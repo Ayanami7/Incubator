@@ -1,0 +1,15 @@
+# Vulkan CMakeLists.txt
+
+if(WIN32)
+    set(VULKAN_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
+
+    set(VULKAN_LIB "${CMAKE_CURRENT_SOURCE_DIR}/lib/Win32/vulkan-1.lib")
+
+    # Create an interface target for Vulkan
+    add_library(vulkan INTERFACE)
+    target_include_directories(vulkan INTERFACE ${VULKAN_INCLUDE_DIR})
+    target_link_libraries(vulkan INTERFACE ${VULKAN_LIB})
+
+    # Set folder for organization in IDEs
+    set_target_properties(vulkan PROPERTIES FOLDER ${THIRD_PARTY_FOLDER}/vulkan)
+endif()

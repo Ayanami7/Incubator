@@ -1,0 +1,4 @@
+# test CMakelists.txt
+
+# runtime 模块测试
+add_subdirectory(runtime)

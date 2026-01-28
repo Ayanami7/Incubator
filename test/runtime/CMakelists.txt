@@ -1,0 +1,32 @@
+# test/runtime CMakelists.txt
+enable_testing()
+
+# 设置测试源文件列表
+file(GLOB TEST_SOURCES "*.cpp")
+
+# 创建测试源文件列表
+foreach(TEST_SOURCE ${TEST_SOURCES})
+    get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
+
+    add_executable(${TEST_NAME} ${TEST_SOURCE})
+
+    target_link_libraries(
+        ${TEST_NAME} PRIVATE
+        GTest::gtest_main
+        GTest::gmock_main
+        IncubatorRuntime
+    )
+
+    target_include_directories(
+        ${TEST_NAME} PRIVATE
+        GTest::gtest_main
+        GTest::gmock_main
+    )
+
+    # 设置测试可执行文件的目录
+    set_target_properties(${TEST_NAME} PROPERTIES FOLDER "UnitTest/runtime")
+
+    # 注册测试到 CMake
+    include(GoogleTest)
+    gtest_discover_tests(${TEST_NAME})
+endforeach()

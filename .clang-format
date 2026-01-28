@@ -1,0 +1,71 @@
+# 基于 Google 样式的自定义配置
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++17
+
+# 缩进设置
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+AccessModifierOffset: -4
+IndentCaseLabels: true
+NamespaceIndentation: All  # 这是关键设置：所有命名空间内容都缩进
+
+# 大括号设置
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterControlStatement: true
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterUnion: true
+  BeforeCatch: true
+  BeforeElse: true
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+
+# 行长度和断行
+ColumnLimit: 120
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+AlignAfterOpenBracket: Align
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+
+# 空格
+SpaceAfterCStyleCast: false
+SpaceAfterTemplateKeyword: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# 其他格式设置
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Left
+AlignOperands: true
+AlignTrailingComments: true
+AllowAllParametersOfDeclarationOnNextLine: true
+PointerAlignment: Left
+IncludeBlocks: Regroup
+
+# 头文件排序设置
+SortIncludes: CaseSensitive
+SortUsingDeclarations: true
+
+# 注释设置
+ReflowComments: true
+FixNamespaceComments: true

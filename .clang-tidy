@@ -1,0 +1,33 @@
+CompileFlags:
+  Add: [-Wall, -Wextra, -pedantic, -std=c++17]
+
+Diagnostics:
+  ClangTidy:
+    Add: [
+      modernize-*,
+      performance-*,
+      readability-*,
+      bugprone-*,
+      portability-*,
+      cppcoreguidelines-*,
+    ]
+    Remove: [
+      modernize-use-trailing-return-type,
+      readability-uppercase-literal-suffix,
+      readability-magic-numbers,
+      readability-braces-around-statements,
+    ]
+    CheckOptions:
+      readability-identifier-naming.VariableCase: camelBack
+      readability-identifier-naming.ClassCase: CamelCase
+      readability-identifier-naming.MemberPrefix: m_
+      readability-identifier-naming.ConstantCase: UPPER_CASE
+
+# 限制索引使用的内存
+Index:
+  Background: true
+  
+InlayHints:
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true
