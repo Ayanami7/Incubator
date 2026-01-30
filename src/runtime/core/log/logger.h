@@ -45,50 +45,50 @@ namespace Incubator
         template <typename... Args>
         void trace(fmt::format_string<Args...> fmt, Args&&... args)
         {
-            if (logger)
-                logger->trace(fmt, std::forward<Args>(args)...);
+            if (logger_)
+                logger_->trace(fmt, std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         void debug(fmt::format_string<Args...> fmt, Args&&... args)
         {
-            if (logger)
-                logger->debug(fmt, std::forward<Args>(args)...);
+            if (logger_)
+                logger_->debug(fmt, std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         void info(fmt::format_string<Args...> fmt, Args&&... args)
         {
-            if (logger)
-                logger->info(fmt, std::forward<Args>(args)...);
+            if (logger_)
+                logger_->info(fmt, std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         void warn(fmt::format_string<Args...> fmt, Args&&... args)
         {
-            if (logger)
-                logger->warn(fmt, std::forward<Args>(args)...);
+            if (logger_)
+                logger_->warn(fmt, std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         void error(fmt::format_string<Args...> fmt, Args&&... args)
         {
-            if (logger)
-                logger->error(fmt, std::forward<Args>(args)...);
+            if (logger_)
+                logger_->error(fmt, std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         void critical(fmt::format_string<Args...> fmt, Args&&... args)
         {
-            if (logger)
-                logger->critical(fmt, std::forward<Args>(args)...);
+            if (logger_)
+                logger_->critical(fmt, std::forward<Args>(args)...);
         }
 
     private:
         // 私有化构造函数，通过 Create 创建
         explicit Logger(std::shared_ptr<spdlog::logger> logger);
 
-        std::shared_ptr<spdlog::logger> logger;  // 每个实例持有 spdlog logger
+        std::shared_ptr<spdlog::logger> logger_;  // 每个实例持有 spdlog logger
     };
 
     void logError(Logger& logger, const Exception& err, LogLevel level);

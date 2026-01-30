@@ -158,21 +158,21 @@ namespace Incubator
         }
     }
 
-    Logger::Logger(std::shared_ptr<spdlog::logger> logger) : logger(std::move(logger)) {}
+    Logger::Logger(std::shared_ptr<spdlog::logger> logger) : logger_(std::move(logger)) {}
 
     void Logger::setLevel(LogLevel level)
     {
-        if (logger)
+        if (logger_)
         {
-            logger->set_level(toSpdLevel(level));
+            logger_->set_level(toSpdLevel(level));
         }
     }
 
     LogLevel Logger::getLevel() const
     {
-        if (logger)
+        if (logger_)
         {
-            auto spd_level = logger->level();
+            auto spd_level = logger_->level();
             switch (spd_level)
             {
                 case spdlog::level::trace:
@@ -198,9 +198,9 @@ namespace Incubator
 
     void Logger::addSink(std::shared_ptr<spdlog::sinks::sink> sink)
     {
-        if (logger && sink)
+        if (logger_ && sink)
         {
-            logger->sinks().push_back(std::move(sink));
+            logger_->sinks().push_back(std::move(sink));
         }
     }
 
