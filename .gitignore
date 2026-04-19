@@ -1,5 +1,8 @@
 /.vscode
 /.vs
+/.claude
 /bin
 /build
 /out
+
+/claude.md
