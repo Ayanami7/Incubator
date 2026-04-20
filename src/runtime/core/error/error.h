@@ -10,46 +10,47 @@
 
 namespace Incubator
 {
-    enum class ErrorCode
+    namespace Error
     {
-        UNKNOWN,
-        IO,
-        CONFIG,
-        NETWORK
-    };
-
-    class Exception : public std::exception
-    {
-    public:
-        Exception(ErrorCode code, std::string message, std::source_location loc = std::source_location::current());
-
-        const char* what() const noexcept override;
-        ErrorCode code() const noexcept
+        enum class Code
         {
-            return code_;
-        }
-        const std::string& message() const noexcept
+            UNKNOWN,
+            IO,
+            CONFIG,
+            NETWORK
+        };
+
+        class Exception : public std::exception
         {
-            return message_;
-        }
-        const std::source_location& location() const noexcept
-        {
-            return location_;
-        }
+        public:
+            Exception(Code code, std::string message, std::source_location loc = std::source_location::current());
 
-    private:
-        ErrorCode code_;
-        std::string message_;
-        std::source_location location_;
-        mutable std::string what_cache_;  // 用于缓存 what() 字符串
+            const char* what() const noexcept override;
+            Code code() const noexcept
+            {
+                return code_;
+            }
+            const std::string& message() const noexcept
+            {
+                return message_;
+            }
+            const std::source_location& location() const noexcept
+            {
+                return location_;
+            }
 
-        void buildWhat() const;
-    };
+        private:
+            Code code_;
+            std::string message_;
+            std::source_location location_;
+            mutable std::string what_cache_;
 
-    // 错误码转换为字符串
-    std::string toString(ErrorCode code);
+            void buildWhat() const;
+        };
 
-    // 从路径中提取文件名
-    std::string_view getFileName(std::string_view path);
+        std::string toString(Code code);
+
+        std::string_view getFileName(std::string_view path);
+    }  // namespace Error
 
 }  // namespace Incubator

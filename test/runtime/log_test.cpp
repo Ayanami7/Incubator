@@ -10,37 +10,37 @@
 
 #include "runtime/core/log/logger.h"
 
-using Incubator::LogLevel;
-using Incubator::LogSystem;
+using Incubator::Log::Level;
+using Incubator::Log::Registry;
 
 class LoggerTest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        LogSystem::reset();
+        Registry::reset();
     }
 
     void TearDown() override
     {
-        LogSystem::reset();
+        Registry::reset();
     }
 };
 
 TEST_F(LoggerTest, AutoInitializeWithoutExplicitInit)
 {
-    auto logger = LogSystem::get("auto.init");
+    auto logger = Registry::get("auto.init");
 
     EXPECT_NO_THROW(logger.info("Auto initialized"));
-    EXPECT_EQ(logger.getLevel(), LogLevel::INFO);
+    EXPECT_EQ(logger.getLevel(), Level::INFO);
 }
 
 TEST_F(LoggerTest, InitAndBasicLoggingDoesNotThrow)
 {
-    LogSystem::init();
-    auto logger = LogSystem::get("unit.logger");
+    Registry::init();
+    auto logger = Registry::get("unit.logger");
 
-    EXPECT_EQ(logger.getLevel(), LogLevel::INFO);
+    EXPECT_EQ(logger.getLevel(), Level::INFO);
 
     EXPECT_NO_THROW(logger.trace("literal trace"));
     EXPECT_NO_THROW(logger.debug("value {}", 42));
@@ -49,16 +49,16 @@ TEST_F(LoggerTest, InitAndBasicLoggingDoesNotThrow)
     EXPECT_NO_THROW(logger.error("runtime error"));
     EXPECT_NO_THROW(logger.critical("fatal {}", 1));
 
-    LogSystem::setGlobalLevel(LogLevel::WARN);
-    EXPECT_EQ(logger.getLevel(), LogLevel::WARN);
+    Registry::setGlobalLevel(Level::WARN);
+    EXPECT_EQ(logger.getLevel(), Level::WARN);
 
-    EXPECT_NO_THROW(LogSystem::flushAll());
+    EXPECT_NO_THROW(Registry::flushAll());
 }
 
 TEST_F(LoggerTest, LogErrorUsesProvidedLevel)
 {
-    LogSystem::init();
-    auto logger = LogSystem::get("unit.logger.error");
+    Registry::init();
+    auto logger = Registry::get("unit.logger.error");
 
     std::ostringstream stream = std::ostringstream();
     auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(stream);
@@ -67,11 +67,11 @@ TEST_F(LoggerTest, LogErrorUsesProvidedLevel)
 
     logger.addSink(sink);
 
-    logger.setLevel(LogLevel::TRACE);
+    logger.setLevel(Level::TRACE);
 
-    Incubator::Exception ex(Incubator::ErrorCode::IO, "io failure");
+    Incubator::Error::Exception ex(Incubator::Error::Code::IO, "io failure");
 
-    logError(logger, ex, LogLevel::ERROR);
+    Incubator::Log::logError(logger, ex, Level::ERROR);
 
     EXPECT_THAT(stream.str(), ::testing::HasSubstr("error"));
     EXPECT_THAT(stream.str(), ::testing::HasSubstr("io failure"));
@@ -79,34 +79,34 @@ TEST_F(LoggerTest, LogErrorUsesProvidedLevel)
     stream.str("");
     stream.clear();
 
-    logError(logger, ex, LogLevel::INFO);
+    Incubator::Log::logError(logger, ex, Level::INFO);
     EXPECT_THAT(stream.str(), ::testing::HasSubstr("info"));
 }
 
 TEST_F(LoggerTest, SameModuleNameReusesLogger)
 {
-    LogSystem::init();
+    Registry::init();
 
-    auto logger1 = LogSystem::get("shared.module");
-    auto logger2 = LogSystem::get("shared.module");
+    auto logger1 = Registry::get("shared.module");
+    auto logger2 = Registry::get("shared.module");
 
-    logger1.setLevel(LogLevel::TRACE);
+    logger1.setLevel(Level::TRACE);
 
-    EXPECT_EQ(logger2.getLevel(), LogLevel::TRACE);
+    EXPECT_EQ(logger2.getLevel(), Level::TRACE);
 }
 
 TEST_F(LoggerTest, DifferentModuleNamesCreateIndependentLoggers)
 {
-    LogSystem::init();
+    Registry::init();
 
-    auto loggerA = LogSystem::get("module.A");
-    auto loggerB = LogSystem::get("module.B");
+    auto loggerA = Registry::get("module.A");
+    auto loggerB = Registry::get("module.B");
 
-    loggerA.setLevel(LogLevel::ERROR);
-    loggerB.setLevel(LogLevel::DEBUG);
+    loggerA.setLevel(Level::ERROR);
+    loggerB.setLevel(Level::DEBUG);
 
-    EXPECT_EQ(loggerA.getLevel(), LogLevel::ERROR);
-    EXPECT_EQ(loggerB.getLevel(), LogLevel::DEBUG);
+    EXPECT_EQ(loggerA.getLevel(), Level::ERROR);
+    EXPECT_EQ(loggerB.getLevel(), Level::DEBUG);
 }
 
 TEST_F(LoggerTest, ConcurrentGetIsStable)
@@ -121,8 +121,8 @@ TEST_F(LoggerTest, ConcurrentGetIsStable)
         ts.emplace_back([&] {
             try
             {
-                auto l1 = LogSystem::get("shared");
-                auto l2 = LogSystem::get("shared");
+                auto l1 = Registry::get("shared");
+                auto l2 = Registry::get("shared");
 
                 if (l1.getLevel() != l2.getLevel())
                     ok = false;

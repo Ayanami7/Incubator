@@ -7,7 +7,7 @@
 
 #include <thread>
 
-using namespace Incubator;
+using namespace Incubator::Clock;
 
 class ClockTest : public ::testing::Test
 {};

@@ -5,22 +5,19 @@
 #include <source_location>
 #include <string>
 
-// 错误处理单元测试：覆盖枚举字符串化、文件名提取以及异常内容。
-using Incubator::ErrorCode;
-using Incubator::Exception;
-using Incubator::getFileName;
-using Incubator::toString;
+using Incubator::Error::Code;
+using Incubator::Error::Exception;
+using Incubator::Error::getFileName;
+using Incubator::Error::toString;
 
-// 验证错误码枚举到字符串的映射
 TEST(ErrorTest, ToStringMapsEnum)
 {
-    EXPECT_EQ(toString(ErrorCode::UNKNOWN), "UNKNOWN");
-    EXPECT_EQ(toString(ErrorCode::IO), "IO");
-    EXPECT_EQ(toString(ErrorCode::CONFIG), "CONFIG");
-    EXPECT_EQ(toString(ErrorCode::NETWORK), "NETWORK");
+    EXPECT_EQ(toString(Code::UNKNOWN), "UNKNOWN");
+    EXPECT_EQ(toString(Code::IO), "IO");
+    EXPECT_EQ(toString(Code::CONFIG), "CONFIG");
+    EXPECT_EQ(toString(Code::NETWORK), "NETWORK");
 }
 
-// 验证路径分隔符兼容性
 TEST(ErrorTest, GetFileNameHandlesSeparators)
 {
     EXPECT_EQ(getFileName("/path/to/file.txt"), "file.txt");
@@ -28,11 +25,10 @@ TEST(ErrorTest, GetFileNameHandlesSeparators)
     EXPECT_EQ(getFileName("file.txt"), "file.txt");
 }
 
-// 验证异常what包含上下文信息
 TEST(ErrorTest, ExceptionWhatContainsDetails)
 {
     const int line = __LINE__ + 1;
-    Exception ex(ErrorCode::CONFIG, "broken config", std::source_location::current());
+    Exception ex(Code::CONFIG, "broken config", std::source_location::current());
 
     const std::string what = ex.what();
 
