@@ -7,6 +7,7 @@ set(CORE_HEADERS
     core/log/logger.h
     core/error/error.h
     core/utils/hash.h
+    core/clock/clock.h
 )
 set(CORE_SOURCES
     core/log/logger.cpp
