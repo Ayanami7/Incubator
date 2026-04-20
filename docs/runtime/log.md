@@ -22,14 +22,17 @@ src/runtime/core/log/
 - `CRITICAL`: 严重错误
 - `OFF`: 关闭日志
 
-### Logger 类
-封装 spdlog，提供模块化的日志接口。
+### LogSystem 类
+全局日志系统管理器，负责管理所有 logger 的共享状态和生命周期。
 
 **静态方法：**
-- `init(LogLevel default_level, std::string_view pattern)`: 全局初始化，配置所有 logger 的共享 sinks
-- `create(std::string_view module_name)`: 创建指定名称的 logger 实例
+- `init(LogLevel default_level, std::string_view pattern)`: 全局初始化，配置共享 sinks
+- `get(std::string_view module_name)`: 获取指定模块的 logger
 - `setGlobalLevel(LogLevel level)`: 设置所有 logger 的日志级别
 - `flushAll()`: 刷新所有日志输出
+
+### Logger 类
+轻量句柄，各模块持有使用，提供日志输出接口。
 
 **实例方法：**
 - `setLevel(LogLevel level)`: 设置当前 logger 的日志级别
@@ -54,10 +57,10 @@ void critical(fmt::format_string<Args...> fmt, Args&&... args)
 
 ```cpp
 // 全局初始化（程序启动时调用一次）
-Logger::init(LogLevel::DEBUG);
+LogSystem::init(LogLevel::DEBUG);
 
-// 创建模块 logger
-Logger renderLog = Logger::create("Renderer");
+// 获取模块 logger
+Logger renderLog = LogSystem::get("Renderer");
 
 // 使用日志
 renderLog.info("Window created: {}x{}", width, height);
@@ -73,11 +76,11 @@ try {
 ```
 
 ## 设计要点
-1. **模块隔离**: 每个模块创建独立的 logger 实例，便于日志过滤和分析
-2. **高性能**: 基于 spdlog 的异步日志机制
-3. **格式化**: 集成 fmt 库，提供类型安全的参数化日志
-4. **双 sink**: 默认同时输出到控制台和文件
-5. **UTF-8 支持**: CMake 中配置 `/utf-8` 选项（MSVC）
+1. **职责分离**: LogSystem 管理全局状态，Logger 作为轻量句柄供各模块使用
+2. **模块隔离**: 每个模块通过名称获取独立的 logger 实例，便于日志过滤和分析
+3. **高性能**: 基于 spdlog 的异步日志机制
+4. **格式化**: 集成 fmt 库，提供类型安全的参数化日志
+5. **线程安全**: 内部使用 mutex 保护全局状态
 
 ## 默认格式
 ```
@@ -92,4 +95,4 @@ try {
 - 多模块 logger 的隔离性
 - 日志级别过滤正确性
 - 异常日志输出格式
-- 多线程环境下的日志顺序（异步日志）
+- 多线程环境下的日志顺序

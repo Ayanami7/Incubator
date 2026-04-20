@@ -1,7 +1,6 @@
 #include "runtime/core/log/logger.h"
 
 #include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/spdlog.h>
 
 #include <mutex>
 #include <unordered_map>
@@ -9,17 +8,69 @@
 
 namespace Incubator
 {
-    // 全局状态（线程安全）
-    std::mutex g_mutex;
-    std::unordered_map<std::string, std::shared_ptr<spdlog::logger>> g_loggers;
-    std::vector<spdlog::sink_ptr> g_sinks;
-    LogLevel g_default_level = LogLevel::INFO;
-    bool g_initialized = false;
-
-    // 匿名命名空间用于内部实现细节，避免符号外泄
     namespace
     {
-        // 统一内部日志分发，供 logError 复用，放入匿名命名空间避免符号外泄
+        struct LogSystemState
+        {
+            std::mutex mutex;
+            std::unordered_map<std::string, std::shared_ptr<spdlog::logger>> loggers;
+            std::vector<spdlog::sink_ptr> sinks;
+            LogLevel default_level = LogLevel::INFO;
+            bool initialized = false;
+        };
+
+        LogSystemState& state()
+        {
+            static LogSystemState instance;
+            return instance;
+        }
+
+        spdlog::level::level_enum toSpdLevel(LogLevel level)
+        {
+            switch (level)
+            {
+                case LogLevel::TRACE:
+                    return spdlog::level::trace;
+                case LogLevel::DEBUG:
+                    return spdlog::level::debug;
+                case LogLevel::INFO:
+                    return spdlog::level::info;
+                case LogLevel::WARN:
+                    return spdlog::level::warn;
+                case LogLevel::ERROR:
+                    return spdlog::level::err;
+                case LogLevel::CRITICAL:
+                    return spdlog::level::critical;
+                case LogLevel::OFF:
+                    return spdlog::level::off;
+                default:
+                    return spdlog::level::info;
+            }
+        }
+
+        LogLevel fromSpdLevel(spdlog::level::level_enum level)
+        {
+            switch (level)
+            {
+                case spdlog::level::trace:
+                    return LogLevel::TRACE;
+                case spdlog::level::debug:
+                    return LogLevel::DEBUG;
+                case spdlog::level::info:
+                    return LogLevel::INFO;
+                case spdlog::level::warn:
+                    return LogLevel::WARN;
+                case spdlog::level::err:
+                    return LogLevel::ERROR;
+                case spdlog::level::critical:
+                    return LogLevel::CRITICAL;
+                case spdlog::level::off:
+                    return LogLevel::OFF;
+                default:
+                    return LogLevel::INFO;
+            }
+        }
+
         void logWithLevel(Logger& logger, LogLevel level, std::string_view msg)
         {
             switch (level)
@@ -51,115 +102,114 @@ namespace Incubator
         }
     }  // namespace
 
-    // 内部转换函数
-    spdlog::level::level_enum toSpdLevel(LogLevel level)
+    // LogSystem 实现
+    void LogSystem::init(LogLevel default_level, std::string_view pattern)
     {
-        switch (level)
-        {
-            case LogLevel::TRACE:
-                return spdlog::level::trace;
-            case LogLevel::DEBUG:
-                return spdlog::level::debug;
-            case LogLevel::INFO:
-                return spdlog::level::info;
-            case LogLevel::WARN:
-                return spdlog::level::warn;
-            case LogLevel::ERROR:
-                return spdlog::level::err;
-            case LogLevel::CRITICAL:
-                return spdlog::level::critical;
-            case LogLevel::OFF:
-                return spdlog::level::off;
-            default:
-                return spdlog::level::info;
-        }
-    }
+        std::lock_guard<std::mutex> lock(state().mutex);
 
-    // 确保初始化（内部使用，调用前需持有锁）
-    void ensureInitializedLocked()
-    {
-        if (g_initialized)
+        auto& s = state();
+        // 1. 防止重复初始化：如果已经初始化过，不再重新创建 Sink
+        if (s.initialized)
+        {
             return;
+        }
 
-        // 创建共享的 sink（控制台彩色输出，多线程安全）
+        s.default_level = default_level;
+
+        // 2. 创建默认 Sink
         auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-        console_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-10n] %v");
-        g_sinks.push_back(console_sink);
 
-        g_initialized = true;
+        // 如果 pattern 为空，使用默认格式
+        if (pattern.empty())
+        {
+            console_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-10n] %v");
+        }
+        else
+        {
+            console_sink->set_pattern(std::string{pattern});
+        }
+
+        s.sinks.push_back(console_sink);
+        s.initialized = true;
     }
 
-    // 获取或创建 logger（内部使用）
-    std::shared_ptr<spdlog::logger> getOrCreateLogger(std::string_view module_name)
+    // 获取指定模块的 logger
+    Logger LogSystem::get(std::string_view module_name)
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
-
-        ensureInitializedLocked();
-
         std::string name(module_name);
-        auto it = g_loggers.find(name);
-        if (it != g_loggers.end())
+        auto& s = state();
+
         {
-            return it->second;
+            // 第一次锁定：检查初始化和查找既有 Logger
+            std::lock_guard<std::mutex> lock(s.mutex);
+
+            // 1. 自动初始化逻辑：如果用户没调 init，则按默认参数初始化
+            if (!s.initialized)
+            {
+                // 注意：因为 lock 已经是 state().mutex，这里不能直接调用 LogSystem::init(会死锁)
+                // 所以我们将初始化最核心的逻辑在此内联，确保逻辑一致
+                s.default_level = LogLevel::INFO;
+                auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+                console_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-10n] %v");
+                s.sinks.push_back(console_sink);
+                s.initialized = true;
+            }
+
+            // 2. 查找缓存
+            auto it = s.loggers.find(name);
+            if (it != s.loggers.end())
+            {
+                return Logger(it->second);
+            }
+
+            // 3. 创建新 Logger
+            // 这里复制一份当前的 sinks，防止在创建过程中 s.sinks 被其他操作修改导致迭代器失效
+            auto current_sinks = s.sinks;
+            auto new_spd_logger = std::make_shared<spdlog::logger>(name, current_sinks.begin(), current_sinks.end());
+
+            new_spd_logger->set_level(toSpdLevel(s.default_level));
+            new_spd_logger->flush_on(spdlog::level::err);
+
+            s.loggers[name] = new_spd_logger;
+            return Logger(new_spd_logger);
         }
-
-        // 创建新的 logger，共享所有 sinks（多线程安全）
-        auto logger = std::make_shared<spdlog::logger>(name, g_sinks.begin(), g_sinks.end());
-        logger->set_level(toSpdLevel(g_default_level));
-        logger->flush_on(spdlog::level::err);  // 错误级别自动刷新
-
-        g_loggers[name] = logger;
-        return logger;
     }
 
-    // logger 初始化
-    void Logger::init(LogLevel default_level, std::string_view pattern)
+    void LogSystem::setGlobalLevel(LogLevel level)
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::lock_guard<std::mutex> lock(state().mutex);
 
-        if (g_initialized)
-        {
-            return;  // 已初始化，避免重复
-        }
+        state().default_level = level;
 
-        g_default_level = default_level;
-
-        // 创建共享的 sink（控制台彩色输出，多线程安全）
-        auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-        console_sink->set_pattern(std::string{pattern});
-        g_sinks.push_back(console_sink);
-
-        g_initialized = true;
-    }
-
-    // 创建Logger实例
-    Logger Logger::create(std::string_view module_name)
-    {
-        return Logger(getOrCreateLogger(module_name));
-    }
-
-    void Logger::setGlobalLevel(LogLevel level)
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        g_default_level = level;
-
-        // 更新所有已存在的 logger
-        for (auto& [name, logger] : g_loggers)
+        for (auto& [name, logger] : state().loggers)
         {
             logger->set_level(toSpdLevel(level));
         }
     }
 
-    // 刷新所有 logger
-    void Logger::flushAll()
+    void LogSystem::flushAll()
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        for (auto& [name, logger] : g_loggers)
+        std::lock_guard<std::mutex> lock(state().mutex);
+
+        for (auto& [name, logger] : state().loggers)
         {
             logger->flush();
         }
     }
 
+    // 重置日志系统
+    void LogSystem::reset()
+    {
+        std::lock_guard<std::mutex> lock(state().mutex);
+
+        auto& s = state();
+        s.loggers.clear();
+        s.sinks.clear();
+        s.default_level = LogLevel::INFO;
+        s.initialized = false;
+    }
+
+    // Logger 实现
     Logger::Logger(std::shared_ptr<spdlog::logger> logger) : logger_(std::move(logger)) {}
 
     void Logger::setLevel(LogLevel level)
@@ -174,28 +224,9 @@ namespace Incubator
     {
         if (logger_)
         {
-            auto spd_level = logger_->level();
-            switch (spd_level)
-            {
-                case spdlog::level::trace:
-                    return LogLevel::TRACE;
-                case spdlog::level::debug:
-                    return LogLevel::DEBUG;
-                case spdlog::level::info:
-                    return LogLevel::INFO;
-                case spdlog::level::warn:
-                    return LogLevel::WARN;
-                case spdlog::level::err:
-                    return LogLevel::ERROR;
-                case spdlog::level::critical:
-                    return LogLevel::CRITICAL;
-                case spdlog::level::off:
-                    return LogLevel::OFF;
-                default:
-                    return LogLevel::INFO;
-            }
+            return fromSpdLevel(logger_->level());
         }
-        return LogLevel::OFF;  // 默认返回 OFF 如果 logger 不存在
+        return LogLevel::OFF;
     }
 
     void Logger::addSink(std::shared_ptr<spdlog::sinks::sink> sink)
@@ -208,7 +239,6 @@ namespace Incubator
 
     void logError(Logger& logger, const Exception& err, LogLevel level)
     {
-        // 复用 Exception 的格式化字符串输出到指定日志级别
         logWithLevel(logger, level, err.what());
     }
 }  // namespace Incubator

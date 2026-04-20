@@ -1,4 +1,3 @@
-// logger.h
 #pragma once
 
 #include <spdlog/fmt/fmt.h>
@@ -23,15 +22,19 @@ namespace Incubator
         OFF
     };
 
-    class Logger
+    // Logger 轻量句柄，各模块持有使用
+    class Logger;
+
+    // 全局日志系统管理器
+    class LogSystem
     {
     public:
         // 全局初始化（配置所有 logger 的共享 sinks）
         static void init(LogLevel default_level = LogLevel::INFO,
                          std::string_view pattern = "[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-10n] %v");
 
-        // 创建Logger
-        static Logger create(std::string_view module_name);
+        // 获取指定模块的 logger
+        static Logger get(std::string_view module_name);
 
         // 设置全局日志级别
         static void setGlobalLevel(LogLevel level);
@@ -39,13 +42,21 @@ namespace Incubator
         // 刷新所有 logger
         static void flushAll();
 
-        // 实例方法
+        // 重置日志系统（仅用于测试）
+        static void reset();
+    };
+
+    // Logger 轻量句柄，各模块持有使用
+    class Logger
+    {
+    public:
+        Logger() = default;
+
         void setLevel(LogLevel level);
         LogLevel getLevel() const;
 
         void addSink(std::shared_ptr<spdlog::sinks::sink> sink);
 
-        // 日志输出方法
         template <typename... Args>
         void trace(fmt::format_string<Args...> fmt, Args&&... args)
         {
@@ -89,11 +100,11 @@ namespace Incubator
         }
 
     private:
-        // 私有化构造函数，通过 Create 创建
         explicit Logger(std::shared_ptr<spdlog::logger> logger);
 
-        std::shared_ptr<spdlog::logger> logger_;  // 每个实例持有 spdlog logger
+        std::shared_ptr<spdlog::logger> logger_;
+        friend class LogSystem;
     };
 
     void logError(Logger& logger, const Exception& err, LogLevel level);
-}  // namespace Incubator
+}
