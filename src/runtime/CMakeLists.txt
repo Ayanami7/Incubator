@@ -6,10 +6,12 @@ set(TARGET_NAME IncubatorRuntime)
 set(CORE_HEADERS
     core/log/logger.h
     core/error/error.h
+    core/utils/hash.h
 )
 set(CORE_SOURCES
     core/log/logger.cpp
     core/error/error.cpp
+    core/utils/hash.cpp
 )
 
 # 合并所有头文件和源文件到一个变量

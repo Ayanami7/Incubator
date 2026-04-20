@@ -16,6 +16,7 @@ namespace Incubator
     LogLevel g_default_level = LogLevel::INFO;
     bool g_initialized = false;
 
+    // 匿名命名空间用于内部实现细节，避免符号外泄
     namespace
     {
         // 统一内部日志分发，供 logError 复用，放入匿名命名空间避免符号外泄
@@ -131,6 +132,7 @@ namespace Incubator
         g_initialized = true;
     }
 
+    // 创建Logger实例
     Logger Logger::create(std::string_view module_name)
     {
         return Logger(getOrCreateLogger(module_name));

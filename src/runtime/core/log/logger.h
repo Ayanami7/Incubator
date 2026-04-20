@@ -30,12 +30,16 @@ namespace Incubator
         static void init(LogLevel default_level = LogLevel::INFO,
                          std::string_view pattern = "[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-10n] %v");
 
+        // 创建Logger
         static Logger create(std::string_view module_name);
 
+        // 设置全局日志级别
         static void setGlobalLevel(LogLevel level);
 
+        // 刷新所有 logger
         static void flushAll();
 
+        // 实例方法
         void setLevel(LogLevel level);
         LogLevel getLevel() const;
 

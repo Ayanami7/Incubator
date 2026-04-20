@@ -46,8 +46,10 @@ namespace Incubator
         void buildWhat() const;
     };
 
+    // 错误码转换为字符串
     std::string toString(ErrorCode code);
 
+    // 从路径中提取文件名
     std::string_view getFileName(std::string_view path);
 
 }  // namespace Incubator
