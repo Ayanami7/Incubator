@@ -1,61 +1,93 @@
-// hash.cpp
-#include "runtime/core/utils/hash.h"
+#include "hash.h"
 
-namespace Incubator::Utils
+#include <algorithm>
+#include <cstdint>
+#include <fstream>
+#include <stdexcept>
+#include <vector>
+
+namespace Incubator
 {
-
-    uint32_t hash32(std::string_view str)
+    namespace Utils
     {
-        return hash32(str.data(), str.size());
-    }
-
-    void hashCombine(size_t& seed, const char* value)
-    {
-        seed ^= hash64(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-    }
-
-    void hashCombine(size_t& seed, std::string_view value)
-    {
-        seed ^= hash64(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-    }
-
-    uint32_t hash32(const void* data, size_t size)
-    {
-        static constexpr uint32_t FNV_OFFSET_BASIS = 2166136261u;
-        static constexpr uint32_t FNV_PRIME = 16777619u;
-
-        uint32_t hash = FNV_OFFSET_BASIS;
-        const unsigned char* bytes = static_cast<const unsigned char*>(data);
-
-        for (size_t i = 0; i < size; ++i)
+        namespace Detail
         {
-            hash ^= static_cast<uint32_t>(bytes[i]);
-            hash *= FNV_PRIME;
+            Hash hashBytes(const void* data, size_t size) noexcept
+            {
+                Hash result = kOffset;
+                const uint8_t* bytes = static_cast<const uint8_t*>(data);
+
+                for (size_t i = 0; i < size; ++i)
+                {
+                    result ^= static_cast<Hash>(bytes[i]);
+                    result *= kPrime;
+                }
+
+                return result;
+            }
         }
 
-        return hash;
-    }
-
-    uint64_t hash64(std::string_view str)
-    {
-        return hash64(str.data(), str.size());
-    }
-
-    uint64_t hash64(const void* data, size_t size)
-    {
-        static constexpr uint64_t FNV_OFFSET_BASIS = 14695981039346656037ULL;
-        static constexpr uint64_t FNV_PRIME = 1099511628211ULL;
-
-        uint64_t hash = FNV_OFFSET_BASIS;
-        const unsigned char* bytes = static_cast<const unsigned char*>(data);
-
-        for (size_t i = 0; i < size; ++i)
+        Hash hash(std::string_view str) noexcept
         {
-            hash ^= static_cast<uint64_t>(bytes[i]);
-            hash *= FNV_PRIME;
+            return Detail::hashBytes(str.data(), str.size());
         }
 
-        return hash;
-    }
+        Hash hashFileFast(const std::filesystem::path& path) noexcept
+        {
+            try
+            {
+                if (!std::filesystem::exists(path))
+                {
+                    return 0;
+                }
 
-}  // namespace Incubator::Utils
+                std::uintmax_t fileSize = std::filesystem::file_size(path);
+                auto writeTime = std::filesystem::last_write_time(path);
+                auto timeSinceEpoch = writeTime.time_since_epoch();
+                auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(timeSinceEpoch).count();
+
+                Hash seed = Detail::kOffset;
+                combine(seed, path.string());
+                combine(seed, fileSize);
+                combine(seed, timestamp);
+
+                return seed;
+            }
+            catch (...)
+            {
+                return 0;
+            }
+        }
+
+        Hash hashFileContent(const std::filesystem::path& path)
+        {
+            std::ifstream file(path, std::ios::binary);
+            if (!file)
+            {
+                throw std::runtime_error("Failed to open file: " + path.string());
+            }
+
+            file.seekg(0, std::ios::end);
+            std::streamsize fileSize = file.tellg();
+            file.seekg(0, std::ios::beg);
+
+            constexpr size_t bufferSize = 8192;
+            std::vector<uint8_t> buffer(bufferSize);
+
+            Hash result = Detail::kOffset;
+
+            while (fileSize > 0)
+            {
+                std::streamsize toRead = std::min<std::streamsize>(fileSize, bufferSize);
+                file.read(reinterpret_cast<char*>(buffer.data()), toRead);
+
+                Hash chunkHash = Detail::hashBytes(buffer.data(), static_cast<size_t>(toRead));
+                combine(result, chunkHash);
+
+                fileSize -= toRead;
+            }
+
+            return result;
+        }
+    }
+}

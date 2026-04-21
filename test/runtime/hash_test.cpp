@@ -1,90 +1,248 @@
-#include <gtest/gtest.h>
+#define TESTING_ENABLED
+
 #include "runtime/core/utils/hash.h"
+
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <thread>
+#include <vector>
 
 using namespace Incubator::Utils;
 
-TEST(HashTest, Hash32Basic)
+class HashTest : public ::testing::Test
 {
-    uint32_t h1 = hash32("hello");
-    uint32_t h2 = hash32("hello");
+protected:
+    void SetUp() override
+    {
+        testFile = "test_hash_temp.txt";
+        std::ofstream file(testFile);
+        file << "Hello, World!" << std::endl;
+        file << "This is a test file for hashing." << std::endl;
+        file.close();
+    }
+
+    void TearDown() override
+    {
+        if (std::filesystem::exists(testFile))
+        {
+            std::filesystem::remove(testFile);
+        }
+    }
+
+    std::filesystem::path testFile;
+};
+
+TEST_F(HashTest, HashReturnsConsistentResult)
+{
+    std::string_view str = "Hello, World!";
+    Hash h1 = hash(str);
+    Hash h2 = hash(str);
 
     EXPECT_EQ(h1, h2);
-    EXPECT_NE(h1, hash32("world"));
+    EXPECT_NE(h1, 0);
 }
 
-TEST(HashTest, Hash32Data)
+TEST_F(HashTest, HashDifferentStringsDifferentHashes)
 {
-    std::string data = "test data";
-    uint32_t h1 = hash32(data.data(), data.size());
-    uint32_t h2 = hash32("test data");
+    std::string_view str1 = "Hello, World!";
+    std::string_view str2 = "Hello, Incubator!";
 
-    EXPECT_EQ(h1, h2);
-}
-
-TEST(HashTest, Hash64Basic)
-{
-    uint64_t h1 = hash64("hello");
-    uint64_t h2 = hash64("hello");
-
-    EXPECT_EQ(h1, h2);
-    EXPECT_NE(h1, hash64("world"));
-}
-
-TEST(HashTest, Hash64Data)
-{
-    std::string data = "test data";
-    uint64_t h1 = hash64(data.data(), data.size());
-    uint64_t h2 = hash64("test data");
-
-    EXPECT_EQ(h1, h2);
-}
-
-TEST(HashTest, ConstHash32)
-{
-    constexpr uint32_t h1 = constHash32("hello");
-    uint32_t h2 = hash32("hello");
-
-    EXPECT_EQ(h1, h2);
-}
-
-TEST(HashTest, ConstHash32Different)
-{
-    constexpr uint32_t h1 = constHash32("hello");
-    constexpr uint32_t h2 = constHash32("world");
+    Hash h1 = hash(str1);
+    Hash h2 = hash(str2);
 
     EXPECT_NE(h1, h2);
 }
 
-TEST(HashTest, HashCombine)
+TEST_F(HashTest, HashEmptyString)
 {
-    size_t seed = 0;
-    hashCombine(seed, 42);
-    hashCombine(seed, "test");
+    std::string_view emptyStr = "";
+    Hash h = hash(emptyStr);
 
-    size_t seed2 = 0;
-    hashCombine(seed2, 42);
-    hashCombine(seed2, "test");
-
-    EXPECT_EQ(seed, seed2);
+    EXPECT_NE(h, 0);
 }
 
-TEST(HashTest, HashCombineDifferent)
+TEST_F(HashTest, HashLongString)
 {
-    size_t seed = 0;
-    hashCombine(seed, 42);
-    hashCombine(seed, "test");
+    std::string longStr(10000, 'A');
+    Hash h1 = hash(longStr);
+    Hash h2 = hash(longStr);
 
-    size_t seed2 = 0;
-    hashCombine(seed2, 42);
-    hashCombine(seed2, "different");
-
-    EXPECT_NE(seed, seed2);
+    EXPECT_EQ(h1, h2);
 }
 
-TEST(HashTest, Hash64ConsistentWithHash32Different)
+TEST_F(HashTest, ConstHashIsCompileTimeConstant)
 {
-    uint32_t h32 = hash32("test string");
-    uint64_t h64 = hash64("test string");
+    constexpr Hash h1 = constHash("CompileTime");
+    constexpr Hash h2 = constHash("CompileTime");
 
-    EXPECT_NE(static_cast<uint64_t>(h32), h64);
+    static_assert(h1 == h2, "Const hash should be equal");
+    static_assert(h1 != 0, "Const hash should not be zero");
+
+    EXPECT_EQ(h1, h2);
+}
+
+TEST_F(HashTest, ConstHashDifferentStringsDifferentHashes)
+{
+    constexpr Hash h1 = constHash("String1");
+    constexpr Hash h2 = constHash("String2");
+
+    static_assert(h1 != h2, "Const hashes should be different for different strings");
+
+    EXPECT_NE(h1, h2);
+}
+
+TEST_F(HashTest, CombineInteger)
+{
+    Hash seed = Detail::kOffset;
+    combine(seed, static_cast<int32_t>(42));
+
+    EXPECT_NE(seed, Detail::kOffset);
+}
+
+TEST_F(HashTest, CombineMultipleValues)
+{
+    Hash seed1 = Detail::kOffset;
+    combine(seed1, static_cast<int32_t>(1));
+    combine(seed1, static_cast<int32_t>(2));
+    combine(seed1, static_cast<int32_t>(3));
+
+    Hash seed2 = Detail::kOffset;
+    combine(seed2, static_cast<int32_t>(1));
+    combine(seed2, static_cast<int32_t>(2));
+
+    EXPECT_NE(seed1, seed2);
+}
+
+TEST_F(HashTest, CombineFloat)
+{
+    Hash seed = Detail::kOffset;
+    combine(seed, 3.14159f);
+
+    EXPECT_NE(seed, Detail::kOffset);
+}
+
+TEST_F(HashTest, CombineDouble)
+{
+    Hash seed = Detail::kOffset;
+    combine(seed, 3.141592653589793);
+
+    EXPECT_NE(seed, Detail::kOffset);
+}
+
+TEST_F(HashTest, CombineStringView)
+{
+    Hash seed = Detail::kOffset;
+    combine(seed, std::string_view("TestString"));
+
+    EXPECT_NE(seed, Detail::kOffset);
+}
+
+TEST_F(HashTest, CombineStdString)
+{
+    Hash seed = Detail::kOffset;
+    combine(seed, std::string("StdString"));
+
+    EXPECT_NE(seed, Detail::kOffset);
+}
+
+TEST_F(HashTest, HashFileFastReturnsValidHash)
+{
+    if (!std::filesystem::exists(testFile))
+    {
+        GTEST_SKIP() << "Test file does not exist";
+    }
+
+    Hash h1 = hashFileFast(testFile);
+    Hash h2 = hashFileFast(testFile);
+
+    EXPECT_EQ(h1, h2);
+    EXPECT_NE(h1, 0);
+}
+
+TEST_F(HashTest, HashFileFastReturnsZeroForNonExistentFile)
+{
+    auto nonExistentPath = "non_existent_file_12345.txt";
+    Hash h = hashFileFast(nonExistentPath);
+
+    EXPECT_EQ(h, 0);
+}
+
+TEST_F(HashTest, HashFileContentReturnsValidHash)
+{
+    if (!std::filesystem::exists(testFile))
+    {
+        GTEST_SKIP() << "Test file does not exist";
+    }
+
+    Hash h1 = hashFileContent(testFile);
+    Hash h2 = hashFileContent(testFile);
+
+    EXPECT_EQ(h1, h2);
+    EXPECT_NE(h1, 0);
+}
+
+TEST_F(HashTest, HashFileContentThrowsForNonExistentFile)
+{
+    auto nonExistentPath = "non_existent_file_12345.txt";
+
+    EXPECT_THROW(hashFileContent(nonExistentPath), std::runtime_error);
+}
+
+TEST_F(HashTest, HashFileContentDifferentFromFastHash)
+{
+    if (!std::filesystem::exists(testFile))
+    {
+        GTEST_SKIP() << "Test file does not exist";
+    }
+
+    Hash fastHash = hashFileFast(testFile);
+    Hash contentHash = hashFileContent(testFile);
+
+    EXPECT_NE(fastHash, contentHash);
+}
+
+TEST_F(HashTest, HashFileContentDetectsFileModification)
+{
+    if (!std::filesystem::exists(testFile))
+    {
+        GTEST_SKIP() << "Test file does not exist";
+    }
+
+    Hash h1 = hashFileContent(testFile);
+
+    std::ofstream file(testFile, std::ios::app);
+    file << "Modified content" << std::endl;
+    file.close();
+
+    Hash h2 = hashFileContent(testFile);
+
+    EXPECT_NE(h1, h2);
+}
+
+TEST_F(HashTest, CombineOrderMatters)
+{
+    Hash seed1 = Detail::kOffset;
+    combine(seed1, static_cast<int32_t>(1));
+    combine(seed1, static_cast<int32_t>(2));
+
+    Hash seed2 = Detail::kOffset;
+    combine(seed2, static_cast<int32_t>(2));
+    combine(seed2, static_cast<int32_t>(1));
+
+    EXPECT_NE(seed1, seed2);
+}
+
+TEST_F(HashTest, HashAndCombineWorkTogether)
+{
+    Hash seed = Detail::kOffset;
+    combine(seed, hash("prefix"));
+    combine(seed, static_cast<int32_t>(123));
+    combine(seed, hash("suffix"));
+
+    EXPECT_NE(seed, Detail::kOffset);
 }

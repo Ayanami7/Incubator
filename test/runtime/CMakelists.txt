@@ -19,8 +19,7 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
 
     target_include_directories(
         ${TEST_NAME} PRIVATE
-        GTest::gtest_main
-        GTest::gmock_main
+        ${CMAKE_SOURCE_DIR}/src
     )
 
     # 设置测试可执行文件的目录

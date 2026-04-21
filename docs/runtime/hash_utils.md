@@ -1,46 +1,64 @@
-# Hash Utilities 模块设计
+# Hash Utilities 模块
 
-## 目标
-提供哈希函数，用于资源 ID、事件标识等场景。
+## 概述
 
-## 文件结构
+基于 FNV-1a 的 64 位哈希工具模块，用于资源 ID、缓存键、文件变更检测等场景。
+
 ```
 src/runtime/core/utils/
 ├── hash.h
 └── hash.cpp
 ```
 
-## 接口设计
+## 核心接口
 
 ```cpp
-namespace Incubator::Utils
-{
-    // FNV-1a 32位哈希（快速，适合资源 ID）
-    uint32_t hash32(std::string_view str);
-    uint32_t hash32(const void* data, size_t size);
+namespace Incubator::Utils {
 
-    // FNV-1a 64位哈希
-    uint64_t hash64(std::string_view str);
-    uint64_t hash64(const void* data, size_t size);
-
-    // 组合哈希（用于复合键）
-    template <typename T>
-    void hashCombine(size_t& seed, const T& value);
-
-    // 哈希类型别名
     using Hash = uint64_t;
 
-    // 常量哈希（编译时计算）
-    constexpr uint32_t constHash32(std::string_view str);
+    // 字符串哈希（最常用）
+    Hash hash(std::string_view str) noexcept;
+
+    // 快速文件哈希，使用元数据（路径 + size + timestamp）
+    Hash hashFileFast(const std::filesystem::path& path) noexcept;
+
+    // 内容文件哈希（完整文件）
+    Hash hashFileContent(const std::filesystem::path& path);
+
+    // 编译期哈希
+    template <size_t N>
+    constexpr Hash constHash(const char (&str)[N]) noexcept;
+
+    // 基础组合（对外提供）
+    template <typename T>
+    void combine(Hash& seed, const T& value) noexcept;
+
+    // 内部实现（禁止外部使用）
+    namespace detail
+    {
+        Hash hashBytes(const void* data, size_t size) noexcept;
+        constexpr Hash kOffset = 14695981039346656037ull;
+        constexpr Hash kPrime  = 1099511628211ull;
+        constexpr Hash kMul = 0x9e3779b97f4a7c15ull;
+    }
+
 }
 ```
 
-## 应用场景
-- 资源 ID：`Hash id = hash32("textures/player.png")`
-- 事件 ID：`Hash eventId = constHash32("PlayerJump")`
-- 文件变更检测
+## 使用场景
 
-## 测试要点
-- 哈希分布均匀性（抽样测试）
-- 碰撞率检查
-- 编译时哈希正确性
+| 场景 | 推荐接口 | 说明 |
+|------|----------|------|
+| 资源 ID | `hash()` / `constHash()` | 路径字符串转 ID |
+| 缓存键 | `hash()` + `combine()` | 组合多个参数 |
+| 文件变更检测 | `hashFileFast()` | 热重载场景，快速检查 |
+| 内容校验 | `hashFileContent()` | 完整文件哈希 |
+| switch-case | `constHash()` | 编译期常量 |
+
+## 注意事项
+
+- `hashFileFast()` 只检查元数据，可能漏判内容修改
+- FNV-1a 哈希存在碰撞概率，勿用于安全场景
+- `combine()` 对自定义类型需特化
+- `constHash()` 仅支持字面量字符串
