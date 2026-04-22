@@ -8,11 +8,13 @@ set(CORE_HEADERS
     core/error/error.h
     core/utils/hash.h
     core/clock/clock.h
+    core/path/path.h
 )
 set(CORE_SOURCES
     core/log/logger.cpp
     core/error/error.cpp
     core/utils/hash.cpp
+    core/path/path.cpp
 )
 
 # 合并所有头文件和源文件到一个变量
