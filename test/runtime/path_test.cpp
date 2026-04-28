@@ -8,8 +8,7 @@
 using namespace Incubator::Path;
 
 class PathTest : public ::testing::Test
-{
-};
+{};
 
 // ========== join 测试 ==========
 
@@ -401,4 +400,88 @@ TEST_F(PathTest, PathConstructionExample)
     EXPECT_EQ(ext, "png");
 
     EXPECT_TRUE(hasExtension(assetPath, "png"));
+}
+
+// ========== 中文路径测试 ==========
+
+TEST_F(PathTest, ChineseJoinSimple)
+{
+    std::string result = join("中文文件夹", "文件.txt");
+    EXPECT_EQ(result, "中文文件夹/文件.txt");
+}
+
+TEST_F(PathTest, ChineseJoinNested)
+{
+    std::string result = join("资源/纹理", "角色.png");
+    EXPECT_EQ(result, "资源/纹理/角色.png");
+}
+
+TEST_F(PathTest, ChineseNormalizeDotDot)
+{
+    std::string result = normalize("中文/./../其他");
+    EXPECT_EQ(result, "其他");
+}
+
+TEST_F(PathTest, ChineseNormalizeBackslashes)
+{
+    std::string result = normalize("游戏/配置/设置.ini");
+    EXPECT_EQ(result, "游戏/配置/设置.ini");
+}
+
+TEST_F(PathTest, ChineseGetFileNameSimple)
+{
+    std::string result = getFileName("路径/文档.pdf");
+    EXPECT_EQ(result, "文档.pdf");
+}
+
+TEST_F(PathTest, ChineseGetFileNameNoExtension)
+{
+    std::string result = getFileName("数据/说明");
+    EXPECT_EQ(result, "说明");
+}
+
+TEST_F(PathTest, ChineseGetStemSimple)
+{
+    std::string result = getStem("图片/风景.jpg");
+    EXPECT_EQ(result, "风景");
+}
+
+TEST_F(PathTest, ChineseGetStemNoExtension)
+{
+    std::string result = getStem("音乐/歌曲");
+    EXPECT_EQ(result, "歌曲");
+}
+
+TEST_F(PathTest, ChineseGetExtension)
+{
+    std::string result = getExtension("视频/电影.mp4");
+    EXPECT_EQ(result, "mp4");
+}
+
+TEST_F(PathTest, ChineseGetParentPath)
+{
+    std::string result = getParentPath("项目/源码/main.cpp");
+    EXPECT_EQ(result, "项目/源码");
+}
+
+TEST_F(PathTest, ChineseAbsolutePathWindowsDrive)
+{
+    EXPECT_TRUE(isAbsolute("D:/游戏/存档"));
+}
+
+TEST_F(PathTest, ChineseHasExtensionCaseInsensitive)
+{
+    EXPECT_TRUE(hasExtension("文档.PDF", "pdf"));
+}
+
+TEST_F(PathTest, ChineseMixedWithEnglish)
+{
+    std::string result = join("assets/素材", "texture.png");
+    EXPECT_EQ(result, "assets/素材/texture.png");
+}
+
+TEST_F(PathTest, ChineseComplexPath)
+{
+    std::string path = normalize("游戏/./资源/../纹理/./角色.png");
+    EXPECT_EQ(path, "游戏/纹理/角色.png");
 }
