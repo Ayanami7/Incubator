@@ -24,6 +24,11 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+// Incubator engine modules
+#include "runtime/core/log/logger.h"
+#include "runtime/core/error/error.h"
+#include "runtime/core/clock/clock.h"
+
 // Volk headers
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
 #define VOLK_IMPLEMENTATION
@@ -60,15 +65,18 @@ static bool g_SwapChainRebuild = false;
 
 static void glfw_error_callback(int error, const char* description)
 {
-    fprintf(stderr, "GLFW Error %d: %s\n", error, description);
+    auto log = Incubator::Log::Registry::get("Demo");
+    log.error("GLFW Error {}: {}", error, description);
 }
+
 static void check_vk_result(VkResult err)
 {
     if (err == VK_SUCCESS)
         return;
-    fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
-    if (err < 0)
-        abort();
+    throw Incubator::Error::Exception(
+        Incubator::Error::Code::IO,
+        fmt::format("VkResult = {}", (int)err)
+    );
 }
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
@@ -82,7 +90,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_report(VkDebugReportFlagsEXT flags, 
     (void)messageCode;
     (void)pUserData;
     (void)pLayerPrefix;  // Unused arguments
-    fprintf(stderr, "[vulkan] Debug report from ObjectType: %i\nMessage: %s\n\n", objectType, pMessage);
+    auto log = Incubator::Log::Registry::get("Demo.Vulkan");
+    log.debug("Vulkan debug report (ObjectType: {}): {}", static_cast<int>(objectType), pMessage);
     return VK_FALSE;
 }
 #endif  // APP_USE_VULKAN_DEBUG_REPORT
@@ -230,8 +239,12 @@ static void SetupVulkanWindow(ImGui_ImplVulkanH_Window* wd, VkSurfaceKHR surface
     vkGetPhysicalDeviceSurfaceSupportKHR(g_PhysicalDevice, g_QueueFamily, wd->Surface, &res);
     if (res != VK_TRUE)
     {
-        fprintf(stderr, "Error no WSI support on physical device 0\n");
-        exit(-1);
+        auto log = Incubator::Log::Registry::get("Demo");
+        log.error("No WSI support on physical device 0");
+        throw Incubator::Error::Exception(
+            Incubator::Error::Code::IO,
+            "No WSI support on physical device 0"
+        );
     }
 
     // Select Surface Format
@@ -371,16 +384,21 @@ static void FramePresent(ImGui_ImplVulkanH_Window* wd)
 // Main code
 int main(int, char**)
 {
+    Incubator::Log::Registry::init();
+    auto log = Incubator::Log::Registry::get("Demo");
+
+    log.info("Engine starting");
+
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit())
         return 1;
 
     // Create window with Vulkan context
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Dear ImGui GLFW+Vulkan example", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "Incubator Engine", nullptr, nullptr);
     if (!glfwVulkanSupported())
     {
-        printf("GLFW: Vulkan Not Supported\n");
+        log.error("GLFW: Vulkan Not Supported");
         return 1;
     }
 
@@ -460,9 +478,13 @@ int main(int, char**)
     bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
+    double g_FrameTime = 0.0;
+
     // Main loop
     while (!glfwWindowShouldClose(window))
     {
+        auto frameStart = Incubator::Clock::now();
+
         // Poll and handle events (inputs, window resize, etc.)
         // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your
         // inputs.
@@ -522,6 +544,9 @@ int main(int, char**)
             ImGui::Text("counter = %d", counter);
 
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+            ImGui::Separator();
+            ImGui::Text("Engine frame: %.3f ms (%.1f FPS)",
+                        1000.0 / g_FrameTime, 1.0 / g_FrameTime);
             ImGui::End();
         }
 
@@ -550,9 +575,12 @@ int main(int, char**)
             FrameRender(wd, draw_data);
             FramePresent(wd);
         }
+
+        g_FrameTime = Incubator::Clock::elapsedSeconds(frameStart);
     }
 
     // Cleanup
+    log.info("Engine shutting down");
     err = vkDeviceWaitIdle(g_Device);
     check_vk_result(err);
     ImGui_ImplVulkan_Shutdown();
@@ -565,5 +593,8 @@ int main(int, char**)
     glfwDestroyWindow(window);
     glfwTerminate();
 
+    log.info("Engine shutdown complete");
+
+    Incubator::Log::Registry::flushAll();
     return 0;
 }
