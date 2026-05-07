@@ -17,12 +17,23 @@ set(CORE_SOURCES
     core/path/path.cpp
 )
 
+# platform 模块头文件/源文件
+set(PLATFORM_HEADERS
+    platform/fileio/fileio.h
+    platform/fileio/file_handle.h
+)
+set(PLATFORM_SOURCES
+    platform/fileio/fileio.cpp
+)
+
 # 合并所有头文件和源文件到一个变量
 set(ALL_HEADERS
     ${CORE_HEADERS}
+    ${PLATFORM_HEADERS}
 )
 set(ALL_SOURCES
     ${CORE_SOURCES}
+    ${PLATFORM_SOURCES}
 )
 
 # 创建静态库目标

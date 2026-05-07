@@ -1,6 +1,7 @@
 /.vscode
 /.vs
 /.claude
+/.sisyphus
 /bin
 /build
 /out
