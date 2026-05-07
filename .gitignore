@@ -2,6 +2,7 @@
 /.vs
 /.claude
 /.sisyphus
+/.opencode
 /bin
 /build
 /out
