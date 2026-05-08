@@ -2,12 +2,12 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <source_location>
 #include <string>
 
 using Incubator::Error::Code;
 using Incubator::Error::Exception;
-using Incubator::Error::getFileName;
 using Incubator::Error::toString;
 
 TEST(ErrorTest, ToStringMapsEnum)
@@ -16,13 +16,6 @@ TEST(ErrorTest, ToStringMapsEnum)
     EXPECT_EQ(toString(Code::IO), "IO");
     EXPECT_EQ(toString(Code::CONFIG), "CONFIG");
     EXPECT_EQ(toString(Code::NETWORK), "NETWORK");
-}
-
-TEST(ErrorTest, GetFileNameHandlesSeparators)
-{
-    EXPECT_EQ(getFileName("/path/to/file.txt"), "file.txt");
-    EXPECT_EQ(getFileName("C:\\path\\to\\file.txt"), "file.txt");
-    EXPECT_EQ(getFileName("file.txt"), "file.txt");
 }
 
 TEST(ErrorTest, ExceptionWhatContainsDetails)
@@ -35,5 +28,7 @@ TEST(ErrorTest, ExceptionWhatContainsDetails)
     EXPECT_NE(what.find("CONFIG"), std::string::npos);
     EXPECT_NE(what.find("broken config"), std::string::npos);
     EXPECT_NE(what.find(std::to_string(line)), std::string::npos);
-    EXPECT_NE(what.find(std::string(getFileName(__FILE__))), std::string::npos);
+    // Exception 内部使用 std::filesystem::path::filename() 提取文件名
+    std::string filename = std::filesystem::path(__FILE__).filename().string();
+    EXPECT_NE(what.find(filename), std::string::npos);
 }

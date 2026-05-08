@@ -25,17 +25,16 @@ namespace Incubator
             }
         }
 
-        std::string_view getFileName(std::string_view path)
-        {
-            auto pos = path.find_last_of("/\\");
-            return (pos == std::string_view::npos) ? path : path.substr(pos + 1);
-        }
-
         Exception::Exception(Code code, std::string message, std::source_location loc)
             : code_(code), message_(std::move(message)), location_(loc)
         {
+            // 从完整路径中提取文件名
+            auto file = std::string_view(location_.file_name());
+            auto pos = file.find_last_of("/\\");
+            auto shortName = (pos == std::string_view::npos) ? file : file.substr(pos + 1);
+
             what_cache_ = fmt::format("[{}]  {}  @{}({}:{})", toString(code_), message_,
-                                      getFileName(location_.file_name()), location_.line(), location_.function_name());
+                                      shortName, location_.line(), location_.function_name());
         }
 
         const char* Exception::what() const noexcept

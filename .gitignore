@@ -3,6 +3,7 @@
 /.claude
 /.sisyphus
 /.opencode
+/.cache
 /bin
 /build
 /out

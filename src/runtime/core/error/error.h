@@ -5,7 +5,6 @@
 #include <exception>
 #include <source_location>
 #include <string>
-#include <string_view>
 
 namespace Incubator
 {
@@ -71,10 +70,6 @@ namespace Incubator
         /// @return 对应的字符串表示（如 Code::IO → "IO"）
         std::string toString(Code code);
 
-        /// @brief 从完整文件路径中提取文件名
-        /// @param path 完整路径（如 "/path/to/file.cpp"）
-        /// @return 文件名部分（如 "file.cpp"）
-        std::string_view getFileName(std::string_view path);
     }  // namespace Error
 
 }  // namespace Incubator
