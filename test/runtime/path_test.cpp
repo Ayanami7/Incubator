@@ -130,8 +130,10 @@ TEST_F(PathTest, NormalizeUNCPathWithDotDot)
 
 TEST_F(PathTest, NormalizeDotDotCannotCrossDriveRoot)
 {
+    // std::filesystem::path::lexically_normal 正确处理盘符根目录语义：
+    // C:/.. = C:/（不能越过盘符根），所以 C:/../other = C:/other
     std::string result = normalize("C:/../other");
-    EXPECT_EQ(result, "C:/../other");
+    EXPECT_EQ(result, "C:/other");
 }
 
 TEST_F(PathTest, NormalizeTrailingSeparator)
@@ -218,8 +220,9 @@ TEST_F(PathTest, GetStemEmpty)
 
 TEST_F(PathTest, GetStemDotFile)
 {
+    // std::filesystem::path::stem 将 .hidden 视为完整文件名（无扩展名）
     std::string result = getStem(".hidden");
-    EXPECT_EQ(result, "");
+    EXPECT_EQ(result, ".hidden");
 }
 
 TEST_F(PathTest, GetStemDotFileWithExtension)

@@ -2,8 +2,10 @@
 
 #include "runtime/platform/fileio/file_handle.h"
 
+#include <filesystem>
 #include <memory>
-#include <string_view>
+
+#include "runtime/platform/fileio/file_handle.h"
 
 namespace Incubator
 {
@@ -40,15 +42,15 @@ namespace Incubator
             // ---- 文件操作 ----
 
             /// @brief 检查文件是否存在
-            virtual bool exists(std::string_view path) = 0;
+            virtual bool exists(const std::filesystem::path& path) = 0;
 
             /// @brief 获取文件大小
             /// @return 字节数，文件不存在时返回 0
-            virtual uint64_t getFileSize(std::string_view path) = 0;
+            virtual uint64_t getFileSize(const std::filesystem::path& path) = 0;
 
             /// @brief 删除文件
             /// @return 成功返回 true，文件不存在返回 false
-            virtual bool remove(std::string_view path) = 0;
+            virtual bool remove(const std::filesystem::path& path) = 0;
 
             /// @brief 打开文件
             /// @param path 文件路径
@@ -56,7 +58,7 @@ namespace Incubator
             /// @param share 共享模式
             /// @return 文件句柄；文件不存在返回 nullptr，其他错误抛出 Error::Exception
             virtual std::unique_ptr<FileHandle> open(
-                std::string_view path,
+                const std::filesystem::path& path,
                 OpenMode mode,
                 ShareMode share = ShareMode::Exclusive
             ) = 0;
@@ -64,15 +66,15 @@ namespace Incubator
             // ---- 目录操作 ----
 
             /// @brief 检查目录是否存在
-            virtual bool directoryExists(std::string_view path) = 0;
+            virtual bool directoryExists(const std::filesystem::path& path) = 0;
 
             /// @brief 创建目录（不会递归创建父目录）
             /// @return 成功返回 true，已存在返回 false
-            virtual bool createDirectory(std::string_view path) = 0;
+            virtual bool createDirectory(const std::filesystem::path& path) = 0;
 
             /// @brief 删除空目录
             /// @return 成功返回 true，目录不存在或不空返回 false
-            virtual bool removeDirectory(std::string_view path) = 0;
+            virtual bool removeDirectory(const std::filesystem::path& path) = 0;
 
         protected:
             FileIO() = default;
@@ -82,16 +84,12 @@ namespace Incubator
 
         constexpr OpenMode operator|(OpenMode a, OpenMode b) noexcept
         {
-            return static_cast<OpenMode>(
-                static_cast<uint8_t>(a) | static_cast<uint8_t>(b)
-            );
+            return static_cast<OpenMode>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
         }
 
         constexpr OpenMode operator&(OpenMode a, OpenMode b) noexcept
         {
-            return static_cast<OpenMode>(
-                static_cast<uint8_t>(a) & static_cast<uint8_t>(b)
-            );
+            return static_cast<OpenMode>(static_cast<uint8_t>(a) & static_cast<uint8_t>(b));
         }
 
         constexpr bool hasFlag(OpenMode value, OpenMode flag) noexcept

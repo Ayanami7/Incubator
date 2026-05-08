@@ -279,17 +279,17 @@ namespace Incubator
             class Win32FileIO : public FileIO
             {
             public:
-                bool exists(std::string_view path) override
+                bool exists(const std::filesystem::path& path) override
                 {
-                    DWORD attrs = GetFileAttributesA(std::string(path).c_str());
+                    DWORD attrs = GetFileAttributesA(path.string().c_str());
                     return attrs != INVALID_FILE_ATTRIBUTES &&
                            !(attrs & FILE_ATTRIBUTE_DIRECTORY);
                 }
 
-                uint64_t getFileSize(std::string_view path) override
+                uint64_t getFileSize(const std::filesystem::path& path) override
                 {
                     WIN32_FILE_ATTRIBUTE_DATA attr;
-                    if (!GetFileAttributesExA(std::string(path).c_str(),
+                    if (!GetFileAttributesExA(path.string().c_str(),
                                               GetFileExInfoStandard, &attr))
                     {
                         return 0;
@@ -298,17 +298,17 @@ namespace Incubator
                            static_cast<uint64_t>(attr.nFileSizeLow);
                 }
 
-                bool remove(std::string_view path) override
+                bool remove(const std::filesystem::path& path) override
                 {
-                    return DeleteFileA(std::string(path).c_str()) != FALSE;
+                    return DeleteFileA(path.string().c_str()) != FALSE;
                 }
 
                 std::unique_ptr<FileHandle> open(
-                    std::string_view path,
+                    const std::filesystem::path& path,
                     OpenMode mode,
                     ShareMode share) override
                 {
-                    std::string pathStr(path);
+                    auto pathStr = path.string();
 
                     HANDLE h = CreateFileA(
                         pathStr.c_str(),
@@ -335,21 +335,21 @@ namespace Incubator
                     return std::make_unique<Win32FileHandle>(h);
                 }
 
-                bool directoryExists(std::string_view path) override
+                bool directoryExists(const std::filesystem::path& path) override
                 {
-                    DWORD attrs = GetFileAttributesA(std::string(path).c_str());
+                    DWORD attrs = GetFileAttributesA(path.string().c_str());
                     return attrs != INVALID_FILE_ATTRIBUTES &&
                            (attrs & FILE_ATTRIBUTE_DIRECTORY);
                 }
 
-                bool createDirectory(std::string_view path) override
+                bool createDirectory(const std::filesystem::path& path) override
                 {
-                    return CreateDirectoryA(std::string(path).c_str(), nullptr) != FALSE;
+                    return CreateDirectoryA(path.string().c_str(), nullptr) != FALSE;
                 }
 
-                bool removeDirectory(std::string_view path) override
+                bool removeDirectory(const std::filesystem::path& path) override
                 {
-                    return RemoveDirectoryA(std::string(path).c_str()) != FALSE;
+                    return RemoveDirectoryA(path.string().c_str()) != FALSE;
                 }
             };
 
