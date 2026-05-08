@@ -28,6 +28,7 @@
 #include "runtime/core/log/logger.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/clock/clock.h"
+#include "runtime/platform/window/window.h"
 
 // Volk headers
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
@@ -62,12 +63,6 @@ static VkDescriptorPool g_DescriptorPool = VK_NULL_HANDLE;
 static ImGui_ImplVulkanH_Window g_MainWindowData;
 static uint32_t g_MinImageCount = 2;
 static bool g_SwapChainRebuild = false;
-
-static void glfw_error_callback(int error, const char* description)
-{
-    auto log = Incubator::Log::Registry::get("Demo");
-    log.error("GLFW Error {}: {}", error, description);
-}
 
 static void check_vk_result(VkResult err)
 {
@@ -389,13 +384,15 @@ int main(int, char**)
 
     log.info("Engine starting");
 
-    glfwSetErrorCallback(glfw_error_callback);
-    if (!glfwInit())
-        return 1;
+    // Create platform window (WindowGlfw handles glfwInit + glfwCreateWindow internally)
+    Incubator::Window::WindowDesc windowDesc;
+    windowDesc.title = "Incubator Engine";
+    windowDesc.width = 1280;
+    windowDesc.height = 720;
 
-    // Create window with Vulkan context
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Incubator Engine", nullptr, nullptr);
+    auto engineWindow = Incubator::Window::createPlatformWindow(windowDesc);
+    auto nativeWindow = static_cast<GLFWwindow*>(engineWindow->getNativeHandle());
+
     if (!glfwVulkanSupported())
     {
         log.error("GLFW: Vulkan Not Supported");
@@ -411,12 +408,12 @@ int main(int, char**)
 
     // Create Window Surface
     VkSurfaceKHR surface;
-    VkResult err = glfwCreateWindowSurface(g_Instance, window, g_Allocator, &surface);
+    VkResult err = glfwCreateWindowSurface(g_Instance, nativeWindow, g_Allocator, &surface);
     check_vk_result(err);
 
     // Create Framebuffers
     int w, h;
-    glfwGetFramebufferSize(window, &w, &h);
+    engineWindow->getFramebufferSize(w, h);
     ImGui_ImplVulkanH_Window* wd = &g_MainWindowData;
     SetupVulkanWindow(wd, surface, w, h);
 
@@ -433,7 +430,7 @@ int main(int, char**)
     // ImGui::StyleColorsLight();
 
     // Setup Platform/Renderer backends
-    ImGui_ImplGlfw_InitForVulkan(window, true);
+    ImGui_ImplGlfw_InitForVulkan(nativeWindow, true);
     ImGui_ImplVulkan_InitInfo init_info = {};
     // init_info.ApiVersion = VK_API_VERSION_1_3;              // Pass in your value of VkApplicationInfo::apiVersion,
     // otherwise will default to header version.
@@ -481,7 +478,7 @@ int main(int, char**)
     double g_FrameTime = 0.0;
 
     // Main loop
-    while (!glfwWindowShouldClose(window))
+    while (!engineWindow->shouldClose())
     {
         auto frameStart = Incubator::Clock::now();
 
@@ -493,11 +490,11 @@ int main(int, char**)
         // - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or
         // clear/overwrite your copy of the keyboard data. Generally you may always pass all inputs to dear imgui, and
         // hide them from your application based on those two flags.
-        glfwPollEvents();
+        engineWindow->pollEvents();
 
         // Resize swap chain?
         int fb_width, fb_height;
-        glfwGetFramebufferSize(window, &fb_width, &fb_height);
+        engineWindow->getFramebufferSize(fb_width, fb_height);
         if (fb_width > 0 && fb_height > 0 &&
             (g_SwapChainRebuild || g_MainWindowData.Width != fb_width || g_MainWindowData.Height != fb_height))
         {
@@ -507,7 +504,7 @@ int main(int, char**)
             g_MainWindowData.FrameIndex = 0;
             g_SwapChainRebuild = false;
         }
-        if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0)
+        if (glfwGetWindowAttrib(nativeWindow, GLFW_ICONIFIED) != 0)
         {
             ImGui_ImplGlfw_Sleep(10);
             continue;
@@ -590,7 +587,8 @@ int main(int, char**)
     CleanupVulkanWindow();
     CleanupVulkan();
 
-    glfwDestroyWindow(window);
+    // Destroy engine window (calls glfwDestroyWindow internally)
+    engineWindow.reset();
     glfwTerminate();
 
     log.info("Engine shutdown complete");

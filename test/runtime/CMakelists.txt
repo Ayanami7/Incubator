@@ -1,5 +1,4 @@
-# test/runtime CMakelists.txt
-enable_testing()
+﻿# test/runtime CMakelists.txt
 
 # 设置测试源文件列表
 file(GLOB TEST_SOURCES "*.cpp")
