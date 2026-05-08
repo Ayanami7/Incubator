@@ -1,23 +1,44 @@
 ﻿#include "runtime/core/path/path.h"
 
 #include <algorithm>
-#include <cctype>
 #include <filesystem>
 
 namespace Incubator
 {
     namespace Path
     {
-        // 路径连接
+        namespace
+        {
+            /// @brief 将 string_view 按 UTF-8 编码构造为 filesystem::path
+            ///
+            /// MSVC 上 std::filesystem::path(const char*) 使用系统代码页解释输入，
+            /// 即使设置了 /utf-8 编译选项也是如此。只有通过 char8_t 构造函数才能保证
+            /// 始终按 UTF-8 编码解释输入字符串。
+            std::filesystem::path toPath(std::string_view sv)
+            {
+                return std::filesystem::path(
+                    std::u8string(reinterpret_cast<const char8_t*>(sv.data()), sv.size()));
+            }
+
+            /// @brief 将 u8string 转换为 std::string（保留 UTF-8 字节序列）
+            std::string fromU8String(const std::u8string& s)
+            {
+                return std::string(reinterpret_cast<const char*>(s.data()), s.size());
+            }
+        }  // anonymous namespace
+
+        // ============================================================
+        //  路径连接
+        // ============================================================
+
         std::string join(std::string_view a, std::string_view b)
         {
             if (b.empty())
             {
                 return std::string(a);
             }
-            auto makePath = [](std::string_view sv) -> std::filesystem::path { return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(sv.data()), sv.size())); };
-            auto joined = (makePath(a) / makePath(b)).generic_u8string();
-            return std::string(reinterpret_cast<const char*>(joined.data()), joined.size());
+            auto joined = (toPath(a) / toPath(b)).generic_u8string();
+            return fromU8String(joined);
         }
 
         std::string join(std::string_view a, std::string_view b, std::string_view c)
@@ -25,7 +46,10 @@ namespace Incubator
             return join(join(a, b), c);
         }
 
-        // 路径规范化
+        // ============================================================
+        //  路径规范化
+        // ============================================================
+
         std::string normalize(std::string_view path)
         {
             if (path.empty())
@@ -33,19 +57,12 @@ namespace Incubator
                 return "";
             }
 
-            // MSVC 在 generic 格式下可能丢失 //server 的 UNC root-name 语义。
-            // 用 native 格式做 lexically_normal，再转换为 generic 格式。
-            auto normalized = std::filesystem::path(path).lexically_normal().string();
+            // lexically_normal 用 native 格式处理以保留 UNC root-name 语义，
+            // 输出则用 generic_u8string 保证 UTF-8 编码和 '/' 分隔符。
+            auto normalized_u8 = toPath(path).lexically_normal().generic_u8string();
+            std::string result = fromU8String(normalized_u8);
 
-            // 统一分隔符为 /
-            std::string result;
-            result.reserve(normalized.size());
-            for (char c : normalized)
-            {
-                result += (c == '\\') ? '/' : c;
-            }
-
-            // 恢复 UNC 双斜杠前缀（原始路径以 // 开头时）
+            // 恢复 UNC 双斜杠前缀（MSVC generic 格式可能丢失 //server 的 '//'）
             if (path.size() >= 2 && path[0] == '/' && path[1] == '/')
             {
                 if (result.starts_with("//"))
@@ -71,22 +88,26 @@ namespace Incubator
             return result;
         }
 
-        // 获取文件名
+        // ============================================================
+        //  组件提取
+        // ============================================================
+
         std::string getFileName(std::string_view path)
         {
-            return std::filesystem::path(path).filename().string();
+            auto s = toPath(path).filename().u8string();
+            return fromU8String(s);
         }
 
-        // 获取文件名（不含扩展名）
         std::string getStem(std::string_view path)
         {
-            return std::filesystem::path(path).stem().string();
+            auto s = toPath(path).stem().u8string();
+            return fromU8String(s);
         }
 
-        // 获取扩展名
         std::string getExtension(std::string_view path)
         {
-            auto ext = std::filesystem::path(path).extension().string();
+            auto ext_u8 = toPath(path).extension().u8string();
+            std::string ext = fromU8String(ext_u8);
             if (!ext.empty() && ext[0] == '.')
             {
                 ext = ext.substr(1);
@@ -94,7 +115,6 @@ namespace Incubator
             return ext;
         }
 
-        // 获取父路径
         std::string getParentPath(std::string_view path)
         {
             if (path.empty())
@@ -106,10 +126,14 @@ namespace Incubator
             {
                 return "";
             }
-            return std::filesystem::path(path).parent_path().string();
+            auto parent_u8 = toPath(path).parent_path().generic_u8string();
+            return fromU8String(parent_u8);
         }
 
-        // 判断是否为绝对路径
+        // ============================================================
+        //  路径判断
+        // ============================================================
+
         bool isAbsolute(std::string_view path)
         {
             if (path.empty())
@@ -122,13 +146,13 @@ namespace Incubator
             {
                 return true;
             }
-            return std::filesystem::path(path).is_absolute();
+            return toPath(path).is_absolute();
         }
 
-        // 判断扩展名是否匹配（大小写不敏感）
         bool hasExtension(std::string_view path, std::string_view ext)
         {
-            auto extStr = std::filesystem::path(path).extension().string();
+            auto extStr_u8 = toPath(path).extension().u8string();
+            std::string extStr = fromU8String(extStr_u8);
             std::string_view actual = extStr;
             if (!actual.empty() && actual[0] == '.')
             {
@@ -145,10 +169,14 @@ namespace Incubator
                 return false;
             }
 
+            // ASCII-only 大小写比较：安全处理非 ASCII 字符
+            // （扩展名均为 ASCII，但此函数不应对非 ASCII 输入产生 UB）
             return std::equal(actual.begin(), actual.end(), ext.begin(),
                               [](char a, char b) {
-                                  return std::tolower(static_cast<unsigned char>(a)) ==
-                                         std::tolower(static_cast<unsigned char>(b));
+                                  auto asciiToLower = [](char c) -> char {
+                                      return (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c;
+                                  };
+                                  return asciiToLower(a) == asciiToLower(b);
                               });
         }
     }  // namespace Path

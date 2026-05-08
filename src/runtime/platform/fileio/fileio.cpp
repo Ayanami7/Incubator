@@ -281,7 +281,7 @@ namespace Incubator
             public:
                 bool exists(const std::filesystem::path& path) override
                 {
-                    DWORD attrs = GetFileAttributesA(path.string().c_str());
+                    DWORD attrs = GetFileAttributesW(path.c_str());
                     return attrs != INVALID_FILE_ATTRIBUTES &&
                            !(attrs & FILE_ATTRIBUTE_DIRECTORY);
                 }
@@ -289,7 +289,7 @@ namespace Incubator
                 uint64_t getFileSize(const std::filesystem::path& path) override
                 {
                     WIN32_FILE_ATTRIBUTE_DATA attr;
-                    if (!GetFileAttributesExA(path.string().c_str(),
+                    if (!GetFileAttributesExW(path.c_str(),
                                               GetFileExInfoStandard, &attr))
                     {
                         return 0;
@@ -300,7 +300,7 @@ namespace Incubator
 
                 bool remove(const std::filesystem::path& path) override
                 {
-                    return DeleteFileA(path.string().c_str()) != FALSE;
+                    return DeleteFileW(path.c_str()) != FALSE;
                 }
 
                 std::unique_ptr<FileHandle> open(
@@ -308,10 +308,8 @@ namespace Incubator
                     OpenMode mode,
                     ShareMode share) override
                 {
-                    auto pathStr = path.string();
-
-                    HANDLE h = CreateFileA(
-                        pathStr.c_str(),
+                    HANDLE h = CreateFileW(
+                        path.c_str(),
                         toWin32Access(mode),
                         toWin32ShareMode(share),
                         nullptr,
@@ -328,8 +326,9 @@ namespace Incubator
                         {
                             return nullptr;
                         }
+                        std::string pathStr = std::filesystem::path(path).string();
                         throw Error::Exception(Error::Code::IO,
-                                               formatWin32Error(err, "CreateFileA failed: " + pathStr));
+                                               formatWin32Error(err, "CreateFileW failed: " + pathStr));
                     }
 
                     return std::make_unique<Win32FileHandle>(h);
@@ -337,19 +336,19 @@ namespace Incubator
 
                 bool directoryExists(const std::filesystem::path& path) override
                 {
-                    DWORD attrs = GetFileAttributesA(path.string().c_str());
+                    DWORD attrs = GetFileAttributesW(path.c_str());
                     return attrs != INVALID_FILE_ATTRIBUTES &&
                            (attrs & FILE_ATTRIBUTE_DIRECTORY);
                 }
 
                 bool createDirectory(const std::filesystem::path& path) override
                 {
-                    return CreateDirectoryA(path.string().c_str(), nullptr) != FALSE;
+                    return CreateDirectoryW(path.c_str(), nullptr) != FALSE;
                 }
 
                 bool removeDirectory(const std::filesystem::path& path) override
                 {
-                    return RemoveDirectoryA(path.string().c_str()) != FALSE;
+                    return RemoveDirectoryW(path.c_str()) != FALSE;
                 }
             };
 
