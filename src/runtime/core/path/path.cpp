@@ -1,4 +1,4 @@
-#include "runtime/core/path/path.h"
+﻿#include "runtime/core/path/path.h"
 
 #include <algorithm>
 #include <cctype>
@@ -15,7 +15,9 @@ namespace Incubator
             {
                 return std::string(a);
             }
-            return (std::filesystem::path(a) / std::filesystem::path(b)).generic_string();
+            auto makePath = [](std::string_view sv) -> std::filesystem::path { return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(sv.data()), sv.size())); };
+            auto joined = (makePath(a) / makePath(b)).generic_u8string();
+            return std::string(reinterpret_cast<const char*>(joined.data()), joined.size());
         }
 
         std::string join(std::string_view a, std::string_view b, std::string_view c)
@@ -46,7 +48,11 @@ namespace Incubator
             // 恢复 UNC 双斜杠前缀（原始路径以 // 开头时）
             if (path.size() >= 2 && path[0] == '/' && path[1] == '/')
             {
-                if (result.starts_with('/'))
+                if (result.starts_with("//"))
+                {
+                    // 已经是双斜杠，lexically_normal 已保留 UNC 前缀，无需恢复
+                }
+                else if (result.starts_with('/'))
                 {
                     result = '/' + result;  // /server → //server
                 }
