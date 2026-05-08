@@ -21,9 +21,12 @@ set(CORE_SOURCES
 set(PLATFORM_HEADERS
     platform/fileio/fileio.h
     platform/fileio/file_handle.h
+    platform/input/input.h
+    platform/window/window.h
 )
 set(PLATFORM_SOURCES
     platform/fileio/fileio.cpp
+    platform/window/window.cpp
 )
 
 # 合并所有头文件和源文件到一个变量
@@ -56,6 +59,7 @@ add_dependencies(${TARGET_NAME} fmt::fmt)
 # 链接依赖库
 target_link_libraries(${TARGET_NAME} PUBLIC spdlog::spdlog)
 target_link_libraries(${TARGET_NAME} PUBLIC fmt::fmt)
+target_link_libraries(${TARGET_NAME} PUBLIC glfw)
 
 # 设置包含目录
 target_include_directories(
