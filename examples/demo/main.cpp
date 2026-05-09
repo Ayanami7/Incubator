@@ -504,7 +504,7 @@ int main(int, char**)
             g_MainWindowData.FrameIndex = 0;
             g_SwapChainRebuild = false;
         }
-        if (glfwGetWindowAttrib(nativeWindow, GLFW_ICONIFIED) != 0)
+        if (engineWindow->isIconified())
         {
             ImGui_ImplGlfw_Sleep(10);
             continue;
@@ -587,9 +587,8 @@ int main(int, char**)
     CleanupVulkanWindow();
     CleanupVulkan();
 
-    // Destroy engine window (calls glfwDestroyWindow internally)
+    // Destroy engine window (~WindowGlfw handles glfwDestroyWindow + glfwTerminate internally)
     engineWindow.reset();
-    glfwTerminate();
 
     log.info("Engine shutdown complete");
 

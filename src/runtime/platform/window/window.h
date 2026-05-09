@@ -79,10 +79,21 @@ namespace Incubator
             /// @param title 新标题
             virtual void setTitle(std::string_view title) = 0;
 
+            // ---- 窗口状态查询 ----
+
+            /// @brief 窗口是否处于最小化状态
+            /// @return 最小化返回 true
+            virtual bool isIconified() const = 0;
+
+            /// @brief 获取窗口 DPI 缩放比例
+            /// @return 缩放系数（通常为 1.0、1.25、1.5、2.0 等）
+            virtual float getContentScale() const = 0;
+
             /// @brief 获取原生窗口句柄
             /// @return GLFWwindow*（以 void* 形式返回）
             ///
             /// 用于需要直接调用 GLFW API 的底层操作（如输入查询、上下文管理）。
+            /// 此为逃生舱接口，仅在 ImGui 绑定等必须场景使用。
             virtual void* getNativeHandle() const = 0;
 
             /// @brief 禁止拷贝

@@ -14,8 +14,10 @@ namespace Incubator
         {
 
             // ============================================================
-            //  GLFW Error Callback
+            //  GLFW生命周期引用计数
             // ============================================================
+
+            static int s_glfwRefCount = 0;
 
             void glfwErrorCallback(int error, const char* description)
             {
@@ -33,12 +35,16 @@ namespace Incubator
                 {
                     glfwSetErrorCallback(glfwErrorCallback);
 
-                    if (!glfwInit())
+                    if (s_glfwRefCount++ == 0)
                     {
-                        throw Incubator::Error::Exception(
-                            Incubator::Error::Code::IO,
-                            "GLFW initialization failed"
-                        );
+                        if (!glfwInit())
+                        {
+                            s_glfwRefCount = 0;
+                            throw Incubator::Error::Exception(
+                                Incubator::Error::Code::IO,
+                                "GLFW initialization failed"
+                            );
+                        }
                     }
 
                     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -51,7 +57,10 @@ namespace Incubator
 
                     if (!window_)
                     {
-                        glfwTerminate();
+                        if (--s_glfwRefCount == 0)
+                        {
+                            glfwTerminate();
+                        }
                         throw Incubator::Error::Exception(
                             Incubator::Error::Code::IO,
                             "GLFW window creation failed"
@@ -65,6 +74,10 @@ namespace Incubator
                     {
                         glfwDestroyWindow(window_);
                         window_ = nullptr;
+                    }
+                    if (--s_glfwRefCount == 0)
+                    {
+                        glfwTerminate();
                     }
                 }
 
@@ -104,6 +117,20 @@ namespace Incubator
                 void setTitle(std::string_view title) override
                 {
                     glfwSetWindowTitle(window_, title.data());
+                }
+
+                // ---- 窗口状态查询 ----
+
+                bool isIconified() const override
+                {
+                    return glfwGetWindowAttrib(window_, GLFW_ICONIFIED) != 0;
+                }
+
+                float getContentScale() const override
+                {
+                    float x, y;
+                    glfwGetWindowContentScale(window_, &x, &y);
+                    return x;
                 }
 
                 void* getNativeHandle() const override
