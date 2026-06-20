@@ -22,7 +22,16 @@ namespace Incubator
                 Level default_level = Level::INFO;
                 bool initialized = false;
             };
+            void initializeDefaultSink(RegistryState& s)
+            {
+                auto console_sink =
+                    std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 
+                console_sink->set_pattern(std::string(Incubator::Log::DEFAULT_PATTERN));
+
+                s.sinks.push_back(console_sink);
+                s.initialized = true;
+            }
             RegistryState& state()
             {
                 static RegistryState instance;
@@ -118,19 +127,19 @@ namespace Incubator
 
             s.default_level = default_level;
 
-            auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-
             if (pattern.empty())
             {
-                console_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-10n] %v");
+                initializeDefaultSink(s);
             }
             else
             {
-                console_sink->set_pattern(std::string{pattern});
-            }
+                auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 
-            s.sinks.push_back(console_sink);
-            s.initialized = true;
+                console_sink->set_pattern(std::string(pattern));
+
+                s.sinks.push_back(console_sink);
+                s.initialized = true;
+            }
         }
 
         Logger Registry::get(std::string_view module_name)
@@ -144,10 +153,7 @@ namespace Incubator
                 if (!s.initialized)
                 {
                     s.default_level = Level::INFO;
-                    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-                    console_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-10n] %v");
-                    s.sinks.push_back(console_sink);
-                    s.initialized = true;
+                    initializeDefaultSink(s);
                 }
 
                 auto it = s.loggers.find(name);

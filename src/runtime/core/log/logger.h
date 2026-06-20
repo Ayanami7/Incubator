@@ -29,6 +29,8 @@ namespace Incubator
 
         class Logger;
 
+        inline constexpr std::string_view DEFAULT_PATTERN = "[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-12n] %v";
+
         /// @brief 日志注册表（全局单例）
         ///
         /// 管理所有 logger 的共享状态（sinks、级别、缓存）。
@@ -39,8 +41,7 @@ namespace Incubator
             /// @brief 全局初始化
             /// @param default_level 默认日志级别（默认 INFO）
             /// @param pattern 日志输出格式（默认包含时间、级别、模块名）
-            static void init(Level default_level = Level::INFO,
-                             std::string_view pattern = "[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-10n] %v");
+            static void init(Level default_level = Level::INFO, std::string_view pattern = {});
 
             /// @brief 获取指定模块的 Logger
             /// @param module_name 模块名称（相同名称返回同一实例）
