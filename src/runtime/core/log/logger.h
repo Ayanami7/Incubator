@@ -16,20 +16,31 @@ namespace Incubator
         /// @brief 日志级别枚举
         ///
         /// 定义日志输出的详细程度，级别由低到高依次变高。
-        enum class Level
+        /// 显式值与 spdlog::level::level_enum 对齐，便于序列化和 static_cast 映射。
+        enum class Level : int
         {
-            TRACE,     ///< 最详细的调试信息（仅开发期使用）
-            DEBUG,     ///< 调试信息
-            INFO,      ///< 一般信息（默认级别）
-            WARN,      ///< 警告信息
-            ERROR,     ///< 错误信息
-            CRITICAL,  ///< 严重错误
-            OFF        ///< 关闭所有日志
+            TRACE = 0,     // 最详细的调试信息（仅开发期使用）
+            DEBUG = 1,     // 调试信息
+            INFO = 2,      // 一般信息（默认级别）
+            WARN = 3,      // 警告信息
+            ERROR = 4,     // 错误信息
+            CRITICAL = 5,  // 严重错误
+            OFF = 6        // 关闭所有日志
         };
 
         class Logger;
 
-        inline constexpr std::string_view DEFAULT_PATTERN = "[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-12n] %v";
+        // 级别最长为 "CRITICAL"（8 字符），固定占位 8 确保列对齐
+        inline constexpr std::string_view DEFAULT_PATTERN = "[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%n] %v";
+
+        /// @brief 文件日志输出配置
+        struct FileSinkConfig
+        {
+            std::string log_dir;                // 日志输出目录，为空则禁用文件日志
+            std::string basename = "app";       // 日志文件名（不含路径和扩展名）
+            size_t max_size = 5 * 1024 * 1024;  // 单文件最大字节数，0=不轮转
+            size_t max_files = 3;               // 轮转保留的历史文件数
+        };
 
         /// @brief 日志注册表（全局单例）
         ///
@@ -41,7 +52,9 @@ namespace Incubator
             /// @brief 全局初始化
             /// @param default_level 默认日志级别（默认 INFO）
             /// @param pattern 日志输出格式（默认包含时间、级别、模块名）
-            static void init(Level default_level = Level::INFO, std::string_view pattern = {});
+            /// @param file_config 文件日志配置（log_dir 为空则不输出文件）
+            static void init(Level default_level = Level::INFO, std::string_view pattern = {},
+                             const FileSinkConfig& file_config = {});
 
             /// @brief 获取指定模块的 Logger
             /// @param module_name 模块名称（相同名称返回同一实例）
@@ -51,6 +64,10 @@ namespace Incubator
             /// @brief 设置所有 logger 的全局级别
             /// @param level 目标日志级别
             static void setGlobalLevel(Level level);
+
+            /// @brief 运行时设置/移除文件日志输出（可在 init 之后调用）
+            /// @param config 文件日志配置，log_dir 为空则移除文件输出
+            static void setFileSinkConfig(const FileSinkConfig& config);
 
             /// @brief 刷新所有日志输出到 sink
             static void flushAll();
@@ -67,6 +84,9 @@ namespace Incubator
         {
         public:
             Logger() = default;
+
+            /// @brief 检查 Logger 是否持有有效的 spdlog::logger
+            bool isValid() const;
 
             /// @brief 设置此 logger 的日志级别
             void setLevel(Level level);

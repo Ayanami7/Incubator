@@ -1,7 +1,10 @@
 #include "runtime/core/log/logger.h"
 
+#include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
+#include <algorithm>
+#include <filesystem>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -19,19 +22,35 @@ namespace Incubator
                 std::mutex mutex;
                 std::unordered_map<std::string, std::shared_ptr<spdlog::logger>> loggers;
                 std::vector<spdlog::sink_ptr> sinks;
+                std::shared_ptr<spdlog::sinks::sink> file_sink;  // 跟踪文件 sink，用于运行时移除
                 Level default_level = Level::INFO;
                 bool initialized = false;
             };
             void initializeDefaultSink(RegistryState& s)
             {
-                auto console_sink =
-                    std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+                auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 
-                console_sink->set_pattern(std::string(Incubator::Log::DEFAULT_PATTERN));
+                console_sink->set_pattern(std::string(DEFAULT_PATTERN));
 
                 s.sinks.push_back(console_sink);
-                s.initialized = true;
             }
+            std::shared_ptr<spdlog::sinks::sink> createFileSink(const FileSinkConfig& config)
+            {
+                namespace fs = std::filesystem;
+
+                auto dir = fs::path(config.log_dir);
+                auto filepath = dir / (config.basename + ".log");
+
+                std::error_code ec;
+                fs::create_directories(dir, ec);
+
+                auto sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(filepath.string(), config.max_size,
+                                                                                   config.max_files);
+
+                sink->set_pattern(std::string(DEFAULT_PATTERN));
+                return sink;
+            }
+
             RegistryState& state()
             {
                 static RegistryState instance;
@@ -115,7 +134,7 @@ namespace Incubator
             }
         }  // namespace
 
-        void Registry::init(Level default_level, std::string_view pattern)
+        void Registry::init(Level default_level, std::string_view pattern, const FileSinkConfig& file_config)
         {
             std::lock_guard<std::mutex> lock(state().mutex);
 
@@ -138,8 +157,15 @@ namespace Incubator
                 console_sink->set_pattern(std::string(pattern));
 
                 s.sinks.push_back(console_sink);
-                s.initialized = true;
             }
+
+            if (!file_config.log_dir.empty())
+            {
+                s.file_sink = createFileSink(file_config);
+                s.sinks.push_back(s.file_sink);
+            }
+
+            s.initialized = true;
         }
 
         Logger Registry::get(std::string_view module_name)
@@ -154,6 +180,7 @@ namespace Incubator
                 {
                     s.default_level = Level::INFO;
                     initializeDefaultSink(s);
+                    s.initialized = true;
                 }
 
                 auto it = s.loggers.find(name);
@@ -196,6 +223,45 @@ namespace Incubator
             }
         }
 
+        void Registry::setFileSinkConfig(const FileSinkConfig& config)
+        {
+            std::lock_guard<std::mutex> lock(state().mutex);
+            auto& s = state();
+
+            if (config.log_dir.empty())
+            {
+                if (s.file_sink)
+                {
+                    auto& global_sinks = s.sinks;
+                    global_sinks.erase(std::remove(global_sinks.begin(), global_sinks.end(), s.file_sink),
+                                       global_sinks.end());
+
+                    for (auto& [name, logger] : s.loggers)
+                    {
+                        auto& logger_sinks = logger->sinks();
+                        logger_sinks.erase(std::remove(logger_sinks.begin(), logger_sinks.end(), s.file_sink),
+                                           logger_sinks.end());
+                    }
+
+                    s.file_sink.reset();
+                }
+                return;
+            }
+
+            if (s.file_sink)
+            {
+                return;
+            }
+
+            s.file_sink = createFileSink(config);
+            s.sinks.push_back(s.file_sink);
+
+            for (auto& [name, logger] : s.loggers)
+            {
+                logger->sinks().push_back(s.file_sink);
+            }
+        }
+
         void Registry::reset()
         {
             std::lock_guard<std::mutex> lock(state().mutex);
@@ -203,11 +269,17 @@ namespace Incubator
             auto& s = state();
             s.loggers.clear();
             s.sinks.clear();
+            s.file_sink.reset();
             s.default_level = Level::INFO;
             s.initialized = false;
         }
 
         Logger::Logger(std::shared_ptr<spdlog::logger> logger) : logger_(std::move(logger)) {}
+
+        bool Logger::isValid() const
+        {
+            return logger_ != nullptr;
+        }
 
         void Logger::setLevel(Level level)
         {
