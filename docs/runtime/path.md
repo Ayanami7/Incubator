@@ -35,6 +35,9 @@ namespace Path {
     // 路径判断
     bool isAbsolute(std::string_view path);
     bool hasExtension(std::string_view path, std::string_view ext);
+
+    // 字符串工具
+    std::string toLowerASCII(std::string_view s);
 }
 ```
 
@@ -86,6 +89,16 @@ Path::hasExtension("file.txt", ".txt")     // true
 Path::hasExtension("file.TXT", "txt")      // true (大小写不敏感)
 ```
 
+### toLowerASCII
+**仅折叠 ASCII 大写字母 `A-Z` 为小写，非 ASCII 字符（如中文）与数字/符号保持不变**：
+```cpp
+Path::toLowerASCII("Textures/Player.PNG")  // "textures/player.png"
+Path::toLowerASCII("中文/纹理")             // "中文/纹理"（非 ASCII 不变）
+Path::toLowerASCII("Tex123!_@#")           // "tex123!_@#"（数字/符号不变）
+```
+
+用途：生成大小写无关的资源键（配合资源 ID 使用），在 Windows/macOS 等大小写不敏感的文件系统上保证同一资产的不同大小写拼写映射到同一 ID。
+
 ## 平台处理
 
 ### Windows
@@ -95,7 +108,7 @@ Path::hasExtension("file.TXT", "txt")      // true (大小写不敏感)
 ## 实现要点
 
 1. **分隔符统一使用 `/`** - normalize 会将 `\` 替换为 `/`
-2. **大小写不敏感** - 扩展名比较时忽略大小写
+2. **大小写不敏感** - 扩展名比较时忽略大小写；toLowerASCII 仅折叠 ASCII（避免 locale 相关的不确定性）
 3. **空路径处理** - 所有函数对空字符串有明确定义
 4. **无系统调用** - 所有操作均为纯字符串处理
 
@@ -121,4 +134,5 @@ if (Path::hasExtension(file, "png") || Path::hasExtension(file, "jpg")) {
 - normalize 的正确性（. 和 .. 处理）
 - Windows 盘符和 UNC 路径处理
 - 大小写不敏感的扩展名匹配
+- toLowerASCII 的 ASCII 折叠与非 ASCII 不变
 - 无系统调用
