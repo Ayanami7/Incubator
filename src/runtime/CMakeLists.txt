@@ -29,14 +29,25 @@ set(PLATFORM_SOURCES
     platform/window/window.cpp
 )
 
+# resource 模块头文件、源文件
+set(RESOURCE_HEADERS
+    resource/resource_type.h
+    resource/resource_id.h
+)
+set(RESOURCE_SOURCES
+    resource/resource_id.cpp
+)
+
 # 合并所有头文件和源文件到一个变量
 set(ALL_HEADERS
     ${CORE_HEADERS}
     ${PLATFORM_HEADERS}
+    ${RESOURCE_HEADERS}
 )
 set(ALL_SOURCES
     ${CORE_SOURCES}
     ${PLATFORM_SOURCES}
+    ${RESOURCE_SOURCES}
 )
 
 # 创建静态库目标
