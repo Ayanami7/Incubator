@@ -179,5 +179,15 @@ namespace Incubator
                                   return asciiToLower(a) == asciiToLower(b);
                               });
         }
+
+        std::string toLowerASCII(std::string_view s)
+        {
+            std::string result(s);
+            std::transform(result.begin(), result.end(), result.begin(),
+                           [](char c) -> char {
+                               return (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c;
+                           });
+            return result;
+        }
     }  // namespace Path
 }  // namespace Incubator

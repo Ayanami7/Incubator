@@ -59,5 +59,10 @@ namespace Incubator
         /// @param ext 扩展名（可带或不带前导点）
         /// @return 扩展名是否匹配
         bool hasExtension(std::string_view path, std::string_view ext);
+
+        /// @brief ASCII 大小写折叠（仅折叠 A-Z 为 a-z，非 ASCII 保持不变）
+        /// @param s 输入字符串
+        /// @return 折叠后的字符串
+        std::string toLowerASCII(std::string_view s);
     }  // namespace Path
 }  // namespace Incubator

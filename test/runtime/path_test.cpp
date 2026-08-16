@@ -488,3 +488,35 @@ TEST_F(PathTest, ChineseComplexPath)
     std::string path = normalize("游戏/./资源/../纹理/./角色.png");
     EXPECT_EQ(path, "游戏/纹理/角色.png");
 }
+
+// ========== toLowerASCII 测试 ==========
+
+TEST_F(PathTest, ToLowerASCIIFullRange)
+{
+    EXPECT_EQ(toLowerASCII("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), "abcdefghijklmnopqrstuvwxyz");
+}
+
+TEST_F(PathTest, ToLowerASCIIAlreadyLower)
+{
+    EXPECT_EQ(toLowerASCII("already lower"), "already lower");
+}
+
+TEST_F(PathTest, ToLowerASCIINonAsciiUnchanged)
+{
+    EXPECT_EQ(toLowerASCII("中文/纹理"), "中文/纹理");
+}
+
+TEST_F(PathTest, ToLowerASCIIDigitsAndSymbolsUnchanged)
+{
+    EXPECT_EQ(toLowerASCII("Tex123!_@#"), "tex123!_@#");
+}
+
+TEST_F(PathTest, ToLowerASCIIEmpty)
+{
+    EXPECT_EQ(toLowerASCII(""), "");
+}
+
+TEST_F(PathTest, ToLowerASCIIPathExample)
+{
+    EXPECT_EQ(toLowerASCII("Textures/Player.PNG"), "textures/player.png");
+}
