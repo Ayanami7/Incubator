@@ -1,7 +1,7 @@
 # Logger 模块设计
 
 ## 目标
-基于 spdlog 提供高性能、模块化的日志系统，支持多 sink 和异步日志。
+基于 spdlog 提供高性能、模块化的日志系统，支持控制台/文件多 sink 与轮转文件日志。
 
 ## 文件结构
 ```
@@ -10,57 +10,98 @@ src/runtime/core/log/
 └── logger.cpp
 ```
 
+## 命名空间
+
+```cpp
+namespace Incubator::Log
+```
+
 ## 核心组件
 
-### LogLevel 枚举
-定义日志级别：
-- `TRACE`: 最详细的调试信息
-- `DEBUG`: 调试信息
-- `INFO`: 一般信息（默认级别）
-- `WARN`: 警告信息
-- `ERROR`: 错误信息
-- `CRITICAL`: 严重错误
-- `OFF`: 关闭日志
+### Level 枚举
 
-### LogSystem 类
-全局日志系统管理器，负责管理所有 logger 的共享状态和生命周期。
+```cpp
+enum class Level : int
+{
+    TRACE = 0,     // 最详细的调试信息（仅开发期使用）
+    DEBUG = 1,     // 调试信息
+    INFO = 2,      // 一般信息（默认级别）
+    WARN = 3,      // 警告信息
+    ERROR = 4,     // 错误信息
+    CRITICAL = 5,  // 严重错误
+    OFF = 6        // 关闭所有日志
+};
+```
+
+显式值与 `spdlog::level::level_enum` 对齐，便于序列化和映射。级别使用 UPPER_CASE，与 `ResourceType` 约定一致。
+
+### FileSinkConfig 文件日志配置
+
+```cpp
+struct FileSinkConfig
+{
+    std::string log_dir;          // 日志输出目录，为空则禁用文件日志
+    std::string basename = "app"; // 日志文件名（不含路径和扩展名）
+    size_t max_size = 5 * 1024 * 1024;  // 单文件最大字节数，0=不轮转
+    size_t max_files = 3;               // 轮转保留的历史文件数
+};
+```
+
+### Registry 类（全局单例）
+
+管理所有 logger 的共享状态（sinks、级别、缓存）。所有静态方法线程安全。
 
 **静态方法：**
-- `init(LogLevel default_level, std::string_view pattern)`: 全局初始化，配置共享 sinks
-- `get(std::string_view module_name)`: 获取指定模块的 logger
-- `setGlobalLevel(LogLevel level)`: 设置所有 logger 的日志级别
-- `flushAll()`: 刷新所有日志输出
+```cpp
+static void init(Level default_level = Level::INFO,
+                 std::string_view pattern = {},
+                 const FileSinkConfig& file_config = {});
+// 全局初始化：配置控制台 sink（可自定义 pattern）与可选文件 sink
 
-### Logger 类
-轻量句柄，各模块持有使用，提供日志输出接口。
+static Logger get(std::string_view module_name);
+// 获取指定模块的 Logger（相同名称返回同一实例）；未 init 时自动懒初始化
+
+static void setGlobalLevel(Level level);      // 设置所有 logger 的日志级别
+static void setFileSinkConfig(const FileSinkConfig& config);
+// 运行时添加/移除文件 sink（log_dir 为空则移除文件输出），可在 init 之后调用
+
+static void flushAll();   // 刷新所有日志输出到 sink
+static void reset();      // 重置日志系统（清理所有 logger 和 sink）
+```
+
+### Logger 类（轻量值类型句柄）
+
+各模块持有的日志输出接口，内部持 `shared_ptr<spdlog::logger>`，拷贝开销低。
 
 **实例方法：**
-- `setLevel(LogLevel level)`: 设置当前 logger 的日志级别
-- `getLevel() const`: 获取当前 logger 的日志级别
-- `addSink(std::shared_ptr<spdlog::sinks::sink> sink)`: 添加输出 sink
+```cpp
+bool isValid() const;                       // 是否持有有效的 spdlog::logger
+void setLevel(Level level);                 // 设置此 logger 的日志级别
+Level getLevel() const;                     // 获取此 logger 的当前级别
+void addSink(std::shared_ptr<spdlog::sinks::sink> sink);  // 添加自定义 sink
+```
 
 **日志输出（支持 fmt 格式化）：**
 ```cpp
 template <typename... Args>
 void trace(fmt::format_string<Args...> fmt, Args&&... args)
-void debug(fmt::format_string<Args...> fmt, Args&&... args)
-void info(fmt::format_string<Args...> fmt, Args&&... args)
-void warn(fmt::format_string<Args...> fmt, Args&&... args)
-void error(fmt::format_string<Args...> fmt, Args&&... args)
-void critical(fmt::format_string<Args...> fmt, Args&&... args)
+void debug(...) / info(...) / warn(...) / error(...) / critical(...)
 ```
 
-**辅助工具：**
-- `logError(Logger& logger, const Exception& err, LogLevel level)`: 将 Exception 输出到日志
+**辅助函数：**
+```cpp
+void logError(Logger& logger, const Error::Exception& err, Level level);
+// 将 Exception 输出到日志
+```
 
 ## 使用示例
 
 ```cpp
 // 全局初始化（程序启动时调用一次）
-LogSystem::init(LogLevel::DEBUG);
+Log::Registry::init(Log::Level::DEBUG);
 
 // 获取模块 logger
-Logger renderLog = LogSystem::get("Renderer");
+auto renderLog = Log::Registry::get("Renderer");
 
 // 使用日志
 renderLog.info("Window created: {}x{}", width, height);
@@ -68,27 +109,34 @@ renderLog.warn("Texture not found: {}", texturePath);
 renderLog.error("Shader compilation failed: {}", shaderName);
 
 // 日志异常
-try {
+try
+{
     // ... 代码
-} catch (const Exception& e) {
-    logError(renderLog, e, LogLevel::ERROR);
+}
+catch (const Error::Exception& e)
+{
+    Log::logError(renderLog, e, Log::Level::ERROR);
 }
 ```
 
 ## 设计要点
-1. **职责分离**: LogSystem 管理全局状态，Logger 作为轻量句柄供各模块使用
-2. **模块隔离**: 每个模块通过名称获取独立的 logger 实例，便于日志过滤和分析
-3. **高性能**: 基于 spdlog 的异步日志机制
-4. **格式化**: 集成 fmt 库，提供类型安全的参数化日志
-5. **线程安全**: 内部使用 mutex 保护全局状态
+
+1. **职责分离**：`Registry` 管理全局共享状态，`Logger` 作为轻量句柄供各模块使用
+2. **模块隔离**：每个模块通过名称获取独立 logger，便于日志过滤和分析
+3. **懒初始化**：`get()` 在未调用 `init()` 时自动使用默认配置初始化，保证随时可用
+4. **格式化**：集成 fmt 库，提供类型安全的参数化日志
+5. **线程安全**：内部使用 mutex 保护全局状态
+6. **文件日志可热插拔**：`setFileSinkConfig` 支持运行时添加/移除文件输出
 
 ## 默认格式
+
 ```
-[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%-10n] %v
+[%Y-%m-%d %H:%M:%S.%e] [%^%-8l%$] [%n] %v
 ```
+
 - 时间戳（精确到毫秒）
 - 日志级别（8 字符左对齐，带颜色）
-- 模块名（10 字符左对齐）
+- 模块名
 - 消息内容
 
 ## 测试要点

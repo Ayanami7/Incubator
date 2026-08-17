@@ -1,40 +1,72 @@
-# CMake文件结构
+# CMake 构建结构
 
-## 根目录 CMakeLists.txt
-- **作用**: 项目入口配置，定义全局设置和路径变量
-- **主要功能**:
-  - 设置 CMake 最低版本为 3.15
-  - 配置 C++20 标准  
-  - 定义项目名称 `Incubator` 和版本 `0.1.0`
+## 目标
 
-## 3rdparty/CMakeLists.txt
-- **作用**: 管理所有第三方依赖库
-- **主要功能**:
-  - 按顺序添加第三方库，确保依赖关系正确
-  - 每个库通过 `NOT TARGET` 检查避免重复添加
-  - 配置各库的构建选项（关闭不必要的示例、测试、文档）
+描述项目的 CMake 层级结构，帮助理解构建组织方式。本文档只介绍**大致构成与约定**，不逐模块罗列，避免随模块增删频繁更新。
 
-## src/CMakeLists.txt
-- **作用**: 源代码模块入口
-- **主要功能**: 添加 `runtime` 子目录
+## 全局约定
 
-## src/runtime/CMakeLists.txt
-- **作用**: 运行时模块构建配置
-- **主要功能**:
-  - 定义目标名称 `IncubatorRuntime`
-  - 收集头文件和源文件（按模块分组：CORE_HEADERS, CORE_SOURCES）
-  - 创建静态库目标 `add_library(STATIC)`
-  - 设置项目属性：`FOLDER "Engine"`（用于 IDE 分组）
-  - MSVC 特定配置：`/utf-8` 编码支持
-  - 添加依赖关系：`add_dependencies(spdlog::spdlog, fmt::fmt)`
-  - 链接依赖库：`target_link_libraries(PUBLIC)`
-  - 设置包含目录：`src/` 和 `3rdparty/glm`
+| 约定 | 说明 |
+|------|------|
+| CMake 最低版本 | 3.15 |
+| C++ 标准 | C++20（`CMAKE_CXX_STANDARD 20`） |
+| 构建类型 | 静态库为主（`BUILD_SHARED_LIBS OFF`） |
+| 源码目录 | `src/`，二进制输出 | `build/` |
+| 禁止源码内构建 | 根 CMakeLists 检测并报错 |
 
-## test/runtime/CMakeLists.txt
-- **作用**: 单元测试-模块构建配置
-- **主要功能**:
-  - 定义测试目标 `IncubatorRuntimeTests`
-  - 收集测试源文件，为每个模块创建测试文件（如 `string_utils_test.cpp`）
-  - 创建可执行文件目标 `add_executable`
-  - 设置项目属性：`FOLDER "Tests"`
-  - 链接测试框架和运行时库：`target_link_libraries(PUBLIC)`
+## 目录结构
+
+```
+Incubator/
+├── CMakeLists.txt      # 入口：全局设置 + 依次添加子目录
+├── 3rdparty/
+│   └── CMakeLists.txt  # 第三方依赖库（各库独立 CMakeLists 或子目录）
+├── src/
+│   ├── CMakeLists.txt  # 源码入口（仅 add_subdirectory 各层）
+│   └── <layer>/        # 按层组织（core/platform/resource/...）
+│       └── CMakeLists.txt  # 每层定义静态库目标
+├── test/
+│   └── CMakeLists.txt  # 测试入口（按被测层/模块建子目录与可执行目标）
+└── examples/
+    └── CMakeLists.txt  # 示例程序（可执行目标）
+```
+
+## 分层构建模式
+
+### 根 CMakeLists.txt
+
+- 设置全局变量：CMake 版本、C++ 标准、路径变量（`SRC_DIR`、`THIRD_PARTY_DIR` 等）
+- 依次 `add_subdirectory(3rdparty)` → `add_subdirectory(src)` → `add_subdirectory(test)` → `add_subdirectory(examples)`
+
+### 库目标（src/ 下各层）
+
+- 每层一个静态库目标（如 `IncubatorRuntime`），头文件与源文件按模块分组收集
+- 使用 `FOLDER "Engine"` 属性在 IDE 中分组显示
+- 依赖关系通过 `add_dependencies` + `target_link_libraries` 声明
+- 平台相关配置（如 MSVC 的 `/utf-8` 编码支持）在库目标处集中设置
+
+### 测试目标（test/ 下）
+
+- 为每个被测模块创建独立可执行目标（`<模块>_test.exe`）
+- 链接测试框架与对应的运行时库
+- 使用 `FOLDER "Tests"` 属性分组
+
+### 示例目标（examples/ 下）
+
+- 独立可执行目标，演示引擎模块的实际用法
+- 链接运行时库与所需第三方库
+
+## 扩展新模块的约定
+
+新增一个模块时，遵循以下模式即可（**无需修改本文档**）：
+
+1. 在对应层目录创建源码文件
+2. 在该层的 `CMakeLists.txt` 中，把新文件的头文件/源文件加入对应分组变量
+3. 在 `test/` 下创建 `<模块>_test.cpp` 并接入测试目标
+4. 若需要示例，在 `examples/` 下添加或修改示例
+
+## 注意事项
+
+- 依赖方向保持单向：上层库只能依赖下层库，避免循环依赖
+- 测试与示例通过库目标消费引擎能力，不重复编译引擎源码
+- 引入新第三方库时，在 `3rdparty/CMakeLists.txt` 中按既有模式注册，并处理 `NOT TARGET` 防重复

@@ -19,133 +19,142 @@
 
 ## 文件结构
 ```
-src/runtime/
-├── core/path/
-│   └── path.h           # 纯路径操作（平台无关）
-└── platform/fileio/
-    ├── fileio.h         # 主接口 + 抽象基类
-    ├── file_handle.h    # 文件句柄抽象
-    └── fileio.cpp       # Windows 平台实现
+src/runtime/platform/fileio/
+├── fileio.h         # FileIO 主接口 + OpenMode/ShareMode 枚举 + 工厂
+├── file_handle.h    # FileHandle 抽象 + SeekOrigin 枚举
+└── fileio.cpp       # Windows 平台实现
 ```
 
-## Core/Path 设计
+## 枚举定义
 
-**纯静态工具类，平台无关的字符串操作：**
+### OpenMode 打开模式（位标志组合）
 
 ```cpp
-namespace Path {
-    std::string join(std::string_view a, std::string_view b);
-    std::string normalize(std::string_view path);
-    std::string getExtension(std::string_view path);
-    std::string getStem(std::string_view path);
-    std::string getFileName(std::string_view path);
-    std::string getParentPath(std::string_view path);
-    bool isAbsolute(std::string_view path);
-}
-```
-
-## Platform/FileIO 设计
-
-### 抽象接口（可 Mock）
-
-**FileHandle - 文件句柄抽象：**
-```cpp
-class FileHandle {
-public:
-    virtual ~FileHandle() = default;
-    virtual bool isValid() const = 0;
-    virtual size_t read(std::span<uint8_t> buffer) = 0;
-    virtual size_t write(std::span<const uint8_t> data) = 0;
-    virtual size_t seek(int64_t offset, SeekOrigin origin) = 0;
-    virtual uint64_t tell() const = 0;
-    virtual uint64_t size() const = 0;
-    virtual void close() = 0;
-};
-```
-
-**FileIO - 主接口（可 Mock）：**
-```cpp
-class FileIO {
-public:
-    virtual ~FileIO() = default;
-
-    // 文件操作
-    virtual bool exists(std::string_view path) = 0;
-    virtual uint64_t getFileSize(std::string_view path) = 0;
-    virtual bool remove(std::string_view path) = 0;
-
-    // 文件打开
-    virtual std::unique_ptr<FileHandle> open(
-        std::string_view path,
-        OpenMode mode,
-        ShareMode share = ShareMode::Exclusive
-    ) = 0;
-
-    // 目录操作
-    virtual bool directoryExists(std::string_view path) = 0;
-    virtual bool createDirectory(std::string_view path) = 0;
-    virtual bool removeDirectory(std::string_view path) = 0;
-};
-```
-
-**枚举定义：**
-```cpp
-enum class OpenMode : uint8_t {
+enum class OpenMode : uint8_t
+{
     Read = 1,
     Write = 2,
-    ReadWrite = 3,
+    ReadWrite = Read | Write,  // 3
     Create = 4,
     Truncate = 8
 };
+```
 
-enum class ShareMode : uint8_t {
+### ShareMode 共享模式
+
+```cpp
+enum class ShareMode : uint8_t
+{
     Exclusive = 0,
     Read = 1,
     Write = 2,
-    ReadWrite = 3
+    ReadWrite = Read | Write  // 3
 };
+```
 
-enum class SeekOrigin : uint8_t {
+### SeekOrigin 定位参考点
+
+```cpp
+enum class SeekOrigin : uint8_t
+{
     Begin = 0,
     Current = 1,
     End = 2
 };
 ```
 
-### 平台实现
+### 位运算辅助
 
-**PlatformFileIO - Windows 实现：**
 ```cpp
-class PlatformFileIO : public FileIO {
-    // 实现 FileIO 所有接口
-};
+constexpr OpenMode operator|(OpenMode a, OpenMode b) noexcept;
+constexpr OpenMode operator&(OpenMode a, OpenMode b) noexcept;
+constexpr bool hasFlag(OpenMode value, OpenMode flag) noexcept;
 ```
 
-**PlatformFileHandle - Windows 文件句柄：**
+## 接口设计
+
+### FileHandle 文件句柄抽象
+
 ```cpp
-class PlatformFileHandle : public FileHandle {
+class FileHandle
+{
 public:
-    explicit PlatformFileHandle(HANDLE handle);
-    ~PlatformFileHandle() override;
+    virtual ~FileHandle() = default;
 
-    // 实现 FileHandle 所有接口
-private:
-    HANDLE m_handle;
+    virtual bool isValid() const = 0;                    // 句柄是否有效
+    virtual size_t read(std::span<uint8_t> buffer) = 0;  // 读取，返回实际字节数
+    virtual size_t write(std::span<const uint8_t> data) = 0;  // 写入，返回实际字节数
+    virtual size_t seek(int64_t offset, SeekOrigin origin) = 0;  // 定位，返回新指针位置
+    virtual uint64_t tell() const = 0;                   // 当前指针位置
+    virtual uint64_t size() const = 0;                   // 文件总字节数
+    virtual void close() = 0;                            // 关闭句柄
+    virtual void flush() = 0;                            // 刷新缓冲区到物理存储
+
+    // 禁止拷贝，允许移动
+    FileHandle(const FileHandle&) = delete;
+    FileHandle& operator=(const FileHandle&) = delete;
+    FileHandle(FileHandle&&) noexcept = default;
+    FileHandle& operator=(FileHandle&&) noexcept = default;
+
+protected:
+    FileHandle() = default;
 };
 ```
+
+### FileIO 主接口（可 Mock）
+
+```cpp
+class FileIO
+{
+public:
+    virtual ~FileIO() = default;
+
+    // 文件操作
+    virtual bool exists(const std::filesystem::path& path) = 0;      // 是否存在
+    virtual uint64_t getFileSize(const std::filesystem::path& path) = 0;  // 字节数，不存在返回 0
+    virtual bool remove(const std::filesystem::path& path) = 0;      // 删除，不存在返回 false
+
+    // 打开文件
+    virtual std::unique_ptr<FileHandle> open(
+        const std::filesystem::path& path,
+        OpenMode mode,
+        ShareMode share = ShareMode::Exclusive
+    ) = 0;  // 文件不存在返回 nullptr，其他错误抛出 Error::Exception
+
+    // 目录操作
+    virtual bool directoryExists(const std::filesystem::path& path) = 0;
+    virtual bool createDirectory(const std::filesystem::path& path) = 0;  // 不递归创建父目录
+    virtual bool removeDirectory(const std::filesystem::path& path) = 0;  // 仅删空目录
+
+protected:
+    FileIO() = default;
+};
+
+// 工厂：创建平台特定实现
+std::unique_ptr<FileIO> createPlatformFileIO();
+```
+
+## 平台实现（Windows）
+
+**PlatformFileIO / PlatformFileHandle** 在 `fileio.cpp` 中实现，通过工厂函数获取，调用方不直接接触平台类型。
+
+1. **宽字符转换**：路径经 UTF-8 → 宽字符串转换后调用 `CreateFileW` 等 API
+2. **API 映射**：`CreateFileW`（打开）、`ReadFile`/`WriteFile`（读写）、`SetFilePointerEx`（seek）、`GetFileSizeEx`（size）、`GetFileAttributesW`（exists）、`CreateDirectoryW`（createDirectory）
+3. **错误处理**：`GetLastError()` 转换为 `Error::Exception`；文件不存在等预期场景返回 `false`/`nullptr`
+4. **资源管理**：`PlatformFileHandle` 析构时自动 `CloseHandle`
 
 ## 使用示例
 
 ### 基础文件操作
-```cpp
-#include "platform/fileio/fileio.h"
-#include "core/path/path.h"
 
-// 使用默认平台实现
-auto fileio = std::make_unique<PlatformFileIO>();
+```cpp
+#include "runtime/platform/fileio/fileio.h"
+
+auto fileio = Incubator::FileIO::createPlatformFileIO();
 
 // 检查文件存在
-if (fileio->exists("data/config.json")) {
+if (fileio->exists("data/config.json"))
+{
     uint64_t size = fileio->getFileSize("data/config.json");
 
     // 打开并读取
@@ -156,77 +165,47 @@ if (fileio->exists("data/config.json")) {
 ```
 
 ### 写入文件
+
 ```cpp
 // 创建/覆盖文件
-auto handle = fileio->open("output.log", OpenMode::Create | OpenMode::Write | OpenMode::Truncate);
+auto handle = fileio->open("output.log",
+                           OpenMode::Create | OpenMode::Write | OpenMode::Truncate);
 
-// 写入数据
 std::string data = "Hello, World!";
 handle->write(std::span<const uint8_t>(
-    reinterpret_cast<const uint8_t*>(data.data()),
-    data.size()
-));
-
+    reinterpret_cast<const uint8_t*>(data.data()), data.size()));
 handle->close();
 ```
 
 ### 使用 Mock 进行测试
+
 ```cpp
 // 测试中的 Mock 实现
-class MockFileIO : public FileIO {
+class MockFileIO : public FileIO
+{
     // 可以注入假文件数据，记录调用等
 };
 
-void testResourceLoader() {
+void testResourceLoader()
+{
     auto mockFileIO = std::make_unique<MockFileIO>();
     // ... 配置 mock
-    ResourceLoader loader(std::move(mockFileIO));
+    // ResourceLoader loader(std::move(mockFileIO));
     // ... 测试逻辑
 }
 ```
 
-## 平台实现要点（Windows）
-
-1. **宽字符转换**:
-   ```cpp
-   std::wstring toWideString(std::string_view utf8);
-   std::string fromWideString(std::wstring_view wide);
-   ```
-
-2. **API 映射**:
-   - `CreateFileW` → 打开文件
-   - `ReadFile` / `WriteFile` → 读写
-   - `SetFilePointerEx` → seek
-   - `GetFileSizeEx` → size
-   - `GetFileAttributesW` → exists
-   - `CreateDirectoryW` → createDirectory
-
-3. **错误处理**:
-   - 使用 `GetLastError()` 转换为 `Exception`
-   - 返回 `false` 表示操作失败（调用者可继续）
-
-4. **资源管理**:
-   - `PlatformFileHandle` 析构时自动调用 `CloseHandle`
-
 ## 上层实现示例（不在本模块）
-
-使用 FileIO 实现高级功能：
 
 ```cpp
 // 上层功能：readAllBytes
-std::vector<uint8_t> readAllBytes(FileIO& fileio, std::string_view path) {
+std::vector<uint8_t> readAllBytes(FileIO& fileio, std::string_view path)
+{
     uint64_t size = fileio.getFileSize(path);
-    auto handle = fileio->open(path, OpenMode::Read);
-
+    auto handle = fileio.open(path, OpenMode::Read);
     std::vector<uint8_t> buffer(size);
     handle->read(buffer);
     return buffer;
-}
-
-// 上层功能：目录遍历
-std::vector<std::string> listFiles(FileIO& fileio, std::string_view path) {
-    // 使用 FileIO + Path 组合实现
-    // Windows 下可用 FindFirstFileW / FindNextFileW
 }
 ```
 
