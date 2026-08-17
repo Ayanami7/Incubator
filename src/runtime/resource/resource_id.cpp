@@ -46,17 +46,17 @@ namespace Incubator
 
         ResourceId::ResourceId(Utils::Hash value) noexcept : m_value(value) {}
 
-        ResourceId ResourceId::computeId(ResourceTypeId type, const std::string& key)
+        ResourceId ResourceId::computeId(ResourceType type, const std::string& key)
         {
             Utils::Hash seed = kResourceDomainSalt;
-            Utils::combine(seed, type);
+            Utils::combine(seed, static_cast<Utils::Hash>(type));
             Utils::combine(seed, Utils::hash(key));
             return ResourceId(seed);
         }
 
-        ResourceId ResourceId::fromPath(ResourceTypeId type, std::string_view virtualPath)
+        ResourceId ResourceId::fromPath(ResourceType type, std::string_view virtualPath)
         {
-            if (type == static_cast<ResourceTypeId>(BuiltinType::INVALID))
+            if (type == ResourceType::INVALID)
             {
                 return {};
             }
@@ -68,11 +68,6 @@ namespace Incubator
             return computeId(type, key);
         }
 
-        ResourceId ResourceId::fromPath(BuiltinType type, std::string_view virtualPath)
-        {
-            return fromPath(static_cast<ResourceTypeId>(type), virtualPath);
-        }
-
         ResourceId ResourceId::fromPathOnly(std::string_view virtualPath)
         {
             std::string key = canonicalizeResourceKey(virtualPath);
@@ -80,7 +75,7 @@ namespace Incubator
             {
                 return {};
             }
-            return computeId(static_cast<ResourceTypeId>(BuiltinType::INVALID), key);
+            return computeId(ResourceType::INVALID, key);
         }
 
         bool ResourceId::valid() const noexcept

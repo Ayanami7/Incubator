@@ -22,8 +22,8 @@ protected:
 TEST_F(ResourceRegistryTest, RegisterReturnsStableId)
 {
     auto& reg = ResourceRegistry::instance();
-    ResourceId id1 = reg.registerResource(BuiltinType::TEXTURE, "textures/player.png");
-    ResourceId id2 = reg.registerResource(BuiltinType::TEXTURE, "textures/player.png");
+    ResourceId id1 = reg.registerResource(ResourceType::TEXTURE, "textures/player.png");
+    ResourceId id2 = reg.registerResource(ResourceType::TEXTURE, "textures/player.png");
     EXPECT_TRUE(id1.valid());
     EXPECT_EQ(id1, id2);
 }
@@ -31,26 +31,26 @@ TEST_F(ResourceRegistryTest, RegisterReturnsStableId)
 TEST_F(ResourceRegistryTest, RegisterNormalizesPath)
 {
     auto& reg = ResourceRegistry::instance();
-    ResourceId id1 = reg.registerResource(BuiltinType::TEXTURE, "textures/../textures/Player.png");
-    ResourceId id2 = reg.registerResource(BuiltinType::TEXTURE, "TEXTURES/player.png");
+    ResourceId id1 = reg.registerResource(ResourceType::TEXTURE, "textures/../textures/Player.png");
+    ResourceId id2 = reg.registerResource(ResourceType::TEXTURE, "TEXTURES/player.png");
     EXPECT_EQ(id1, id2);
 }
 
 TEST_F(ResourceRegistryTest, DifferentTypesSeparateEntries)
 {
     auto& reg = ResourceRegistry::instance();
-    ResourceId tex = reg.registerResource(BuiltinType::TEXTURE, "ui/icons");
-    ResourceId shd = reg.registerResource(BuiltinType::SHADER, "ui/icons");
+    ResourceId tex = reg.registerResource(ResourceType::TEXTURE, "ui/icons");
+    ResourceId shd = reg.registerResource(ResourceType::SHADER, "ui/icons");
     EXPECT_NE(tex, shd);
 }
 
 TEST_F(ResourceRegistryTest, InvalidInputRejected)
 {
     auto& reg = ResourceRegistry::instance();
-    EXPECT_FALSE(reg.registerResource(BuiltinType::INVALID, "textures/player.png").valid());
-    EXPECT_FALSE(reg.registerResource(BuiltinType::TEXTURE, "").valid());
-    EXPECT_FALSE(reg.registerResource(BuiltinType::TEXTURE, "C:/abs/path.png").valid());
-    EXPECT_FALSE(reg.registerResource(BuiltinType::TEXTURE, "//server/share/p.png").valid());
+    EXPECT_FALSE(reg.registerResource(ResourceType::INVALID, "textures/player.png").valid());
+    EXPECT_FALSE(reg.registerResource(ResourceType::TEXTURE, "").valid());
+    EXPECT_FALSE(reg.registerResource(ResourceType::TEXTURE, "C:/abs/path.png").valid());
+    EXPECT_FALSE(reg.registerResource(ResourceType::TEXTURE, "//server/share/p.png").valid());
 }
 
 TEST_F(ResourceRegistryTest, CollisionRejected)
@@ -58,18 +58,16 @@ TEST_F(ResourceRegistryTest, CollisionRejected)
     auto& reg = ResourceRegistry::instance();
     ResourceId idA = ResourceId::fromString("1234567890abcdef");
 
-    ResourceId ok = reg.registerWithId(BuiltinType::TEXTURE, "textures/conflict", idA);
-    EXPECT_EQ(ok, idA);
+    EXPECT_TRUE(reg.injectEntry(ResourceType::TEXTURE, "textures/conflict", idA));
 
     // 不同 key 注入相同 ID → 碰撞被拒绝
-    ResourceId rejected = reg.registerWithId(BuiltinType::TEXTURE, "textures/other", idA);
-    EXPECT_FALSE(rejected.valid());
+    EXPECT_FALSE(reg.injectEntry(ResourceType::TEXTURE, "textures/other", idA));
 
     // 原条目未被覆盖
-    ResourceTypeId type = static_cast<ResourceTypeId>(BuiltinType::INVALID);
+    ResourceType type = ResourceType::INVALID;
     std::string path;
     ASSERT_TRUE(reg.lookup(idA, type, path));
-    EXPECT_EQ(type, static_cast<ResourceTypeId>(BuiltinType::TEXTURE));
+    EXPECT_EQ(type, ResourceType::TEXTURE);
     EXPECT_EQ(path, "textures/conflict");
 }
 
@@ -77,14 +75,30 @@ TEST_F(ResourceRegistryTest, CollisionSameKeySameIdIsIdempotent)
 {
     auto& reg = ResourceRegistry::instance();
     ResourceId idA = ResourceId::fromString("1234567890abcdef");
-    EXPECT_EQ(reg.registerWithId(BuiltinType::TEXTURE, "textures/conflict", idA), idA);
-    EXPECT_EQ(reg.registerWithId(BuiltinType::TEXTURE, "textures/conflict", idA), idA);
+    EXPECT_TRUE(reg.injectEntry(ResourceType::TEXTURE, "textures/conflict", idA));
+    EXPECT_TRUE(reg.injectEntry(ResourceType::TEXTURE, "textures/conflict", idA));
+}
+
+TEST_F(ResourceRegistryTest, InjectEntryRejectsPathMappingToDifferentId)
+{
+    auto& reg = ResourceRegistry::instance();
+    ResourceId id = reg.registerResource(ResourceType::TEXTURE, "textures/player.png");
+
+    // (type, key) 已映射到不同 ID → 拒绝
+    EXPECT_FALSE(reg.injectEntry(ResourceType::TEXTURE, "textures/player.png",
+                                 ResourceId::fromString("1234567890abcdef")));
+
+    ResourceType type = ResourceType::INVALID;
+    std::string path;
+    ASSERT_TRUE(reg.lookup(id, type, path));
+    EXPECT_EQ(type, ResourceType::TEXTURE);
+    EXPECT_EQ(path, "textures/player.png");
 }
 
 TEST_F(ResourceRegistryTest, RefCountAcquireRelease)
 {
     auto& reg = ResourceRegistry::instance();
-    ResourceId id = reg.registerResource(BuiltinType::MODEL, "models/car.fbx");
+    ResourceId id = reg.registerResource(ResourceType::MODEL, "models/car.fbx");
     EXPECT_EQ(reg.refCount(id), 1u);
 
     reg.acquire(id);
@@ -104,7 +118,7 @@ TEST_F(ResourceRegistryTest, RefCountUnknownIdIsZero)
 TEST_F(ResourceRegistryTest, ReleaseDoesNotGoNegative)
 {
     auto& reg = ResourceRegistry::instance();
-    ResourceId id = reg.registerResource(BuiltinType::MODEL, "models/car.fbx");
+    ResourceId id = reg.registerResource(ResourceType::MODEL, "models/car.fbx");
     reg.release(id);
     reg.release(id);
     EXPECT_EQ(reg.refCount(id), 0u);
@@ -113,12 +127,12 @@ TEST_F(ResourceRegistryTest, ReleaseDoesNotGoNegative)
 TEST_F(ResourceRegistryTest, LookupById)
 {
     auto& reg = ResourceRegistry::instance();
-    ResourceId id = reg.registerResource(BuiltinType::SHADER, "shaders/pbr.vert");
+    ResourceId id = reg.registerResource(ResourceType::SHADER, "shaders/pbr.vert");
 
-    ResourceTypeId type = static_cast<ResourceTypeId>(BuiltinType::INVALID);
+    ResourceType type = ResourceType::INVALID;
     std::string path;
     ASSERT_TRUE(reg.lookup(id, type, path));
-    EXPECT_EQ(type, static_cast<ResourceTypeId>(BuiltinType::SHADER));
+    EXPECT_EQ(type, ResourceType::SHADER);
     EXPECT_EQ(path, "shaders/pbr.vert");
 
     EXPECT_FALSE(reg.lookup(ResourceId::fromString("deadbeefdeadbeef"), type, path));
@@ -127,18 +141,18 @@ TEST_F(ResourceRegistryTest, LookupById)
 TEST_F(ResourceRegistryTest, LookupByTypeAndPath)
 {
     auto& reg = ResourceRegistry::instance();
-    ResourceId id = reg.registerResource(BuiltinType::MATERIAL, "materials/gold.mat");
+    ResourceId id = reg.registerResource(ResourceType::MATERIAL, "materials/gold.mat");
 
-    EXPECT_EQ(reg.lookup(BuiltinType::MATERIAL, "materials/gold.mat"), id);
-    EXPECT_FALSE(reg.lookup(BuiltinType::MATERIAL, "materials/silver.mat").valid());
-    EXPECT_FALSE(reg.lookup(BuiltinType::TEXTURE, "materials/gold.mat").valid());
+    EXPECT_EQ(reg.lookup(ResourceType::MATERIAL, "materials/gold.mat"), id);
+    EXPECT_FALSE(reg.lookup(ResourceType::MATERIAL, "materials/silver.mat").valid());
+    EXPECT_FALSE(reg.lookup(ResourceType::TEXTURE, "materials/gold.mat").valid());
 }
 
 TEST_F(ResourceRegistryTest, ClearResetsState)
 {
     auto& reg = ResourceRegistry::instance();
-    ResourceId id = reg.registerResource(BuiltinType::MATERIAL, "materials/gold.mat");
+    ResourceId id = reg.registerResource(ResourceType::MATERIAL, "materials/gold.mat");
     reg.clear();
     EXPECT_EQ(reg.refCount(id), 0u);
-    EXPECT_FALSE(reg.lookup(BuiltinType::MATERIAL, "materials/gold.mat").valid());
+    EXPECT_FALSE(reg.lookup(ResourceType::MATERIAL, "materials/gold.mat").valid());
 }

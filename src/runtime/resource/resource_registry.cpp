@@ -18,9 +18,9 @@ namespace Incubator
             m_idToEntry.clear();
         }
 
-        ResourceId ResourceRegistry::registerResource(ResourceTypeId type, std::string_view virtualPath)
+        ResourceId ResourceRegistry::registerResource(ResourceType type, std::string_view virtualPath)
         {
-            if (type == static_cast<ResourceTypeId>(BuiltinType::INVALID))
+            if (type == ResourceType::INVALID)
             {
                 Log::Registry::get("resource").error("registerResource: invalid resource type tag");
                 return {};
@@ -40,45 +40,40 @@ namespace Incubator
                 return pathIt->second;
             }
 
-            return registerWithId(type, key, ResourceId::fromPath(type, key));
+            ResourceId id = ResourceId::fromPath(type, key);
+            return injectEntry(type, key, id) ? id : ResourceId{};
         }
 
-        ResourceId ResourceRegistry::registerResource(BuiltinType type, std::string_view virtualPath)
-        {
-            return registerResource(static_cast<ResourceTypeId>(type), virtualPath);
-        }
-
-        ResourceId ResourceRegistry::registerWithId(ResourceTypeId type, const std::string& key,
-                                                    ResourceId id)
+        bool ResourceRegistry::injectEntry(ResourceType type, const std::string& key, ResourceId id)
         {
             if (!id.valid())
             {
-                return {};
+                return false;
+            }
+
+            // (type, key) 已映射到不同 ID → 拒绝（封堵绕过 registerResource 导致的映射不一致）
+            auto pathIt = m_pathToId.find(std::make_pair(type, key));
+            if (pathIt != m_pathToId.end())
+            {
+                return pathIt->second == id;
             }
 
             auto [it, inserted] = m_idToEntry.emplace(id.value(), Entry{type, key, 1});
             if (!inserted)
             {
-                // 碰撞检测：相同 ID 已被不同 (type, key) 占用 → 拒绝注册
+                // 碰撞检测：相同 ID 已被不同 (type, key) 占用 → 拒绝注入
                 if (it->second.type != type || it->second.virtualPath != key)
                 {
                     Log::Registry::get("resource").error(
-                        "registerResource: hash collision for '{}' (type {:#x}) with existing '{}'",
+                        "injectEntry: hash collision for '{}' (type {:#x}) with existing '{}'",
                         key, static_cast<uint64_t>(type), it->second.virtualPath);
-                    return {};
+                    return false;
                 }
-                // 相同 (type, key) 已存在（防御分支，正常流程已被 pathToId 命中拦截）
-                return id;
+                return true;
             }
 
             m_pathToId.emplace(std::make_pair(type, key), id);
-            return id;
-        }
-
-        ResourceId ResourceRegistry::registerWithId(BuiltinType type, const std::string& key,
-                                                    ResourceId id)
-        {
-            return registerWithId(static_cast<ResourceTypeId>(type), key, id);
+            return true;
         }
 
         void ResourceRegistry::acquire(ResourceId id)
@@ -116,7 +111,7 @@ namespace Incubator
             return it == m_idToEntry.end() ? 0 : it->second.refCount;
         }
 
-        bool ResourceRegistry::lookup(ResourceId id, ResourceTypeId& type, std::string& virtualPath) const
+        bool ResourceRegistry::lookup(ResourceId id, ResourceType& type, std::string& virtualPath) const
         {
             auto it = m_idToEntry.find(id.value());
             if (it == m_idToEntry.end())
@@ -128,7 +123,7 @@ namespace Incubator
             return true;
         }
 
-        ResourceId ResourceRegistry::lookup(ResourceTypeId type, std::string_view virtualPath) const
+        ResourceId ResourceRegistry::lookup(ResourceType type, std::string_view virtualPath) const
         {
             std::string key = canonicalizeResourceKey(virtualPath);
             if (key.empty())
@@ -137,11 +132,6 @@ namespace Incubator
             }
             auto it = m_pathToId.find(std::make_pair(type, key));
             return it == m_pathToId.end() ? ResourceId{} : it->second;
-        }
-
-        ResourceId ResourceRegistry::lookup(BuiltinType type, std::string_view virtualPath) const
-        {
-            return lookup(static_cast<ResourceTypeId>(type), virtualPath);
         }
     }
 }

@@ -27,16 +27,10 @@ namespace Incubator
             ResourceId() = default;
 
             /// @brief 由类型 + 虚拟路径计算 ID
-            /// @param type 资源类型 tag
+            /// @param type 资源类型
             /// @param virtualPath 虚拟路径（相对资源根）
             /// @return 稳定 ID；非法输入返回无效 ID
-            static ResourceId fromPath(ResourceTypeId type, std::string_view virtualPath);
-
-            /// @brief 由内置类型 + 虚拟路径计算 ID（便捷重载）
-            /// @param type 内置资源类型
-            /// @param virtualPath 虚拟路径（相对资源根）
-            /// @return 稳定 ID；非法输入返回无效 ID
-            static ResourceId fromPath(BuiltinType type, std::string_view virtualPath);
+            static ResourceId fromPath(ResourceType type, std::string_view virtualPath);
 
             /// @brief 仅由虚拟路径计算 ID（不带类型 tag）
             /// @param virtualPath 虚拟路径（相对资源根）
@@ -60,7 +54,7 @@ namespace Incubator
 
         private:
             explicit ResourceId(Utils::Hash value) noexcept;
-            static ResourceId computeId(ResourceTypeId type, const std::string& key);
+            static ResourceId computeId(ResourceType type, const std::string& key);
 
             Utils::Hash m_value = 0;
         };
