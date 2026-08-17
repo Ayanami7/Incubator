@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cstdint>
-
 #include "runtime/core/utils/hash.h"
 
 namespace Incubator
@@ -23,5 +21,5 @@ namespace Incubator
             SHADER = Utils::constHash("SHADER"),
             INVALID = 0
         };
-    }
-}
+    }  // namespace Resource
+}  // namespace Incubator

@@ -1,7 +1,6 @@
 #include "runtime/resource/resource_id.h"
 
 #include <charconv>
-#include <cstdint>
 #include <system_error>
 
 #include "runtime/core/path/path.h"
@@ -14,7 +13,7 @@ namespace Incubator
         {
             /// @brief 资源域隔离种子（不使用 Utils::Detail::kOffset）
             constexpr Utils::Hash kResourceDomainSalt = Utils::constHash("Incubator::Resource");
-        }
+        }  // namespace
 
         std::string canonicalizeResourceKey(std::string_view virtualPath)
         {
@@ -28,10 +27,8 @@ namespace Incubator
             if (key.size() >= 2)
             {
                 const bool drivePrefix =
-                    key[1] == ':' &&
-                    ((key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= 'a' && key[0] <= 'z'));
-                const bool uncPrefix =
-                    (key[0] == '/' && key[1] == '/') || (key[0] == '\\' && key[1] == '\\');
+                    key[1] == ':' && ((key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= 'a' && key[0] <= 'z'));
+                const bool uncPrefix = (key[0] == '/' && key[1] == '/') || (key[0] == '\\' && key[1] == '\\');
                 if (drivePrefix || uncPrefix)
                 {
                     return {};
@@ -128,5 +125,5 @@ namespace Incubator
         {
             return lhs.value() < rhs.value();
         }
-    }
-}
+    }  // namespace Resource
+}  // namespace Incubator

@@ -5,14 +5,12 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <cstdint>
 #include <string>
 
 using namespace Incubator::Resource;
 
 class ResourceIdTest : public ::testing::Test
-{
-};
+{};
 
 TEST_F(ResourceIdTest, DefaultIsInvalid)
 {

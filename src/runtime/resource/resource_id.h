@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -71,5 +70,5 @@ namespace Incubator
 
         /// @brief 小于比较（可作 map/set key）
         bool operator<(ResourceId lhs, ResourceId rhs) noexcept;
-    }
-}
+    }  // namespace Resource
+}  // namespace Incubator
