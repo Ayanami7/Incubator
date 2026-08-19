@@ -75,9 +75,9 @@ namespace Incubator
             ResourceRegistry() = default;
 
             // key = (类型, 规范化虚拟路径) → id
-            std::map<std::pair<ResourceType, std::string>, ResourceId> m_pathToId;
+            std::map<std::pair<ResourceType, std::string>, ResourceId> pathToId_;
             // id → 条目
-            std::map<Utils::Hash, Entry> m_idToEntry;
+            std::map<Utils::Hash, Entry> idToEntry_;
         };
     }
 }

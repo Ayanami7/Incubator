@@ -56,7 +56,7 @@ namespace Incubator
             explicit ResourceId(Utils::Hash value) noexcept;
             static ResourceId computeId(ResourceType type, const std::string& key);
 
-            Utils::Hash m_value = 0;
+            Utils::Hash value_ = 0;
         };
 
         /// @brief 相等比较

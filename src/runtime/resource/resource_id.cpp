@@ -44,7 +44,7 @@ namespace Incubator
             return Incubator::Path::toLowerASCII(key);
         }
 
-        ResourceId::ResourceId(Utils::Hash value) noexcept : m_value(value) {}
+        ResourceId::ResourceId(Utils::Hash value) noexcept : value_(value) {}
 
         ResourceId ResourceId::computeId(ResourceType type, const std::string& key)
         {
@@ -80,23 +80,23 @@ namespace Incubator
 
         bool ResourceId::valid() const noexcept
         {
-            return m_value != 0;
+            return value_ != 0;
         }
 
         Utils::Hash ResourceId::value() const noexcept
         {
-            return m_value;
+            return value_;
         }
 
         ResourceId::operator Utils::Hash() const noexcept
         {
-            return m_value;
+            return value_;
         }
 
         std::string ResourceId::toString() const
         {
             char buffer[17];
-            const auto result = std::to_chars(buffer, buffer + sizeof(buffer) - 1, m_value, 16);
+            const auto result = std::to_chars(buffer, buffer + sizeof(buffer) - 1, value_, 16);
             return std::string(buffer, result.ptr);
         }
 
