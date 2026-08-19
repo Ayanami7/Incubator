@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/utils/utf8.h"
 
 #include <string>
 
@@ -326,7 +327,7 @@ namespace Incubator
                         {
                             return nullptr;
                         }
-                        std::string pathStr = std::filesystem::path(path).string();
+                        std::string pathStr = Utils::Utf8::toUtf8String(path);
                         throw Error::Exception(Error::Code::IO,
                                                formatWin32Error(err, "CreateFileW failed: " + pathStr));
                     }

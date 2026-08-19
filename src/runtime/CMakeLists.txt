@@ -7,6 +7,7 @@ set(CORE_HEADERS
     core/log/logger.h
     core/error/error.h
     core/utils/hash.h
+    core/utils/utf8.h
     core/clock/clock.h
     core/path/path.h
 )
@@ -14,6 +15,7 @@ set(CORE_SOURCES
     core/log/logger.cpp
     core/error/error.cpp
     core/utils/hash.cpp
+    core/utils/utf8.cpp
     core/path/path.cpp
 )
 
@@ -73,6 +75,7 @@ add_dependencies(${TARGET_NAME} fmt::fmt)
 target_link_libraries(${TARGET_NAME} PUBLIC spdlog::spdlog)
 target_link_libraries(${TARGET_NAME} PUBLIC fmt::fmt)
 target_link_libraries(${TARGET_NAME} PUBLIC glfw)
+target_link_libraries(${TARGET_NAME} PUBLIC utf8::utf8cpp)
 
 # 设置包含目录
 target_include_directories(

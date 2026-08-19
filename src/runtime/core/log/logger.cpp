@@ -9,6 +9,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "runtime/core/utils/utf8.h"
+
 using Incubator::Log::Logger;
 
 namespace Incubator
@@ -38,14 +40,14 @@ namespace Incubator
             {
                 namespace fs = std::filesystem;
 
-                auto dir = fs::path(config.log_dir);
+                auto dir = Utils::Utf8::toFsPath(config.log_dir);
                 auto filepath = dir / (config.basename + ".log");
 
                 std::error_code ec;
                 fs::create_directories(dir, ec);
 
-                auto sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(filepath.string(), config.max_size,
-                                                                                   config.max_files);
+                auto sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+                    Utils::Utf8::toUtf8String(filepath), config.max_size, config.max_files);
 
                 sink->set_pattern(std::string(DEFAULT_PATTERN));
                 return sink;

@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include "runtime/core/utils/utf8.h"
+
 namespace Incubator
 {
     namespace Utils
@@ -47,7 +49,7 @@ namespace Incubator
                 auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(timeSinceEpoch).count();
 
                 Hash seed = Detail::kOffset;
-                combine(seed, path.string());
+                combine(seed, Utils::Utf8::toUtf8String(path));
                 combine(seed, fileSize);
                 combine(seed, timestamp);
 
@@ -64,7 +66,7 @@ namespace Incubator
             std::ifstream file(path, std::ios::binary);
             if (!file)
             {
-                throw std::runtime_error("Failed to open file: " + path.string());
+                throw std::runtime_error("Failed to open file: " + Utils::Utf8::toUtf8String(path));
             }
 
             file.seekg(0, std::ios::end);

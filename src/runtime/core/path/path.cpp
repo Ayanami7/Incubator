@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <filesystem>
 
+#include "runtime/core/utils/utf8.h"
+
 namespace Incubator
 {
     namespace Path
@@ -11,13 +13,10 @@ namespace Incubator
         {
             /// @brief 将 string_view 按 UTF-8 编码构造为 filesystem::path
             ///
-            /// MSVC 上 std::filesystem::path(const char*) 使用系统代码页解释输入，
-            /// 即使设置了 /utf-8 编译选项也是如此。只有通过 char8_t 构造函数才能保证
-            /// 始终按 UTF-8 编码解释输入字符串。
+            /// 统一走 Utils::Utf8::toFsPath，保证始终按 UTF-8 解释输入（见 utf8.h 说明）。
             std::filesystem::path toPath(std::string_view sv)
             {
-                return std::filesystem::path(
-                    std::u8string(reinterpret_cast<const char8_t*>(sv.data()), sv.size()));
+                return Utils::Utf8::toFsPath(sv);
             }
 
             /// @brief 将 u8string 转换为 std::string（保留 UTF-8 字节序列）
