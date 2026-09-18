@@ -148,6 +148,30 @@ namespace Incubator
             return toPath(path).is_absolute();
         }
 
+        bool hasRootName(std::string_view path)
+        {
+            if (path.size() < 2)
+            {
+                return false;
+            }
+
+            // UNC 根名（//server 或 \\server）：MSVC 在 generic 格式下不识别，须手动检测
+            const bool uncPrefix = (path[0] == '/' && path[1] == '/') || (path[0] == '\\' && path[1] == '\\');
+            if (uncPrefix)
+            {
+                return true;
+            }
+
+            // 盘符根名：C:、C:foo 等（含 drive-relative，此时 is_absolute()==false）
+            if (path[1] == ':')
+            {
+                const char c = path[0];
+                return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+            }
+
+            return false;
+        }
+
         bool hasExtension(std::string_view path, std::string_view ext)
         {
             auto extStr_u8 = toPath(path).extension().u8string();

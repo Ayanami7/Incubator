@@ -54,6 +54,14 @@ namespace Incubator
         /// @return 是否为绝对路径（检测 Windows 盘符或 UNC 前缀）
         bool isAbsolute(std::string_view path);
 
+        /// @brief 判断路径是否包含名称根（root-name）
+        ///
+        /// 比 isAbsolute 更严格：只要存在"名称根"即返回 true，
+        /// 包括仅含盘符根名而根目录为空的 drive-relative 路径（如 C:foo）。
+        /// @param path 待判断的路径
+        /// @return 是否包含盘符前缀（C:、c:foo）或 UNC 前缀（//、\\\\）
+        bool hasRootName(std::string_view path);
+
         /// @brief 判断文件扩展名是否匹配（大小写不敏感）
         /// @param path 完整路径
         /// @param ext 扩展名（可带或不带前导点）

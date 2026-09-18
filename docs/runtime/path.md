@@ -34,6 +34,7 @@ namespace Path {
 
     // 路径判断
     bool isAbsolute(std::string_view path);
+    bool hasRootName(std::string_view path);
     bool hasExtension(std::string_view path, std::string_view ext);
 
     // 字符串工具
@@ -82,6 +83,17 @@ Path::isAbsolute("C:/folder/file.txt")     // true (Windows 盘符)
 Path::isAbsolute("//server/share/file.txt") // true (UNC 路径)
 ```
 
+### hasRootName
+判断是否包含**名称根**（root-name），比 isAbsolute 更严格：只要存在盘符或 UNC 前缀即返回 true，**包含仅含盘符根名、根目录为空的 drive-relative 路径**（如 `C:foo`，此时 `is_absolute()` 为 false）。
+```cpp
+Path::hasRootName("folder/file.txt")         // false
+Path::hasRootName("C:foo")                   // true (drive-relative，无根目录)
+Path::hasRootName("C:/folder/file.txt")      // true (盘符前缀)
+Path::hasRootName("//server/share/file.txt") // true (UNC 路径，MSVC generic 格式需手动检测)
+```
+
+用途：判定路径是否携带"宿主文件系统"信息，用于虚拟路径 / 资源键等必须相对的场景。
+
 ### hasExtension
 ```cpp
 Path::hasExtension("file.txt", "txt")      // true
@@ -103,6 +115,7 @@ Path::toLowerASCII("Tex123!_@#")           // "tex123!_@#"（数字/符号不变
 
 ### Windows
 - 绝对路径检测：`C:`, `D:` 等盘符开头，或 `//` UNC 路径
+- 名称根检测（`hasRootName`）：盘符前缀（含 drive-relative 如 `C:foo`）与 UNC 前缀均命中
 - 分隔符：内部统一使用 `/`，但可解析 `\` 分隔符
 
 ## 实现要点

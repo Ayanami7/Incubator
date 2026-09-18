@@ -23,16 +23,12 @@ namespace Incubator
                 return {};
             }
 
-            // 盘符前缀（C: 等）或 UNC 前缀（// 或 \\）→ 非法
-            if (key.size() >= 2)
+            // 拒绝任何"名称根"：盘符前缀（含 drive-relative 的 C:foo）或 UNC 前缀。
+            // 这里不用 Path::isAbsolute：C:foo 仅含盘符根名、无根目录，is_absolute()==false，
+            // 但作为虚拟资源键仍必须拒绝。
+            if (Path::hasRootName(key))
             {
-                const bool drivePrefix =
-                    key[1] == ':' && ((key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= 'a' && key[0] <= 'z'));
-                const bool uncPrefix = (key[0] == '/' && key[1] == '/') || (key[0] == '\\' && key[1] == '\\');
-                if (drivePrefix || uncPrefix)
-                {
-                    return {};
-                }
+                return {};
             }
 
             // 剥离单个前导 '/'（根相对路径与相对路径归一；UNC 已在上面排除）

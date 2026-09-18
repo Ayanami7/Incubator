@@ -345,6 +345,35 @@ TEST_F(PathTest, IsAbsoluteNotUnixPath)
     EXPECT_FALSE(isAbsolute("/file.txt"));
 }
 
+// ========== hasRootName 测试 ==========
+
+TEST_F(PathTest, HasRootNameRelativePath)
+{
+    EXPECT_FALSE(hasRootName("folder/file.txt"));
+    EXPECT_FALSE(hasRootName("file.txt"));
+    EXPECT_FALSE(hasRootName(""));
+}
+
+TEST_F(PathTest, HasRootNameWindowsDrive)
+{
+    EXPECT_TRUE(hasRootName("C:/folder/file.txt"));
+    EXPECT_TRUE(hasRootName("C:foo"));
+    EXPECT_TRUE(hasRootName("c:/windows"));
+    EXPECT_TRUE(hasRootName("d:"));
+}
+
+TEST_F(PathTest, HasRootNameUNC)
+{
+    EXPECT_TRUE(hasRootName("//server/share/file.txt"));
+    EXPECT_TRUE(hasRootName("\\\\server\\share\\file.txt"));
+}
+
+TEST_F(PathTest, HasRootNameNotUnixPath)
+{
+    EXPECT_FALSE(hasRootName("/usr/local/file.txt"));
+    EXPECT_FALSE(hasRootName("/file.txt"));
+}
+
 // ========== hasExtension 测试 ==========
 
 TEST_F(PathTest, HasExtensionSimple)
