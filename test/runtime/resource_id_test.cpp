@@ -49,6 +49,14 @@ TEST_F(ResourceIdTest, DotDotNormalized)
               ResourceId::fromPath(ResourceType::TEXTURE, "textures/player.png"));
 }
 
+TEST_F(ResourceIdTest, DotDotEscapeInvalid)
+{
+    EXPECT_FALSE(ResourceId::fromPath(ResourceType::TEXTURE, "../outside.txt").valid());
+    EXPECT_FALSE(ResourceId::fromPath(ResourceType::TEXTURE, "a/../../x").valid());
+    EXPECT_FALSE(ResourceId::fromPath(ResourceType::TEXTURE, "..\\outside.txt").valid());
+    EXPECT_FALSE(ResourceId::fromPathOnly("../outside.txt").valid());
+}
+
 TEST_F(ResourceIdTest, LeadingSlashStripped)
 {
     EXPECT_EQ(ResourceId::fromPath(ResourceType::TEXTURE, "/textures/player.png"),

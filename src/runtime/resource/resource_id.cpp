@@ -37,6 +37,12 @@ namespace Incubator
                 key.erase(0, 1);
             }
 
+            // A normalized path that still starts with ".." escapes the virtual resource root.
+            if (key == ".." || key.starts_with("../"))
+            {
+                return {};
+            }
+
             return Incubator::Path::toLowerASCII(key);
         }
 

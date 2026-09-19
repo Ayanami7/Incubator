@@ -12,9 +12,9 @@ namespace Incubator
     {
         /// @brief 将虚拟路径规范化为稳定键
         ///
-        /// 顺序：normalize → 拒绝空/盘符/UNC → 剥离单个前导 '/' → ASCII 小写折叠。
+        /// 顺序：normalize → 拒绝空/盘符/UNC → 剥离单个前导 '/' → 拒绝越界 '..' 段 → ASCII 小写折叠。
         /// @param virtualPath 虚拟路径（相对资源根）
-        /// @return 规范化键；非法输入（空、含盘符、UNC）返回空串
+        /// @return 规范化键；非法输入（空、含盘符、UNC 或越出虚拟根）返回空串
         std::string canonicalizeResourceKey(std::string_view virtualPath);
 
         /// @brief 全局稳定资源 ID

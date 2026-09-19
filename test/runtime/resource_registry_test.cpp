@@ -53,6 +53,14 @@ TEST_F(ResourceRegistryTest, InvalidInputRejected)
     EXPECT_FALSE(reg.registerResource(ResourceType::TEXTURE, "//server/share/p.png").valid());
 }
 
+TEST_F(ResourceRegistryTest, RegisterRejectsDotDotEscape)
+{
+    auto& reg = ResourceRegistry::instance();
+    EXPECT_FALSE(reg.registerResource(ResourceType::TEXTURE, "../x").valid());
+    EXPECT_FALSE(reg.registerResource(ResourceType::TEXTURE, "a/../../x").valid());
+    EXPECT_FALSE(reg.registerResource(ResourceType::TEXTURE, "..\\x").valid());
+}
+
 TEST_F(ResourceRegistryTest, CollisionRejected)
 {
     auto& reg = ResourceRegistry::instance();

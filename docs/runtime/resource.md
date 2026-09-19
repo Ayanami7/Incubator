@@ -74,7 +74,7 @@ public:
 std::string canonicalizeResourceKey(std::string_view virtualPath);
 ```
 
-规范化顺序：`Path::normalize` → 拒绝空/盘符前缀/UNC → 剥离单个前导 `/` → ASCII 小写折叠。非法输入返回空串。
+规范化顺序：`Path::normalize` → 拒绝空/盘符前缀/UNC → 剥离单个前导 `/` → 拒绝越界 `..` 段 → ASCII 小写折叠。规范化后等于 `..` 或以 `../` 开头的路径会被拒绝，非法输入返回空串。
 
 ### 全局注册表 `ResourceRegistry`
 
@@ -136,6 +136,7 @@ public:
 ## 注意事项
 
 1. `ResourceId` 基于哈希，存在极小碰撞概率；碰撞由注册表检测并拒绝，非安全场景
-2. 虚拟路径需为**相对资源根**的路径，盘符/UNC 前缀视为非法
-3. 本层不加载实际数据（无磁盘 IO），`contentHash`/`deps`/状态机等属于后续 Asset/ResourceObject 分层
-4. `clear()` 会清空全部条目，多测试并行时需注意单例共享
+2. 虚拟路径需为**相对资源根**的路径，盘符/UNC 前缀以及规范化后越出资源根的 `..` 段视为非法
+3. Loader 层仍应做纵深防御：打开文件前验证物理路径仍位于资源根内，以防符号链接等文件系统绕道；基于 `..` 的文本路径逃逸已由本层封堵
+4. 本层不加载实际数据（无磁盘 IO），`contentHash`/`deps`/状态机等属于后续 Asset/ResourceObject 分层
+5. `clear()` 会清空全部条目，多测试并行时需注意单例共享
