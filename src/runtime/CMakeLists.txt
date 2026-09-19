@@ -36,10 +36,14 @@ set(RESOURCE_HEADERS
     resource/resource_type.h
     resource/resource_id.h
     resource/resource_registry.h
+    resource/resource_state.h
+    resource/asset_info.h
+    resource/resource_object.h
 )
 set(RESOURCE_SOURCES
     resource/resource_id.cpp
     resource/resource_registry.cpp
+    resource/resource_object.cpp
 )
 
 # 合并所有头文件和源文件到一个变量
