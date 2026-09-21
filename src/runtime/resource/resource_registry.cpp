@@ -29,8 +29,7 @@ namespace Incubator
             std::string key = canonicalizeResourceKey(virtualPath);
             if (key.empty())
             {
-                Log::Registry::get("resource").error("registerResource: invalid virtual path '{}'",
-                                                     virtualPath);
+                Log::Registry::get("resource").error("registerResource: invalid virtual path '{}'", virtualPath);
                 return {};
             }
 
@@ -64,9 +63,9 @@ namespace Incubator
                 // 碰撞检测：相同 ID 已被不同 (type, key) 占用 → 拒绝注入
                 if (it->second.type != type || it->second.virtualPath != key)
                 {
-                    Log::Registry::get("resource").error(
-                        "injectEntry: hash collision for '{}' (type {:#x}) with existing '{}'",
-                        key, static_cast<uint64_t>(type), it->second.virtualPath);
+                    Log::Registry::get("resource")
+                        .error("injectEntry: hash collision for '{}' (type {:#x}) with existing '{}'", key,
+                               static_cast<uint64_t>(type), it->second.virtualPath);
                     return false;
                 }
                 return true;
@@ -133,5 +132,5 @@ namespace Incubator
             auto it = pathToId_.find(std::make_pair(type, key));
             return it == pathToId_.end() ? ResourceId{} : it->second;
         }
-    }
-}
+    }  // namespace Resource
+}  // namespace Incubator

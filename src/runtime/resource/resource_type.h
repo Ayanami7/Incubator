@@ -20,5 +20,5 @@ namespace Incubator
             SHADER = Utils::constHash("SHADER"),
             INVALID = 0
         };
-    }
-}
+    }  // namespace Resource
+}  // namespace Incubator

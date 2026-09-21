@@ -79,5 +79,5 @@ namespace Incubator
             // id → 条目
             std::map<Utils::Hash, Entry> idToEntry_;
         };
-    }
-}
+    }  // namespace Resource
+}  // namespace Incubator
