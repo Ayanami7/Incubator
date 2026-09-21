@@ -6,9 +6,33 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 using namespace Incubator::Resource;
+
+namespace
+{
+    class FakeResource final : public ResourceObject
+    {
+    public:
+        FakeResource(ResourceId id, ResourceType type, bool* destroyed = nullptr)
+            : ResourceObject(id, type), destroyed_(destroyed)
+        {
+        }
+
+        ~FakeResource() override
+        {
+            if (destroyed_)
+            {
+                *destroyed_ = true;
+            }
+        }
+
+    private:
+        bool* destroyed_;
+    };
+}  // namespace
 
 class ResourceRegistryTest : public ::testing::Test
 {
@@ -163,4 +187,128 @@ TEST_F(ResourceRegistryTest, ClearResetsState)
     reg.clear();
     EXPECT_EQ(reg.refCount(id), 0u);
     EXPECT_FALSE(reg.lookup(ResourceType::MATERIAL, "materials/gold.mat").valid());
+}
+
+TEST_F(ResourceRegistryTest, AttachObjectReturnsSamePointerAndKeepsRefCount)
+{
+    auto& reg = ResourceRegistry::instance();
+    ResourceId id = reg.registerResource(ResourceType::TEXTURE, "textures/player.png");
+    bool destroyed = false;
+
+    auto object = std::make_unique<FakeResource>(id, ResourceType::TEXTURE, &destroyed);
+    ResourceObject* raw = object.get();
+
+    ASSERT_TRUE(reg.attachObject(id, std::move(object)));
+    EXPECT_EQ(reg.getObject(id), raw);
+    EXPECT_EQ(reg.refCount(id), 1u);
+
+    const ResourceRegistry& constReg = reg;
+    EXPECT_EQ(constReg.getObject(id), raw);
+    EXPECT_FALSE(destroyed);
+}
+
+TEST_F(ResourceRegistryTest, AttachObjectRejectsNullObject)
+{
+    auto& reg = ResourceRegistry::instance();
+    ResourceId id = reg.registerResource(ResourceType::TEXTURE, "textures/player.png");
+
+    EXPECT_FALSE(reg.attachObject(id, nullptr));
+    EXPECT_EQ(reg.getObject(id), nullptr);
+}
+
+TEST_F(ResourceRegistryTest, AttachObjectRejectsUnregisteredId)
+{
+    auto& reg = ResourceRegistry::instance();
+
+    auto object = std::make_unique<FakeResource>(
+        ResourceId::fromString("1234567890abcdef"), ResourceType::TEXTURE);
+    EXPECT_FALSE(reg.attachObject(ResourceId::fromString("ffffffffffffffff"), std::move(object)));
+}
+
+TEST_F(ResourceRegistryTest, AttachObjectRejectsDoubleMount)
+{
+    auto& reg = ResourceRegistry::instance();
+    ResourceId id = reg.registerResource(ResourceType::TEXTURE, "textures/player.png");
+
+    auto first = std::make_unique<FakeResource>(id, ResourceType::TEXTURE);
+    ASSERT_TRUE(reg.attachObject(id, std::move(first)));
+
+    auto second = std::make_unique<FakeResource>(id, ResourceType::TEXTURE);
+    EXPECT_FALSE(reg.attachObject(id, std::move(second)));
+}
+
+TEST_F(ResourceRegistryTest, AttachObjectRejectsIdMismatch)
+{
+    auto& reg = ResourceRegistry::instance();
+    ResourceId id = reg.registerResource(ResourceType::TEXTURE, "textures/player.png");
+    ResourceId otherId = reg.registerResource(ResourceType::MODEL, "models/car.fbx");
+
+    auto object = std::make_unique<FakeResource>(otherId, ResourceType::TEXTURE);
+    EXPECT_FALSE(reg.attachObject(id, std::move(object)));
+    EXPECT_EQ(reg.getObject(id), nullptr);
+}
+
+TEST_F(ResourceRegistryTest, AttachObjectRejectsTypeMismatch)
+{
+    auto& reg = ResourceRegistry::instance();
+    ResourceId id = reg.registerResource(ResourceType::TEXTURE, "textures/player.png");
+
+    auto object = std::make_unique<FakeResource>(id, ResourceType::SHADER);
+    EXPECT_FALSE(reg.attachObject(id, std::move(object)));
+    EXPECT_EQ(reg.getObject(id), nullptr);
+}
+
+TEST_F(ResourceRegistryTest, DetachObjectRemovesObjectButRetainsRegistration)
+{
+    auto& reg = ResourceRegistry::instance();
+    ResourceId id = reg.registerResource(ResourceType::TEXTURE, "textures/player.png");
+    bool destroyed = false;
+
+    auto object = std::make_unique<FakeResource>(id, ResourceType::TEXTURE, &destroyed);
+    ASSERT_TRUE(reg.attachObject(id, std::move(object)));
+    EXPECT_FALSE(destroyed);
+
+    reg.detachObject(id);
+
+    EXPECT_EQ(reg.getObject(id), nullptr);
+    EXPECT_TRUE(destroyed);
+
+    ResourceType type = ResourceType::INVALID;
+    std::string path;
+    ASSERT_TRUE(reg.lookup(id, type, path));
+    EXPECT_EQ(type, ResourceType::TEXTURE);
+    EXPECT_EQ(path, "textures/player.png");
+    EXPECT_EQ(reg.lookup(ResourceType::TEXTURE, "textures/player.png"), id);
+}
+
+TEST_F(ResourceRegistryTest, ClearDestroysMountedObjects)
+{
+    auto& reg = ResourceRegistry::instance();
+    ResourceId id = reg.registerResource(ResourceType::TEXTURE, "textures/player.png");
+    bool destroyed = false;
+
+    auto object = std::make_unique<FakeResource>(id, ResourceType::TEXTURE, &destroyed);
+    ASSERT_TRUE(reg.attachObject(id, std::move(object)));
+    EXPECT_FALSE(destroyed);
+
+    reg.clear();
+
+    EXPECT_TRUE(destroyed);
+}
+
+TEST_F(ResourceRegistryTest, InjectEntryRejectsInvalidInput)
+{
+    auto& reg = ResourceRegistry::instance();
+    const ResourceId byType = ResourceId::fromString("1111111111111111");
+    const ResourceId byEmpty = ResourceId::fromString("2222222222222222");
+    const ResourceId byCase = ResourceId::fromString("3333333333333333");
+    const ResourceId byEscape = ResourceId::fromString("4444444444444444");
+
+    EXPECT_FALSE(reg.injectEntry(ResourceType::INVALID, "textures/conflict", byType));
+    EXPECT_FALSE(reg.injectEntry(ResourceType::TEXTURE, "", byEmpty));
+    EXPECT_FALSE(reg.injectEntry(ResourceType::TEXTURE, "Textures/conflict", byCase));
+    EXPECT_FALSE(reg.injectEntry(ResourceType::TEXTURE, "../x", byEscape));
+
+    EXPECT_FALSE(reg.lookup(ResourceType::TEXTURE, "textures/conflict").valid());
+    EXPECT_EQ(reg.refCount(byType), 0u);
 }

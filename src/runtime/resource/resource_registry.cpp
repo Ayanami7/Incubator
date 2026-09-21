@@ -1,5 +1,7 @@
 #include "runtime/resource/resource_registry.h"
 
+#include <utility>
+
 #include "runtime/core/log/logger.h"
 
 namespace Incubator
@@ -45,7 +47,8 @@ namespace Incubator
 
         bool ResourceRegistry::injectEntry(ResourceType type, const std::string& key, ResourceId id)
         {
-            if (!id.valid())
+            if (!id.valid() || type == ResourceType::INVALID || key.empty() ||
+                key != canonicalizeResourceKey(key))
             {
                 return false;
             }
@@ -57,15 +60,15 @@ namespace Incubator
                 return pathIt->second == id;
             }
 
-            auto [it, inserted] = idToEntry_.emplace(id.value(), Entry{type, key, 1});
+            auto [it, inserted] = idToEntry_.emplace(id.value(), Entry{{id, type, key, 0}, 1, nullptr});
             if (!inserted)
             {
                 // 碰撞检测：相同 ID 已被不同 (type, key) 占用 → 拒绝注入
-                if (it->second.type != type || it->second.virtualPath != key)
+                if (it->second.info.type != type || it->second.info.virtualPath != key)
                 {
                     Log::Registry::get("resource")
                         .error("injectEntry: hash collision for '{}' (type {:#x}) with existing '{}'", key,
-                               static_cast<uint64_t>(type), it->second.virtualPath);
+                               static_cast<uint64_t>(type), it->second.info.virtualPath);
                     return false;
                 }
                 return true;
@@ -117,8 +120,8 @@ namespace Incubator
             {
                 return false;
             }
-            type = it->second.type;
-            virtualPath = it->second.virtualPath;
+            type = it->second.info.type;
+            virtualPath = it->second.info.virtualPath;
             return true;
         }
 
@@ -131,6 +134,40 @@ namespace Incubator
             }
             auto it = pathToId_.find(std::make_pair(type, key));
             return it == pathToId_.end() ? ResourceId{} : it->second;
+        }
+
+        bool ResourceRegistry::attachObject(ResourceId id, std::unique_ptr<ResourceObject> object)
+        {
+            auto it = idToEntry_.find(id.value());
+            if (it == idToEntry_.end() || !object || it->second.object ||
+                object->id() != it->second.info.id || object->type() != it->second.info.type)
+            {
+                Log::Registry::get("resource").error("attachObject: invalid object for id '{}'",
+                                                     id.toString());
+                return false;
+            }
+            it->second.object = std::move(object);
+            return true;
+        }
+
+        const ResourceObject* ResourceRegistry::getObject(ResourceId id) const
+        {
+            auto it = idToEntry_.find(id.value());
+            return (it == idToEntry_.end()) ? nullptr : it->second.object.get();
+        }
+
+        ResourceObject* ResourceRegistry::getObject(ResourceId id)
+        {
+            return const_cast<ResourceObject*>(std::as_const(*this).getObject(id));
+        }
+
+        void ResourceRegistry::detachObject(ResourceId id)
+        {
+            auto it = idToEntry_.find(id.value());
+            if (it != idToEntry_.end())
+            {
+                it->second.object.reset();
+            }
         }
     }  // namespace Resource
 }  // namespace Incubator
