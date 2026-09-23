@@ -39,11 +39,18 @@ set(RESOURCE_HEADERS
     resource/resource_state.h
     resource/asset_info.h
     resource/resource_object.h
+    resource/resource_manager.h
+    resource/loader/loader_base.h
+    resource/loader/text_loader.h
+    resource/loader/text_resource.h
 )
 set(RESOURCE_SOURCES
     resource/resource_id.cpp
     resource/resource_registry.cpp
     resource/resource_object.cpp
+    resource/resource_manager.cpp
+    resource/loader/text_loader.cpp
+    resource/loader/text_resource.cpp
 )
 
 # 合并所有头文件和源文件到一个变量

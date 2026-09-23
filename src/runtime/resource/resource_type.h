@@ -14,6 +14,7 @@ namespace Incubator
         /// 枚举值使用 UPPER_CASE，与 Log::Level 约定一致。
         enum class ResourceType : Utils::Hash
         {
+            TEXT = Utils::constHash("TEXT"),  // 文本资源（配置/JSON/着色器源码）
             TEXTURE = Utils::constHash("TEXTURE"),
             MODEL = Utils::constHash("MODEL"),
             MATERIAL = Utils::constHash("MATERIAL"),
