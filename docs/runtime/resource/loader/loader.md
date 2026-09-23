@@ -1,0 +1,56 @@
+# Loader 桥模块设计
+
+## 目标
+
+把磁盘数据**解析并构建为 ResourceObject**。Loader 是资源层的"桥"：
+`AssetInfo → Loader::load → ResourceObject`，按 `ResourceType` 路由（封闭枚举的用处）。
+Loader 直接站在已有的 `FileIO`（OS 抽象）+ `Path`（字符串操作）之上组合，**不新建文件系统层**。
+
+## LoaderBase 接口
+
+```cpp
+class LoaderBase
+{
+public:
+    virtual ~LoaderBase() = default;
+
+    // 加载并构建 ResourceObject；失败返回 nullptr（不抛异常）
+    virtual std::unique_ptr<ResourceObject> load(const ResourceId& id,
+                                                 std::string_view virtualPath) = 0;
+};
+```
+
+- 按 `ResourceType` 注册到 `ResourceManager` 的路由表（`registerLoader`，同类型覆盖）
+- 参数：`id`（Registry 已登记）、`virtualPath`（AssetInfo 持有的规范化虚拟路径）
+- 成功返回的对象 state 由 `ResourceManager` 置为 READY（Loader 不负责状态）
+
+## 失败约定
+
+- **返回 nullptr 表示预期失败**（文件缺失等），Loader 内部应记录 error 日志
+- **允许抛异常但不必自行捕获**：底层 IO 的可恢复错误（权限/设备等 `Error::Exception`）可以透传，
+  **异常边界唯一在 Manager 门面**（`ResourceManager::load` 统一捕获转 nullptr）。Loader 自身包 try/catch 属冗余，不推荐
+
+## 虚拟路径解析最小约定
+
+- Loader 内 `Path::join("assets", virtualPath)` 得到真实相对路径，**不建 VFS**；相对进程工作目录解析
+- 虚拟路径已在登记边界规范化（拒绝盘符/UNC/越界 `..`），Loader 端无需重复处理文本逃逸
+- **VFS 触发条件**：出现多资源根、`.pak` 打包、归档需求时，在 Loader 与 FileIO 之间插入 VFS 层（增量扩展，当前 YAGNI）
+
+## FileIO 注入
+
+Loader 通过构造函数注入 `Incubator::FileIO::FileIO&`（如 `TextLoader(FileIO&)`），而非内部自建实例：
+
+- 生产与测试共用同一套真实 FileIO（`createPlatformFileIO()`）
+- 测试用临时目录替换工作目录即可（虚拟路径 join 后落在临时目录），无需 Mock 文件系统
+
+## 新增一个 Loader 的模板
+
+1. 新建 `<name>_loader.h/.cpp`（继承 `LoaderBase`，`final`）
+2. 若引入新载荷类型，另建 `<name>_resource.h/.cpp`（继承 `ResourceObject`，`final`）；载荷可复用则跳过
+3. 若为新资源种，在 `ResourceType` 增量添加显式 `constHash` 枚举值（需重编译）
+4. `CMakeLists.txt` 登记头文件/源文件
+5. 编写测试：真实 FileIO + 临时目录模式（参照 `text_loader_test.cpp`）
+
+## 文档索引
+
+- [text_loader.md](./text_loader.md) - 首个实现（文本资源全链路）
