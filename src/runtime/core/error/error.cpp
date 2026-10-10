@@ -20,6 +20,8 @@ namespace Incubator
                     return "CONFIG";
                 case Code::NETWORK:
                     return "NETWORK";
+                case Code::RENDER:
+                    return "RENDER";
                 default:
                     return "UNKNOWN";
             }

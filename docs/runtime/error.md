@@ -26,7 +26,8 @@ enum class Code
     UNKNOWN,  ///< 未知/未分类错误
     IO,       ///< 文件/输入输出错误
     CONFIG,   ///< 配置解析错误
-    NETWORK   ///< 网络通信错误
+    NETWORK,  ///< 网络通信错误
+    RENDER    ///< 图形渲染错误
 };
 ```
 

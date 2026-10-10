@@ -53,16 +53,23 @@ set(RESOURCE_SOURCES
     resource/loader/text_resource.cpp
 )
 
+# render 模块头文件、源文件
+# Vulkan 实现将在后续任务中逐步加入；公共接口不向 Core/Platform/Resource 反向传播依赖。
+set(RENDER_HEADERS)
+set(RENDER_SOURCES)
+
 # 合并所有头文件和源文件到一个变量
 set(ALL_HEADERS
     ${CORE_HEADERS}
     ${PLATFORM_HEADERS}
     ${RESOURCE_HEADERS}
+    ${RENDER_HEADERS}
 )
 set(ALL_SOURCES
     ${CORE_SOURCES}
     ${PLATFORM_SOURCES}
     ${RESOURCE_SOURCES}
+    ${RENDER_SOURCES}
 )
 
 # 创建静态库目标
@@ -87,6 +94,12 @@ target_link_libraries(${TARGET_NAME} PUBLIC spdlog::spdlog)
 target_link_libraries(${TARGET_NAME} PUBLIC fmt::fmt)
 target_link_libraries(${TARGET_NAME} PUBLIC glfw)
 target_link_libraries(${TARGET_NAME} PUBLIC utf8::utf8cpp)
+
+# Render owns the Vulkan integration. Keep it private because public Runtime headers
+# do not expose Vulkan types. The bundled Vulkan target is currently Windows-only.
+if(WIN32)
+    target_link_libraries(${TARGET_NAME} PRIVATE vulkan)
+endif()
 
 # 设置包含目录
 target_include_directories(
