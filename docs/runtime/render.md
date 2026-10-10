@@ -10,6 +10,10 @@ Render 是 IncubatorRuntime 中的 Function 层模块，负责把应用准备的
 - Windows、单窗口、主线程录制；上传和绘制使用同一图形队列。
 - 显存分配器在任务 05 开始前另行审核，本模块当前不引入 VMA。
 
+任务 02 的验证模式在初始化配置中选择 `Disabled`、`Optional` 或 `Required`。Demo 的 Debug 构建采用 `Optional`：缺少 Khronos Validation Layer 或 `VK_EXT_debug_utils` 时记录告警并继续；`Required` 缺少任一组件时初始化失败。Release Demo 默认禁用 Validation。
+
+`VulkanInstance` 请求 Vulkan 1.3，并在创建前确认 Loader 版本及 GLFW 必需扩展。`GlfwSurface` 借用 `Window` 创建 Surface。`VulkanDevice` 按枚举顺序选择首个满足 API 1.3、`VK_KHR_swapchain`、图形与呈现队列、非空 Surface 格式/呈现模式，以及 Dynamic Rendering 和 Synchronization2 的物理设备；图形与呈现队列族相同时优先采用该组合，否则分别保存两个队列族。逻辑设备启用并输出这些必需功能信息。
+
 ## 模块依赖
 
 Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resource 不依赖 Render。GLFW 与 Vulkan Surface 的连接属于 Render，`Platform::Window` 不添加 Vulkan 创建接口。公共渲染头文件不暴露 Vulkan 类型，Runtime 对 Vulkan 的链接保持私有。
@@ -21,9 +25,9 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 | 对象 | 职责与所有权 |
 |---|---|
 | `Renderer` | 由应用创建和持有；借用 `Window`；组合并拥有本次渲染所需内部对象；提供初始化、完整帧绘制和关闭入口。 |
-| `VulkanInstance` | 创建并拥有 Vulkan Instance；销毁晚于 Surface。 |
-| Surface | 由 Render 通过 GLFW 从借用的 Window 创建和销毁；依赖 Instance，Window 必须活到 Surface 销毁之后。 |
-| `VulkanDevice` | 选择物理设备并创建、拥有逻辑设备和队列；销毁前先清理设备子对象。 |
+| `VulkanInstance` | 创建并拥有 Vulkan Instance 和可选 debug messenger；查询并启用 GLFW 所需实例扩展；销毁晚于 Surface。 |
+| Surface | `GlfwSurface` 由 Render 通过 GLFW 从借用的 Window 创建和销毁；依赖 Instance，Window 必须活到 Surface 销毁之后。 |
+| `VulkanDevice` | 选择支持图形、呈现、Swapchain、Dynamic Rendering 和 Synchronization2 的首个物理设备；创建并拥有逻辑设备和队列；销毁前先清理设备子对象。 |
 | `VulkanSwapchain` | 拥有交换链及图像视图等呈现资源；依赖 Device 与 Surface。 |
 | `VulkanFrameScheduler` | 管理帧槽、命令录制与提交同步；依赖 Device，并协调 Swapchain 图像生命周期。 |
 

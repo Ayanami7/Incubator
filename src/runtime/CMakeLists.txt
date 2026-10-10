@@ -54,9 +54,21 @@ set(RESOURCE_SOURCES
 )
 
 # render 模块头文件、源文件
-# Vulkan 实现将在后续任务中逐步加入；公共接口不向 Core/Platform/Resource 反向传播依赖。
-set(RENDER_HEADERS)
-set(RENDER_SOURCES)
+if(WIN32)
+    set(RENDER_HEADERS
+        render/vulkan/vulkan_instance.h
+        render/vulkan/glfw_surface.h
+        render/vulkan/vulkan_device.h
+    )
+    set(RENDER_SOURCES
+        render/vulkan/vulkan_instance.cpp
+        render/vulkan/glfw_surface.cpp
+        render/vulkan/vulkan_device.cpp
+    )
+else()
+    set(RENDER_HEADERS)
+    set(RENDER_SOURCES)
+endif()
 
 # 合并所有头文件和源文件到一个变量
 set(ALL_HEADERS
