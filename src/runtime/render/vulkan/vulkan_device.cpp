@@ -325,6 +325,21 @@ namespace Incubator
                                        "No compatible Vulkan memory type satisfies the requested properties");
             }
 
+            VkFormat VulkanDevice::findDepthFormat() const
+            {
+                constexpr VkFormat CANDIDATE_FORMATS[] = {
+                    VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM};
+                for (VkFormat format : CANDIDATE_FORMATS)
+                {
+                    VkFormatProperties properties{};
+                    vkGetPhysicalDeviceFormatProperties(physicalDevice_, format, &properties);
+                    if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0)
+                        return format;
+                }
+                throw Error::Exception(Error::Code::RENDER,
+                                       "The selected Vulkan device has no supported depth attachment format");
+            }
+
             void VulkanDevice::executeImmediate(const std::function<void(VkCommandBuffer)>& recordCommands) const
             {
                 VkCommandPool commandPool = VK_NULL_HANDLE;

@@ -38,6 +38,7 @@ namespace Incubator
                 uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags required,
                                         VkMemoryPropertyFlags preferred,
                                         VkMemoryPropertyFlags* selectedProperties = nullptr) const;
+                VkFormat findDepthFormat() const;
                 void executeImmediate(const std::function<void(VkCommandBuffer)>& recordCommands) const;
 
             private:

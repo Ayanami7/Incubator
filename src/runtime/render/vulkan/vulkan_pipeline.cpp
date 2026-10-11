@@ -25,10 +25,11 @@ namespace Incubator
                 }
             }  // namespace
 
-            VulkanPipeline::VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat,
+            VulkanPipeline::VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
+                                           VkDescriptorSetLayout descriptorLayout,
                                            const std::vector<uint32_t>& vertexShader,
                                            const std::vector<uint32_t>& fragmentShader)
-                : device_(device), colorFormat_(colorFormat)
+                : device_(device), colorFormat_(colorFormat), depthFormat_(depthFormat)
             {
                 VkShaderModule vertexModule = VK_NULL_HANDLE;
                 VkShaderModule fragmentModule = VK_NULL_HANDLE;
@@ -47,6 +48,8 @@ namespace Incubator
 
                     VkPipelineLayoutCreateInfo layoutInfo{};
                     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+                    layoutInfo.setLayoutCount = 1;
+                    layoutInfo.pSetLayouts = &descriptorLayout;
                     checkVk(vkCreatePipelineLayout(device_.handle(), &layoutInfo, nullptr, &layout_),
                             "vkCreatePipelineLayout");
 
@@ -68,8 +71,8 @@ namespace Incubator
                     const VkVertexInputBindingDescription vertexBinding{0, 5 * sizeof(float),
                                                                         VK_VERTEX_INPUT_RATE_VERTEX};
                     constexpr VkVertexInputAttributeDescription vertexAttributes[] = {
-                        {0, 0, VK_FORMAT_R32G32_SFLOAT, 0},
-                        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 2 * sizeof(float)}};
+                        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
+                        {1, 0, VK_FORMAT_R32G32_SFLOAT, 3 * sizeof(float)}};
                     vertexInput.vertexBindingDescriptionCount = 1;
                     vertexInput.pVertexBindingDescriptions = &vertexBinding;
                     vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(std::size(vertexAttributes));
@@ -95,6 +98,11 @@ namespace Incubator
                     VkPipelineMultisampleStateCreateInfo multisample{};
                     multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
                     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+                    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+                    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+                    depthStencil.depthTestEnable = VK_TRUE;
+                    depthStencil.depthWriteEnable = VK_TRUE;
+                    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
                     VkPipelineColorBlendAttachmentState blendAttachment{};
                     blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -106,6 +114,7 @@ namespace Incubator
                     rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
                     rendering.colorAttachmentCount = 1;
                     rendering.pColorAttachmentFormats = &colorFormat_;
+                    rendering.depthAttachmentFormat = depthFormat_;
 
                     VkGraphicsPipelineCreateInfo pipelineInfo{};
                     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -117,6 +126,7 @@ namespace Incubator
                     pipelineInfo.pViewportState = &viewport;
                     pipelineInfo.pRasterizationState = &rasterization;
                     pipelineInfo.pMultisampleState = &multisample;
+                    pipelineInfo.pDepthStencilState = &depthStencil;
                     pipelineInfo.pColorBlendState = &blend;
                     pipelineInfo.pDynamicState = &dynamic;
                     pipelineInfo.layout = layout_;

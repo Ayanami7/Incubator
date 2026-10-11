@@ -34,14 +34,16 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 | `VulkanCommandList` | 录制交换链图像布局转换、动态渲染清屏和绘制命令。 |
 | `VulkanBuffer` | 每个 Buffer 独立申请 Vulkan 内存；支持 Host Visible 写入及带 staging 的设备本地静态上传。 |
 | `VulkanImage` | 仅拥有自行创建的 Image、内存和 ImageView；交换链借用图像仍归 Swapchain 管理。 |
+| `VulkanBindingSet` | Render 内部创建固定的 Uniform Buffer 与 Combined Image Sampler 布局、池和每帧 DescriptorSet。 |
+| `VulkanSampler` | 拥有纹理采样器；DescriptorSet 引用它和 ImageView。 |
 
 GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自建显存池。`VulkanDevice` 集中选择满足 required、尽量满足 preferred 的内存类型，并提供 Fence 等待的一次性图形队列提交。静态 Buffer 和 RGBA8 Image 通过 staging 上传；Buffer 写入后按非 coherent 属性执行 flush，Image 显式从 Undefined 转为 Transfer Destination，再转为 Shader Read Only。该方案适合当前低数量基础资源，之后如资源数量和分配开销增长，再单独评估 VMA。
 
 `VulkanFrameScheduler` 每帧槽可持有本帧命令引用的共享 GPU 资源。帧槽 Fence 确认提交完成后才清除这些引用；重建和关闭时等待在途帧完成后释放。CPU 可写 Buffer 本身不允许与 GPU 并发读写，调用方需按帧槽隔离区域或等待对应 Fence 后再写。
 
-`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。获取图像后等待该图像上一次提交和呈现完成，再由 `VulkanCommandList` 录制布局转换、动态渲染清屏与三角形绘制、呈现布局转换，并通过 `vkQueueSubmit2` 提交。`VulkanPipeline` 使用顶点与索引 Buffer 绘制三角形，Pipeline 颜色附件格式来自当前交换链；窗口尺寸变化只更新 viewport/scissor，交换链格式变化则重建 Pipeline。
+`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新帧变换前等待对应帧槽 Fence，Uniform Buffer 与深度附件按帧槽隔离；`VulkanCommandList` 录制颜色/深度布局、动态渲染、DescriptorSet 绑定、立方体 indexed draw 和呈现布局。固定相机使用 GLM，模型每帧旋转；程序生成的棋盘纹理通过 Combined Image Sampler 采样。窗口尺寸变化会重建匹配 extent 的深度附件并更新投影，交换链颜色格式变化时重建兼容 Pipeline。
 
-Demo 构建时调用仓库内的 `glslangValidator.exe`，将 `assets/shaders/triangle.vert` 和 `.frag` 编译到构建目录的 `assets/shaders/`，目标为 GLSL 450、Vulkan 1.3 与 SPIR-V 1.6。Demo 从构建根目录读取 SPIR-V。`Resource::Loader::readSpirv` 通过 FileIO 读取完整二进制载荷并验证长度与 magic，返回自持有的 32 位字；Vulkan Pipeline 创建 ShaderModule 后即可释放临时 ShaderModule，但 Renderer 保留 CPU 字载荷以支持交换链格式变化后的 Pipeline 重建。
+Demo 构建时调用仓库内的 `glslangValidator.exe`，将 `assets/shaders/cube.vert` 和 `.frag` 编译到构建目录的 `assets/shaders/`，目标为 GLSL 450、Vulkan 1.3 与 SPIR-V 1.6。Demo 从构建根目录读取 SPIR-V。`Resource::Loader::readSpirv` 通过 FileIO 读取完整二进制载荷并验证长度与 magic，返回自持有的 32 位字；Vulkan Pipeline 创建 ShaderModule 后即可释放临时 ShaderModule，但 Renderer 保留 CPU 字载荷以支持交换链格式变化后的 Pipeline 重建。
 
 交换链按 Surface 能力选取格式和 extent，present mode 使用 FIFO；图形与呈现队列族不同则使用 concurrent sharing。尺寸为零时跳过绘制。`OUT_OF_DATE` 与 `SUBOPTIMAL` 会安排重建，重建前等待所有帧提交 Fence 及呈现 Fence，再创建新交换链并回收旧 image view、交换链图像同步对象。关闭时也等待呈现 Fence 后再销毁同步对象和交换链。Render 设备要求 `VK_EXT_swapchain_maintenance1`，以获得明确的呈现完成回收依据。
 

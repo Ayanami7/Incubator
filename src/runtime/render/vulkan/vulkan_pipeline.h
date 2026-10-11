@@ -16,7 +16,8 @@ namespace Incubator
             class VulkanPipeline
             {
             public:
-                VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat,
+                VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
+                               VkDescriptorSetLayout descriptorLayout,
                                const std::vector<uint32_t>& vertexShader,
                                const std::vector<uint32_t>& fragmentShader);
                 ~VulkanPipeline();
@@ -33,6 +34,7 @@ namespace Incubator
                 VkPipelineLayout layout_ = VK_NULL_HANDLE;
                 VkPipeline pipeline_ = VK_NULL_HANDLE;
                 VkFormat colorFormat_ = VK_FORMAT_UNDEFINED;
+                VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
             };
         }  // namespace Vulkan
     }  // namespace Render

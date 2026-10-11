@@ -17,23 +17,29 @@ namespace Incubator
             class VulkanDevice;
             class VulkanBuffer;
             class VulkanPipeline;
+            class VulkanImage;
             class VulkanSwapchain;
 
             class VulkanFrameScheduler
             {
             public:
+                static constexpr uint32_t FRAME_COUNT = 2;
+
                 explicit VulkanFrameScheduler(const VulkanDevice& device);
                 ~VulkanFrameScheduler();
 
                 VulkanFrameScheduler(const VulkanFrameScheduler&) = delete;
                 VulkanFrameScheduler& operator=(const VulkanFrameScheduler&) = delete;
 
-                void initializeSwapchainImages(uint32_t imageCount);
+                void initializeSwapchainImages(uint32_t imageCount, VkExtent2D extent, VkFormat depthFormat);
                 void waitForFrames();
+                void waitForCurrentFrame();
                 void waitForPresentation();
+                uint32_t currentFrameIndex() const noexcept;
                 bool renderAndPresent(const VulkanSwapchain& swapchain, const VkClearColorValue& clearColor,
                                      const VulkanPipeline& pipeline, const VulkanBuffer& vertexBuffer,
-                                     const VulkanBuffer& indexBuffer,
+                                     const VulkanBuffer& indexBuffer, VkDescriptorSet descriptorSet,
+                                     uint32_t indexCount,
                                      std::span<const std::shared_ptr<void>> inFlightResources = {});
 
             private:
@@ -44,11 +50,12 @@ namespace Incubator
                     VkSemaphore imageAvailable = VK_NULL_HANDLE;
                     VkFence completionFence = VK_NULL_HANDLE;
                     std::vector<std::shared_ptr<void>> inFlightResources;
+                    std::shared_ptr<VulkanImage> depthAttachment;
                 };
 
                 void destroySwapchainSync() noexcept;
                 const VulkanDevice& device_;
-                std::array<FrameSlot, 2> frames_{};
+                std::array<FrameSlot, FRAME_COUNT> frames_{};
                 std::vector<VkSemaphore> presentReady_;
                 std::vector<VkFence> presentFences_;
                 std::vector<bool> presentPending_;

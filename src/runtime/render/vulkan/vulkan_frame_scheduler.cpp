@@ -7,6 +7,7 @@
 #include "runtime/render/vulkan/vulkan_buffer.h"
 #include "runtime/render/vulkan/vulkan_command_list.h"
 #include "runtime/render/vulkan/vulkan_device.h"
+#include "runtime/render/vulkan/vulkan_image.h"
 #include "runtime/render/vulkan/vulkan_pipeline.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
 
@@ -98,12 +99,16 @@ namespace Incubator
                     if (frame.commandPool != VK_NULL_HANDLE)
                         vkDestroyCommandPool(device_.handle(), frame.commandPool, nullptr);
                     frame.inFlightResources.clear();
+                    frame.depthAttachment.reset();
                 }
             }
 
-            void VulkanFrameScheduler::initializeSwapchainImages(uint32_t imageCount)
+            void VulkanFrameScheduler::initializeSwapchainImages(uint32_t imageCount, VkExtent2D extent,
+                                                                 VkFormat depthFormat)
             {
                 destroySwapchainSync();
+                for (FrameSlot& frame : frames_)
+                    frame.depthAttachment.reset();
                 presentReady_.resize(imageCount, VK_NULL_HANDLE);
                 presentFences_.resize(imageCount, VK_NULL_HANDLE);
                 presentPending_.assign(imageCount, false);
@@ -121,10 +126,18 @@ namespace Incubator
                         checkVk(vkCreateFence(device_.handle(), &fenceInfo, nullptr, &presentFences_[index]),
                                 "vkCreateFence");
                     }
+                    for (FrameSlot& frame : frames_)
+                    {
+                        frame.depthAttachment = std::make_shared<VulkanImage>(
+                            device_, extent, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                            VK_IMAGE_ASPECT_DEPTH_BIT);
+                    }
                 }
                 catch (...)
                 {
                     destroySwapchainSync();
+                    for (FrameSlot& frame : frames_)
+                        frame.depthAttachment.reset();
                     throw;
                 }
             }
@@ -139,6 +152,20 @@ namespace Incubator
                         "vkWaitForFences");
                 for (FrameSlot& frame : frames_)
                     frame.inFlightResources.clear();
+            }
+
+            void VulkanFrameScheduler::waitForCurrentFrame()
+            {
+                FrameSlot& frame = frames_[frameIndex_];
+                checkVk(vkWaitForFences(device_.handle(), 1, &frame.completionFence, VK_TRUE,
+                                        std::numeric_limits<uint64_t>::max()),
+                        "vkWaitForFences(frame update)");
+                frame.inFlightResources.clear();
+            }
+
+            uint32_t VulkanFrameScheduler::currentFrameIndex() const noexcept
+            {
+                return frameIndex_;
             }
 
             void VulkanFrameScheduler::waitForPresentation()
@@ -159,6 +186,8 @@ namespace Incubator
                                                         const VulkanPipeline& pipeline,
                                                         const VulkanBuffer& vertexBuffer,
                                                         const VulkanBuffer& indexBuffer,
+                                                        VkDescriptorSet descriptorSet,
+                                                        uint32_t indexCount,
                                                         std::span<const std::shared_ptr<void>> inFlightResources)
             {
                 FrameSlot& frame = frames_[frameIndex_];
@@ -195,8 +224,9 @@ namespace Incubator
                 }
 
                 checkVk(vkResetCommandPool(device_.handle(), frame.commandPool, 0), "vkResetCommandPool");
-                VulkanCommandList::recordTriangle(frame.commandBuffer, swapchain, imageIndex, clearColor, pipeline,
-                                                  vertexBuffer, indexBuffer);
+                VulkanCommandList::recordIndexed(frame.commandBuffer, swapchain, imageIndex, clearColor, pipeline,
+                                                 vertexBuffer, indexBuffer, frame.depthAttachment->handle(),
+                                                 frame.depthAttachment->view(), descriptorSet, indexCount);
 
                 VkSemaphoreSubmitInfo waitInfo{};
                 waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
