@@ -29,9 +29,13 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 | Surface | `GlfwSurface` 由 Render 通过 GLFW 从借用的 Window 创建和销毁；依赖 Instance，Window 必须活到 Surface 销毁之后。 |
 | `VulkanDevice` | 选择支持图形、呈现、Swapchain、Dynamic Rendering 和 Synchronization2 的首个物理设备；创建并拥有逻辑设备和队列；销毁前先清理设备子对象。 |
 | `VulkanSwapchain` | 拥有交换链及图像视图等呈现资源；依赖 Device 与 Surface。 |
-| `VulkanFrameScheduler` | 管理帧槽、命令录制与提交同步；依赖 Device，并协调 Swapchain 图像生命周期。 |
+| `VulkanFrameScheduler` | 管理帧槽、提交同步，并协调 Swapchain 图像生命周期；录制交由 `VulkanCommandList`。 |
+| `VulkanPipeline` | 拥有图形 Pipeline 与 PipelineLayout；ShaderModule 仅在创建 Pipeline 期间存在。 |
+| `VulkanCommandList` | 录制交换链图像布局转换、动态渲染清屏和绘制命令。 |
 
-`Renderer::drawFrame` 负责一个完整的清屏帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。获取图像后等待该图像上一次提交和呈现完成，再录制布局转换、动态渲染清屏与呈现布局转换，并通过 `vkQueueSubmit2` 提交。
+`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。获取图像后等待该图像上一次提交和呈现完成，再由 `VulkanCommandList` 录制布局转换、动态渲染清屏与三角形绘制、呈现布局转换，并通过 `vkQueueSubmit2` 提交。`VulkanPipeline` 使用无顶点缓冲的三角形 Shader，Pipeline 颜色附件格式来自当前交换链；窗口尺寸变化只更新 viewport/scissor，交换链格式变化则重建 Pipeline。
+
+Demo 构建时调用仓库内的 `glslangValidator.exe`，将 `assets/shaders/triangle.vert` 和 `.frag` 编译到构建目录的 `assets/shaders/`，目标为 GLSL 450、Vulkan 1.3 与 SPIR-V 1.6。Demo 从构建根目录读取 SPIR-V。`Resource::Loader::readSpirv` 通过 FileIO 读取完整二进制载荷并验证长度与 magic，返回自持有的 32 位字；Vulkan Pipeline 创建 ShaderModule 后即可释放临时 ShaderModule，但 Renderer 保留 CPU 字载荷以支持交换链格式变化后的 Pipeline 重建。
 
 交换链按 Surface 能力选取格式和 extent，present mode 使用 FIFO；图形与呈现队列族不同则使用 concurrent sharing。尺寸为零时跳过绘制。`OUT_OF_DATE` 与 `SUBOPTIMAL` 会安排重建，重建前等待所有帧提交 Fence 及呈现 Fence，再创建新交换链并回收旧 image view、交换链图像同步对象。关闭时也等待呈现 Fence 后再销毁同步对象和交换链。Render 设备要求 `VK_EXT_swapchain_maintenance1`，以获得明确的呈现完成回收依据。
 

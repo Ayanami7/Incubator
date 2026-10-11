@@ -13,6 +13,7 @@ namespace Incubator
         namespace Vulkan
         {
             class VulkanDevice;
+            class VulkanPipeline;
             class VulkanSwapchain;
 
             class VulkanFrameScheduler
@@ -27,7 +28,8 @@ namespace Incubator
                 void initializeSwapchainImages(uint32_t imageCount);
                 void waitForFrames();
                 void waitForPresentation();
-                bool renderAndPresent(const VulkanSwapchain& swapchain, const VkClearColorValue& clearColor);
+                bool renderAndPresent(const VulkanSwapchain& swapchain, const VkClearColorValue& clearColor,
+                                     const VulkanPipeline& pipeline);
 
             private:
                 struct FrameSlot
@@ -39,9 +41,6 @@ namespace Incubator
                 };
 
                 void destroySwapchainSync() noexcept;
-                void recordClear(const VulkanSwapchain& swapchain, uint32_t imageIndex,
-                                const VkClearColorValue& clearColor, VkCommandBuffer commandBuffer);
-
                 const VulkanDevice& device_;
                 std::array<FrameSlot, 2> frames_{};
                 std::vector<VkSemaphore> presentReady_;

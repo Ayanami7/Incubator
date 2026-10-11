@@ -6,11 +6,14 @@
 #include <vector>
 
 #include "runtime/core/error/error.h"
+#include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
+#include "runtime/resource/loader/spirv_reader.h"
 #include "runtime/render/vulkan/glfw_surface.h"
 #include "runtime/render/vulkan/vulkan_device.h"
 #include "runtime/render/vulkan/vulkan_frame_scheduler.h"
 #include "runtime/render/vulkan/vulkan_instance.h"
+#include "runtime/render/vulkan/vulkan_pipeline.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
 
 namespace Incubator
@@ -56,7 +59,9 @@ namespace Incubator
             Impl(Window::Window& window, RendererValidationMode validationMode)
                 : window_(window), instance_(requiredRendererInstanceExtensions(),
                                              toVulkanValidationMode(validationMode)),
-                  surface_(instance_, window_), device_(instance_, surface_)
+                  surface_(instance_, window_), device_(instance_, surface_),
+                  vertexShader_(Resource::Loader::readSpirv(*fileIO_, "assets/shaders/triangle.vert.spv")),
+                  fragmentShader_(Resource::Loader::readSpirv(*fileIO_, "assets/shaders/triangle.frag.spv"))
             {
                 scheduler_ = std::make_unique<Vulkan::VulkanFrameScheduler>(device_);
                 int width = 0;
@@ -84,7 +89,7 @@ namespace Incubator
                 color.float32[1] = clearColor[1];
                 color.float32[2] = clearColor[2];
                 color.float32[3] = clearColor[3];
-                if (!scheduler_->renderAndPresent(*swapchain_, color))
+                if (!scheduler_->renderAndPresent(*swapchain_, color, *pipeline_))
                     needsRebuild_ = true;
             }
 
@@ -93,6 +98,7 @@ namespace Incubator
             {
                 scheduler_->waitForFrames();
                 scheduler_->waitForPresentation();
+                const VkFormat previousFormat = swapchain_ ? swapchain_->format() : VK_FORMAT_UNDEFINED;
                 if (swapchain_)
                 {
                     swapchain_->recreate(width, height);
@@ -102,7 +108,14 @@ namespace Incubator
                     swapchain_ = std::make_unique<Vulkan::VulkanSwapchain>(device_, surface_, width, height);
                 }
                 if (swapchain_->handle() != VK_NULL_HANDLE)
+                {
                     scheduler_->initializeSwapchainImages(swapchain_->imageCount());
+                    if (!pipeline_ || previousFormat != swapchain_->format())
+                    {
+                        pipeline_ = std::make_unique<Vulkan::VulkanPipeline>(device_, swapchain_->format(),
+                                                                             vertexShader_, fragmentShader_);
+                    }
+                }
                 requestedWidth_ = width;
                 requestedHeight_ = height;
                 needsRebuild_ = false;
@@ -112,7 +125,11 @@ namespace Incubator
             Vulkan::VulkanInstance instance_;
             Vulkan::GlfwSurface surface_;
             Vulkan::VulkanDevice device_;
+            std::unique_ptr<FileIO::FileIO> fileIO_ = FileIO::createPlatformFileIO();
+            std::vector<uint32_t> vertexShader_;
+            std::vector<uint32_t> fragmentShader_;
             std::unique_ptr<Vulkan::VulkanSwapchain> swapchain_;
+            std::unique_ptr<Vulkan::VulkanPipeline> pipeline_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
             int requestedWidth_ = 0;
             int requestedHeight_ = 0;

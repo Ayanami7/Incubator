@@ -43,6 +43,7 @@ set(RESOURCE_HEADERS
     resource/loader/loader_base.h
     resource/loader/text_loader.h
     resource/loader/text_resource.h
+    resource/loader/spirv_reader.h
 )
 set(RESOURCE_SOURCES
     resource/resource_id.cpp
@@ -51,30 +52,31 @@ set(RESOURCE_SOURCES
     resource/resource_manager.cpp
     resource/loader/text_loader.cpp
     resource/loader/text_resource.cpp
+    resource/loader/spirv_reader.cpp
 )
 
 # render 模块头文件、源文件
-if(WIN32)
-    set(RENDER_HEADERS
-        render/renderer.h
-        render/vulkan/vulkan_swapchain.h
-        render/vulkan/vulkan_frame_scheduler.h
-        render/vulkan/vulkan_instance.h
-        render/vulkan/glfw_surface.h
-        render/vulkan/vulkan_device.h
-    )
-    set(RENDER_SOURCES
-        render/renderer.cpp
-        render/vulkan/vulkan_swapchain.cpp
-        render/vulkan/vulkan_frame_scheduler.cpp
-        render/vulkan/vulkan_instance.cpp
-        render/vulkan/glfw_surface.cpp
-        render/vulkan/vulkan_device.cpp
-    )
-else()
-    set(RENDER_HEADERS)
-    set(RENDER_SOURCES)
-endif()
+set(RENDER_HEADERS
+    render/renderer.h
+    render/vulkan/vulkan_swapchain.h
+    render/vulkan/vulkan_frame_scheduler.h
+    render/vulkan/vulkan_pipeline.h
+    render/vulkan/vulkan_command_list.h
+    render/vulkan/vulkan_instance.h
+    render/vulkan/glfw_surface.h
+    render/vulkan/vulkan_device.h
+)
+set(RENDER_SOURCES
+    render/renderer.cpp
+    render/vulkan/vulkan_swapchain.cpp
+    render/vulkan/vulkan_frame_scheduler.cpp
+    render/vulkan/vulkan_pipeline.cpp
+    render/vulkan/vulkan_command_list.cpp
+    render/vulkan/vulkan_instance.cpp
+    render/vulkan/glfw_surface.cpp
+    render/vulkan/vulkan_device.cpp
+)
+
 
 # 合并所有头文件和源文件到一个变量
 set(ALL_HEADERS
