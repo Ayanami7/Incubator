@@ -62,6 +62,10 @@ set(RENDER_HEADERS
     render/vulkan/vulkan_frame_scheduler.h
     render/vulkan/vulkan_pipeline.h
     render/vulkan/vulkan_command_list.h
+        render/vulkan/vulkan_buffer.h
+        render/vulkan/vulkan_image.h
+        render/vulkan/vulkan_buffer.h
+        render/vulkan/vulkan_image.h
     render/vulkan/vulkan_instance.h
     render/vulkan/glfw_surface.h
     render/vulkan/vulkan_device.h
@@ -72,6 +76,10 @@ set(RENDER_SOURCES
     render/vulkan/vulkan_frame_scheduler.cpp
     render/vulkan/vulkan_pipeline.cpp
     render/vulkan/vulkan_command_list.cpp
+        render/vulkan/vulkan_buffer.cpp
+        render/vulkan/vulkan_image.cpp
+        render/vulkan/vulkan_buffer.cpp
+        render/vulkan/vulkan_image.cpp
     render/vulkan/vulkan_instance.cpp
     render/vulkan/glfw_surface.cpp
     render/vulkan/vulkan_device.cpp

@@ -65,6 +65,15 @@ namespace Incubator
 
                     VkPipelineVertexInputStateCreateInfo vertexInput{};
                     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+                    const VkVertexInputBindingDescription vertexBinding{0, 5 * sizeof(float),
+                                                                        VK_VERTEX_INPUT_RATE_VERTEX};
+                    constexpr VkVertexInputAttributeDescription vertexAttributes[] = {
+                        {0, 0, VK_FORMAT_R32G32_SFLOAT, 0},
+                        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 2 * sizeof(float)}};
+                    vertexInput.vertexBindingDescriptionCount = 1;
+                    vertexInput.pVertexBindingDescriptions = &vertexBinding;
+                    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(std::size(vertexAttributes));
+                    vertexInput.pVertexAttributeDescriptions = vertexAttributes;
                     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
                     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
                     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;

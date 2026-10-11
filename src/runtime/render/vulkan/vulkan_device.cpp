@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <set>
 #include <string_view>
 #include <vector>
@@ -242,6 +243,7 @@ namespace Incubator
 
                 vkGetDeviceQueue(device_, queueFamilies_.graphics, 0, &graphicsQueue_);
                 vkGetDeviceQueue(device_, queueFamilies_.present, 0, &presentQueue_);
+                vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &memoryProperties_);
 
                 Log::Registry::get("Render.Vulkan").info(
                     "Selected Vulkan device '{}' (API {}.{}; Dynamic Rendering and Synchronization2 enabled; "
@@ -286,6 +288,96 @@ namespace Incubator
             const VkPhysicalDeviceProperties& VulkanDevice::properties() const noexcept
             {
                 return properties_;
+            }
+
+            uint32_t VulkanDevice::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags required,
+                                                   VkMemoryPropertyFlags preferred,
+                                                   VkMemoryPropertyFlags* selectedProperties) const
+            {
+                uint32_t fallback = VK_MAX_MEMORY_TYPES;
+                VkMemoryPropertyFlags fallbackProperties = 0;
+                for (uint32_t index = 0; index < memoryProperties_.memoryTypeCount; ++index)
+                {
+                    if ((typeFilter & (1u << index)) == 0)
+                        continue;
+                    const VkMemoryPropertyFlags properties = memoryProperties_.memoryTypes[index].propertyFlags;
+                    if ((properties & required) != required)
+                        continue;
+                    if ((properties & preferred) == preferred)
+                    {
+                        if (selectedProperties)
+                            *selectedProperties = properties;
+                        return index;
+                    }
+                    if (fallback == VK_MAX_MEMORY_TYPES)
+                    {
+                        fallback = index;
+                        fallbackProperties = properties;
+                    }
+                }
+                if (fallback != VK_MAX_MEMORY_TYPES)
+                {
+                    if (selectedProperties)
+                        *selectedProperties = fallbackProperties;
+                    return fallback;
+                }
+                throw Error::Exception(Error::Code::RENDER,
+                                       "No compatible Vulkan memory type satisfies the requested properties");
+            }
+
+            void VulkanDevice::executeImmediate(const std::function<void(VkCommandBuffer)>& recordCommands) const
+            {
+                VkCommandPool commandPool = VK_NULL_HANDLE;
+                VkFence completionFence = VK_NULL_HANDLE;
+                bool submitted = false;
+                try
+                {
+                    VkCommandPoolCreateInfo poolInfo{};
+                    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+                    poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+                    poolInfo.queueFamilyIndex = queueFamilies_.graphics;
+                    checkVk(vkCreateCommandPool(device_, &poolInfo, nullptr, &commandPool), "vkCreateCommandPool");
+
+                    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+                    VkCommandBufferAllocateInfo allocateInfo{};
+                    allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+                    allocateInfo.commandPool = commandPool;
+                    allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                    allocateInfo.commandBufferCount = 1;
+                    checkVk(vkAllocateCommandBuffers(device_, &allocateInfo, &commandBuffer),
+                            "vkAllocateCommandBuffers");
+                    VkCommandBufferBeginInfo beginInfo{};
+                    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                    checkVk(vkBeginCommandBuffer(commandBuffer, &beginInfo), "vkBeginCommandBuffer");
+                    recordCommands(commandBuffer);
+                    checkVk(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
+
+                    VkFenceCreateInfo fenceInfo{};
+                    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+                    checkVk(vkCreateFence(device_, &fenceInfo, nullptr, &completionFence), "vkCreateFence");
+                    VkSubmitInfo submitInfo{};
+                    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                    submitInfo.commandBufferCount = 1;
+                    submitInfo.pCommandBuffers = &commandBuffer;
+                    checkVk(vkQueueSubmit(graphicsQueue_, 1, &submitInfo, completionFence), "vkQueueSubmit(upload)");
+                    submitted = true;
+                    checkVk(vkWaitForFences(device_, 1, &completionFence, VK_TRUE,
+                                            std::numeric_limits<uint64_t>::max()),
+                            "vkWaitForFences(upload)");
+                }
+                catch (...)
+                {
+                    if (submitted)
+                        vkQueueWaitIdle(graphicsQueue_);
+                    if (completionFence != VK_NULL_HANDLE)
+                        vkDestroyFence(device_, completionFence, nullptr);
+                    if (commandPool != VK_NULL_HANDLE)
+                        vkDestroyCommandPool(device_, commandPool, nullptr);
+                    throw;
+                }
+                vkDestroyFence(device_, completionFence, nullptr);
+                vkDestroyCommandPool(device_, commandPool, nullptr);
             }
 
         }  // namespace Vulkan

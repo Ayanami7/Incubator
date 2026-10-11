@@ -27,13 +27,19 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 | `Renderer` | 由应用创建和持有；借用 `Window`；组合并拥有本次渲染所需内部对象；提供初始化、完整帧绘制和关闭入口。 |
 | `VulkanInstance` | 创建并拥有 Vulkan Instance 和可选 debug messenger；查询并启用 GLFW 所需实例扩展；销毁晚于 Surface。 |
 | Surface | `GlfwSurface` 由 Render 通过 GLFW 从借用的 Window 创建和销毁；依赖 Instance，Window 必须活到 Surface 销毁之后。 |
-| `VulkanDevice` | 选择支持图形、呈现、Swapchain、Dynamic Rendering 和 Synchronization2 的首个物理设备；创建并拥有逻辑设备和队列；销毁前先清理设备子对象。 |
+| `VulkanDevice` | 选择支持图形、呈现、Swapchain、Dynamic Rendering 和 Synchronization2 的首个物理设备；创建逻辑设备和队列，查询内存类型并执行有 Fence 的一次性上传提交；销毁前先清理设备子对象。 |
 | `VulkanSwapchain` | 拥有交换链及图像视图等呈现资源；依赖 Device 与 Surface。 |
 | `VulkanFrameScheduler` | 管理帧槽、提交同步，并协调 Swapchain 图像生命周期；录制交由 `VulkanCommandList`。 |
 | `VulkanPipeline` | 拥有图形 Pipeline 与 PipelineLayout；ShaderModule 仅在创建 Pipeline 期间存在。 |
 | `VulkanCommandList` | 录制交换链图像布局转换、动态渲染清屏和绘制命令。 |
+| `VulkanBuffer` | 每个 Buffer 独立申请 Vulkan 内存；支持 Host Visible 写入及带 staging 的设备本地静态上传。 |
+| `VulkanImage` | 仅拥有自行创建的 Image、内存和 ImageView；交换链借用图像仍归 Swapchain 管理。 |
 
-`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。获取图像后等待该图像上一次提交和呈现完成，再由 `VulkanCommandList` 录制布局转换、动态渲染清屏与三角形绘制、呈现布局转换，并通过 `vkQueueSubmit2` 提交。`VulkanPipeline` 使用无顶点缓冲的三角形 Shader，Pipeline 颜色附件格式来自当前交换链；窗口尺寸变化只更新 viewport/scissor，交换链格式变化则重建 Pipeline。
+GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自建显存池。`VulkanDevice` 集中选择满足 required、尽量满足 preferred 的内存类型，并提供 Fence 等待的一次性图形队列提交。静态 Buffer 和 RGBA8 Image 通过 staging 上传；Buffer 写入后按非 coherent 属性执行 flush，Image 显式从 Undefined 转为 Transfer Destination，再转为 Shader Read Only。该方案适合当前低数量基础资源，之后如资源数量和分配开销增长，再单独评估 VMA。
+
+`VulkanFrameScheduler` 每帧槽可持有本帧命令引用的共享 GPU 资源。帧槽 Fence 确认提交完成后才清除这些引用；重建和关闭时等待在途帧完成后释放。CPU 可写 Buffer 本身不允许与 GPU 并发读写，调用方需按帧槽隔离区域或等待对应 Fence 后再写。
+
+`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。获取图像后等待该图像上一次提交和呈现完成，再由 `VulkanCommandList` 录制布局转换、动态渲染清屏与三角形绘制、呈现布局转换，并通过 `vkQueueSubmit2` 提交。`VulkanPipeline` 使用顶点与索引 Buffer 绘制三角形，Pipeline 颜色附件格式来自当前交换链；窗口尺寸变化只更新 viewport/scissor，交换链格式变化则重建 Pipeline。
 
 Demo 构建时调用仓库内的 `glslangValidator.exe`，将 `assets/shaders/triangle.vert` 和 `.frag` 编译到构建目录的 `assets/shaders/`，目标为 GLSL 450、Vulkan 1.3 与 SPIR-V 1.6。Demo 从构建根目录读取 SPIR-V。`Resource::Loader::readSpirv` 通过 FileIO 读取完整二进制载荷并验证长度与 magic，返回自持有的 32 位字；Vulkan Pipeline 创建 ShaderModule 后即可释放临时 ShaderModule，但 Renderer 保留 CPU 字载荷以支持交换链格式变化后的 Pipeline 重建。
 

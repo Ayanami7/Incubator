@@ -1,6 +1,7 @@
 #include "runtime/render/vulkan/vulkan_command_list.h"
 
 #include "runtime/core/error/error.h"
+#include "runtime/render/vulkan/vulkan_buffer.h"
 #include "runtime/render/vulkan/vulkan_pipeline.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
 
@@ -25,7 +26,9 @@ namespace Incubator
 
             void VulkanCommandList::recordTriangle(VkCommandBuffer commandBuffer, const VulkanSwapchain& swapchain,
                                                    uint32_t imageIndex, const VkClearColorValue& clearColor,
-                                                   const VulkanPipeline& pipeline)
+                                                   const VulkanPipeline& pipeline,
+                                                   const VulkanBuffer& vertexBuffer,
+                                                   const VulkanBuffer& indexBuffer)
             {
                 VkCommandBufferBeginInfo beginInfo{};
                 beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -76,7 +79,11 @@ namespace Incubator
                 vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
                 vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-                vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+                const VkDeviceSize vertexOffset = 0;
+                const VkBuffer vertexHandle = vertexBuffer.handle();
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexHandle, &vertexOffset);
+                vkCmdBindIndexBuffer(commandBuffer, indexBuffer.handle(), 0, VK_INDEX_TYPE_UINT16);
+                vkCmdDrawIndexed(commandBuffer, 3, 1, 0, 0, 0);
                 vkCmdEndRendering(commandBuffer);
 
                 VkImageMemoryBarrier2 toPresent{};

@@ -4,6 +4,7 @@
 #include <limits>
 
 #include "runtime/core/error/error.h"
+#include "runtime/render/vulkan/vulkan_buffer.h"
 #include "runtime/render/vulkan/vulkan_command_list.h"
 #include "runtime/render/vulkan/vulkan_device.h"
 #include "runtime/render/vulkan/vulkan_pipeline.h"
@@ -96,6 +97,7 @@ namespace Incubator
                         vkDestroySemaphore(device_.handle(), frame.imageAvailable, nullptr);
                     if (frame.commandPool != VK_NULL_HANDLE)
                         vkDestroyCommandPool(device_.handle(), frame.commandPool, nullptr);
+                    frame.inFlightResources.clear();
                 }
             }
 
@@ -135,6 +137,8 @@ namespace Incubator
                 checkVk(vkWaitForFences(device_.handle(), static_cast<uint32_t>(frames_.size()), fences.data(), VK_TRUE,
                                         std::numeric_limits<uint64_t>::max()),
                         "vkWaitForFences");
+                for (FrameSlot& frame : frames_)
+                    frame.inFlightResources.clear();
             }
 
             void VulkanFrameScheduler::waitForPresentation()
@@ -152,12 +156,17 @@ namespace Incubator
 
             bool VulkanFrameScheduler::renderAndPresent(const VulkanSwapchain& swapchain,
                                                         const VkClearColorValue& clearColor,
-                                                        const VulkanPipeline& pipeline)
+                                                        const VulkanPipeline& pipeline,
+                                                        const VulkanBuffer& vertexBuffer,
+                                                        const VulkanBuffer& indexBuffer,
+                                                        std::span<const std::shared_ptr<void>> inFlightResources)
             {
                 FrameSlot& frame = frames_[frameIndex_];
                 checkVk(vkWaitForFences(device_.handle(), 1, &frame.completionFence, VK_TRUE,
                                         std::numeric_limits<uint64_t>::max()),
                         "vkWaitForFences(frame)");
+                frame.inFlightResources.clear();
+                frame.inFlightResources.assign(inFlightResources.begin(), inFlightResources.end());
 
                 uint32_t imageIndex = 0;
                 const VkResult acquireResult = vkAcquireNextImageKHR(
@@ -186,7 +195,8 @@ namespace Incubator
                 }
 
                 checkVk(vkResetCommandPool(device_.handle(), frame.commandPool, 0), "vkResetCommandPool");
-                VulkanCommandList::recordTriangle(frame.commandBuffer, swapchain, imageIndex, clearColor, pipeline);
+                VulkanCommandList::recordTriangle(frame.commandBuffer, swapchain, imageIndex, clearColor, pipeline,
+                                                  vertexBuffer, indexBuffer);
 
                 VkSemaphoreSubmitInfo waitInfo{};
                 waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;

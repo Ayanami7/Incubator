@@ -4,6 +4,8 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <span>
 #include <vector>
 
 namespace Incubator
@@ -13,6 +15,7 @@ namespace Incubator
         namespace Vulkan
         {
             class VulkanDevice;
+            class VulkanBuffer;
             class VulkanPipeline;
             class VulkanSwapchain;
 
@@ -29,7 +32,9 @@ namespace Incubator
                 void waitForFrames();
                 void waitForPresentation();
                 bool renderAndPresent(const VulkanSwapchain& swapchain, const VkClearColorValue& clearColor,
-                                     const VulkanPipeline& pipeline);
+                                     const VulkanPipeline& pipeline, const VulkanBuffer& vertexBuffer,
+                                     const VulkanBuffer& indexBuffer,
+                                     std::span<const std::shared_ptr<void>> inFlightResources = {});
 
             private:
                 struct FrameSlot
@@ -38,6 +43,7 @@ namespace Incubator
                     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
                     VkSemaphore imageAvailable = VK_NULL_HANDLE;
                     VkFence completionFence = VK_NULL_HANDLE;
+                    std::vector<std::shared_ptr<void>> inFlightResources;
                 };
 
                 void destroySwapchainSync() noexcept;
