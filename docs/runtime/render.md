@@ -12,7 +12,7 @@ Render 是 IncubatorRuntime 中的 Function 层模块，负责把应用准备的
 
 任务 02 的验证模式在初始化配置中选择 `Disabled`、`Optional` 或 `Required`。Demo 的 Debug 构建采用 `Optional`：缺少 Khronos Validation Layer 或 `VK_EXT_debug_utils` 时记录告警并继续；`Required` 缺少任一组件时初始化失败。Release Demo 默认禁用 Validation。
 
-`VulkanInstance` 请求 Vulkan 1.3，并在创建前确认 Loader 版本及 GLFW 必需扩展。`GlfwSurface` 借用 `Window` 创建 Surface。`VulkanDevice` 按枚举顺序选择首个满足 API 1.3、`VK_KHR_swapchain`、图形与呈现队列、非空 Surface 格式/呈现模式，以及 Dynamic Rendering 和 Synchronization2 的物理设备；图形与呈现队列族相同时优先采用该组合，否则分别保存两个队列族。逻辑设备启用并输出这些必需功能信息。
+`VulkanInstance` 请求 Vulkan 1.3，并在创建前确认 Loader 版本及 GLFW 必需扩展。`GlfwSurface` 借用 `Window` 创建 Surface。`VulkanDevice` 按枚举顺序选择首个满足 API 1.3、`VK_KHR_swapchain`、`VK_EXT_swapchain_maintenance1`、图形与呈现队列、非空 Surface 格式/呈现模式，以及 Dynamic Rendering 和 Synchronization2 的物理设备；图形与呈现队列族相同时优先采用该组合，否则分别保存两个队列族。逻辑设备启用并输出这些必需功能信息。maintenance1 用于为呈现操作附加 Fence，确保交换链重建和关闭时可以等待呈现完成再回收旧资源。
 
 ## 模块依赖
 
@@ -31,6 +31,10 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 | `VulkanSwapchain` | 拥有交换链及图像视图等呈现资源；依赖 Device 与 Surface。 |
 | `VulkanFrameScheduler` | 管理帧槽、命令录制与提交同步；依赖 Device，并协调 Swapchain 图像生命周期。 |
 
+`Renderer::drawFrame` 负责一个完整的清屏帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。获取图像后等待该图像上一次提交和呈现完成，再录制布局转换、动态渲染清屏与呈现布局转换，并通过 `vkQueueSubmit2` 提交。
+
+交换链按 Surface 能力选取格式和 extent，present mode 使用 FIFO；图形与呈现队列族不同则使用 concurrent sharing。尺寸为零时跳过绘制。`OUT_OF_DATE` 与 `SUBOPTIMAL` 会安排重建，重建前等待所有帧提交 Fence 及呈现 Fence，再创建新交换链并回收旧 image view、交换链图像同步对象。关闭时也等待呈现 Fence 后再销毁同步对象和交换链。Render 设备要求 `VK_EXT_swapchain_maintenance1`，以获得明确的呈现完成回收依据。
+
 初始化依赖顺序为 Instance → Surface → Device → Swapchain/帧资源 → 绘制资源；关闭时按反向依赖销毁。Renderer 的对象成员和显式关闭顺序必须保证 Surface 先于 Instance 销毁、所有设备资源先于 Device 销毁，并由应用保证 Window 活到 Renderer 完成关闭。
 
 ## 调用与错误约定
@@ -43,4 +47,4 @@ ImGui 接入后，应用通过 UI 适配层开始 UI 帧、构建界面并结束
 
 ## 后续实施边界
 
-本任务只固定模块位置、依赖、所有权、调用职责和错误分类。具体 Vulkan 对象与帧实现随任务 02–03 加入；GPU 分配策略留待任务 05 审核。无需预先创建空类或占位实现。
+当前实现范围限于清屏，不包含通用帧状态机、帧取消协议或 GPU 分配器；GPU 分配策略留待任务 05 审核。

@@ -56,11 +56,17 @@ set(RESOURCE_SOURCES
 # render 模块头文件、源文件
 if(WIN32)
     set(RENDER_HEADERS
+        render/renderer.h
+        render/vulkan/vulkan_swapchain.h
+        render/vulkan/vulkan_frame_scheduler.h
         render/vulkan/vulkan_instance.h
         render/vulkan/glfw_surface.h
         render/vulkan/vulkan_device.h
     )
     set(RENDER_SOURCES
+        render/renderer.cpp
+        render/vulkan/vulkan_swapchain.cpp
+        render/vulkan/vulkan_frame_scheduler.cpp
         render/vulkan/vulkan_instance.cpp
         render/vulkan/glfw_surface.cpp
         render/vulkan/vulkan_device.cpp

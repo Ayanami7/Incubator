@@ -12,14 +12,12 @@ if(MSVC)
 endif()
 
 add_dependencies(${TARGET_NAME} IncubatorRuntime)
-add_dependencies(${TARGET_NAME} imgui)
 
 set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "examples")
 
 target_link_libraries(
     ${TARGET_NAME} PUBLIC
     IncubatorRuntime
-    imgui
 )
 target_include_directories(
     ${TARGET_NAME} PUBLIC

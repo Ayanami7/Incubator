@@ -19,7 +19,8 @@ namespace Incubator
         {
             namespace
             {
-                constexpr std::array<const char*, 1> REQUIRED_DEVICE_EXTENSIONS = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+                constexpr std::array<const char*, 2> REQUIRED_DEVICE_EXTENSIONS = {
+                    VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME};
 
                 void checkVk(VkResult result, const char* operation)
                 {
@@ -124,13 +125,17 @@ namespace Incubator
 
                 bool supportsRequiredFeatures(VkPhysicalDevice physicalDevice)
                 {
+                    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance1{};
+                    maintenance1.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
                     VkPhysicalDeviceVulkan13Features features13{};
                     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+                    features13.pNext = &maintenance1;
                     VkPhysicalDeviceFeatures2 features{};
                     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
                     features.pNext = &features13;
                     vkGetPhysicalDeviceFeatures2(physicalDevice, &features);
-                    return features13.dynamicRendering == VK_TRUE && features13.synchronization2 == VK_TRUE;
+                    return features13.dynamicRendering == VK_TRUE && features13.synchronization2 == VK_TRUE &&
+                           maintenance1.swapchainMaintenance1 == VK_TRUE;
                 }
 
                 bool isSuitable(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, QueueFamilyIndices& indices,
@@ -176,8 +181,8 @@ namespace Incubator
                 {
                     throw Error::Exception(
                         Error::Code::RENDER,
-                        "No Vulkan 1.3 device supports graphics, presentation, swapchain, dynamic rendering and "
-                        "synchronization2");
+                        "No Vulkan 1.3 device supports graphics, presentation, swapchain maintenance1, dynamic "
+                        "rendering and synchronization2");
                 }
 
                 const std::set<uint32_t> uniqueFamilies = {queueFamilies_.graphics, queueFamilies_.present};
@@ -198,6 +203,10 @@ namespace Incubator
                 enabledFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
                 enabledFeatures.dynamicRendering = VK_TRUE;
                 enabledFeatures.synchronization2 = VK_TRUE;
+                VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT enabledMaintenance1{};
+                enabledMaintenance1.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+                enabledMaintenance1.swapchainMaintenance1 = VK_TRUE;
+                enabledFeatures.pNext = &enabledMaintenance1;
 
                 std::vector<const char*> enabledExtensions(REQUIRED_DEVICE_EXTENSIONS.begin(),
                                                            REQUIRED_DEVICE_EXTENSIONS.end());
@@ -278,6 +287,7 @@ namespace Incubator
             {
                 return properties_;
             }
+
         }  // namespace Vulkan
     }  // namespace Render
 }  // namespace Incubator
