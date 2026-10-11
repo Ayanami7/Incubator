@@ -1,6 +1,9 @@
 #include "runtime/render/renderer.h"
 
+#include <algorithm>
 #include <memory>
+#include <string_view>
+#include <vector>
 
 #include "runtime/core/error/error.h"
 #include "runtime/platform/window/window.h"
@@ -16,6 +19,22 @@ namespace Incubator
     {
         namespace
         {
+            std::vector<const char*> requiredRendererInstanceExtensions()
+            {
+                std::vector<const char*> extensions = Vulkan::GlfwSurface::requiredInstanceExtensions();
+                const auto addIfMissing = [&extensions](const char* extension) {
+                    const bool alreadyPresent = std::any_of(
+                        extensions.begin(), extensions.end(), [extension](const char* current) {
+                            return std::string_view(current) == extension;
+                        });
+                    if (!alreadyPresent)
+                        extensions.push_back(extension);
+                };
+                addIfMissing(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+                addIfMissing(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
+                return extensions;
+            }
+
             Vulkan::ValidationMode toVulkanValidationMode(RendererValidationMode mode)
             {
                 switch (mode)
@@ -35,7 +54,7 @@ namespace Incubator
         {
         public:
             Impl(Window::Window& window, RendererValidationMode validationMode)
-                : window_(window), instance_(Vulkan::GlfwSurface::requiredInstanceExtensions(),
+                : window_(window), instance_(requiredRendererInstanceExtensions(),
                                              toVulkanValidationMode(validationMode)),
                   surface_(instance_, window_), device_(instance_, surface_)
             {
