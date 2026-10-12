@@ -32,6 +32,7 @@ ResourceId ──► ResourceRegistry ──► ResourceManager ──► Loader
 | ResourceManager 门面 | [resource_manager.md](./resource_manager.md) | ✅ 已实现 |
 | LoaderBase + 虚拟路径解析约定 | [loader/loader.md](./loader/loader.md) | ✅ 已实现 |
 | TextLoader 首个实现 | [loader/text_loader.md](./loader/text_loader.md) | ✅ 已实现 |
+| ShaderResource + ShaderLoader（SPIR-V CPU 载荷） | [loader/shader_loader.md](./loader/shader_loader.md) | ✅ 已实现 |
 
 ## 文件布局（镜像 src）
 
@@ -47,17 +48,23 @@ src/runtime/resource/
 └── loader/
     ├── loader_base.h
     ├── text_loader.h/.cpp
-    └── text_resource.h/.cpp
+    ├── text_resource.h/.cpp
+    ├── spirv_reader.h/.cpp
+    ├── shader_loader.h/.cpp
+    └── shader_resource.h/.cpp
 ```
+
+ShaderLoader 复用共享的 `Loader::readSpirv` 二进制入口，不引入 Vulkan 依赖。ResourceManager 管理 ShaderResource 的 CPU 载荷；Renderer 在构造时复制字载荷，用于首次创建及交换链兼容 Pipeline 重建。ResourceManager 释放 CPU 对象不触发 Vulkan 资源销毁。
 
 ## 演进路线（未实现项触发条件）
 
 | 项目 | 触发条件 |
 |---|---|
-| 异步加载（启用 LOADING/ERROR 态） | 跨帧加载需求出现（资源接入渲染管线后） |
+| 异步加载（启用 LOADING/ERROR 态） | 出现跨帧加载或后台流式加载需求 |
 | 热重载（contentHash 变更检测） | 需要运行时资源迭代的工作流 |
 | VFS（虚拟路径 → 真实文件解析 / 打包） | .pak 打包、多资源根需求 |
 | ResourceHandle / LOD / 流式加载 | 一个 Asset 多实例需求时引入 |
+| Texture 文件解码、异步加载、热重载、Cook、资产清单 | 完成本组任务后按具体资源管线需求另行规划 |
 
 ## 设计原则
 

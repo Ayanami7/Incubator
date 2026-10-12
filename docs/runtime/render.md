@@ -43,13 +43,13 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 
 `Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新帧变换前等待对应帧槽 Fence，Uniform Buffer 与深度附件按帧槽隔离；`VulkanCommandList` 录制颜色/深度布局、动态渲染、DescriptorSet 绑定、立方体 indexed draw 和呈现布局。固定相机使用 GLM，模型每帧旋转；程序生成的棋盘纹理通过 Combined Image Sampler 采样。窗口尺寸变化会重建匹配 extent 的深度附件并更新投影，交换链颜色格式变化时重建兼容 Pipeline。
 
-`Integration::ImGuiRenderer` 将仓库内 ImGui 1.91.9b 的 GLFW 与 Vulkan 后端接入 Runtime。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色格式。交换链图像数量或颜色格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭时 ImGui Vulkan 资源先于 Device 销毁。
+`Integration::ImGuiRenderer` 将仓库内 ImGui 1.91.9b 的 GLFW 与 Vulkan 后端接入 Runtime。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色和深度格式。交换链图像数量或附件格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭或重配置时适配器先调用 `vkDeviceWaitIdle`，再释放 ImGui Vulkan 资源。后端要求交换链至少有两个图像，数量不足时明确报渲染错误。
 
 Demo 每轮先轮询事件，再调用 `renderer.imgui().beginFrame()`、使用 ImGui API 构建界面并调用 `endFrame()`。`drawData()` 返回仅供本次 `Renderer::drawFrame` 使用的数据；Renderer 在场景 indexed draw 后、结束同一动态渲染作用域前执行 UI 录制回调。UI 数据不跨帧保留；窗口尺寸为零或 acquire 结果要求跳帧时，回调不执行，下一轮由应用生成新 UI 数据。颜色附件使用 CLEAR 加载和 STORE 保存，因此 UI 叠加时保留场景颜色。
 
-Demo 构建时调用仓库内的 `glslangValidator.exe`，将 `assets/shaders/cube.vert` 和 `.frag` 编译到构建目录的 `assets/shaders/`，目标为 GLSL 450、Vulkan 1.3 与 SPIR-V 1.6。Demo 从构建根目录读取 SPIR-V。`Resource::Loader::readSpirv` 通过 FileIO 读取完整二进制载荷并验证长度与 magic，返回自持有的 32 位字；Vulkan Pipeline 创建 ShaderModule 后即可释放临时 ShaderModule，但 Renderer 保留 CPU 字载荷以支持交换链格式变化后的 Pipeline 重建。
+Demo 构建时调用仓库内的 `glslangValidator.exe`，将 `assets/shaders/cube.vert` 和 `.frag` 编译到构建目录的 `assets/shaders/`，目标为 GLSL 450、Vulkan 1.3 与 SPIR-V 1.6。Demo 注册 `shaders/cube.vert.spv` 与 `shaders/cube.frag.spv` 两个 `ResourceType::SHADER`，由 `ShaderLoader` 按资源根约定映射到构建目录的 `assets/shaders/`，并通过 `Resource::Loader::readSpirv` 读取和验证。`ShaderResource` 拥有 CPU 字载荷；Demo 将资源借给 Renderer 构造，Renderer 复制载荷后 Demo 即可释放 CPU Resource。Vulkan Pipeline 创建 ShaderModule 时借用 Renderer 的字数组，Pipeline 创建完成后临时 ShaderModule 即销毁；Renderer 保留自己的 CPU 副本以支持交换链格式变化后的 Pipeline 重建。CPU Resource 的 release 不决定 GPU Pipeline 的销毁时机。
 
-交换链按 Surface 能力选取格式和 extent，present mode 使用 FIFO；图形与呈现队列族不同则使用 concurrent sharing。尺寸为零时跳过绘制。`OUT_OF_DATE` 与 `SUBOPTIMAL` 会安排重建，重建前等待所有帧提交 Fence 及呈现 Fence，再创建新交换链并回收旧 image view、交换链图像同步对象。关闭时也等待呈现 Fence 后再销毁同步对象和交换链。Render 设备要求 `VK_EXT_swapchain_maintenance1`，以获得明确的呈现完成回收依据。
+交换链按 Surface 能力选取格式和 extent，present mode 使用 FIFO；图形与呈现队列族不同则使用 concurrent sharing。帧缓冲尺寸或 Surface extent 为零时跳过绘制并保留重建请求，恢复有效尺寸后重新尝试。成功重建会记录尺寸、格式、图像数和原因；`OUT_OF_DATE` 与 `SUBOPTIMAL` 会记录状态并安排重建。重建前等待所有帧提交 Fence 及呈现 Fence，再创建新交换链并回收旧 image view、交换链图像同步对象。关闭时也等待呈现 Fence 后再销毁同步对象和交换链。Render 设备要求 `VK_EXT_swapchain_maintenance1`，以获得明确的呈现完成回收依据。
 
 初始化依赖顺序为 Instance → Surface → Device → Swapchain/帧资源 → 绘制资源；关闭时按反向依赖销毁。Renderer 的对象成员和显式关闭顺序必须保证 Surface 先于 Instance 销毁、所有设备资源先于 Device 销毁，并由应用保证 Window 活到 Renderer 完成关闭。
 

@@ -68,7 +68,7 @@ namespace Incubator
                 destroy();
             }
 
-            void VulkanSwapchain::recreate(int width, int height)
+            bool VulkanSwapchain::recreate(int width, int height)
             {
                 VkSurfaceCapabilitiesKHR capabilities{};
                 checkVk(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device_.physicalDevice(), surface_.handle(),
@@ -97,7 +97,7 @@ namespace Incubator
                 const VkExtent2D newExtent = chooseExtent(capabilities, width, height);
                 if (newExtent.width == 0 || newExtent.height == 0)
                 {
-                    return;
+                    return false;
                 }
 
                 uint32_t imageCount = std::max(capabilities.minImageCount, 2u);
@@ -192,6 +192,7 @@ namespace Incubator
                 extent_ = newExtent;
                 images_ = std::move(newImages);
                 imageViews_ = std::move(newViews);
+                return true;
             }
 
             void VulkanSwapchain::destroy() noexcept

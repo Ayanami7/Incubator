@@ -11,6 +11,11 @@ namespace Incubator
         class Window;
     }
 
+    namespace Resource
+    {
+        class ShaderResource;
+    }
+
     namespace Render
     {
         namespace Integration
@@ -28,8 +33,9 @@ namespace Incubator
         class Renderer
         {
         public:
-            explicit Renderer(Window::Window& window,
-                              RendererValidationMode validationMode = RendererValidationMode::Disabled);
+            Renderer(Window::Window& window, const Resource::ShaderResource& vertexShader,
+                     const Resource::ShaderResource& fragmentShader,
+                     RendererValidationMode validationMode = RendererValidationMode::Disabled);
             ~Renderer();
 
             Renderer(const Renderer&) = delete;

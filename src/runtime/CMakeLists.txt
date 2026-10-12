@@ -44,6 +44,8 @@ set(RESOURCE_HEADERS
     resource/loader/text_loader.h
     resource/loader/text_resource.h
     resource/loader/spirv_reader.h
+    resource/loader/shader_resource.h
+    resource/loader/shader_loader.h
 )
 set(RESOURCE_SOURCES
     resource/resource_id.cpp
@@ -53,6 +55,8 @@ set(RESOURCE_SOURCES
     resource/loader/text_loader.cpp
     resource/loader/text_resource.cpp
     resource/loader/spirv_reader.cpp
+    resource/loader/shader_resource.cpp
+    resource/loader/shader_loader.cpp
 )
 
 # render 模块头文件、源文件

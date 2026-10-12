@@ -4,6 +4,7 @@
 #include <limits>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
 #include "runtime/render/vulkan/vulkan_command_list.h"
 #include "runtime/render/vulkan/vulkan_device.h"
@@ -203,10 +204,15 @@ namespace Incubator
                     device_.handle(), swapchain.handle(), std::numeric_limits<uint64_t>::max(), frame.imageAvailable,
                     VK_NULL_HANDLE, &imageIndex);
                 if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+                {
+                    Log::Registry::get("render").info("Swapchain acquire returned OUT_OF_DATE; scheduling recreation");
                     return false;
+                }
                 if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
                     checkVk(acquireResult, "vkAcquireNextImageKHR");
                 bool shouldRecreate = acquireResult == VK_SUBOPTIMAL_KHR;
+                if (acquireResult == VK_SUBOPTIMAL_KHR)
+                    Log::Registry::get("render").info("Swapchain acquire returned SUBOPTIMAL; scheduling recreation");
 
                 if (imageOwners_[imageIndex] != VK_NULL_HANDLE && imageOwners_[imageIndex] != frame.completionFence)
                 {
@@ -273,9 +279,13 @@ namespace Incubator
                 {
                     presentPending_[imageIndex] = true;
                     shouldRecreate = shouldRecreate || presentResult == VK_SUBOPTIMAL_KHR;
+                    if (presentResult == VK_SUBOPTIMAL_KHR)
+                        Log::Registry::get("render").info(
+                            "Swapchain present returned SUBOPTIMAL; scheduling recreation");
                 }
                 else if (presentResult == VK_ERROR_OUT_OF_DATE_KHR)
                 {
+                    Log::Registry::get("render").info("Swapchain present returned OUT_OF_DATE; scheduling recreation");
                     // The queue wait and present fence are still submitted for this rejected request.
                     presentPending_[imageIndex] = true;
                     shouldRecreate = true;

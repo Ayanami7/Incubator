@@ -14,9 +14,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "runtime/core/error/error.h"
-#include "runtime/platform/fileio/fileio.h"
+#include "runtime/core/log/logger.h"
 #include "runtime/platform/window/window.h"
-#include "runtime/resource/loader/spirv_reader.h"
+#include "runtime/resource/loader/shader_resource.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
 #include "runtime/render/vulkan/glfw_surface.h"
@@ -151,12 +151,12 @@ namespace Incubator
         class Renderer::Impl
         {
         public:
-            Impl(Window::Window& window, RendererValidationMode validationMode)
+            Impl(Window::Window& window, const Resource::ShaderResource& vertexShader,
+                 const Resource::ShaderResource& fragmentShader, RendererValidationMode validationMode)
                 : window_(window), instance_(requiredRendererInstanceExtensions(),
                                              toVulkanValidationMode(validationMode)),
                   surface_(instance_, window_), device_(instance_, surface_),
-                  vertexShader_(Resource::Loader::readSpirv(*fileIO_, "assets/shaders/cube.vert.spv")),
-                  fragmentShader_(Resource::Loader::readSpirv(*fileIO_, "assets/shaders/cube.frag.spv"))
+                  vertexShader_(vertexShader.words()), fragmentShader_(fragmentShader.words())
             {
                 depthFormat_ = device_.findDepthFormat();
                 vertexBuffer_ = Vulkan::VulkanBuffer::uploadStatic(
@@ -184,7 +184,7 @@ namespace Incubator
                 int height = 0;
                 window_.getFramebufferSize(width, height);
                 if (width > 0 && height > 0)
-                    rebuild(width, height);
+                    rebuild(width, height, "initialization");
             }
 
             void drawFrame(const std::array<float, 4>& clearColor,
@@ -196,8 +196,12 @@ namespace Incubator
                 if (width <= 0 || height <= 0)
                     return;
 
-                if (!swapchain_ || needsRebuild_ || requestedWidth_ != width || requestedHeight_ != height)
-                    rebuild(width, height);
+                const bool sizeChanged = requestedWidth_ != width || requestedHeight_ != height;
+                const char* rebuildReason = !swapchain_ ? "initialization"
+                                             : needsRebuild_ ? "swapchain status"
+                                             : "framebuffer size changed";
+                if ((!swapchain_ || needsRebuild_ || sizeChanged) && !rebuild(width, height, rebuildReason))
+                    return;
                 if (!swapchain_ || swapchain_->handle() == VK_NULL_HANDLE)
                     return;
 
@@ -248,19 +252,27 @@ namespace Incubator
                 return transforms;
             }
 
-            void rebuild(int width, int height)
+            bool rebuild(int width, int height, const char* reason)
             {
                 scheduler_->waitForFrames();
                 scheduler_->waitForPresentation();
                 const VkFormat previousFormat = swapchain_ ? swapchain_->format() : VK_FORMAT_UNDEFINED;
+                bool recreated = false;
                 if (swapchain_)
                 {
-                    swapchain_->recreate(width, height);
+                    recreated = swapchain_->recreate(width, height);
                 }
                 else
                 {
                     swapchain_ = std::make_unique<Vulkan::VulkanSwapchain>(device_, surface_, width, height);
+                    recreated = swapchain_->handle() != VK_NULL_HANDLE;
                 }
+                if (!recreated || swapchain_->handle() == VK_NULL_HANDLE)
+                {
+                    needsRebuild_ = true;
+                    return false;
+                }
+
                 if (swapchain_->handle() != VK_NULL_HANDLE)
                 {
                     scheduler_->initializeSwapchainImages(swapchain_->imageCount(), swapchain_->extent(), depthFormat_);
@@ -277,13 +289,17 @@ namespace Incubator
                 requestedWidth_ = width;
                 requestedHeight_ = height;
                 needsRebuild_ = false;
+                Log::Registry::get("render").info(
+                    "Swapchain {}: {}x{}, format {}, {} images, present mode FIFO", reason,
+                    swapchain_->extent().width, swapchain_->extent().height, static_cast<int>(swapchain_->format()),
+                    swapchain_->imageCount());
+                return true;
             }
 
             Window::Window& window_;
             Vulkan::VulkanInstance instance_;
             Vulkan::GlfwSurface surface_;
             Vulkan::VulkanDevice device_;
-            std::unique_ptr<FileIO::FileIO> fileIO_ = FileIO::createPlatformFileIO();
             std::vector<uint32_t> vertexShader_;
             std::vector<uint32_t> fragmentShader_;
             std::shared_ptr<Vulkan::VulkanBuffer> vertexBuffer_;
@@ -304,8 +320,10 @@ namespace Incubator
             bool needsRebuild_ = false;
         };
 
-        Renderer::Renderer(Window::Window& window, RendererValidationMode validationMode)
-            : impl_(std::make_unique<Impl>(window, validationMode))
+        Renderer::Renderer(Window::Window& window, const Resource::ShaderResource& vertexShader,
+                           const Resource::ShaderResource& fragmentShader,
+                           RendererValidationMode validationMode)
+            : impl_(std::make_unique<Impl>(window, vertexShader, fragmentShader, validationMode))
         {
         }
 

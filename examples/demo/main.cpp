@@ -7,7 +7,12 @@
 
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
+#include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
+#include "runtime/resource/loader/shader_loader.h"
+#include "runtime/resource/loader/shader_resource.h"
+#include "runtime/resource/resource_manager.h"
+#include "runtime/resource/resource_type.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
 
@@ -25,12 +30,28 @@ int main()
         windowDesc.height = 720;
         auto window = Incubator::Window::createPlatformWindow(windowDesc);
 
+        auto shaderFileIO = Incubator::FileIO::createPlatformFileIO();
+        auto& resources = Incubator::Resource::ResourceManager::instance();
+        resources.registerLoader(Incubator::Resource::ResourceType::SHADER,
+                                 std::make_unique<Incubator::Resource::ShaderLoader>(*shaderFileIO));
+        const auto vertexShaderId = resources.registerResource(Incubator::Resource::ResourceType::SHADER,
+                                                               "shaders/cube.vert.spv");
+        const auto fragmentShaderId = resources.registerResource(Incubator::Resource::ResourceType::SHADER,
+                                                                 "shaders/cube.frag.spv");
+        auto* vertexShader = resources.get<Incubator::Resource::ShaderResource>(vertexShaderId);
+        auto* fragmentShader = resources.get<Incubator::Resource::ShaderResource>(fragmentShaderId);
+        if (!vertexShader || !fragmentShader)
+            throw Incubator::Error::Exception(Incubator::Error::Code::RENDER, "Failed to load Demo shaders");
+
 #ifdef _DEBUG
         constexpr auto validationMode = Incubator::Render::RendererValidationMode::Optional;
 #else
         constexpr auto validationMode = Incubator::Render::RendererValidationMode::Disabled;
 #endif
-        Incubator::Render::Renderer renderer(*window, validationMode);
+        Incubator::Render::Renderer renderer(*window, *vertexShader, *fragmentShader, validationMode);
+        resources.release(vertexShaderId);
+        resources.release(fragmentShaderId);
+        resources.reset();
         std::array<float, 4> clearColor = {0.12f, 0.16f, 0.22f, 1.0f};
 
         while (!window->shouldClose())

@@ -23,7 +23,7 @@ namespace Incubator
                 VulkanSwapchain(const VulkanSwapchain&) = delete;
                 VulkanSwapchain& operator=(const VulkanSwapchain&) = delete;
 
-                void recreate(int width, int height);
+                bool recreate(int width, int height);
                 VkSwapchainKHR handle() const noexcept;
                 VkImage image(uint32_t index) const noexcept;
                 VkImageView imageView(uint32_t index) const noexcept;

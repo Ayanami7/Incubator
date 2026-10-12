@@ -1,13 +1,12 @@
 #include "runtime/render/integration/imgui_renderer.h"
 
-#include <algorithm>
-
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
 #include "runtime/platform/window/window.h"
 
 namespace Incubator
@@ -49,6 +48,9 @@ namespace Incubator
                                                  uint32_t queueFamily, VkQueue queue, VkFormat colorFormat,
                                                  VkFormat depthFormat, uint32_t imageCount)
             {
+                if (imageCount < 2)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "The ImGui Vulkan backend requires at least two swapchain images");
                 if (vulkanInitialized_ && instance_ == instance && physicalDevice_ == physicalDevice &&
                     device_ == device && colorFormat_ == colorFormat && depthFormat_ == depthFormat &&
                     imageCount_ == imageCount)
@@ -72,7 +74,7 @@ namespace Incubator
                 info.QueueFamily = queueFamily_;
                 info.Queue = queue_;
                 info.DescriptorPoolSize = 128;
-                info.MinImageCount = std::min(2u, imageCount_);
+                info.MinImageCount = 2;
                 info.ImageCount = imageCount_;
                 info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
                 info.UseDynamicRendering = true;
@@ -120,7 +122,13 @@ namespace Incubator
             void ImGuiRenderer::shutdownVulkan() noexcept
             {
                 if (vulkanInitialized_)
+                {
+                    const VkResult idleResult = vkDeviceWaitIdle(device_);
+                    if (idleResult != VK_SUCCESS)
+                        Log::Registry::get("render").error("vkDeviceWaitIdle before ImGui shutdown failed: {}",
+                                                             static_cast<int>(idleResult));
                     ImGui_ImplVulkan_Shutdown();
+                }
                 vulkanInitialized_ = false;
                 instance_ = VK_NULL_HANDLE;
                 physicalDevice_ = VK_NULL_HANDLE;
