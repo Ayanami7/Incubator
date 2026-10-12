@@ -188,6 +188,7 @@ namespace Incubator
                                                         const VulkanBuffer& indexBuffer,
                                                         VkDescriptorSet descriptorSet,
                                                         uint32_t indexCount,
+                                                        const std::function<void(VkCommandBuffer)>& recordUi,
                                                         std::span<const std::shared_ptr<void>> inFlightResources)
             {
                 FrameSlot& frame = frames_[frameIndex_];
@@ -226,7 +227,7 @@ namespace Incubator
                 checkVk(vkResetCommandPool(device_.handle(), frame.commandPool, 0), "vkResetCommandPool");
                 VulkanCommandList::recordIndexed(frame.commandBuffer, swapchain, imageIndex, clearColor, pipeline,
                                                  vertexBuffer, indexBuffer, frame.depthAttachment->handle(),
-                                                 frame.depthAttachment->view(), descriptorSet, indexCount);
+                                                 frame.depthAttachment->view(), descriptorSet, indexCount, recordUi);
 
                 VkSemaphoreSubmitInfo waitInfo{};
                 waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;

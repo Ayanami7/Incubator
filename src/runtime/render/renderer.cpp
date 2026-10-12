@@ -1,4 +1,5 @@
 #include "runtime/render/renderer.h"
+#include "runtime/render/integration/imgui_renderer.h"
 
 #include <algorithm>
 #include <array>
@@ -178,6 +179,7 @@ namespace Incubator
                 bindingSet_ = std::make_unique<Vulkan::VulkanBindingSet>(
                     device_, uniformBuffers_, *checkerTexture_, *sampler_);
                 scheduler_ = std::make_unique<Vulkan::VulkanFrameScheduler>(device_);
+                imguiRenderer_ = std::make_unique<Integration::ImGuiRenderer>(window_);
                 int width = 0;
                 int height = 0;
                 window_.getFramebufferSize(width, height);
@@ -185,7 +187,8 @@ namespace Incubator
                     rebuild(width, height);
             }
 
-            void drawFrame(const std::array<float, 4>& clearColor)
+            void drawFrame(const std::array<float, 4>& clearColor,
+                           const std::function<void(void*)>& recordUi)
             {
                 int width = 0;
                 int height = 0;
@@ -214,8 +217,18 @@ namespace Incubator
                     std::static_pointer_cast<void>(checkerTexture_), std::static_pointer_cast<void>(sampler_)};
                 if (!scheduler_->renderAndPresent(*swapchain_, color, *pipeline_, *vertexBuffer_, *indexBuffer_,
                                                   bindingSet_->descriptorSet(frameIndex),
-                                                  static_cast<uint32_t>(CUBE_INDICES.size()), inFlightResources))
+                                                  static_cast<uint32_t>(CUBE_INDICES.size()),
+                                                  [&recordUi](VkCommandBuffer commandBuffer) {
+                                                      if (recordUi)
+                                                          recordUi(static_cast<void*>(commandBuffer));
+                                                  },
+                                                  inFlightResources))
                     needsRebuild_ = true;
+            }
+
+            Integration::ImGuiRenderer& imgui()
+            {
+                return *imguiRenderer_;
             }
 
         private:
@@ -257,6 +270,9 @@ namespace Incubator
                             device_, swapchain_->format(), depthFormat_, bindingSet_->layout(), vertexShader_,
                             fragmentShader_);
                     }
+                    imguiRenderer_->initializeVulkan(instance_.handle(), device_.physicalDevice(), device_.handle(),
+                                                     device_.queueFamilies().graphics, device_.graphicsQueue(),
+                                                     swapchain_->format(), depthFormat_, swapchain_->imageCount());
                 }
                 requestedWidth_ = width;
                 requestedHeight_ = height;
@@ -280,6 +296,7 @@ namespace Incubator
             std::unique_ptr<Vulkan::VulkanSwapchain> swapchain_;
             std::unique_ptr<Vulkan::VulkanPipeline> pipeline_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
+            std::unique_ptr<Integration::ImGuiRenderer> imguiRenderer_;
             VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
             const std::chrono::steady_clock::time_point startTime_ = std::chrono::steady_clock::now();
             int requestedWidth_ = 0;
@@ -298,11 +315,19 @@ namespace Incubator
 
         Renderer& Renderer::operator=(Renderer&&) noexcept = default;
 
-        void Renderer::drawFrame(const std::array<float, 4>& clearColor)
+        void Renderer::drawFrame(const std::array<float, 4>& clearColor,
+                                 const std::function<void(void*)>& recordUi)
         {
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
-            impl_->drawFrame(clearColor);
+            impl_->drawFrame(clearColor, recordUi);
+        }
+
+        Integration::ImGuiRenderer& Renderer::imgui()
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            return impl_->imgui();
         }
     }  // namespace Render
 }  // namespace Incubator

@@ -58,6 +58,7 @@ set(RESOURCE_SOURCES
 # render 模块头文件、源文件
 set(RENDER_HEADERS
     render/renderer.h
+    render/integration/imgui_renderer.h
     render/vulkan/vulkan_swapchain.h
     render/vulkan/vulkan_frame_scheduler.h
     render/vulkan/vulkan_pipeline.h
@@ -72,6 +73,7 @@ set(RENDER_HEADERS
 )
 set(RENDER_SOURCES
     render/renderer.cpp
+    render/integration/imgui_renderer.cpp
     render/vulkan/vulkan_swapchain.cpp
     render/vulkan/vulkan_frame_scheduler.cpp
     render/vulkan/vulkan_pipeline.cpp
@@ -122,6 +124,7 @@ target_link_libraries(${TARGET_NAME} PUBLIC spdlog::spdlog)
 target_link_libraries(${TARGET_NAME} PUBLIC fmt::fmt)
 target_link_libraries(${TARGET_NAME} PUBLIC glfw)
 target_link_libraries(${TARGET_NAME} PUBLIC utf8::utf8cpp)
+target_link_libraries(${TARGET_NAME} PRIVATE imgui)
 
 # Render owns the Vulkan integration. Keep it private because public Runtime headers
 # do not expose Vulkan types. The bundled Vulkan target is currently Windows-only.

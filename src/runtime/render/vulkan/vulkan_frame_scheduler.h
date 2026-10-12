@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <vector>
@@ -40,6 +41,7 @@ namespace Incubator
                                      const VulkanPipeline& pipeline, const VulkanBuffer& vertexBuffer,
                                      const VulkanBuffer& indexBuffer, VkDescriptorSet descriptorSet,
                                      uint32_t indexCount,
+                                     const std::function<void(VkCommandBuffer)>& recordUi,
                                      std::span<const std::shared_ptr<void>> inFlightResources = {});
 
             private:

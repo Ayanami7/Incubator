@@ -2,6 +2,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include <functional>
+
 namespace Incubator
 {
     namespace Render
@@ -20,7 +22,8 @@ namespace Incubator
                                           const VulkanPipeline& pipeline, const VulkanBuffer& vertexBuffer,
                                           const VulkanBuffer& indexBuffer, VkImage depthImage,
                                           VkImageView depthView,
-                                          VkDescriptorSet descriptorSet, uint32_t indexCount);
+                                          VkDescriptorSet descriptorSet, uint32_t indexCount,
+                                          const std::function<void(VkCommandBuffer)>& recordUi);
             };
         }  // namespace Vulkan
     }  // namespace Render

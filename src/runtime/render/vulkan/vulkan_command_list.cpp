@@ -29,7 +29,8 @@ namespace Incubator
                                                   const VulkanPipeline& pipeline,
                                                   const VulkanBuffer& vertexBuffer, const VulkanBuffer& indexBuffer,
                                                   VkImage depthImage, VkImageView depthView,
-                                                  VkDescriptorSet descriptorSet, uint32_t indexCount)
+                                                  VkDescriptorSet descriptorSet, uint32_t indexCount,
+                                                  const std::function<void(VkCommandBuffer)>& recordUi)
             {
                 VkCommandBufferBeginInfo beginInfo{};
                 beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -110,6 +111,8 @@ namespace Incubator
                 vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexHandle, &vertexOffset);
                 vkCmdBindIndexBuffer(commandBuffer, indexBuffer.handle(), 0, VK_INDEX_TYPE_UINT16);
                 vkCmdDrawIndexed(commandBuffer, indexCount, 1, 0, 0, 0);
+                if (recordUi)
+                    recordUi(commandBuffer);
                 vkCmdEndRendering(commandBuffer);
 
                 VkImageMemoryBarrier2 toPresent{};

@@ -3,9 +3,12 @@
 #include <exception>
 #include <thread>
 
+#include <imgui.h>
+
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/platform/window/window.h"
+#include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
 
 int main()
@@ -28,12 +31,23 @@ int main()
         constexpr auto validationMode = Incubator::Render::RendererValidationMode::Disabled;
 #endif
         Incubator::Render::Renderer renderer(*window, validationMode);
-        constexpr std::array<float, 4> clearColor = {0.12f, 0.16f, 0.22f, 1.0f};
+        std::array<float, 4> clearColor = {0.12f, 0.16f, 0.22f, 1.0f};
 
         while (!window->shouldClose())
         {
             window->pollEvents();
-            renderer.drawFrame(clearColor);
+            renderer.imgui().beginFrame();
+            ImGui::Begin("Incubator Demo");
+            ImGui::Text("Vulkan textured cube");
+            ImGui::ColorEdit3("Clear color", clearColor.data());
+            ImGui::Text("Application controls events; Renderer owns frame submission.");
+            ImGui::End();
+            renderer.imgui().endFrame();
+
+            void* uiDrawData = renderer.imgui().drawData();
+            renderer.drawFrame(clearColor, [&renderer, uiDrawData](void* commandBuffer) {
+                renderer.imgui().recordDrawData(uiDrawData, commandBuffer);
+            });
             if (window->isIconified())
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
