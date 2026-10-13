@@ -41,3 +41,10 @@
 - 变更：增加正常帧/跳帧日志频率、获取图像后 resize 恢复与诊断消息传递测试；重建原因文字统一为 status recovery。
 - 验证：基于 `d72a04c` 加本条修订，Debug / all 构建和三个测试通过。20 个正常帧仅一次创建日志；resize 仅一次对应重建日志；零 framebuffer 的连续跳帧无新增日志。获取图像后 resize 实际触发 present OUT_OF_DATE，下一帧重建为 710x430 并恢复 UI，Required Validation 无非预期 warning/error。
 - 诊断测试：两条明确标记的注入 warning/error 均进入日志，属于预期测试消息；SUBOPTIMAL 本轮未由驱动返回，静态保留其 acquire/present 日志分支。
+
+## R-03 Validation 构建策略
+
+- 可行性：无需更改公共默认值。将 Demo 构建策略集中到可直接复用的头文件，由 Debug/Release 编译同一运行测试确认。
+- 变更：Demo Debug=Optional、Release=Disabled；Required 继续用于 GPU 验收。增加已安装 layer 三模式测试、缺失 layer 行为和实际 Demo 构建策略测试。
+- 验证：基于 `41dcfc9` 加本条修订，工作流 Debug / all 构建通过，三个测试通过；独立 `build/review-release` 的 Release Demo/测试构建通过，同样三个测试通过。Debug Demo 策略实际启用 Validation，Release 实际记录 disabled。
+- 缺失场景：测试进程用空 `VK_LAYER_PATH`/`VK_IMPLICIT_LAYER_PATH` 搜索目录，先确认枚举中没有 Khronos layer，再验证 Optional 告警继续、Required 指明缺失组件并失败、Disabled 正常创建。进程环境自动恢复，未修改系统安装；依据 [Khronos loader 搜索约定](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderLayerInterface.md)。缺失场景不计为 Validation 验收，已安装 layer 的 GPU 验收另使用 Required。

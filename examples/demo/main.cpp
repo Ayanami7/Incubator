@@ -15,6 +15,7 @@
 #include "runtime/resource/resource_type.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
+#include "validation_mode.h"
 
 int main()
 {
@@ -43,12 +44,7 @@ int main()
         if (!vertexShader || !fragmentShader)
             throw Incubator::Error::Exception(Incubator::Error::Code::RENDER, "Failed to load Demo shaders");
 
-#ifdef _DEBUG
-        constexpr auto validationMode = Incubator::Render::RendererValidationMode::Optional;
-#else
-        constexpr auto validationMode = Incubator::Render::RendererValidationMode::Disabled;
-#endif
-        Incubator::Render::Renderer renderer(*window, *vertexShader, *fragmentShader, validationMode);
+        Incubator::Render::Renderer renderer(*window, *vertexShader, *fragmentShader, Incubator::Demo::VALIDATION_MODE);
         resources.release(vertexShaderId);
         resources.release(fragmentShaderId);
         resources.reset();

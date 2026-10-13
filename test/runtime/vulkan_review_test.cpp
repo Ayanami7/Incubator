@@ -5,12 +5,15 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <sstream>
 #include <string_view>
 #include <vector>
 
+#include "examples/demo/validation_mode.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/platform/fileio/fileio.h"
@@ -47,6 +50,31 @@ namespace
             ++count;
         return count;
     }
+
+    class EmptyLayerSearch
+    {
+    public:
+        EmptyLayerSearch()
+        {
+            const auto empty = std::filesystem::absolute("review/empty-layers");
+            std::filesystem::create_directories(empty);
+            for (size_t index = 0; index < names_.size(); ++index)
+            {
+                const auto* current = std::getenv(names_[index]);
+                previous_[index] = current ? current : "";
+                _putenv_s(names_[index], empty.string().c_str());
+            }
+        }
+        ~EmptyLayerSearch()
+        {
+            for (size_t index = 0; index < names_.size(); ++index)
+                _putenv_s(names_[index], previous_[index].c_str());
+        }
+
+    private:
+        const std::array<const char*, 2> names_ = {"VK_LAYER_PATH", "VK_IMPLICIT_LAYER_PATH"};
+        std::array<std::string, 2> previous_;
+    };
 
     class ShaderAssets
     {
@@ -406,5 +434,68 @@ namespace
         EXPECT_NE(messages_.str().find("warning|Review injected warning"), std::string::npos);
         EXPECT_NE(messages_.str().find("error|Review injected error with operation/VkResult evidence"),
                   std::string::npos);
+    }
+    TEST_F(VulkanReviewTest, ValidationModesWithInstalledLayer)
+    {
+        auto window = createWindow();
+        for (const auto mode : {ValidationMode::Optional, ValidationMode::Required, ValidationMode::Disabled})
+        {
+            VulkanInstance instance(requiredExtensions(), mode);
+            EXPECT_EQ(instance.validationEnabled(), mode != ValidationMode::Disabled);
+        }
+        EXPECT_EQ(messages_.str().find("warning|"), std::string::npos);
+        EXPECT_EQ(messages_.str().find("error|"), std::string::npos);
+    }
+
+    TEST_F(VulkanReviewTest, MissingLayerOptionalWarnsAndRequiredFails)
+    {
+        auto window = createWindow();
+        EmptyLayerSearch missing;
+        uint32_t count = 0;
+        ASSERT_EQ(vkEnumerateInstanceLayerProperties(&count, nullptr), VK_SUCCESS);
+        std::vector<VkLayerProperties> layers(count);
+        ASSERT_EQ(vkEnumerateInstanceLayerProperties(&count, layers.data()), VK_SUCCESS);
+        ASSERT_FALSE(std::any_of(layers.begin(), layers.end(), [](const auto& layer) {
+            return std::string_view(layer.layerName) == "VK_LAYER_KHRONOS_validation";
+        }));
+        {
+            VulkanInstance optional(requiredExtensions(), ValidationMode::Optional);
+            EXPECT_FALSE(optional.validationEnabled());
+        }
+        EXPECT_NE(messages_.str().find("continuing without validation"), std::string::npos);
+        try
+        {
+            VulkanInstance required(requiredExtensions(), ValidationMode::Required);
+            FAIL() << "Required mode accepted a missing layer";
+        }
+        catch (const Error::Exception& error)
+        {
+            EXPECT_NE(error.message().find("Required Vulkan validation component is unavailable"), std::string::npos);
+        }
+        VulkanInstance disabled(requiredExtensions(), ValidationMode::Disabled);
+        EXPECT_FALSE(disabled.validationEnabled());
+    }
+
+    TEST_F(VulkanReviewTest, DefaultDemoPolicyMatchesBuild)
+    {
+        auto window = createWindow();
+        ShaderAssets shaders;
+#ifdef _DEBUG
+        EXPECT_EQ(Demo::VALIDATION_MODE, RendererValidationMode::Optional);
+#else
+        EXPECT_EQ(Demo::VALIDATION_MODE, RendererValidationMode::Disabled);
+#endif
+        {
+            Renderer renderer(*window, *shaders.vertex, *shaders.fragment, Demo::VALIDATION_MODE);
+            for (int frame = 0; frame < 5; ++frame)
+                EXPECT_GT(drawUiFrame(*window, renderer), 0);
+        }
+#ifdef _DEBUG
+        EXPECT_NE(messages_.str().find("validation: enabled"), std::string::npos);
+#else
+        EXPECT_NE(messages_.str().find("validation: disabled"), std::string::npos);
+#endif
+        EXPECT_EQ(messages_.str().find("warning|"), std::string::npos);
+        EXPECT_EQ(messages_.str().find("error|"), std::string::npos);
     }
 }  // namespace
