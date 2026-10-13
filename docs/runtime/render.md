@@ -8,7 +8,7 @@ Render 是 IncubatorRuntime 中的 Function 层模块，负责把应用准备的
 
 - Vulkan 1.3；设备必须支持并启用 Dynamic Rendering 与 Synchronization2。
 - Windows、单窗口、主线程录制；上传和绘制使用同一图形队列。
-- 显存分配器在任务 05 开始前另行审核，本模块当前不引入 VMA。
+- GPU 内存采用任务 05 已确定的 Vulkan 原生逐 Buffer/Image 分配；当前不引入 VMA 或自研显存池。
 
 任务 02 的验证模式在初始化配置中选择 `Disabled`、`Optional` 或 `Required`。Demo 的 Debug 构建采用 `Optional`：缺少 Khronos Validation Layer 或 `VK_EXT_debug_utils` 时记录告警并继续；`Required` 缺少任一组件时初始化失败。Release Demo 默认禁用 Validation。
 
@@ -63,4 +63,6 @@ ImGui 接入后，应用通过 UI 适配层开始 UI 帧、构建界面并结束
 
 ## 后续实施边界
 
-当前实现范围限于清屏，不包含通用帧状态机、帧取消协议或 GPU 分配器；GPU 分配策略留待任务 05 审核。
+任务 01–08 已实现设备与交换链管理、动态渲染、纹理立方体和深度绘制、ImGui 叠加，以及 ResourceManager 的 SPIR-V CPU 加载链路。Buffer/Image 各自拥有 Vulkan 原生内存分配，帧调度器负责提交完成后的资源释放；实现状态不等于 GPU/Validation 验收通过，最终复核结果见 [Vulkan 复核记录](./vulkan_review.md)。
+
+后续范围包括按实际需求评估纹理文件解码、异步加载、热重载、Cook 与资产清单。当前保持单窗口、主线程、同一图形队列上传和绘制；不扩展通用帧状态机、帧取消协议、显存池、多后端或多视口。若资源规模或分配开销成为问题，再另行评估 VMA。
