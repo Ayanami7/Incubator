@@ -48,3 +48,15 @@
 - 变更：Demo Debug=Optional、Release=Disabled；Required 继续用于 GPU 验收。增加已安装 layer 三模式测试、缺失 layer 行为和实际 Demo 构建策略测试。
 - 验证：基于 `41dcfc9` 加本条修订，工作流 Debug / all 构建通过，三个测试通过；独立 `build/review-release` 的 Release Demo/测试构建通过，同样三个测试通过。Debug Demo 策略实际启用 Validation，Release 实际记录 disabled。
 - 缺失场景：测试进程用空 `VK_LAYER_PATH`/`VK_IMPLICIT_LAYER_PATH` 搜索目录，先确认枚举中没有 Khronos layer，再验证 Optional 告警继续、Required 指明缺失组件并失败、Disabled 正常创建。进程环境自动恢复，未修改系统安装；依据 [Khronos loader 搜索约定](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderLayerInterface.md)。缺失场景不计为 Validation 验收，已安装 layer 的 GPU 验收另使用 Required。
+
+## R-05 单交换链图像数量约束
+
+- 可行性：目标 Surface 实际 minImageCount=2、maxImageCount=8，无物理单图像上限条件。现有适配器数量边界可用真实 Instance/Device 验证，无需构建 Surface 模拟系统。
+- 变更：不足两张图像的错误包含实际数量；测试向初始化边界传入 1，确认明确拒绝且未分配 backend，再用 2 成功初始化并清理。
+- 验证：基于 `f4fc78a` 加本条修订，工作流 Debug / all 构建通过，真实 Device 上的数量 1 拒绝、数量 2 初始化及关闭测试通过 Required Validation，无 warning/error。真实 maxImageCount=1 的 Surface 行为未覆盖，不能将边界输入测试写成物理设备覆盖。
+
+## 最终验收
+
+最终修改状态再次通过工作流 Debug / all 构建和完整 CTest：318/318 通过，0 失败，16.51 秒。包含 306 个 CPU/平台用例和 12 个 Vulkan 复核用例；GPU 绘制和生命周期验收使用 Required 并确认 Validation 实际启用。日志消息注入和缺失 layer 测试中的预期诊断有独立断言，不计为 GPU 非预期错误。
+
+八项均完成可行性评估、适用验证和独立本地提交。R-05 为带覆盖说明的完成：当前目标不具备物理单图像 Surface，测试的是初始化边界输入。其他未覆盖项为驱动实际返回 SUBOPTIMAL，以及 Surface extent/framebuffer 异步变化特例；本轮实际覆盖了 OUT_OF_DATE、初始报告零尺寸、可见窗口 resize/最小化恢复、快速关闭与 Debug/Release 策略，不把未覆盖条件写成已运行通过。

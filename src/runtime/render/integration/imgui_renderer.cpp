@@ -50,7 +50,8 @@ namespace Incubator
             {
                 if (imageCount < 2)
                     throw Error::Exception(Error::Code::RENDER,
-                                           "The ImGui Vulkan backend requires at least two swapchain images");
+                                           fmt::format("The ImGui Vulkan backend requires at least two swapchain "
+                                                       "images; received {}", imageCount));
                 if (vulkanInitialized_ && instance_ == instance && physicalDevice_ == physicalDevice &&
                     device_ == device && colorFormat_ == colorFormat && depthFormat_ == depthFormat &&
                     imageCount_ == imageCount)

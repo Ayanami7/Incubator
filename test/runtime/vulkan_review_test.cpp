@@ -498,4 +498,32 @@ namespace
         EXPECT_EQ(messages_.str().find("warning|"), std::string::npos);
         EXPECT_EQ(messages_.str().find("error|"), std::string::npos);
     }
+    TEST_F(VulkanReviewTest, ImGuiRejectsSingleImageBeforeBackendAllocation)
+    {
+        auto window = createWindow();
+        {
+            VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
+            GlfwSurface surface(instance, *window);
+            VulkanDevice device(instance, surface);
+            Integration::ImGuiRenderer adapter(*window);
+            try
+            {
+                adapter.initializeVulkan(instance.handle(), device.physicalDevice(), device.handle(),
+                                         device.queueFamilies().graphics, device.graphicsQueue(),
+                                         VK_FORMAT_B8G8R8A8_UNORM, device.findDepthFormat(), 1);
+                FAIL() << "ImGui accepted a single swapchain image";
+            }
+            catch (const Error::Exception& error)
+            {
+                EXPECT_NE(error.message().find("at least two swapchain images; received 1"), std::string::npos);
+            }
+            EXPECT_EQ(ImGui::GetIO().BackendRendererUserData, nullptr);
+            adapter.initializeVulkan(instance.handle(), device.physicalDevice(), device.handle(),
+                                     device.queueFamilies().graphics, device.graphicsQueue(), VK_FORMAT_B8G8R8A8_UNORM,
+                                     device.findDepthFormat(), 2);
+            EXPECT_NE(ImGui::GetIO().BackendRendererUserData, nullptr);
+            EXPECT_TRUE(ImGui::GetIO().Fonts->IsBuilt());
+        }
+        expectCleanValidation();
+    }
 }  // namespace

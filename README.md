@@ -12,6 +12,7 @@ Incubator 是基于 C++20 和 CMake 的图形渲染器/游戏引擎项目。Runt
 - [CMake 结构](./docs/cmake.md)
 - [开发工作流](./WORKFLOW.md)
 - [Render 模块](./docs/runtime/render.md)
+- [Vulkan 最终复核与验收记录](./docs/runtime/vulkan_review.md)
 - [Resource 模块](./docs/runtime/resource/resource.md)
 - [Vulkan 任务路线图](./.agents/specs/tasks/README.md)
 
