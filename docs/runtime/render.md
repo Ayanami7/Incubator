@@ -67,6 +67,6 @@ ImGui 接入后，应用通过 UI 适配层开始 UI 帧、构建界面并结束
 
 ## 后续实施边界
 
-任务 01–08 已实现设备与交换链管理、动态渲染、纹理立方体和深度绘制、ImGui 叠加，以及 ResourceManager 的 SPIR-V CPU 加载链路。Buffer/Image 各自拥有 Vulkan 原生内存分配，帧调度器负责提交完成后的资源释放；实现状态不等于 GPU/Validation 验收通过，最终复核结果见 [Vulkan 复核记录](./vulkan_review.md)。
+任务 01–08 已实现设备与交换链管理、动态渲染、纹理立方体和深度绘制、ImGui 叠加，以及 ResourceManager 的 SPIR-V CPU 加载链路。Buffer/Image 各自拥有 Vulkan 原生内存分配，帧调度器负责提交完成后的资源释放；实现状态不等于 GPU/Validation 验收通过，最终复核结果见 [Vulkan 复核记录](../../.agents/specs/archived/2026-10-10-vulkan-renderer/verification-report.md)。
 
 后续范围包括按实际需求评估纹理文件解码、异步加载、热重载、Cook 与资产清单。当前保持单窗口、主线程、同一图形队列上传和绘制；不扩展通用帧状态机、帧取消协议、显存池、多后端或多视口。若资源规模或分配开销成为问题，再另行评估 VMA。
