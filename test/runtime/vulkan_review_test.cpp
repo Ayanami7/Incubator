@@ -304,4 +304,19 @@ namespace
         }
         expectCleanValidation();
     }
+    TEST_F(VulkanReviewTest, RapidUiShutdownAfterLastSubmission)
+    {
+        auto window = createWindow();
+        ShaderAssets shaders;
+        for (int cycle = 0; cycle < 12; ++cycle)
+        {
+            Renderer renderer(*window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            int recorded = 0;
+            for (int frame = 0; frame < 1 + cycle % 3; ++frame)
+                recorded += drawUiFrame(*window, renderer);
+            EXPECT_GT(recorded, 0);
+            // No explicit wait here: the destructor must protect the last GPU submission.
+        }
+        expectCleanValidation();
+    }
 }  // namespace

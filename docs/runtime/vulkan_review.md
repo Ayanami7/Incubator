@@ -28,3 +28,9 @@
 - 可行性：首次零尺寸的缺口可在 Renderer/UI 边界修正，不需要通用状态机。GLFW 不允许创建 0x0 窗口，因此测试用 Window 装饰器仅控制报告的 framebuffer 可用性，底层 Surface、设备和绘制仍真实运行；另测试真实窗口最小化/恢复。
 - 变更：`Renderer::beginUiFrame()` 先准备交换链/后端/字体，失败则不开始 ImGui 帧。Demo 和测试遵循返回值；恢复时先初始化后端，避免使用未构建字体或旧纹理标识的 UI 数据。交换链零 extent 仍保留重建请求。
 - 验证：基于 `b99cf04` 加本条修订，Debug / all 构建及四个 Vulkan 测试通过。Required Validation 下，首次报告零 framebuffer 连续五帧不生成 UI，恢复原尺寸后自动开始绘制；真实可见窗口四轮 resize、最小化/恢复并关闭通过，无 warning/error。未强制模拟 Surface currentExtent 与 framebuffer 异步不一致的驱动特例。
+
+## R-04 ImGui 关闭顺序
+
+- 可行性：现有关闭顺序已具有对应等待条件，适合直接做真实 GPU 回归，无需增加重复等待。
+- 静态依据：ImGui 适配器析构时 Device 仍存活，`vkDeviceWaitIdle` 完成引用字体/描述符/绘制缓冲的 GPU 工作后才关闭 backend；调度器随后等待 present fence，回收交换链和呈现信号量。参见 [Device idle](https://docs.vulkan.org/refpages/latest/refpages/source/vkDeviceWaitIdle.html) 与 [present fence](https://docs.vulkan.org/refpages/latest/refpages/source/VkSwapchainPresentFenceInfoKHR.html)；present fence 提供资源回收依据，并不保证等待实际显示呈现结束。
+- 验证：基于 `37fabdf` 加本条回归测试，Debug / all 构建通过。Required Validation 下 12 次创建 Renderer、提交 1–3 个场景/UI 帧后立即销毁，测试未额外等待；所有轮次通过，warning/error 为零。
