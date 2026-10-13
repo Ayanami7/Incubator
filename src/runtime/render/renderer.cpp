@@ -197,7 +197,7 @@ namespace Incubator
 
                 const bool sizeChanged = requestedWidth_ != width || requestedHeight_ != height;
                 const char* rebuildReason = !swapchain_ ? "initialization"
-                                             : needsRebuild_ ? "swapchain status"
+                                             : needsRebuild_ ? "status recovery"
                                              : "framebuffer size changed";
                 if ((!swapchain_ || needsRebuild_ || sizeChanged) && !rebuild(width, height, rebuildReason))
                     return false;

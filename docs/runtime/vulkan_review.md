@@ -34,3 +34,10 @@
 - 可行性：现有关闭顺序已具有对应等待条件，适合直接做真实 GPU 回归，无需增加重复等待。
 - 静态依据：ImGui 适配器析构时 Device 仍存活，`vkDeviceWaitIdle` 完成引用字体/描述符/绘制缓冲的 GPU 工作后才关闭 backend；调度器随后等待 present fence，回收交换链和呈现信号量。参见 [Device idle](https://docs.vulkan.org/refpages/latest/refpages/source/vkDeviceWaitIdle.html) 与 [present fence](https://docs.vulkan.org/refpages/latest/refpages/source/VkSwapchainPresentFenceInfoKHR.html)；present fence 提供资源回收依据，并不保证等待实际显示呈现结束。
 - 验证：基于 `37fabdf` 加本条回归测试，Debug / all 构建通过。Required Validation 下 12 次创建 Renderer、提交 1–3 个场景/UI 帧后立即销毁，测试未额外等待；所有轮次通过，warning/error 为零。
+
+## R-01 日志诊断与频率
+
+- 可行性：现有创建/状态日志覆盖了字段要求，可通过实际绘制、窗口尺寸变化和 debug messenger 消息验证；不增加日志去重系统。
+- 变更：增加正常帧/跳帧日志频率、获取图像后 resize 恢复与诊断消息传递测试；重建原因文字统一为 status recovery。
+- 验证：基于 `d72a04c` 加本条修订，Debug / all 构建和三个测试通过。20 个正常帧仅一次创建日志；resize 仅一次对应重建日志；零 framebuffer 的连续跳帧无新增日志。获取图像后 resize 实际触发 present OUT_OF_DATE，下一帧重建为 710x430 并恢复 UI，Required Validation 无非预期 warning/error。
+- 诊断测试：两条明确标记的注入 warning/error 均进入日志，属于预期测试消息；SUBOPTIMAL 本轮未由驱动返回，静态保留其 acquire/present 日志分支。

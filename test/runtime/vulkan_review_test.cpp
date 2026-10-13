@@ -39,6 +39,15 @@ namespace
         return result;
     }
 
+    size_t countOccurrences(std::string_view messages, std::string_view value)
+    {
+        size_t count = 0;
+        for (size_t position = messages.find(value); position != std::string_view::npos;
+             position = messages.find(value, position + value.size()))
+            ++count;
+        return count;
+    }
+
     class ShaderAssets
     {
     public:
@@ -318,5 +327,84 @@ namespace
             // No explicit wait here: the destructor must protect the last GPU submission.
         }
         expectCleanValidation();
+    }
+    TEST_F(VulkanReviewTest, SwapchainLogsOnlyCreationAndStateChanges)
+    {
+        auto native = createWindow();
+        DeferredFramebufferWindow window(*native);
+        ShaderAssets shaders;
+        {
+            Renderer renderer(window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            for (int frame = 0; frame < 10; ++frame)
+                EXPECT_FALSE(renderer.beginUiFrame());
+            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain "), 0u);
+            window.drawable = true;
+            for (int frame = 0; frame < 20; ++frame)
+                drawUiFrame(window, renderer);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain initialization:"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain "), 1u);
+            EXPECT_NE(messages_.str().find("640x360, format "), std::string::npos);
+            EXPECT_NE(messages_.str().find("images, present mode FIFO"), std::string::npos);
+            glfwSetWindowSize(static_cast<GLFWwindow*>(native->getNativeHandle()), 720, 440);
+            for (int frame = 0; frame < 10; ++frame)
+                drawUiFrame(window, renderer);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain framebuffer size changed:"), 1u);
+            const auto beforeSkip = messages_.str();
+            window.drawable = false;
+            for (int frame = 0; frame < 10; ++frame)
+                EXPECT_FALSE(renderer.beginUiFrame());
+            EXPECT_EQ(messages_.str(), beforeSkip);
+            window.drawable = true;
+            EXPECT_GT(drawUiFrame(window, renderer), 0);
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, ResizeAfterAcquirePreservesFrameAndRebuilds)
+    {
+        auto window = createWindow();
+        ShaderAssets shaders;
+        {
+            Renderer renderer(*window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            ASSERT_TRUE(renderer.beginUiFrame());
+            ImGui::Begin("Resize during acquired frame");
+            ImGui::Text("Review");
+            ImGui::End();
+            renderer.imgui().endFrame();
+            auto* data = renderer.imgui().drawData();
+            renderer.drawFrame({0.1f, 0.2f, 0.3f, 1.0f}, [&](void* commands) {
+                renderer.imgui().recordDrawData(data, commands);
+                glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 710, 430);
+            });
+            int recorded = 0;
+            for (int frame = 0; frame < 10; ++frame)
+                recorded += drawUiFrame(*window, renderer);
+            EXPECT_GT(recorded, 0);
+            EXPECT_NE(messages_.str().find("710x430"), std::string::npos);
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, DebugMessengerPreservesInjectedWarningAndError)
+    {
+        auto window = createWindow();
+        {
+            VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
+            const auto submit = reinterpret_cast<PFN_vkSubmitDebugUtilsMessageEXT>(
+                vkGetInstanceProcAddr(instance.handle(), "vkSubmitDebugUtilsMessageEXT"));
+            ASSERT_NE(submit, nullptr);
+            VkDebugUtilsMessengerCallbackDataEXT data{};
+            data.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CALLBACK_DATA_EXT;
+            data.pMessageIdName = "INCUBATOR_REVIEW_INJECTION";
+            data.pMessage = "Review injected warning";
+            submit(instance.handle(), VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT,
+                   VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT, &data);
+            data.pMessage = "Review injected error with operation/VkResult evidence";
+            submit(instance.handle(), VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+                   VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT, &data);
+        }
+        EXPECT_NE(messages_.str().find("warning|Review injected warning"), std::string::npos);
+        EXPECT_NE(messages_.str().find("error|Review injected error with operation/VkResult evidence"),
+                  std::string::npos);
     }
 }  // namespace
