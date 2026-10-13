@@ -57,7 +57,11 @@ int main()
         while (!window->shouldClose())
         {
             window->pollEvents();
-            renderer.imgui().beginFrame();
+            if (!renderer.beginUiFrame())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
             ImGui::Begin("Incubator Demo");
             ImGui::Text("Vulkan textured cube");
             ImGui::ColorEdit3("Clear color", clearColor.data());
@@ -69,8 +73,6 @@ int main()
             renderer.drawFrame(clearColor, [&renderer, uiDrawData](void* commandBuffer) {
                 renderer.imgui().recordDrawData(uiDrawData, commandBuffer);
             });
-            if (window->isIconified())
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
     catch (const Incubator::Error::Exception& error)

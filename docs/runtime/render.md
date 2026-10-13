@@ -47,7 +47,7 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 
 `Integration::ImGuiRenderer` 将仓库内 ImGui 1.91.9b 的 GLFW 与 Vulkan 后端接入 Runtime。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色和深度格式。交换链图像数量或附件格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭或重配置时适配器先调用 `vkDeviceWaitIdle`，再释放 ImGui Vulkan 资源。后端要求交换链至少有两个图像，数量不足时明确报渲染错误。
 
-Demo 每轮先轮询事件，再调用 `renderer.imgui().beginFrame()`、使用 ImGui API 构建界面并调用 `endFrame()`。`drawData()` 返回仅供本次 `Renderer::drawFrame` 使用的数据；Renderer 在场景 indexed draw 后、结束同一动态渲染作用域前执行 UI 录制回调。UI 数据不跨帧保留；窗口尺寸为零或 acquire 结果要求跳帧时，回调不执行，下一轮由应用生成新 UI 数据。颜色附件使用 CLEAR 加载和 STORE 保存，因此 UI 叠加时保留场景颜色。
+Demo 每轮先轮询事件，再调用 `renderer.beginUiFrame()`。Renderer 在此入口准备交换链、ImGui Vulkan 后端与字体图集，成功才开始 UI 帧；首次零尺寸、最小化或暂不可创建时返回 false，应用跳过本轮 UI 构建及绘制。成功后应用使用 ImGui API 构建界面并通过适配器调用 `endFrame()`。`drawData()` 返回仅供本次 `Renderer::drawFrame` 使用的数据；Renderer 在场景 indexed draw 后、结束同一动态渲染作用域前执行 UI 录制回调。UI 数据不跨帧保留；acquire 结果要求跳帧时不提交本轮数据，下一轮在准备后端后重新生成 UI。颜色附件使用 CLEAR 加载和 STORE 保存，因此 UI 叠加时保留场景颜色。
 
 Demo 构建时调用仓库内的 `glslangValidator.exe`，将 `assets/shaders/cube.vert` 和 `.frag` 编译到构建目录的 `assets/shaders/`，目标为 GLSL 450、Vulkan 1.3 与 SPIR-V 1.6。Demo 注册 `shaders/cube.vert.spv` 与 `shaders/cube.frag.spv` 两个 `ResourceType::SHADER`，由 `ShaderLoader` 按资源根约定映射到构建目录的 `assets/shaders/`，并通过 `Resource::Loader::readSpirv` 读取和验证。`ShaderResource` 拥有 CPU 字载荷；Demo 将资源借给 Renderer 构造，Renderer 复制载荷后 Demo 即可释放 CPU Resource。Vulkan Pipeline 创建 ShaderModule 时借用 Renderer 的字数组，Pipeline 创建完成后临时 ShaderModule 即销毁；Renderer 保留自己的 CPU 副本以支持交换链格式变化后的 Pipeline 重建。CPU Resource 的 release 不决定 GPU Pipeline 的销毁时机。
 

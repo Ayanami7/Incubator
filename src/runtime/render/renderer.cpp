@@ -187,22 +187,35 @@ namespace Incubator
                     rebuild(width, height, "initialization");
             }
 
-            void drawFrame(const std::array<float, 4>& clearColor,
-                           const std::function<void(void*)>& recordUi)
+            bool prepareFrame()
             {
                 int width = 0;
                 int height = 0;
                 window_.getFramebufferSize(width, height);
-                if (width <= 0 || height <= 0)
-                    return;
+                if (width <= 0 || height <= 0 || window_.isIconified())
+                    return false;
 
                 const bool sizeChanged = requestedWidth_ != width || requestedHeight_ != height;
                 const char* rebuildReason = !swapchain_ ? "initialization"
                                              : needsRebuild_ ? "swapchain status"
                                              : "framebuffer size changed";
                 if ((!swapchain_ || needsRebuild_ || sizeChanged) && !rebuild(width, height, rebuildReason))
-                    return;
-                if (!swapchain_ || swapchain_->handle() == VK_NULL_HANDLE)
+                    return false;
+                return swapchain_ && swapchain_->handle() != VK_NULL_HANDLE;
+            }
+
+            bool beginUiFrame()
+            {
+                if (!prepareFrame())
+                    return false;
+                imguiRenderer_->beginFrame();
+                return true;
+            }
+
+            void drawFrame(const std::array<float, 4>& clearColor,
+                           const std::function<void(void*)>& recordUi)
+            {
+                if (!prepareFrame())
                     return;
 
                 const uint32_t frameIndex = scheduler_->currentFrameIndex();
@@ -332,6 +345,13 @@ namespace Incubator
         Renderer::Renderer(Renderer&&) noexcept = default;
 
         Renderer& Renderer::operator=(Renderer&&) noexcept = default;
+
+        bool Renderer::beginUiFrame()
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            return impl_->beginUiFrame();
+        }
 
         void Renderer::drawFrame(const std::array<float, 4>& clearColor,
                                  const std::function<void(void*)>& recordUi)

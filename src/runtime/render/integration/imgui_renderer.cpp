@@ -94,8 +94,7 @@ namespace Incubator
 
             void ImGuiRenderer::beginFrame()
             {
-                if (vulkanInitialized_)
-                    ImGui_ImplVulkan_NewFrame();
+                ImGui_ImplVulkan_NewFrame();
                 ImGui_ImplGlfw_NewFrame();
                 ImGui::NewFrame();
             }

@@ -71,6 +71,56 @@ namespace
         Resource::ResourceId fragmentId_;
     };
 
+    // Simulates the application's initial unavailable framebuffer without mocking Vulkan.
+    class DeferredFramebufferWindow final : public Window::Window
+    {
+    public:
+        explicit DeferredFramebufferWindow(Incubator::Window::Window& native) : native_(native) {}
+        bool shouldClose() const override
+        {
+            return native_.shouldClose();
+        }
+        void setShouldClose(bool value) override
+        {
+            native_.setShouldClose(value);
+        }
+        void pollEvents() override
+        {
+            native_.pollEvents();
+        }
+        void getFramebufferSize(int& width, int& height) const override
+        {
+            if (drawable)
+                native_.getFramebufferSize(width, height);
+            else
+                width = height = 0;
+        }
+        void getWindowSize(int& width, int& height) const override
+        {
+            native_.getWindowSize(width, height);
+        }
+        void setTitle(std::string_view title) override
+        {
+            native_.setTitle(title);
+        }
+        bool isIconified() const override
+        {
+            return native_.isIconified();
+        }
+        float getContentScale() const override
+        {
+            return native_.getContentScale();
+        }
+        void* getNativeHandle() const override
+        {
+            return native_.getNativeHandle();
+        }
+        bool drawable = false;
+
+    private:
+        Incubator::Window::Window& native_;
+    };
+
     class VulkanReviewTest : public ::testing::Test
     {
     protected:
@@ -105,7 +155,8 @@ namespace
         int drawUiFrame(Window::Window& window, Renderer& renderer)
         {
             window.pollEvents();
-            renderer.imgui().beginFrame();
+            if (!renderer.beginUiFrame())
+                return 0;
             ImGui::Begin("Vulkan review");
             ImGui::Text("Textured cube and UI lifecycle verification");
             ImGui::End();
@@ -190,6 +241,63 @@ namespace
                                   360 + cycle * 20);
                 int recorded = 0;
                 for (int frame = 0; frame < 5; ++frame)
+                    recorded += drawUiFrame(*window, renderer);
+                EXPECT_GT(recorded, 0);
+            }
+        }
+        expectCleanValidation();
+    }
+    TEST_F(VulkanReviewTest, FirstZeroFramebufferRestoresUiWithoutExtraResize)
+    {
+        auto native = createWindow();
+        DeferredFramebufferWindow window(*native);
+        ShaderAssets shaders;
+        {
+            Renderer renderer(window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            EXPECT_EQ(ImGui::GetIO().BackendRendererUserData, nullptr);
+            for (int frame = 0; frame < 5; ++frame)
+                EXPECT_FALSE(renderer.beginUiFrame());
+            EXPECT_EQ(ImGui::GetFrameCount(), 0);
+            window.drawable = true;
+            int recorded = 0;
+            for (int frame = 0; frame < 10; ++frame)
+                recorded += drawUiFrame(window, renderer);
+            EXPECT_GT(recorded, 0);
+            EXPECT_NE(ImGui::GetIO().BackendRendererUserData, nullptr);
+            EXPECT_TRUE(ImGui::GetIO().Fonts->IsBuilt());
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, VisibleWindowMinimizeRestoreAndResize)
+    {
+        auto window = createWindow(true);
+        ShaderAssets shaders;
+        {
+            Renderer renderer(*window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            auto* native = static_cast<GLFWwindow*>(window->getNativeHandle());
+            for (int cycle = 0; cycle < 4; ++cycle)
+            {
+                glfwSetWindowSize(native, 680 + cycle * 20, 400 + cycle * 10);
+                EXPECT_GT(drawUiFrame(*window, renderer), 0);
+                glfwIconifyWindow(native);
+                for (int attempt = 0; attempt < 100 && !window->isIconified(); ++attempt)
+                {
+                    window->pollEvents();
+                    glfwWaitEventsTimeout(0.005);
+                }
+                ASSERT_TRUE(window->isIconified());
+                for (int frame = 0; frame < 5; ++frame)
+                    EXPECT_EQ(drawUiFrame(*window, renderer), 0);
+                glfwRestoreWindow(native);
+                for (int attempt = 0; attempt < 100 && window->isIconified(); ++attempt)
+                {
+                    window->pollEvents();
+                    glfwWaitEventsTimeout(0.005);
+                }
+                ASSERT_FALSE(window->isIconified());
+                int recorded = 0;
+                for (int frame = 0; frame < 10; ++frame)
                     recorded += drawUiFrame(*window, renderer);
                 EXPECT_GT(recorded, 0);
             }

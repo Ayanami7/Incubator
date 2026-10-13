@@ -22,3 +22,9 @@
 - 变更：补全最低实例/设备扩展与 feature 要求及不支持时的诊断；新增 Required Validation 的实际设备能力、绘制/resize/关闭测试。
 - 验证：基于 `69ff53e` 加本条修订，Debug / all 构建和两个 GPU 测试通过，Required Validation 实际启用，warning/error 为零。设备 NVIDIA GeForce RTX 5070 Ti，API 1.4.325，driverVersion 2480242688，graphics/present family 均为 0；Surface minImageCount=2、maxImageCount=8。
 - 运行：验证必要实例扩展、设备扩展和三个 feature；绘制场景与 UI 共 20 帧，连续四次尺寸配置后自动重建并正常关闭。该目标满足当前要求，不推广为其他硬件兼容结论。
+
+## R-06 首次零尺寸与 UI 就绪
+
+- 可行性：首次零尺寸的缺口可在 Renderer/UI 边界修正，不需要通用状态机。GLFW 不允许创建 0x0 窗口，因此测试用 Window 装饰器仅控制报告的 framebuffer 可用性，底层 Surface、设备和绘制仍真实运行；另测试真实窗口最小化/恢复。
+- 变更：`Renderer::beginUiFrame()` 先准备交换链/后端/字体，失败则不开始 ImGui 帧。Demo 和测试遵循返回值；恢复时先初始化后端，避免使用未构建字体或旧纹理标识的 UI 数据。交换链零 extent 仍保留重建请求。
+- 验证：基于 `b99cf04` 加本条修订，Debug / all 构建及四个 Vulkan 测试通过。Required Validation 下，首次报告零 framebuffer 连续五帧不生成 UI，恢复原尺寸后自动开始绘制；真实可见窗口四轮 resize、最小化/恢复并关闭通过，无 warning/error。未强制模拟 Surface currentExtent 与 framebuffer 异步不一致的驱动特例。

@@ -44,6 +44,9 @@ namespace Incubator
             Renderer(Renderer&&) noexcept;
             Renderer& operator=(Renderer&&) noexcept;
 
+            // Prepares swapchain/backend before generating UI data; false skips this UI frame.
+            bool beginUiFrame();
+
             // The callback runs inside the active color/depth rendering scope. Its opaque
             // argument is the native command buffer, valid only for this invocation.
             void drawFrame(const std::array<float, 4>& clearColor,
