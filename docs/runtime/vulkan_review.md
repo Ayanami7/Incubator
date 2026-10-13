@@ -15,3 +15,10 @@
 - 可行性：Manager 已提供统一异常门面，无需改变 Loader 行为或增加捕获层。CPU 加载可独立验证。
 - 变更：统一 LoaderBase 与 Loader 文档；增加 ShaderLoader 成功加载/卸载、直接异常与门面单次日志、格式失败后重试测试。启用顶层 CTest 和测试文件自动发现。
 - 验证：基于 `9fc555a` 加本条修订，Debug / all 构建通过；ShaderLoader、TextLoader、ResourceManager 三个测试目标全部通过。覆盖正常 nullptr、异常失败、单次诊断、载荷挂载/卸载和失败后重试。
+
+## R-02 目标设备与扩展基线
+
+- 可行性：用户已确认本机 Windows + RTX 5070 Ti 为本轮目标，保留 maintenance1 单一路径；不增加兼容实现。
+- 变更：补全最低实例/设备扩展与 feature 要求及不支持时的诊断；新增 Required Validation 的实际设备能力、绘制/resize/关闭测试。
+- 验证：基于 `69ff53e` 加本条修订，Debug / all 构建和两个 GPU 测试通过，Required Validation 实际启用，warning/error 为零。设备 NVIDIA GeForce RTX 5070 Ti，API 1.4.325，driverVersion 2480242688，graphics/present family 均为 0；Surface minImageCount=2、maxImageCount=8。
+- 运行：验证必要实例扩展、设备扩展和三个 feature；绘制场景与 UI 共 20 帧，连续四次尺寸配置后自动重建并正常关闭。该目标满足当前要求，不推广为其他硬件兼容结论。

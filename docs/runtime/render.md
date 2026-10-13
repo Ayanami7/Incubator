@@ -10,6 +10,8 @@ Render 是 IncubatorRuntime 中的 Function 层模块，负责把应用准备的
 - Windows、单窗口、主线程录制；上传和绘制使用同一图形队列。
 - GPU 内存采用任务 05 已确定的 Vulkan 原生逐 Buffer/Image 分配；当前不引入 VMA 或自研显存池。
 
+本轮确认的设备目标为 Windows 上的 NVIDIA GeForce RTX 5070 Ti。最低要求包括 Vulkan loader/设备 API 1.3、GLFW 所需 Surface 实例扩展、`VK_KHR_get_surface_capabilities2`、`VK_EXT_surface_maintenance1`，设备扩展 `VK_KHR_swapchain`、`VK_EXT_swapchain_maintenance1`，以及 `dynamicRendering`、`synchronization2`、`swapchainMaintenance1` feature 和图形/呈现队列。当前保持这条呈现同步路径；其他设备不因 API 版本足够而自动视为受支持。
+
 任务 02 的验证模式在初始化配置中选择 `Disabled`、`Optional` 或 `Required`。Demo 的 Debug 构建采用 `Optional`：缺少 Khronos Validation Layer 或 `VK_EXT_debug_utils` 时记录告警并继续；`Required` 缺少任一组件时初始化失败。Release Demo 默认禁用 Validation。
 
 `VulkanInstance` 请求 Vulkan 1.3，并在创建前确认 GLFW 必需扩展及 maintenance1 所需的 `VK_KHR_get_surface_capabilities2`、`VK_EXT_surface_maintenance1`。`GlfwSurface` 借用 `Window` 创建 Surface。`VulkanDevice` 按枚举顺序选择首个满足 API 1.3、`VK_KHR_swapchain`、`VK_EXT_swapchain_maintenance1`、图形与呈现队列、非空 Surface 格式/呈现模式，以及 Dynamic Rendering 和 Synchronization2 的物理设备；图形与呈现队列族相同时优先采用该组合，否则分别保存两个队列族。逻辑设备启用并输出这些必需功能信息。maintenance1 用于为呈现操作附加 Fence，确保交换链重建和关闭时可以等待呈现完成再回收旧资源。

@@ -182,8 +182,9 @@ namespace Incubator
                 {
                     throw Error::Exception(
                         Error::Code::RENDER,
-                        "No Vulkan 1.3 device supports graphics, presentation, swapchain maintenance1, dynamic "
-                        "rendering and synchronization2");
+                        "No suitable Vulkan 1.3 device: requires graphics/present queues, VK_KHR_swapchain, "
+                        "VK_EXT_swapchain_maintenance1, dynamicRendering, synchronization2, "
+                        "swapchainMaintenance1 and supported surface formats/present modes");
                 }
 
                 const std::set<uint32_t> uniqueFamilies = {queueFamilies_.graphics, queueFamilies_.present};
@@ -246,7 +247,8 @@ namespace Incubator
                 vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &memoryProperties_);
 
                 Log::Registry::get("Render.Vulkan").info(
-                    "Selected Vulkan device '{}' (API {}.{}; Dynamic Rendering and Synchronization2 enabled; "
+                    "Selected Vulkan device '{}' (API {}.{}; Dynamic Rendering, Synchronization2 and "
+                    "swapchainMaintenance1 enabled; "
                     "graphics queue family {}, present queue family {})",
                     properties_.deviceName, VK_API_VERSION_MAJOR(properties_.apiVersion),
                     VK_API_VERSION_MINOR(properties_.apiVersion), queueFamilies_.graphics, queueFamilies_.present);

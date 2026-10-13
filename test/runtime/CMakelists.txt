@@ -26,5 +26,13 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
 
     # 注册测试到 CMake
     include(GoogleTest)
-    gtest_discover_tests(${TEST_NAME})
+    if(TEST_NAME STREQUAL "vulkan_review_test")
+        target_link_libraries(${TEST_NAME} PRIVATE vulkan imgui)
+        add_dependencies(${TEST_NAME} demo_shaders)
+        gtest_discover_tests(${TEST_NAME}
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+            PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
+    else()
+        gtest_discover_tests(${TEST_NAME})
+    endif()
 endforeach()
