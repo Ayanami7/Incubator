@@ -32,5 +32,6 @@ add_subdirectory(3rdparty)
 add_subdirectory(src)
 
 # 单元测试和示例
+enable_testing()
 add_subdirectory(test)
 add_subdirectory(examples)

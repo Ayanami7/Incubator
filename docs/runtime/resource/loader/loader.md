@@ -14,7 +14,7 @@ class LoaderBase
 public:
     virtual ~LoaderBase() = default;
 
-    // 加载并构建 ResourceObject；失败返回 nullptr（不抛异常）
+    // 加载并构建 ResourceObject；失败可返回 nullptr 或透传加载异常
     virtual std::unique_ptr<ResourceObject> load(const ResourceId& id,
                                                  std::string_view virtualPath) = 0;
 };
@@ -27,8 +27,8 @@ public:
 ## 失败约定
 
 - **返回 nullptr 表示预期失败**（文件缺失等），Loader 内部应记录 error 日志
-- **允许抛异常但不必自行捕获**：底层 IO 的可恢复错误（权限/设备等 `Error::Exception`）可以透传，
-  **异常边界唯一在 Manager 门面**（`ResourceManager::load` 统一捕获转 nullptr）。Loader 自身包 try/catch 属冗余，不推荐
+- **异常失败**：读取/解析异常可透传。经 ResourceManager 加载时，Manager 记录一次错误并转换为 nullptr，Loader 无需重复捕获或记录同一异常。
+- **直接调用**：调用方遵循 Loader 的可抛异常契约并处理失败。Manager 的不抛异常门面语义不改变 Loader 本身的契约。
 
 ## 虚拟路径解析最小约定
 
@@ -54,3 +54,4 @@ Loader 通过构造函数注入 `Incubator::FileIO::FileIO&`（如 `TextLoader(F
 ## 文档索引
 
 - [text_loader.md](./text_loader.md) - 首个实现（文本资源全链路）
+- [shader_loader.md](./shader_loader.md) - SPIR-V CPU 载荷与异常门面接通

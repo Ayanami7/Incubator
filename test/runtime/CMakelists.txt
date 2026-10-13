@@ -1,7 +1,7 @@
 ﻿# test/runtime CMakelists.txt
 
 # 设置测试源文件列表
-file(GLOB TEST_SOURCES "*.cpp")
+file(GLOB TEST_SOURCES CONFIGURE_DEPENDS "*.cpp")
 
 # 创建测试源文件列表
 foreach(TEST_SOURCE ${TEST_SOURCES})
