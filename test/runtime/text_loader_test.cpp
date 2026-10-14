@@ -4,13 +4,17 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <spdlog/sinks/ostream_sink.h>
 
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 
+#include "runtime/core/log/logger.h"
+#include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/resource/loader/text_resource.h"
 #include "runtime/resource/resource_manager.h"
@@ -70,12 +74,16 @@ protected:
 
         ResourceManager::instance().reset();
         ResourceRegistry::instance().clear();
+        Incubator::Log::Registry::reset();
+        Incubator::Log::Registry::get("resource").addSink(
+            std::make_shared<spdlog::sinks::ostream_sink_mt>(messages_));
     }
 
     void TearDown() override
     {
         ResourceManager::instance().reset();
         ResourceRegistry::instance().clear();
+        Incubator::Log::Registry::reset();
 
         fileIO_.reset();
         fs::current_path(originalCwd_);
@@ -86,7 +94,7 @@ protected:
 
     void createAssetFile(std::string_view relativePath, const std::string& content)
     {
-        fs::path full = testDir_ / "assets" / fs::path(relativePath);
+        fs::path full = testDir_ / "assets" / Incubator::Utils::Utf8::toFsPath(relativePath);
         fs::create_directories(full.parent_path());
         std::ofstream ofs(full, std::ios::binary);
         ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
@@ -101,6 +109,7 @@ protected:
     fs::path originalCwd_;
     fs::path testDir_;
     std::unique_ptr<Incubator::FileIO::FileIO> fileIO_;
+    std::ostringstream messages_;
 };
 
 TEST_F(TextLoaderTest, FullChainLoadsTextFile)
@@ -134,6 +143,31 @@ TEST_F(TextLoaderTest, VirtualPathResolvesUnderAssetsRoot)
     TextResource* res = manager.get<TextResource>(id);
     ASSERT_NE(res, nullptr);
     EXPECT_EQ(res->text(), "void main() {}");
+}
+
+TEST_F(TextLoaderTest, LoadsTextFromChinesePath)
+{
+    createAssetFile("素材/角色.txt", "中文资源内容");
+
+    registerTextLoader();
+    auto& manager = ResourceManager::instance();
+    ResourceId id = manager.registerResource(ResourceType::TEXT, "素材/角色.txt");
+
+    ASSERT_TRUE(id.valid());
+    TextResource* res = manager.get<TextResource>(id);
+    ASSERT_NE(res, nullptr);
+    EXPECT_EQ(res->text(), "中文资源内容");
+}
+
+TEST_F(TextLoaderTest, MissingChinesePathIsPreservedInDiagnostic)
+{
+    registerTextLoader();
+    auto& manager = ResourceManager::instance();
+    ResourceId id = manager.registerResource(ResourceType::TEXT, "素材/缺失.txt");
+
+    ASSERT_TRUE(id.valid());
+    EXPECT_EQ(manager.load(id), nullptr);
+    EXPECT_NE(messages_.str().find("assets/素材/缺失.txt"), std::string::npos);
 }
 
 TEST_F(TextLoaderTest, SecondLoadReusesMountedObject)

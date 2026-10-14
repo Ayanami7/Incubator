@@ -33,7 +33,9 @@ public:
 ## 虚拟路径解析最小约定
 
 - Loader 内 `Path::join("assets", virtualPath)` 得到真实相对路径，**不建 VFS**；相对进程工作目录解析
+- 引擎路径字符串按 UTF-8 处理。把 `Path::join` 的结果交给 FileIO 前，必须通过 `Utils::Utf8::toFsPath` 构造 `std::filesystem::path`；诊断输出物理路径时使用 `Utils::Utf8::toUtf8String`。不得依赖 `std::string` 到 `filesystem::path` 的隐式转换或 `generic_string()`。
 - 虚拟路径已在登记边界规范化（拒绝盘符/UNC/越界 `..`），Loader 端无需重复处理文本逃逸
+- 首版资源根固定为进程启动工作目录下的 `assets/`。Demo 从构建目录启动，故读取 `<build>/assets/`；工作目录在资源被持有或缓存对象存在期间保持稳定。开发调试和终端启动命令见 [Task 02](../../../../.agents/specs/tasks/2026-10-13-texture-loading/task-02-asset-path.md)。
 - **VFS 触发条件**：出现多资源根、`.pak` 打包、归档需求时，在 Loader 与 FileIO 之间插入 VFS 层（增量扩展，当前 YAGNI）
 
 ## FileIO 注入

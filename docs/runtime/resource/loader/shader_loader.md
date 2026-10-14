@@ -7,7 +7,9 @@
 
 ## 资源路径与读取
 
-Demo 将 `shaders/cube.vert.spv` 和 `shaders/cube.frag.spv` 注册为 `ResourceType::SHADER`。Loader 按现有资源根约定将路径解析为 `assets/shaders/<name>.spv`，再调用 `Loader::readSpirv`。SPIR-V 长度、字对齐和 magic 检查只在该二进制读取入口执行；ShaderLoader 不复制读文件或格式验证逻辑。编译仍由 Demo 的 CMake shader target 完成，运行时不调用编译器。
+Demo 将 `shaders/cube.vert.spv` 和 `shaders/cube.frag.spv` 注册为 `ResourceType::SHADER`。Loader 按现有资源根约定将 UTF-8 虚拟路径解析为 `assets/shaders/<name>.spv`，通过 `Utils::Utf8::toFsPath` 转换后交给 FileIO。SPIR-V 长度、字对齐和 magic 检查只在该二进制读取入口执行；ShaderLoader 不复制读文件或格式验证逻辑。`readSpirv` 的异常诊断使用 `Utils::Utf8::toUtf8String` 输出物理路径。编译仍由 Demo 的 CMake shader target 完成，运行时不调用编译器。
+
+资源根是启动工作目录下的 `assets/`。Demo 调试和构建产物终端运行均以 `${CMAKE_BINARY_DIR}` 为工作目录，SPIR-V 输出到该目录的 `assets/shaders/`；源码树中的 Shader 输入由构建目标编译生成。完整目录关系与复现命令见 [Task 02 资源路径记录](../../../../.agents/specs/tasks/2026-10-13-texture-loading/task-02-asset-path.md)。加载期间保持工作目录稳定。
 
 ## CPU 与 GPU 所有权
 

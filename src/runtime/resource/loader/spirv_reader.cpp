@@ -6,6 +6,7 @@
 #include <string>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
 
 namespace Incubator
@@ -29,11 +30,12 @@ namespace Incubator
 
             std::vector<uint32_t> readSpirv(FileIO::FileIO& fileIO, const std::filesystem::path& path)
             {
+                const std::string pathUtf8 = Utils::Utf8::toUtf8String(path);
                 auto file = fileIO.open(path, FileIO::OpenMode::Read, FileIO::ShareMode::Read);
                 if (!file)
                 {
                     throw Error::Exception(Error::Code::IO,
-                                           fmt::format("SPIR-V file was not found: {}", path.generic_string()));
+                                           fmt::format("SPIR-V file was not found: {}", pathUtf8));
                 }
 
                 const uint64_t byteCount = file->size();
@@ -41,7 +43,7 @@ namespace Incubator
                     byteCount > std::numeric_limits<size_t>::max())
                 {
                     throw Error::Exception(Error::Code::IO,
-                                           fmt::format("Invalid SPIR-V file size: {}", path.generic_string()));
+                                           fmt::format("Invalid SPIR-V file size: {}", pathUtf8));
                 }
 
                 std::vector<uint32_t> words(static_cast<size_t>(byteCount / sizeof(uint32_t)));
@@ -54,7 +56,7 @@ namespace Incubator
                     if (bytesRead == 0)
                     {
                         throw Error::Exception(Error::Code::IO,
-                                               fmt::format("Incomplete SPIR-V read: {}", path.generic_string()));
+                                               fmt::format("Incomplete SPIR-V read: {}", pathUtf8));
                     }
                     offset += bytesRead;
                 }
@@ -66,7 +68,7 @@ namespace Incubator
                 if (words.front() != SPIRV_MAGIC)
                 {
                     throw Error::Exception(Error::Code::IO,
-                                           fmt::format("Invalid SPIR-V magic number: {}", path.generic_string()));
+                                           fmt::format("Invalid SPIR-V magic number: {}", pathUtf8));
                 }
                 return words;
             }

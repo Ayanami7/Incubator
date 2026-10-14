@@ -7,6 +7,7 @@
 
 #include "runtime/core/log/logger.h"
 #include "runtime/core/path/path.h"
+#include "runtime/core/utils/utf8.h"
 #include "runtime/resource/loader/text_resource.h"
 
 namespace Incubator
@@ -18,13 +19,14 @@ namespace Incubator
         std::unique_ptr<ResourceObject> TextLoader::load(const ResourceId& id,
                                                          std::string_view virtualPath)
         {
-            std::string realPath = Incubator::Path::join("assets", virtualPath);
+            const std::string realPathUtf8 = Incubator::Path::join("assets", virtualPath);
+            const auto realPath = Incubator::Utils::Utf8::toFsPath(realPathUtf8);
 
             uint64_t size = fileio_.getFileSize(realPath);
             auto handle = fileio_.open(realPath, Incubator::FileIO::OpenMode::Read);
             if (!handle)
             {
-                Log::Registry::get("resource").error("TextLoader: cannot open '{}'", realPath);
+                Log::Registry::get("resource").error("TextLoader: cannot open '{}'", realPathUtf8);
                 return nullptr;
             }
 
