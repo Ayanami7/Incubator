@@ -3,11 +3,9 @@
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
-#include <algorithm>
 #include <filesystem>
 #include <mutex>
 #include <unordered_map>
-#include <vector>
 
 #include "runtime/core/utils/utf8.h"
 
@@ -22,8 +20,8 @@ namespace Incubator
             struct RegistryState
             {
                 std::mutex mutex;
-                std::unordered_map<std::string, std::shared_ptr<spdlog::logger>> loggers;
-                std::vector<spdlog::sink_ptr> sinks;
+                std::unordered_map<std::string, Logger> loggers;
+                std::shared_ptr<spdlog::sinks::dist_sink_mt> sinks = std::make_shared<spdlog::sinks::dist_sink_mt>();
                 std::shared_ptr<spdlog::sinks::sink> file_sink;  // 跟踪文件 sink，用于运行时移除
                 Level default_level = Level::INFO;
                 bool initialized = false;
@@ -34,7 +32,7 @@ namespace Incubator
 
                 console_sink->set_pattern(std::string(DEFAULT_PATTERN));
 
-                s.sinks.push_back(console_sink);
+                s.sinks->add_sink(console_sink);
             }
             std::shared_ptr<spdlog::sinks::sink> createFileSink(const FileSinkConfig& config)
             {
@@ -158,13 +156,13 @@ namespace Incubator
 
                 console_sink->set_pattern(std::string(pattern));
 
-                s.sinks.push_back(console_sink);
+                s.sinks->add_sink(console_sink);
             }
 
             if (!file_config.log_dir.empty())
             {
                 s.file_sink = createFileSink(file_config);
-                s.sinks.push_back(s.file_sink);
+                s.sinks->add_sink(s.file_sink);
             }
 
             s.initialized = true;
@@ -188,18 +186,21 @@ namespace Incubator
                 auto it = s.loggers.find(name);
                 if (it != s.loggers.end())
                 {
-                    return Logger(it->second);
+                    return it->second;
                 }
 
-                auto current_sinks = s.sinks;
-                auto new_spd_logger =
-                    std::make_shared<spdlog::logger>(name, current_sinks.begin(), current_sinks.end());
+                // spdlog::logger 的 sink 列表创建后保持不变；动态修改交给带锁的分发 sink。
+                // 每个 logger 独立分发自定义 sink，全局分发器管理共享控制台与文件输出。
+                auto logger_sinks = std::make_shared<spdlog::sinks::dist_sink_mt>();
+                logger_sinks->add_sink(s.sinks);
+                auto new_spd_logger = std::make_shared<spdlog::logger>(name, logger_sinks);
 
                 new_spd_logger->set_level(toSpdLevel(s.default_level));
                 new_spd_logger->flush_on(spdlog::level::err);
 
-                s.loggers[name] = new_spd_logger;
-                return Logger(new_spd_logger);
+                Logger logger(new_spd_logger, logger_sinks);
+                s.loggers.emplace(name, logger);
+                return logger;
             }
         }
 
@@ -211,7 +212,7 @@ namespace Incubator
 
             for (auto& [name, logger] : state().loggers)
             {
-                logger->set_level(toSpdLevel(level));
+                logger.setLevel(level);
             }
         }
 
@@ -221,7 +222,7 @@ namespace Incubator
 
             for (auto& [name, logger] : state().loggers)
             {
-                logger->flush();
+                logger.logger_->flush();
             }
         }
 
@@ -234,17 +235,7 @@ namespace Incubator
             {
                 if (s.file_sink)
                 {
-                    auto& global_sinks = s.sinks;
-                    global_sinks.erase(std::remove(global_sinks.begin(), global_sinks.end(), s.file_sink),
-                                       global_sinks.end());
-
-                    for (auto& [name, logger] : s.loggers)
-                    {
-                        auto& logger_sinks = logger->sinks();
-                        logger_sinks.erase(std::remove(logger_sinks.begin(), logger_sinks.end(), s.file_sink),
-                                           logger_sinks.end());
-                    }
-
+                    s.sinks->remove_sink(s.file_sink);
                     s.file_sink.reset();
                 }
                 return;
@@ -256,12 +247,7 @@ namespace Incubator
             }
 
             s.file_sink = createFileSink(config);
-            s.sinks.push_back(s.file_sink);
-
-            for (auto& [name, logger] : s.loggers)
-            {
-                logger->sinks().push_back(s.file_sink);
-            }
+            s.sinks->add_sink(s.file_sink);
         }
 
         void Registry::reset()
@@ -270,13 +256,14 @@ namespace Incubator
 
             auto& s = state();
             s.loggers.clear();
-            s.sinks.clear();
+            s.sinks = std::make_shared<spdlog::sinks::dist_sink_mt>();
             s.file_sink.reset();
             s.default_level = Level::INFO;
             s.initialized = false;
         }
 
-        Logger::Logger(std::shared_ptr<spdlog::logger> logger) : logger_(std::move(logger)) {}
+        Logger::Logger(std::shared_ptr<spdlog::logger> logger, std::shared_ptr<spdlog::sinks::dist_sink_mt> sinks)
+            : logger_(std::move(logger)), sinks_(std::move(sinks)) {}
 
         bool Logger::isValid() const
         {
@@ -304,7 +291,7 @@ namespace Incubator
         {
             if (logger_ && sink)
             {
-                logger_->sinks().push_back(std::move(sink));
+                sinks_->add_sink(std::move(sink));
             }
         }
 

@@ -2,6 +2,7 @@
 
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/logger.h>
+#include <spdlog/sinks/dist_sink.h>
 
 #include <memory>
 #include <string_view>
@@ -94,7 +95,7 @@ namespace Incubator
             /// @brief 获取此 logger 的当前日志级别
             Level getLevel() const;
 
-            /// @brief 添加自定义 sink
+            /// @brief 添加自定义 sink，可与日志输出并发调用
             /// @param sink spdlog sink（如文件 sink、网络 sink 等）
             void addSink(std::shared_ptr<spdlog::sinks::sink> sink);
 
@@ -148,9 +149,10 @@ namespace Incubator
 
         private:
             friend class Registry;
-            explicit Logger(std::shared_ptr<spdlog::logger> logger);
+            Logger(std::shared_ptr<spdlog::logger> logger, std::shared_ptr<spdlog::sinks::dist_sink_mt> sinks);
 
             std::shared_ptr<spdlog::logger> logger_;
+            std::shared_ptr<spdlog::sinks::dist_sink_mt> sinks_;
         };
 
         /// @brief 将 Exception 输出到日志
