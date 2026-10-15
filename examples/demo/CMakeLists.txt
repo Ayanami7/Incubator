@@ -37,6 +37,12 @@ if(WIN32)
     add_custom_target(demo_shaders DEPENDS "${CUBE_VERTEX_SPIRV}" "${CUBE_FRAGMENT_SPIRV}")
     add_dependencies(${TARGET_NAME} demo_shaders)
     set_target_properties(${TARGET_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+    add_test(NAME DemoUnicodeCommandLine
+        COMMAND "${CMAKE_COMMAND}"
+            "-DDEMO_EXE=$<TARGET_FILE:${TARGET_NAME}>"
+            "-DDEMO_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}"
+            -P "${CMAKE_SOURCE_DIR}/test/examples/demo_unicode_cli.cmake")
 endif()
 
 if(MSVC)

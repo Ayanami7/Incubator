@@ -3,10 +3,13 @@
 #include <array>
 #include <chrono>
 #include <exception>
+#include <filesystem>
+#include <string>
 #include <thread>
 
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
+#include "runtime/core/utils/utf8.h"
 #include "runtime/platform/window/window.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
@@ -14,7 +17,11 @@
 #include "scene_assets.h"
 #include "validation_mode.h"
 
+#ifdef _WIN32
+int wmain(int argc, wchar_t* argv[])
+#else
 int main(int argc, char* argv[])
+#endif
 {
     Incubator::Log::Registry::init();
     auto log = Incubator::Log::Registry::get("Demo");
@@ -28,8 +35,17 @@ int main(int argc, char* argv[])
             return 1;
         }
         Incubator::Demo::SceneAssetPaths paths;
+        std::string texturePath;
         if (argc == 2)
-            paths.texture = argv[1];
+        {
+#ifdef _WIN32
+            // Windows narrow argv uses the system code page, while resource paths are UTF-8.
+            texturePath = Incubator::Utils::Utf8::toUtf8String(std::filesystem::path(argv[1]));
+#else
+            texturePath = argv[1];
+#endif
+            paths.texture = texturePath;
+        }
         log.info("Scene texture: {}", paths.texture);
         Incubator::Demo::SceneAssets assets(paths);
 
