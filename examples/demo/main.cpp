@@ -14,7 +14,7 @@
 #include "scene_assets.h"
 #include "validation_mode.h"
 
-int main()
+int main(int argc, char* argv[])
 {
     Incubator::Log::Registry::init();
     auto log = Incubator::Log::Registry::get("Demo");
@@ -22,13 +22,23 @@ int main()
 
     try
     {
+        if (argc > 2)
+        {
+            log.error("Usage: demo.exe [texture virtual path, e.g. textures/direction_rgba.png]");
+            return 1;
+        }
+        Incubator::Demo::SceneAssetPaths paths;
+        if (argc == 2)
+            paths.texture = argv[1];
+        log.info("Scene texture: {}", paths.texture);
+        Incubator::Demo::SceneAssets assets(paths);
+
         Incubator::Window::WindowDesc windowDesc;
         windowDesc.title = "Incubator Engine";
         windowDesc.width = 1280;
         windowDesc.height = 720;
         auto window = Incubator::Window::createPlatformWindow(windowDesc);
 
-        Incubator::Demo::SceneAssets assets;
         const auto textureId = assets.texture->id();
         Incubator::Render::Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                                              Incubator::Demo::VALIDATION_MODE);
@@ -47,6 +57,7 @@ int main()
             }
             ImGui::Begin("Incubator Demo");
             ImGui::Text("Vulkan textured cube");
+            ImGui::Text("Texture: %.*s", static_cast<int>(paths.texture.size()), paths.texture.data());
             ImGui::ColorEdit3("Clear color", clearColor.data());
             ImGui::Text("Application controls events; Renderer owns frame submission.");
             ImGui::End();

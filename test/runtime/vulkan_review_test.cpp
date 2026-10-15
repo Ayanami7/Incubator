@@ -433,7 +433,17 @@ namespace
 
     TEST_F(VulkanReviewTest, PartialAssetConstructionReleasesBeforeFixtureCleanup)
     {
-        for (int stage = 0; stage < 3; ++stage)
+        // A valid header with truncated IDAT reaches the decoder and deterministically fails.
+        const auto truncatedPath = std::filesystem::path("assets/textures/task05-truncated.png");
+        {
+            std::ifstream input("assets/textures/reference_rgba.png", std::ios::binary);
+            std::array<char, 72> bytes{};
+            ASSERT_TRUE(input.read(bytes.data(), bytes.size()));
+            std::ofstream output(truncatedPath, std::ios::binary);
+            output.write(bytes.data(), bytes.size());
+            ASSERT_TRUE(output.good());
+        }
+        for (int stage = 0; stage < 4; ++stage)
         {
             Demo::SceneAssetPaths paths;
             if (stage == 0)
@@ -442,12 +452,64 @@ namespace
                 paths.fragment = "shaders/missing-second.spv";
             if (stage == 2)
                 paths.texture = "textures/missing-third.png";
+            if (stage == 3)
+                paths.texture = "textures/task05-truncated.png";
             FileAudit audit;
             EXPECT_THROW((SceneAssets(paths, std::make_unique<AuditedFileIO>(audit))), Error::Exception);
             EXPECT_TRUE(audit.destroyed);
             EXPECT_TRUE(audit.routesClearedBeforeDestroy);
             expectReleased(paths);
         }
+        EXPECT_TRUE(std::filesystem::remove(truncatedPath));
+    }
+
+    TEST_F(VulkanReviewTest, AlternateDemoTextureMatchesCpuAndGpuAndReleasesBeforeFileIO)
+    {
+        auto window = createWindow(false, 384, 256);
+        Demo::SceneAssetPaths paths;
+        paths.texture = "textures/direction_rgba.png";
+        FileAudit audit;
+        {
+            SceneAssets assets(paths, std::make_unique<AuditedFileIO>(audit));
+            ASSERT_EQ(assets.texture->width(), 3u);
+            ASSERT_EQ(assets.texture->height(), 4u);
+            const std::vector<uint8_t> expected = {
+                255, 255, 255, 255, 255, 128, 0,  255, 0,   0,   0, 255, 0,   0, 255, 255,
+                128, 128, 128, 255, 255, 0,   0,  255, 0,   255, 0, 255, 255, 0, 255, 128,
+                0,   255, 255, 255, 17,  34,  51, 0,   255, 255, 0, 255, 128, 0, 255, 255,
+            };
+            EXPECT_EQ(assets.texture->pixels(), expected);
+            VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
+            GlfwSurface surface(instance, *window);
+            VulkanDevice device(instance, surface);
+            VulkanSwapchain swapchain(device, surface, 384, 256);
+            const auto pixels =
+                TextureGpuReview::capture(instance.handle(), device, *window, assets, swapchain.format());
+            for (int y = 0; y < 4; ++y)
+            {
+                for (int x = 0; x < 3; ++x)
+                {
+                    const size_t offset = ((16 + y * 48 + 24) * 384 + 16 + (2 * x + 1) * 256 / 6) * 4;
+                    for (int channel = 0; channel < 3; ++channel)
+                        EXPECT_NEAR(pixels[offset + channel], expected[(y * 3 + x) * 4 + channel], 1);
+                    EXPECT_EQ(pixels[offset + 3], 255);
+                }
+            }
+            expectReleased(paths);
+            EXPECT_EQ(audit.textureOpens, 1u);
+        }
+        EXPECT_TRUE(audit.destroyed);
+        EXPECT_TRUE(audit.routesClearedBeforeDestroy);
+        // Restart with the other asset through the same public Renderer constructor as Demo.
+        {
+            SceneAssets assets(paths);
+            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            releaseCpuAssets(assets);
+            EXPECT_GT(drawUiFrame(*window, renderer), 0);
+        }
+        expectReleased(paths);
+        expectCleanValidation();
     }
 
     TEST_F(VulkanReviewTest, RendererConstructionFailureReleasesUploadedGpuAndCpuAssets)

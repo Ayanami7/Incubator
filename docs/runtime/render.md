@@ -8,13 +8,11 @@ Render 是 IncubatorRuntime 中的 Function 层模块，负责把应用准备的
 
 - Vulkan 1.3；设备必须支持并启用 Dynamic Rendering 与 Synchronization2。
 - Windows、单窗口、主线程录制；上传和绘制使用同一图形队列。
-- GPU 内存采用任务 05 已确定的 Vulkan 原生逐 Buffer/Image 分配；当前不引入 VMA 或自研显存池。
+- GPU 内存采用 Vulkan 原生逐 Buffer/Image 分配；当前不引入 VMA 或自研显存池。
 
-本轮确认的设备目标为 Windows 上的 NVIDIA GeForce RTX 5070 Ti。最低要求包括 Vulkan loader/设备 API 1.3、GLFW 所需 Surface 实例扩展、`VK_KHR_get_surface_capabilities2`、`VK_EXT_surface_maintenance1`，设备扩展 `VK_KHR_swapchain`、`VK_EXT_swapchain_maintenance1`，以及 `dynamicRendering`、`synchronization2`、`swapchainMaintenance1` feature 和图形/呈现队列。当前保持这条呈现同步路径；其他设备不因 API 版本足够而自动视为受支持。
+设备最低要求包括 Vulkan loader/设备 API 1.3、GLFW 所需 Surface 实例扩展、`VK_KHR_get_surface_capabilities2`、`VK_EXT_surface_maintenance1`，设备扩展 `VK_KHR_swapchain`、`VK_EXT_swapchain_maintenance1`，以及 `dynamicRendering`、`synchronization2`、`swapchainMaintenance1` feature 和图形/呈现队列。设备是否可用由这些能力共同决定，不能只检查 API 版本。
 
-任务 02 的验证模式在初始化配置中选择 `Disabled`、`Optional` 或 `Required`。Demo 的 Debug 构建采用 `Optional`：缺少 Khronos Validation Layer 或 `VK_EXT_debug_utils` 时记录告警并继续；`Required` 缺少任一组件时初始化失败。Release Demo 默认禁用 Validation。
-
-Demo 的构建策略集中在 `examples/demo/validation_mode.h`，公共 Renderer 默认仍为 Disabled。GPU 验收显式使用 Required，并检查实际启用日志；Optional 在缺失 layer 时继续运行的结果不计为 Validation 验收通过。
+调用方在初始化时选择验证模式 `Disabled`、`Optional` 或 `Required`，公共 Renderer 默认采用 `Disabled`。`Optional` 在缺少 Khronos Validation Layer 或 `VK_EXT_debug_utils` 时记录告警并继续；`Required` 缺少任一组件时初始化失败。
 
 `VulkanInstance` 请求 Vulkan 1.3，并在创建前确认 GLFW 必需扩展及 maintenance1 所需的 `VK_KHR_get_surface_capabilities2`、`VK_EXT_surface_maintenance1`。`GlfwSurface` 借用 `Window` 创建 Surface。`VulkanDevice` 按枚举顺序选择首个满足 API 1.3、`VK_KHR_swapchain`、`VK_EXT_swapchain_maintenance1`、图形与呈现队列、非空 Surface 格式/呈现模式，以及 Dynamic Rendering 和 Synchronization2 的物理设备；图形与呈现队列族相同时优先采用该组合，否则分别保存两个队列族。逻辑设备启用并输出这些必需功能信息。maintenance1 用于为呈现操作附加 Fence，确保交换链重建和关闭时可以等待呈现完成再回收旧资源。
 
@@ -49,9 +47,9 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 
 `Integration::ImGuiRenderer` 将仓库内 ImGui 1.91.9b 的 GLFW 与 Vulkan 后端接入 Runtime。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色和深度格式。交换链图像数量或附件格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭或重配置时适配器先调用 `vkDeviceWaitIdle`，再释放 ImGui Vulkan 资源。后端要求交换链至少有两个图像，数量不足时明确报渲染错误。
 
-Demo 每轮先轮询事件，再调用 `renderer.beginUiFrame()`。Renderer 在此入口准备交换链、ImGui Vulkan 后端与字体图集，成功才开始 UI 帧；首次零尺寸、最小化或暂不可创建时返回 false，应用跳过本轮 UI 构建及绘制。成功后应用使用 ImGui API 构建界面并通过适配器调用 `endFrame()`。`drawData()` 返回仅供本次 `Renderer::drawFrame` 使用的数据；Renderer 在场景 indexed draw 后、结束同一动态渲染作用域前执行 UI 录制回调。UI 数据不跨帧保留；acquire 结果要求跳帧时不提交本轮数据，下一轮在准备后端后重新生成 UI。颜色附件使用 CLEAR 加载和 STORE 保存，因此 UI 叠加时保留场景颜色。
+应用每轮先轮询事件，再调用 `renderer.beginUiFrame()`。Renderer 在此入口准备交换链、ImGui Vulkan 后端与字体图集，成功才开始 UI 帧；首次零尺寸、最小化或暂不可创建时返回 false，应用跳过本轮 UI 构建及绘制。成功后应用使用 ImGui API 构建界面并通过适配器调用 `endFrame()`。`drawData()` 返回仅供本次 `Renderer::drawFrame` 使用的数据；Renderer 在场景 indexed draw 后、结束同一动态渲染作用域前执行 UI 录制回调。UI 数据不跨帧保留；acquire 结果要求跳帧时不提交本轮数据，下一轮在准备后端后重新生成 UI。颜色附件使用 CLEAR 加载和 STORE 保存，因此 UI 叠加时保留场景颜色。
 
-Demo 构建时调用仓库内的 `glslangValidator.exe`，将 `assets/shaders/cube.vert` 和 `.frag` 编译到构建目录的 `assets/shaders/`，目标为 GLSL 450、Vulkan 1.3 与 SPIR-V 1.6。Demo 注册 `shaders/cube.vert.spv` 与 `shaders/cube.frag.spv` 两个 `ResourceType::SHADER`，由 `ShaderLoader` 按资源根约定映射到构建目录的 `assets/shaders/`，并通过 `Resource::Loader::readSpirv` 读取和验证。`ShaderResource` 拥有 CPU 字载荷；Demo 将资源借给 Renderer 构造，Renderer 复制载荷后 Demo 即可释放 CPU Resource。Vulkan Pipeline 创建 ShaderModule 时借用 Renderer 的字数组，Pipeline 创建完成后临时 ShaderModule 即销毁；Renderer 保留自己的 CPU 副本以支持交换链格式变化后的 Pipeline 重建。CPU Resource 的 release 不决定 GPU Pipeline 的销毁时机。
+`ShaderResource` 拥有 CPU 字载荷；应用将资源借给 Renderer 构造，Renderer 复制载荷后应用即可释放 CPU Resource。Vulkan Pipeline 创建 ShaderModule 时借用 Renderer 的字数组，Pipeline 创建完成后临时 ShaderModule 即销毁；Renderer 保留自己的 CPU 副本以支持交换链格式变化后的 Pipeline 重建。CPU Resource 的 release 不决定 GPU Pipeline 的销毁时机。
 
 交换链按 Surface 能力选取格式和 extent，present mode 使用 FIFO；图形与呈现队列族不同则使用 concurrent sharing。帧缓冲尺寸或 Surface extent 为零时跳过绘制并保留重建请求，恢复有效尺寸后重新尝试。成功重建会记录尺寸、格式、图像数和原因；`OUT_OF_DATE` 与 `SUBOPTIMAL` 会记录状态并安排重建。重建前等待所有帧提交 Fence 及呈现 Fence，再创建新交换链并回收旧 image view、交换链图像同步对象。关闭时也等待呈现 Fence 后再销毁同步对象和交换链。Render 设备要求 `VK_EXT_swapchain_maintenance1`，以获得明确的呈现完成回收依据。
 
@@ -77,11 +75,6 @@ sRGB 编码值，直接写 UNORM；ImGui 沿用现有编码空间 alpha blending
 颜色附件支持；其他组合明确拒绝并报告候选格式与 colorSpace，不任意回退。
 Swapchain 保存并暴露 colorSpace，Renderer 在初始化和重建日志中同时记录格式与 colorSpace。
 
-Demo 与复核测试通过 `examples/demo/scene_assets.h` 选择构建资源根中的 Shader 和参考纹理。
-已构造的清理成员覆盖首次取得引用、加载和外层辅助对象构造失败；加载后 Renderer 构造失败
-也会释放本次取得的 CPU 引用，再清理 Loader，最后销毁 FileIO。已有条目显式 acquire，
-避免将重复 register 当作持有；只释放本 scope 取得的引用。
-
 初始化依赖顺序为 Instance → Surface → Device → Swapchain/帧资源 → 绘制资源；关闭时按反向依赖销毁。Renderer 的对象成员和显式关闭顺序必须保证 Surface 先于 Instance 销毁、所有设备资源先于 Device 销毁，并由应用保证 Window 活到 Renderer 完成关闭。
 
 ## 调用与错误约定
@@ -92,8 +85,6 @@ Demo 与复核测试通过 `examples/demo/scene_assets.h` 选择构建资源根�
 
 ImGui 接入后，应用通过 UI 适配层开始 UI 帧、构建界面并结束 UI 帧以产生本帧 UI 绘制数据；适配层负责 ImGui 后端和 UI 命令录制，Renderer 在同一完整帧调用中消费数据并完成提交与呈现。UI 数据同样仅在本次调用期间有效。
 
-## 后续实施边界
+## 功能边界
 
-任务 01–08 已实现设备与交换链管理、动态渲染、纹理立方体和深度绘制、ImGui 叠加，以及 ResourceManager 的 SPIR-V CPU 加载链路。Buffer/Image 各自拥有 Vulkan 原生内存分配，帧调度器负责提交完成后的资源释放；实现状态不等于 GPU/Validation 验收通过，最终复核结果见 [Vulkan 复核记录](../../.agents/specs/archived/2026-10-10-vulkan-renderer/verification-report.md)。
-
-外部 PNG 的 CPU 解码与 Renderer 消费已接通。后续范围包括正式 Demo 资产安排，以及按实际需求评估异步加载、热重载、Cook 与资产清单。当前保持单窗口、主线程、同一图形队列上传和绘制；不扩展通用帧状态机、帧取消协议、显存池、多后端或多视口。若资源规模或分配开销成为问题，再另行评估 VMA。
+当前使用固定立方体、相机与旋转变换，不提供通用场景提交接口或运行中换图。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供异步资产加载、热重载、显存池、多后端或多视口。

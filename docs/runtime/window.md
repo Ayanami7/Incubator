@@ -164,7 +164,7 @@ int main()
     {
         // 1. 创建窗口
         Incubator::Window::WindowDesc desc;
-        desc.title = "QBEngine Demo";
+        desc.title = "Window Example";
         desc.width = 1920;
         desc.height = 1080;
         desc.resizable = false;

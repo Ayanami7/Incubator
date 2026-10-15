@@ -24,8 +24,7 @@ enum class ResourceType : Utils::Hash
 
 ## TEXT 新值说明
 
-Task 4 落地首个真实 Loader 时引入 `TEXT`。文本资源是配置/JSON/着色器源码的通用载荷，
-不引入解码库，作为第一个 Loader 路由键（TextLoader）。
+`TEXT` 表示配置、JSON、着色器源码等文本载荷，通过 TextLoader 路由加载，不依赖解码库。
 
 ## 扩展注意
 

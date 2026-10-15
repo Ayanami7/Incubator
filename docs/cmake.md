@@ -61,8 +61,8 @@ Incubator/
 ### 运行资源（assets/）
 
 - 源文件到构建目录使用 `add_custom_command(OUTPUT ... DEPENDS ...)` 与 `copy_if_different`。
-- `demo_textures` 由 Demo 和相关测试依赖；仅修改图片也会触发复制，无需重新链接可执行文件。
-- Shader 仍由 `demo_shaders` 编译到构建资源根，纹理与 Shader 共用 `<build>/assets/`。
+- 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
+- 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
 
 ## 扩展新模块的约定
 
