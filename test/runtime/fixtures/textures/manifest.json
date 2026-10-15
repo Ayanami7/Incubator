@@ -1,0 +1,50 @@
+{
+  "gray8": {
+    "bytes": 71,
+    "sha256": "100430b7c7e00d624f513d5e05b6c44de351f3ce33ea7d18937f184be4979dc9"
+  },
+  "gray_alpha8": {
+    "bytes": 73,
+    "sha256": "8db7bac4a409349968d47118ba9799f345abcf3e0c1dea539507aeae6ac8b65d"
+  },
+  "rgb8": {
+    "bytes": 75,
+    "sha256": "137af967a4ab22a84466eb74ddac88d0754a6a98168bb26b7ada7899de2e0900"
+  },
+  "palette8": {
+    "bytes": 89,
+    "sha256": "b86b8e170ebbda0712377f7cc5a17ade27cc428818a6c2d080106f78b70aa204"
+  },
+  "rgb16": {
+    "bytes": 75,
+    "sha256": "d86121528c9f529176ca8ef0ca7f9203aba712188ba86ace414ec58187ef1bfd"
+  },
+  "rgba16": {
+    "bytes": 77,
+    "sha256": "00723997458ac7dc1d7d3fd536877275e08104d6a7356cd91d78708931d7c752"
+  },
+  "adam7": {
+    "bytes": 73,
+    "sha256": "16ce254c8826911d7bc532297af2b5da765569d2364ac0aa78995942fb2f5b69"
+  },
+  "max_width": {
+    "bytes": 4165,
+    "sha256": "383aabbb2097e0aa597ab7c011abb0fea3f49fcfbd5670f8b8801e55d5468bc0"
+  },
+  "max_height": {
+    "bytes": 8260,
+    "sha256": "526a0860359b3419febf0e0c72d5db7c0f6ddbcc4babbe9cf79a19137032b32b"
+  },
+  "gray1": {
+    "bytes": 70,
+    "sha256": "11d9ae7264a8f1f61ef5a2ad824bcb9da8cdc610d6b41c2afbc5a92f4cac3da8"
+  },
+  "icc_metadata": {
+    "bytes": 169,
+    "sha256": "8750feb9da62d995cc72c8ac1bb8070247e6a25d778f821961baa106a70be2cb"
+  },
+  "cgbi": {
+    "bytes": 83,
+    "sha256": "52c389b5254c9ba34ddea5ebb7a40917ddbbe30f685387a1625b35436664a4dc"
+  }
+}

@@ -25,6 +25,8 @@ Incubator/
 │   ├── CMakeLists.txt  # 源码入口（仅 add_subdirectory 各层）
 │   └── <layer>/        # 按层组织（core/platform/resource/...）
 │       └── CMakeLists.txt  # 每层定义静态库目标
+├── assets/
+│   └── CMakeLists.txt  # 运行资源部署（文件依赖与增量复制）
 ├── test/
 │   └── CMakeLists.txt  # 测试入口（按被测层/模块建子目录与可执行目标）
 └── examples/
@@ -36,7 +38,7 @@ Incubator/
 ### 根 CMakeLists.txt
 
 - 设置全局变量：CMake 版本、C++ 标准、路径变量（`SRC_DIR`、`THIRD_PARTY_DIR` 等）
-- 依次 `add_subdirectory(3rdparty)` → `add_subdirectory(src)` → `add_subdirectory(test)` → `add_subdirectory(examples)`
+- 依次添加 `3rdparty` → `src` → `assets` → `test` → `examples`
 
 ### 库目标（src/ 下各层）
 
@@ -55,6 +57,12 @@ Incubator/
 
 - 独立可执行目标，演示引擎模块的实际用法
 - 链接运行时库与所需第三方库
+
+### 运行资源（assets/）
+
+- 源文件到构建目录使用 `add_custom_command(OUTPUT ... DEPENDS ...)` 与 `copy_if_different`。
+- `demo_textures` 由 Demo 和相关测试依赖；仅修改图片也会触发复制，无需重新链接可执行文件。
+- Shader 仍由 `demo_shaders` 编译到构建资源根，纹理与 Shader 共用 `<build>/assets/`。
 
 ## 扩展新模块的约定
 

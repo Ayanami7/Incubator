@@ -44,6 +44,7 @@ if(MSVC)
 endif()
 
 add_dependencies(${TARGET_NAME} IncubatorRuntime)
+add_dependencies(${TARGET_NAME} demo_textures)
 
 set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "examples")
 

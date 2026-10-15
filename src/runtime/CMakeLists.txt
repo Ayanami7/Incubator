@@ -46,6 +46,8 @@ set(RESOURCE_HEADERS
     resource/loader/spirv_reader.h
     resource/loader/shader_resource.h
     resource/loader/shader_loader.h
+    resource/loader/texture_resource.h
+    resource/loader/texture_loader.h
 )
 set(RESOURCE_SOURCES
     resource/resource_id.cpp
@@ -57,6 +59,8 @@ set(RESOURCE_SOURCES
     resource/loader/spirv_reader.cpp
     resource/loader/shader_resource.cpp
     resource/loader/shader_loader.cpp
+    resource/loader/texture_resource.cpp
+    resource/loader/texture_loader.cpp
 )
 
 # render 模块头文件、源文件
@@ -129,6 +133,7 @@ target_link_libraries(${TARGET_NAME} PUBLIC fmt::fmt)
 target_link_libraries(${TARGET_NAME} PUBLIC glfw)
 target_link_libraries(${TARGET_NAME} PUBLIC utf8::utf8cpp)
 target_link_libraries(${TARGET_NAME} PRIVATE imgui)
+target_link_libraries(${TARGET_NAME} PRIVATE stb_image)
 
 # Render owns the Vulkan integration. Keep it private because public Runtime headers
 # do not expose Vulkan types. The bundled Vulkan target is currently Windows-only.

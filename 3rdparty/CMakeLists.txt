@@ -1,6 +1,11 @@
 # 3rdparty CMakelists.txt
 set(THIRD_PARTY_FOLDER "3rdparty")
 
+# stb_image: PNG memory decoding, private to Runtime
+if(NOT TARGET stb_image)
+    add_subdirectory(stb)
+endif()
+
 # fmt (placed before spdlog so external fmt is available)
 if(NOT TARGET fmt)
     add_subdirectory(fmt-12.1.0)

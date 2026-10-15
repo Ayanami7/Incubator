@@ -43,7 +43,7 @@ public:
 Loader 通过构造函数注入 `Incubator::FileIO::FileIO&`（如 `TextLoader(FileIO&)`），而非内部自建实例：
 
 - 生产与测试共用同一套真实 FileIO（`createPlatformFileIO()`）
-- 测试用临时目录替换工作目录即可（虚拟路径 join 后落在临时目录），无需 Mock 文件系统
+- 文件定位测试用临时目录替换工作目录（虚拟路径 join 后落在临时目录）；短读、提前 EOF、读取异常与输入长度上限测试通过受控 FileIO/FileHandle 注入，不实际分配巨量文件。
 
 ## 新增一个 Loader 的模板
 
@@ -57,3 +57,4 @@ Loader 通过构造函数注入 `Incubator::FileIO::FileIO&`（如 `TextLoader(F
 
 - [text_loader.md](./text_loader.md) - 首个实现（文本资源全链路）
 - [shader_loader.md](./shader_loader.md) - SPIR-V CPU 载荷与异常门面接通
+- [texture_loader.md](./texture_loader.md) - PNG 完整读取、RGBA8 CPU 载荷与失败边界
