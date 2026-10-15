@@ -16,6 +16,7 @@
 
 #include "examples/demo/scene_assets.h"
 #include "examples/demo/scene_frame.h"
+#include "examples/demo/scene_mesh.h"
 #include "examples/demo/validation_mode.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
@@ -361,7 +362,13 @@ namespace
             return Window::createPlatformWindow(desc);
         }
 
-        int drawUiFrame(Window::Window& window, Renderer& renderer)
+        Mesh createCubeMesh(Renderer& renderer)
+        {
+            const auto data = Demo::makeCubeMesh();
+            return renderer.createMesh(data.vertices, data.indices);
+        }
+
+        int drawUiFrame(Window::Window& window, Renderer& renderer, const Mesh& mesh)
         {
             window.pollEvents();
             const auto extent = renderer.beginUiFrame();
@@ -373,10 +380,11 @@ namespace
             renderer.imgui().endFrame();
             auto* data = renderer.imgui().drawData();
             int recorded = 0;
-            renderer.drawFrame(Demo::makeSceneFrame(*extent, 0.0f), {0.12f, 0.16f, 0.22f, 1.0f}, [&](void* commands) {
-                ++recorded;
-                renderer.imgui().recordDrawData(data, commands);
-            });
+            renderer.drawFrame(Demo::makeSceneFrame(*extent, 0.0f), mesh, {0.12f, 0.16f, 0.22f, 1.0f},
+                               [&](void* commands) {
+                                   ++recorded;
+                                   renderer.imgui().recordDrawData(data, commands);
+                               });
             return recorded;
         }
 
@@ -450,6 +458,7 @@ namespace
                 SceneAssets assets(audit.paths, std::make_unique<AuditedFileIO>(audit));
                 Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                                   RendererValidationMode::Required);
+                const auto mesh = createCubeMesh(renderer);
                 releaseCpuAssets(assets);
                 for (int cycle = 0; cycle < 4; ++cycle)
                 {
@@ -457,7 +466,7 @@ namespace
                                       400 + cycle * 20);
                     int recorded = 0;
                     for (int frame = 0; frame < 5; ++frame)
-                        recorded += drawUiFrame(*window, renderer);
+                        recorded += drawUiFrame(*window, renderer, mesh);
                     EXPECT_GT(recorded, 0);
                     EXPECT_EQ(audit.textureOpens, 1u);
                 }
@@ -558,8 +567,9 @@ namespace
             SceneAssets assets(paths);
             Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                               RendererValidationMode::Required);
+            const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
-            EXPECT_GT(drawUiFrame(*window, renderer), 0);
+            EXPECT_GT(drawUiFrame(*window, renderer, mesh), 0);
         }
         expectReleased(paths);
         expectCleanValidation();
@@ -606,7 +616,7 @@ namespace
         expectReleased({});
     }
 
-    TEST_F(VulkanReviewTest, ActualShaderAndCubeFaceMatchReferenceAndUiGrayOnGpu)
+    TEST_F(VulkanReviewTest, ActualShaderAndPlaneMatchReferenceAndUiGrayOnGpu)
     {
         auto window = createWindow(false, 384, 256);
         {
@@ -688,6 +698,88 @@ namespace
         }
         expectCleanValidation();
     }
+    TEST_F(VulkanReviewTest, MeshCreationRejectsInvalidDataAndReferencesExpireAfterRendererClose)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        Mesh observer;
+        {
+            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            releaseCpuAssets(assets);
+            auto data = Demo::makePlaneMesh();
+            EXPECT_THROW(renderer.createMesh({}, data.indices), Error::Exception);
+            EXPECT_THROW(renderer.createMesh(data.vertices, {}), Error::Exception);
+            for (const auto& invalid :
+                 {std::vector<uint16_t>{0}, std::vector<uint16_t>{0, 1}, std::vector<uint16_t>{0, 1, 2, 3},
+                  std::vector<uint16_t>{0, 1, 4}, std::vector<uint16_t>{0, 1, 65535}})
+                EXPECT_THROW(renderer.createMesh(data.vertices, invalid), Error::Exception);
+            auto mesh = renderer.createMesh(data.vertices, data.indices);
+            observer = mesh;
+            data.vertices.clear();
+            data.vertices.shrink_to_fit();
+            data.indices.clear();
+            data.indices.shrink_to_fit();
+            ASSERT_TRUE(mesh.valid());
+            EXPECT_TRUE(observer.valid());
+            EXPECT_FALSE(Mesh{}.valid());
+            const auto extent = renderer.beginUiFrame();
+            ASSERT_TRUE(extent);
+            const auto frame = Demo::makeSceneFrame(*extent, 0.0f);
+            renderer.imgui().endFrame();
+            EXPECT_THROW(renderer.drawFrame(frame, Mesh{}, {0.2f, 0.3f, 0.4f, 1.0f}), Error::Exception);
+            renderer.drawFrame(frame, mesh, {0.2f, 0.3f, 0.4f, 1.0f});
+            mesh = Mesh{};
+            // Copies share one upload after the CPU arrays and original reference are gone.
+            for (int frameIndex = 0; frameIndex < 6; ++frameIndex)
+                EXPECT_GT(drawUiFrame(*window, renderer, observer), 0);
+            Renderer moved(std::move(renderer));
+            EXPECT_THROW(renderer.createMesh({}, {}), Error::Exception);
+            EXPECT_GT(drawUiFrame(*window, moved, observer), 0);
+            // No explicit wait: Renderer protects the last submission and frees meshes before Device.
+        }
+        EXPECT_FALSE(observer.valid());
+        expectReleased({});
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, MeshFromAnotherRendererIsRejectedBeforeRecording)
+    {
+        auto firstWindow = createWindow();
+        auto secondWindow = createWindow();
+        SceneAssets assets;
+        {
+            Renderer first(*firstWindow, *assets.vertex, *assets.fragment, *assets.texture,
+                           RendererValidationMode::Required);
+            const auto mesh = createCubeMesh(first);
+            {
+                struct RestoreContext
+                {
+                    ImGuiContext* previous;
+                    ~RestoreContext()
+                    {
+                        ImGui::SetCurrentContext(previous);
+                    }
+                } restore{ImGui::GetCurrentContext()};
+                // CreateContext preserves an existing current context; this test needs a separate one.
+                ImGui::SetCurrentContext(nullptr);
+                Renderer second(*secondWindow, *assets.vertex, *assets.fragment, *assets.texture,
+                                RendererValidationMode::Required);
+                const auto ownMesh = createCubeMesh(second);
+                const auto extent = second.beginUiFrame();
+                ASSERT_TRUE(extent);
+                const auto frame = Demo::makeSceneFrame(*extent, 0.0f);
+                second.imgui().endFrame();
+                EXPECT_THROW(second.drawFrame(frame, mesh, {0.2f, 0.3f, 0.4f, 1.0f}), Error::Exception);
+                second.drawFrame(frame, ownMesh, {0.2f, 0.3f, 0.4f, 1.0f});
+            }
+            releaseCpuAssets(assets);
+            EXPECT_GT(drawUiFrame(*firstWindow, first, mesh), 0);
+        }
+        expectReleased({});
+        expectCleanValidation();
+    }
+
     TEST_F(VulkanReviewTest, FirstZeroFramebufferRestoresUiWithoutExtraResize)
     {
         auto native = createWindow();
@@ -696,6 +788,7 @@ namespace
         {
             Renderer renderer(window, *assets.vertex, *assets.fragment, *assets.texture,
                               RendererValidationMode::Required);
+            const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             EXPECT_EQ(ImGui::GetIO().BackendRendererUserData, nullptr);
             for (int frame = 0; frame < 5; ++frame)
@@ -704,7 +797,7 @@ namespace
             window.drawable = true;
             int recorded = 0;
             for (int frame = 0; frame < 10; ++frame)
-                recorded += drawUiFrame(window, renderer);
+                recorded += drawUiFrame(window, renderer, mesh);
             EXPECT_GT(recorded, 0);
             EXPECT_NE(ImGui::GetIO().BackendRendererUserData, nullptr);
             EXPECT_TRUE(ImGui::GetIO().Fonts->IsBuilt());
@@ -720,12 +813,13 @@ namespace
         {
             Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                               RendererValidationMode::Required);
+            const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             auto* native = static_cast<GLFWwindow*>(window->getNativeHandle());
             for (int cycle = 0; cycle < 4; ++cycle)
             {
                 glfwSetWindowSize(native, 680 + cycle * 20, 400 + cycle * 10);
-                EXPECT_GT(drawUiFrame(*window, renderer), 0);
+                EXPECT_GT(drawUiFrame(*window, renderer, mesh), 0);
                 glfwIconifyWindow(native);
                 for (int attempt = 0; attempt < 100 && !window->isIconified(); ++attempt)
                 {
@@ -734,7 +828,7 @@ namespace
                 }
                 ASSERT_TRUE(window->isIconified());
                 for (int frame = 0; frame < 5; ++frame)
-                    EXPECT_EQ(drawUiFrame(*window, renderer), 0);
+                    EXPECT_EQ(drawUiFrame(*window, renderer, mesh), 0);
                 glfwRestoreWindow(native);
                 for (int attempt = 0; attempt < 100 && window->isIconified(); ++attempt)
                 {
@@ -744,7 +838,7 @@ namespace
                 ASSERT_FALSE(window->isIconified());
                 int recorded = 0;
                 for (int frame = 0; frame < 10; ++frame)
-                    recorded += drawUiFrame(*window, renderer);
+                    recorded += drawUiFrame(*window, renderer, mesh);
                 EXPECT_GT(recorded, 0);
                 EXPECT_EQ(audit.textureOpens, 1u);
             }
@@ -760,10 +854,11 @@ namespace
             SceneAssets assets;
             Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                               RendererValidationMode::Required);
+            const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             int recorded = 0;
             for (int frame = 0; frame < 1 + cycle % 3; ++frame)
-                recorded += drawUiFrame(*window, renderer);
+                recorded += drawUiFrame(*window, renderer, mesh);
             EXPECT_GT(recorded, 0);
             // No explicit wait here: the destructor must protect the last GPU submission.
         }
@@ -777,20 +872,21 @@ namespace
         {
             Renderer renderer(window, *assets.vertex, *assets.fragment, *assets.texture,
                               RendererValidationMode::Required);
+            const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             for (int frame = 0; frame < 10; ++frame)
                 EXPECT_FALSE(renderer.beginUiFrame());
             EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain "), 0u);
             window.drawable = true;
             for (int frame = 0; frame < 20; ++frame)
-                drawUiFrame(window, renderer);
+                drawUiFrame(window, renderer, mesh);
             EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain initialization:"), 1u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain "), 1u);
             EXPECT_NE(messages_.str().find("640x360, format "), std::string::npos);
             EXPECT_NE(messages_.str().find("images, present mode FIFO"), std::string::npos);
             glfwSetWindowSize(static_cast<GLFWwindow*>(native->getNativeHandle()), 720, 440);
             for (int frame = 0; frame < 10; ++frame)
-                drawUiFrame(window, renderer);
+                drawUiFrame(window, renderer, mesh);
             EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain framebuffer size changed:"), 1u);
             const auto beforeSkip = messages_.str();
             window.drawable = false;
@@ -798,7 +894,7 @@ namespace
                 EXPECT_FALSE(renderer.beginUiFrame());
             EXPECT_EQ(messages_.str(), beforeSkip);
             window.drawable = true;
-            EXPECT_GT(drawUiFrame(window, renderer), 0);
+            EXPECT_GT(drawUiFrame(window, renderer, mesh), 0);
         }
         expectCleanValidation();
     }
@@ -810,6 +906,7 @@ namespace
         {
             Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                               RendererValidationMode::Required);
+            const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             const auto extent = renderer.beginUiFrame();
             ASSERT_TRUE(extent);
@@ -818,13 +915,14 @@ namespace
             ImGui::End();
             renderer.imgui().endFrame();
             auto* data = renderer.imgui().drawData();
-            renderer.drawFrame(Demo::makeSceneFrame(*extent, 0.0f), {0.1f, 0.2f, 0.3f, 1.0f}, [&](void* commands) {
-                renderer.imgui().recordDrawData(data, commands);
-                glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 710, 430);
-            });
+            renderer.drawFrame(Demo::makeSceneFrame(*extent, 0.0f), mesh, {0.1f, 0.2f, 0.3f, 1.0f},
+                               [&](void* commands) {
+                                   renderer.imgui().recordDrawData(data, commands);
+                                   glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 710, 430);
+                               });
             int recorded = 0;
             for (int frame = 0; frame < 10; ++frame)
-                recorded += drawUiFrame(*window, renderer);
+                recorded += drawUiFrame(*window, renderer, mesh);
             EXPECT_GT(recorded, 0);
             EXPECT_NE(messages_.str().find("710x430"), std::string::npos);
         }
@@ -838,6 +936,7 @@ namespace
         {
             Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                               RendererValidationMode::Required);
+            const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             const auto extent = renderer.beginUiFrame();
             ASSERT_TRUE(extent);
@@ -846,7 +945,7 @@ namespace
             glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 810, 450);
             window->pollEvents();
             int recorded = 0;
-            renderer.drawFrame(staleInput, {0.1f, 0.2f, 0.3f, 1.0f}, [&](void*) { ++recorded; });
+            renderer.drawFrame(staleInput, mesh, {0.1f, 0.2f, 0.3f, 1.0f}, [&](void*) { ++recorded; });
             EXPECT_EQ(recorded, 0);
             const auto resized = renderer.beginUiFrame();
             ASSERT_TRUE(resized);
@@ -858,7 +957,7 @@ namespace
             EXPECT_EQ(resized->width, static_cast<uint32_t>(width));
             EXPECT_EQ(resized->height, static_cast<uint32_t>(height));
             renderer.imgui().endFrame();
-            renderer.drawFrame(Demo::makeSceneFrame(*resized, 0.0f), {0.1f, 0.2f, 0.3f, 1.0f},
+            renderer.drawFrame(Demo::makeSceneFrame(*resized, 0.0f), mesh, {0.1f, 0.2f, 0.3f, 1.0f},
                                [&](void*) { ++recorded; });
             EXPECT_EQ(recorded, 1);
         }
@@ -872,8 +971,9 @@ namespace
         {
             Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                               RendererValidationMode::Required);
+            const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
-            auto present = [&](float modelX, float cameraX) {
+            auto present = [&](const Mesh& selectedMesh, float modelX, float cameraX) {
                 // Exercise the public submit path across both GPU frame slots. After return,
                 // changing application input must not change uniforms already submitted.
                 for (int frame = 0; frame < 8; ++frame)
@@ -887,7 +987,7 @@ namespace
                     input.camera.view = glm::lookAtRH(glm::vec3(cameraX, 0.0f, 3.0f), glm::vec3(cameraX, 0.0f, 0.0f),
                                                       glm::vec3(0.0f, 1.0f, 0.0f));
                     renderer.imgui().endFrame();
-                    renderer.drawFrame(input, {0.2f, 0.24f, 0.28f, 1.0f});
+                    renderer.drawFrame(input, selectedMesh, {0.2f, 0.24f, 0.28f, 1.0f});
                     input.model = glm::mat4(0.0f);
                     input.camera.projection = glm::mat4(0.0f);
                     glfwWaitEventsTimeout(0.025);
@@ -927,8 +1027,9 @@ namespace
                 EXPECT_TRUE(output.good());
             };
 
-            const auto first = present(0.0f, 0.0f);
-            const auto stable = present(0.0f, 0.0f);
+            const auto first = present(mesh, 0.0f, 0.0f);
+            const auto sharedMesh = mesh;
+            const auto stable = present(sharedMesh, 0.0f, 0.0f);
             save(first, "review/frame-input-fixed.ppm");
             const auto baseBounds = bounds(first);
             ASSERT_GT(baseBounds[2] - baseBounds[0], 100);
@@ -955,8 +1056,8 @@ namespace
                         EXPECT_GT(int(first.rgba[offset + column]) - int(first.rgba[offset + channel]), 100);
             }
 
-            const auto modelImage = present(0.5f, 0.0f);
-            const auto cameraImage = present(0.0f, 0.5f);
+            const auto modelImage = present(mesh, 0.5f, 0.0f);
+            const auto cameraImage = present(mesh, 0.0f, 0.5f);
             const auto modelBounds = bounds(modelImage);
             const auto cameraBounds = bounds(cameraImage);
             EXPECT_GT(modelBounds[0] - baseBounds[0], 50);
@@ -965,17 +1066,29 @@ namespace
             save(cameraImage, "review/frame-input-camera.ppm");
 
             glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 800, 400);
-            const auto resized = present(0.0f, 0.0f);
+            const auto resized = present(sharedMesh, 0.0f, 0.0f);
             const auto resizedBounds = bounds(resized);
             EXPECT_EQ(resized.width, 800);
             EXPECT_EQ(resized.height, 400);
             EXPECT_GT(resizedBounds[2] - resizedBounds[0], 100);
             EXPECT_NEAR(resizedBounds[2] - resizedBounds[0], resizedBounds[3] - resizedBounds[1], 2);
             save(resized, "review/frame-input-resized.ppm");
+            const auto plane = [&] {
+                const auto data = Demo::makePlaneMesh();
+                return renderer.createMesh(data.vertices, data.indices);
+            }();
+            const auto planeImage = present(plane, 0.0f, 0.0f);
+            const auto planeBounds = bounds(planeImage);
+            const auto planeWidth = planeBounds[2] - planeBounds[0];
+            EXPECT_GT(planeWidth, 100);
+            EXPECT_LT(planeWidth, resizedBounds[2] - resizedBounds[0] - 20);
+            EXPECT_NEAR(planeWidth, planeBounds[3] - planeBounds[1], 2);
+            save(planeImage, "review/mesh-plane.ppm");
             std::cout << "PRODUCTION_FRAME_INPUT: stable_changed_pixels=" << changed
                       << " model_shift=" << modelBounds[0] - baseBounds[0]
                       << " camera_shift=" << cameraBounds[0] - baseBounds[0] << " resized=" << resized.width << 'x'
-                      << resized.height << '\n';
+                      << resized.height << " cube_width=" << resizedBounds[2] - resizedBounds[0]
+                      << " plane_width=" << planeWidth << '\n';
         }
         expectCleanValidation();
     }
@@ -1054,9 +1167,10 @@ namespace
 #endif
         {
             Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture, Demo::VALIDATION_MODE);
+            const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             for (int frame = 0; frame < 5; ++frame)
-                EXPECT_GT(drawUiFrame(*window, renderer), 0);
+                EXPECT_GT(drawUiFrame(*window, renderer, mesh), 0);
         }
 #ifdef _DEBUG
         EXPECT_NE(messages_.str().find("validation: enabled"), std::string::npos);

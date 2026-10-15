@@ -27,6 +27,7 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 | 对象 | 职责与所有权 |
 |---|---|
 | `Renderer` | 由应用创建和持有；借用 `Window`；组合并拥有本次渲染所需内部对象；提供初始化、完整帧绘制和关闭入口。 |
+| `Mesh` | 应用可复制的网格引用；其 GPU 顶点/索引由创建它的 Renderer 持有至关闭，引用本身不延长设备寿命。 |
 | `VulkanInstance` | 创建并拥有 Vulkan Instance 和可选 debug messenger；查询并启用 GLFW 所需实例扩展；销毁晚于 Surface。 |
 | Surface | `GlfwSurface` 由 Render 通过 GLFW 从借用的 Window 创建和销毁；依赖 Instance，Window 必须活到 Surface 销毁之后。 |
 | `VulkanDevice` | 选择支持图形、呈现、Swapchain、Dynamic Rendering 和 Synchronization2 的首个物理设备；创建逻辑设备和队列，查询内存类型并执行有 Fence 的一次性上传提交；销毁前先清理设备子对象。 |
@@ -43,7 +44,7 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 
 `VulkanFrameScheduler` 每帧槽可持有本帧命令引用的共享 GPU 资源。帧槽 Fence 确认提交完成后才清除这些引用；重建和关闭时等待在途帧完成后释放。CPU 可写 Buffer 本身不允许与 GPU 并发读写，调用方需按帧槽隔离区域或等待对应 Fence 后再写。
 
-`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新帧变换前等待对应帧槽 Fence，Uniform Buffer 与深度附件按帧槽隔离；`VulkanCommandList` 录制颜色/深度布局、动态渲染、DescriptorSet 绑定、立方体 indexed draw 和呈现布局。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。应用提供的 TextureResource 在初始化时同步上传，通过 Combined Image Sampler 采样。窗口尺寸变化会重建匹配 extent 的深度附件，应用按返回的实际 extent 更新投影；交换链颜色格式变化时重建兼容 Pipeline。
+`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新帧变换前等待对应帧槽 Fence，Uniform Buffer 与深度附件按帧槽隔离；`VulkanCommandList` 录制颜色/深度布局、动态渲染、DescriptorSet 绑定、应用所选网格的 indexed draw 和呈现布局。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。应用提供的 TextureResource 在初始化时同步上传，通过 Combined Image Sampler 采样。窗口尺寸变化会重建匹配 extent 的深度附件，应用按返回的实际 extent 更新投影；交换链颜色格式变化时重建兼容 Pipeline。
 
 `Integration::ImGuiRenderer` 将仓库内 ImGui 1.91.9b 的 GLFW 与 Vulkan 后端接入 Runtime。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色和深度格式。交换链图像数量或附件格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭或重配置时适配器先调用 `vkDeviceWaitIdle`，再释放 ImGui Vulkan 资源。后端要求交换链至少有两个图像，数量不足时明确报渲染错误。
 
@@ -91,7 +92,7 @@ Shader 和 Texture 均由调用方选择并在构造期间保持有效；Window 
 | `CameraMatrices { view, projection }` | 提供最终 GLM 列主序矩阵；右手坐标，深度 0–1，应用对投影 Y 方向适配一次 |
 | `FrameInput { extent, camera, model }` | 模型、相机、投影均为必需输入，动画时间由应用决定；Renderer 不补默认场景 |
 
-提交签名为 `drawFrame(input, clearColor, recordUi)`，变换顺序为
+提交签名为 `drawFrame(input, mesh, clearColor, recordUi)`，变换顺序为
 `projection * view * model * position`。输入只在本次调用内借用，矩阵在等待当前帧槽
 Fence 后写入该槽 Uniform Buffer；返回后调用方可修改或销毁原始 CPU 输入。
 Renderer 不额外翻转 Y，不保留输入引用，正常跳帧也不缓存上一帧输入。
@@ -106,6 +107,36 @@ Renderer 不额外翻转 Y，不保留输入引用，正常跳帧也不缓存上
 
 ImGui 接入后，应用通过 UI 适配层开始 UI 帧、构建界面并结束 UI 帧以产生本帧 UI 绘制数据；适配层负责 ImGui 后端和 UI 命令录制，Renderer 在同一完整帧调用中消费数据并完成提交与呈现。UI 数据同样仅在本次调用期间有效。
 
+## 应用网格与持有期
+
+`mesh.h` 的 `MeshVertex` 固定为 `float position[3]`、`float uv[2]`，紧密 20 字节；
+Pipeline 按该类型的大小和字段偏移绑定。索引固定为 `uint16_t`，拓扑为不透明三角形列表。
+公共输入不包含 Vulkan 类型。
+
+```cpp
+// vertices/indices are application-owned vectors; Renderer must already exist.
+auto mesh = renderer.createMesh(vertices, indices);
+vertices.clear();
+indices.clear();
+auto sharedMesh = mesh; // Refers to the same upload.
+// After beginUiFrame and application matrix/UI preparation:
+renderer.drawFrame(frameInput, sharedMesh, clearColor, recordUi);
+```
+
+`createMesh(span<const MeshVertex>, span<const uint16_t>)` 要求非空顶点与索引、索引数量为 3
+的倍数且能表示为 uint32 绘制数量，每个索引小于顶点数量。输入在上传前集中校验，失败抛
+RENDER 错误，不创建默认网格。位置和 UV 的具体内容由应用提供。
+
+上传复用 VulkanBuffer 的同步 staging 路径；成功后不保留 CPU 数组或指针。Renderer
+持有所有已创建网格至关闭，复制/丢弃应用的 `Mesh` 引用不重新上传或提前回收 GPU Buffer。
+提交帧另持有本次 GPU 网格及其他资源至 Fence 完成；关闭时先等待提交和呈现，再释放网格，
+最后销毁设备。变换更新和交换链重建只复用上传结果。
+
+`Mesh::valid()` 表示创建它的 Renderer 仍持有该网格；空引用、已关闭 Renderer 的引用无效。
+网格只能交回创建它的 Renderer，跨 Renderer 提交明确失败；移动 Renderer 后，网格随其内部
+设备继续有效。应用可以保留过期引用，但不能用它绘制，引用不使设备延迟销毁。
+Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `examples/demo/scene_mesh.h`。
+
 ## 功能边界
 
-当前仍使用内置单立方体，应用控制相机、模型与动画；不提供外部网格、多对象列表或运行中换图。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供异步资产加载、热重载、显存池、多后端或多视口。
+当前单次提交消费一个应用网格，应用控制相机、模型与动画；不提供多对象列表或运行中换图。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供模型文件解析、通用材质、异步资产加载、热重载、显存池、多后端或多视口。

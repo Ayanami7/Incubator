@@ -67,7 +67,7 @@ set(RESOURCE_SOURCES
 set(RENDER_HEADERS
     render/renderer.h
     render/frame_input.h
-    render/cube_mesh.h
+    render/mesh.h
     render/integration/imgui_renderer.h
     render/vulkan/vulkan_swapchain.h
     render/vulkan/vulkan_frame_scheduler.h

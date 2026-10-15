@@ -5,6 +5,10 @@ set(TARGET_NAME demo)
 add_executable(
     ${TARGET_NAME}
     main.cpp
+    scene_mesh.h
+    scene_frame.h
+    scene_assets.h
+    validation_mode.h
 )
 
 if(WIN32)

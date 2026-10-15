@@ -1,7 +1,7 @@
-# 纹理立方体 Demo
+# 纹理网格 Demo
 
 `examples/demo` 演示通过 ResourceManager 加载外部 SPIR-V 和 PNG，将资源传给 Renderer，
-绘制旋转的纹理立方体并叠加 ImGui 界面。应用负责事件轮询、界面构建和主循环。
+上传应用生成的立方体或平面，绘制旋转的纹理网格并叠加 ImGui 界面。应用负责事件轮询、界面构建和主循环。
 
 ## 构建与启动
 
@@ -29,7 +29,7 @@ CMake 设置 `VS_DEBUGGER_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}`。启动调试�
 
 ## 启动时选择纹理
 
-Demo 接受一个可选位置参数，表示纹理虚拟路径，不带 `assets/` 前缀：
+Demo 的第一个可选位置参数表示纹理虚拟路径，不带 `assets/` 前缀：
 
 ```powershell
 # 不传参数时使用 textures/reference_rgba.png。
@@ -52,6 +52,24 @@ Windows 入口使用 Unicode 命令行，再通过 `Utils::Utf8` 转为资源系
 两张图都含中灰和已知透明通道。场景材质不透明，半透明和透明格子仍显示自身 RGB。
 UI 可修改清屏颜色，立方体使用固定相机并自动旋转。
 
+## 启动时选择网格
+
+第二个可选位置参数为 `cube` 或 `plane`；默认使用立方体。选择平面时保留第一个纹理参数：
+
+```powershell
+& './examples/demo/demo.exe' 'textures/reference_rgba.png' 'cube'
+& './examples/demo/demo.exe' 'textures/reference_rgba.png' 'plane'
+& './examples/demo/demo.exe' 'textures/direction_rgba.png' 'plane'
+```
+
+未知网格名会明确报告启动错误，退出码为 1。`examples/demo/scene_mesh.h` 生成立方体的
+24 顶点/36 索引和平面的 4 顶点/6 索引。平面位于 XY、面向 +Z，边长 1，UV 原点在左上。
+两个样本共用 `MeshVertex` position+UV、uint16 索引、同一纹理和 Pipeline。
+
+Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁生成的 CPU 数组；
+绘制时提交返回的 `Mesh`。Renderer 持有 GPU 网格至关闭，复制网格引用不会重新上传，
+缩放或相机/变换更新也不重新上传静态网格。该步骤不通过 ResourceManager 或 MODEL Loader。
+
 ## 应用帧输入
 
 相机和运动的默认选择位于 `examples/demo/scene_frame.h` 的 `makeSceneFrame(extent, seconds)`，
@@ -59,7 +77,7 @@ UI 可修改清屏颜色，立方体使用固定相机并自动旋转。
 修改应用提供的时间、model 或 camera 可改变场景，传入固定时间则保持固定姿态。
 
 每轮先轮询事件，调用 `beginUiFrame()`；只有返回实际绘制 extent 后才计算投影、开始 UI
-内容并提交 `drawFrame(frameInput, clearColor, recordUi)`。返回空值时跳过该轮，避免零尺寸
+内容并提交 `drawFrame(frameInput, mesh, clearColor, recordUi)`。返回空值时跳过该轮，避免零尺寸
 或最小化期间计算无效宽高比。投影采用 `perspectiveRH_ZO`，应用对 Y 方向适配一次；
 缩放后使用新 extent，Renderer 不再翻转。准备与提交之间若尺寸改变，本轮旧输入会被跳过。
 

@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -12,7 +13,6 @@
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/platform/window/window.h"
-#include "runtime/render/cube_mesh.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/vulkan/glfw_surface.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
@@ -33,10 +33,6 @@ namespace Incubator
     {
         namespace
         {
-            using Detail::CUBE_INDICES;
-            using Detail::CUBE_VERTICES;
-            using Detail::CubeVertex;
-
             struct alignas(16) TransformUniform
             {
                 glm::mat4 model;
@@ -75,6 +71,26 @@ namespace Incubator
             }
         }  // namespace
 
+        struct Mesh::Impl
+        {
+            Impl(const Vulkan::VulkanDevice& device, std::span<const MeshVertex> vertices,
+                 std::span<const uint16_t> indices)
+                : owner(&device), indexCount(static_cast<uint32_t>(indices.size()))
+            {
+                vertexBuffer = Vulkan::VulkanBuffer::uploadStatic(
+                    device, std::as_bytes(vertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                    VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT);
+                indexBuffer = Vulkan::VulkanBuffer::uploadStatic(
+                    device, std::as_bytes(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                    VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT);
+            }
+
+            const Vulkan::VulkanDevice* owner;
+            uint32_t indexCount;
+            std::shared_ptr<Vulkan::VulkanBuffer> vertexBuffer;
+            std::shared_ptr<Vulkan::VulkanBuffer> indexBuffer;
+        };
+
         class Renderer::Impl
         {
         public:
@@ -89,13 +105,6 @@ namespace Incubator
                   fragmentShader_(fragmentShader.words())
             {
                 depthFormat_ = device_.findDepthFormat();
-                vertexBuffer_ = Vulkan::VulkanBuffer::uploadStatic(
-                    device_, std::as_bytes(std::span<const CubeVertex>(CUBE_VERTICES)),
-                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-                    VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT);
-                indexBuffer_ = Vulkan::VulkanBuffer::uploadStatic(
-                    device_, std::as_bytes(std::span<const uint16_t>(CUBE_INDICES)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                    VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT);
                 texture_ = Vulkan::VulkanImage::uploadRgba8(device_, {texture.width(), texture.height()},
                                                             VK_FORMAT_R8G8B8A8_SRGB, texture.pixels(),
                                                             VK_IMAGE_USAGE_SAMPLED_BIT);
@@ -134,6 +143,20 @@ namespace Incubator
                 return swapchain_ && swapchain_->handle() != VK_NULL_HANDLE;
             }
 
+            Mesh createMesh(std::span<const MeshVertex> vertices, std::span<const uint16_t> indices)
+            {
+                if (vertices.empty() || indices.empty() || indices.size() % 3 != 0 ||
+                    indices.size() > std::numeric_limits<uint32_t>::max())
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "Mesh requires vertices and complete indexed triangles");
+                for (const auto index : indices)
+                    if (index >= vertices.size())
+                        throw Error::Exception(Error::Code::RENDER, "Mesh index is outside the vertex array");
+                auto mesh = std::make_shared<Mesh::Impl>(device_, vertices, indices);
+                meshes_.push_back(mesh);
+                return Mesh(mesh);
+            }
+
             std::optional<FrameExtent> beginUiFrame()
             {
                 if (!prepareFrame())
@@ -143,9 +166,12 @@ namespace Incubator
                 return FrameExtent{extent.width, extent.height};
             }
 
-            void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
+            void drawFrame(const FrameInput& input, const Mesh& mesh, const std::array<float, 4>& clearColor,
                            const std::function<void(void*)>& recordUi)
             {
+                const auto gpuMesh = mesh.impl_.lock();
+                if (!gpuMesh || gpuMesh->owner != &device_)
+                    throw Error::Exception(Error::Code::RENDER, "Mesh is invalid or belongs to another Renderer");
                 if (!prepareFrame())
                     return;
                 const auto extent = swapchain_->extent();
@@ -162,13 +188,13 @@ namespace Incubator
                 color.float32[1] = clearColor[1];
                 color.float32[2] = clearColor[2];
                 color.float32[3] = clearColor[3];
-                const std::array<std::shared_ptr<void>, 5> inFlightResources = {
-                    std::static_pointer_cast<void>(vertexBuffer_), std::static_pointer_cast<void>(indexBuffer_),
+                const std::array<std::shared_ptr<void>, 4> inFlightResources = {
+                    std::static_pointer_cast<void>(gpuMesh),
                     std::static_pointer_cast<void>(uniformBuffers_[frameIndex]),
                     std::static_pointer_cast<void>(texture_), std::static_pointer_cast<void>(sampler_)};
                 if (!scheduler_->renderAndPresent(
-                        *swapchain_, color, *pipeline_, *vertexBuffer_, *indexBuffer_,
-                        bindingSet_->descriptorSet(frameIndex), static_cast<uint32_t>(CUBE_INDICES.size()),
+                        *swapchain_, color, *pipeline_, *gpuMesh->vertexBuffer, *gpuMesh->indexBuffer,
+                        bindingSet_->descriptorSet(frameIndex), gpuMesh->indexCount,
                         [&recordUi](VkCommandBuffer commandBuffer) {
                             if (recordUi)
                                 recordUi(static_cast<void*>(commandBuffer));
@@ -233,8 +259,7 @@ namespace Incubator
             Vulkan::VulkanDevice device_;
             std::vector<uint32_t> vertexShader_;
             std::vector<uint32_t> fragmentShader_;
-            std::shared_ptr<Vulkan::VulkanBuffer> vertexBuffer_;
-            std::shared_ptr<Vulkan::VulkanBuffer> indexBuffer_;
+            std::vector<std::shared_ptr<Mesh::Impl>> meshes_;
             std::array<std::shared_ptr<Vulkan::VulkanBuffer>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
                 uniformBuffers_{};
             std::shared_ptr<Vulkan::VulkanImage> texture_;
@@ -262,6 +287,13 @@ namespace Incubator
 
         Renderer& Renderer::operator=(Renderer&&) noexcept = default;
 
+        Mesh Renderer::createMesh(std::span<const MeshVertex> vertices, std::span<const uint16_t> indices)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            return impl_->createMesh(vertices, indices);
+        }
+
         std::optional<FrameExtent> Renderer::beginUiFrame()
         {
             if (!impl_)
@@ -269,12 +301,12 @@ namespace Incubator
             return impl_->beginUiFrame();
         }
 
-        void Renderer::drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
+        void Renderer::drawFrame(const FrameInput& input, const Mesh& mesh, const std::array<float, 4>& clearColor,
                                  const std::function<void(void*)>& recordUi)
         {
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
-            impl_->drawFrame(input, clearColor, recordUi);
+            impl_->drawFrame(input, mesh, clearColor, recordUi);
         }
 
         Integration::ImGuiRenderer& Renderer::imgui()

@@ -7,8 +7,8 @@
 #include <vector>
 
 #include "examples/demo/scene_assets.h"
+#include "examples/demo/scene_mesh.h"
 #include "runtime/platform/window/window.h"
-#include "runtime/render/cube_mesh.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
@@ -93,7 +93,7 @@ namespace TextureGpuReview
         VkDeviceMemory memory_ = VK_NULL_HANDLE;
     };
 
-    // Render the production +Z face and shader into the actual selected UNORM format.
+    // Render the application's plane and production shader into the selected UNORM format.
     // The test attachment permits readback without adding a screenshot API to Renderer.
     inline std::vector<uint8_t> capture(VkInstance instance, const VulkanDevice& device, Window::Window& window,
                                         Demo::SceneAssets& assets, VkFormat format)
@@ -120,12 +120,13 @@ namespace TextureGpuReview
         const auto depthFormat = device.findDepthFormat();
         VulkanPipeline pipeline(device, format, depthFormat, bindings.layout(), assets.vertex->words(),
                                 assets.fragment->words());
+        const auto mesh = Demo::makePlaneMesh();
         auto vertices = VulkanBuffer::uploadStatic(
-            device, std::as_bytes(std::span(Detail::CUBE_VERTICES)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            device, std::as_bytes(std::span(mesh.vertices)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT);
-        auto indices = VulkanBuffer::uploadStatic(device, std::as_bytes(std::span(Detail::CUBE_INDICES)),
-                                                  VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                                  VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT);
+        auto indices =
+            VulkanBuffer::uploadStatic(device, std::as_bytes(std::span(mesh.indices)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                       VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT);
         VulkanImage color(device, EXTENT, format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                           VK_IMAGE_ASPECT_COLOR_BIT);
         VulkanImage depth(device, EXTENT, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
@@ -205,7 +206,7 @@ namespace TextureGpuReview
             const auto vertexBuffer = vertices->handle();
             vkCmdBindVertexBuffers(commands, 0, 1, &vertexBuffer, &offset);
             vkCmdBindIndexBuffer(commands, indices->handle(), 0, VK_INDEX_TYPE_UINT16);
-            vkCmdDrawIndexed(commands, 6, 1, 0, 0, 0);
+            vkCmdDrawIndexed(commands, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
             ui.recordDrawData(ui.drawData(), commands);
             vkCmdEndRendering(commands);
 

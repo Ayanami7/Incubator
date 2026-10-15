@@ -16,6 +16,7 @@
 #include "runtime/resource/resource_registry.h"
 #include "scene_assets.h"
 #include "scene_frame.h"
+#include "scene_mesh.h"
 #include "validation_mode.h"
 
 #ifdef _WIN32
@@ -30,14 +31,14 @@ int main(int argc, char* argv[])
 
     try
     {
-        if (argc > 2)
+        if (argc > 3)
         {
-            log.error("Usage: demo.exe [texture virtual path, e.g. textures/direction_rgba.png]");
+            log.error("Usage: demo.exe [texture virtual path] [cube|plane]");
             return 1;
         }
         Incubator::Demo::SceneAssetPaths paths;
         std::string texturePath;
-        if (argc == 2)
+        if (argc >= 2)
         {
 #ifdef _WIN32
             // Windows narrow argv uses the system code page, while resource paths are UTF-8.
@@ -46,6 +47,17 @@ int main(int argc, char* argv[])
             texturePath = argv[1];
 #endif
             paths.texture = texturePath;
+        }
+        std::string meshName = "cube";
+        if (argc == 3)
+        {
+#ifdef _WIN32
+            meshName = Incubator::Utils::Utf8::toUtf8String(std::filesystem::path(argv[2]));
+#else
+            meshName = argv[2];
+#endif
+            if (meshName != "cube" && meshName != "plane")
+                throw Incubator::Error::Exception(Incubator::Error::Code::CONFIG, "Expected mesh 'cube' or 'plane'");
         }
         log.info("Scene texture: {}", paths.texture);
         Incubator::Demo::SceneAssets assets(paths);
@@ -59,6 +71,11 @@ int main(int argc, char* argv[])
         const auto textureId = assets.texture->id();
         Incubator::Render::Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                                              Incubator::Demo::VALIDATION_MODE);
+        const auto mesh = [&] {
+            const auto data = meshName == "plane" ? Incubator::Demo::makePlaneMesh() : Incubator::Demo::makeCubeMesh();
+            return renderer.createMesh(data.vertices, data.indices);
+        }();
+        log.info("Scene mesh: {}", meshName);
         assets.releaseCpuResources();
         if (Incubator::Resource::ResourceRegistry::instance().getObject(textureId))
             throw Incubator::Error::Exception(Incubator::Error::Code::RENDER, "CPU scene texture was not unloaded");
@@ -77,7 +94,7 @@ int main(int argc, char* argv[])
             const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime).count();
             const auto frame = Incubator::Demo::makeSceneFrame(*extent, seconds);
             ImGui::Begin("Incubator Demo");
-            ImGui::Text("Vulkan textured cube");
+            ImGui::Text("Vulkan textured %s", meshName.c_str());
             ImGui::Text("Texture: %.*s", static_cast<int>(paths.texture.size()), paths.texture.data());
             ImGui::ColorEdit3("Clear color", clearColor.data());
             ImGui::Text("Application controls events; Renderer owns frame submission.");
@@ -85,7 +102,7 @@ int main(int argc, char* argv[])
             renderer.imgui().endFrame();
 
             void* uiDrawData = renderer.imgui().drawData();
-            renderer.drawFrame(frame, clearColor, [&renderer, uiDrawData](void* commandBuffer) {
+            renderer.drawFrame(frame, mesh, clearColor, [&renderer, uiDrawData](void* commandBuffer) {
                 renderer.imgui().recordDrawData(uiDrawData, commandBuffer);
             });
         }

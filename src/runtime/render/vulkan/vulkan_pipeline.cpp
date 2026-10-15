@@ -1,9 +1,11 @@
 #include "runtime/render/vulkan/vulkan_pipeline.h"
 
 #include <array>
+#include <cstddef>
 #include <iterator>
 
 #include "runtime/core/error/error.h"
+#include "runtime/render/mesh.h"
 #include "runtime/render/vulkan/vulkan_device.h"
 
 namespace Incubator
@@ -18,9 +20,8 @@ namespace Incubator
                 {
                     if (result != VK_SUCCESS)
                     {
-                        throw Error::Exception(Error::Code::RENDER,
-                                               fmt::format("{} failed with VkResult {}", operation,
-                                                           static_cast<int>(result)));
+                        throw Error::Exception(Error::Code::RENDER, fmt::format("{} failed with VkResult {}", operation,
+                                                                                static_cast<int>(result)));
                     }
                 }
             }  // namespace
@@ -68,11 +69,11 @@ namespace Incubator
 
                     VkPipelineVertexInputStateCreateInfo vertexInput{};
                     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-                    const VkVertexInputBindingDescription vertexBinding{0, 5 * sizeof(float),
+                    const VkVertexInputBindingDescription vertexBinding{0, sizeof(MeshVertex),
                                                                         VK_VERTEX_INPUT_RATE_VERTEX};
                     constexpr VkVertexInputAttributeDescription vertexAttributes[] = {
-                        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
-                        {1, 0, VK_FORMAT_R32G32_SFLOAT, 3 * sizeof(float)}};
+                        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, position)},
+                        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)}};
                     vertexInput.vertexBindingDescriptionCount = 1;
                     vertexInput.pVertexBindingDescriptions = &vertexBinding;
                     vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(std::size(vertexAttributes));
@@ -105,7 +106,7 @@ namespace Incubator
                     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
                     VkPipelineColorBlendAttachmentState blendAttachment{};
                     blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                                      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+                                                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
                     VkPipelineColorBlendStateCreateInfo blend{};
                     blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
                     blend.attachmentCount = 1;
