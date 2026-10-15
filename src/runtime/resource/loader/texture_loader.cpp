@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
 #include "runtime/core/path/path.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/resource/loader/texture_resource.h"
@@ -141,6 +142,9 @@ namespace Incubator
                     throw Error::Exception(Error::Code::IO, "PNG decoded dimensions do not match IHDR");
                 }
                 std::vector<uint8_t> pixels(decoded.get(), decoded.get() + header.pixelBytes);
+                Log::Registry::get("resource").debug("Decoded PNG '{}': {}x{}, {} input bytes, {} RGBA8 bytes",
+                                                      pathUtf8, header.width, header.height, bytes.size(),
+                                                      header.pixelBytes);
                 return std::make_unique<TextureResource>(id, header.width, header.height, std::move(pixels));
             }
             catch (const Error::Exception& ex)

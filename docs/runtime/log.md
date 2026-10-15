@@ -100,6 +100,21 @@ void logError(Logger& logger, const Error::Exception& err, Level level);
 // 将 Exception 输出到日志
 ```
 
+## 模块命名
+
+内置日志模块使用全小写名称，子模块用点分隔，与职责对应：
+
+| 模块名 | 使用范围 |
+|---|---|
+| `demo` | Demo 启动、场景选择与关闭 |
+| `resource` | 资源登记、加载、解码与卸载 |
+| `platform.window` | 窗口创建参数与 GLFW 错误 |
+| `render` | Renderer 调度和 ImGui 集成 |
+| `render.vulkan` | Vulkan Instance、Device、Pipeline、上传和帧同步 |
+
+`Registry::get()` 按完整名称区分大小写；点分隔仅用于分类，不自动继承父模块的级别或 sink。
+新增内置模块沿用上述命名，不混用 `render`、`Render` 或 `Renderer`。
+
 ## 使用示例
 
 ```cpp
@@ -107,7 +122,7 @@ void logError(Logger& logger, const Error::Exception& err, Level level);
 Log::Registry::init(Log::Level::DEBUG);
 
 // 获取模块 logger
-auto renderLog = Log::Registry::get("Renderer");
+auto renderLog = Log::Registry::get("render");
 
 // 使用日志
 renderLog.info("Window created: {}x{}", width, height);

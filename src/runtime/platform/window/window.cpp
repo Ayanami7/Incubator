@@ -2,9 +2,8 @@
 
 #include <GLFW/glfw3.h>
 
-#include <spdlog/spdlog.h>
-
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
 
 namespace Incubator
 {
@@ -21,7 +20,7 @@ namespace Incubator
 
             void glfwErrorCallback(int error, const char* description)
             {
-                spdlog::error("[GLFW] Error {}: {}", error, description);
+                Log::Registry::get("platform.window").error("GLFW error {}: {}", error, description);
             }
 
             // ============================================================
@@ -151,7 +150,18 @@ namespace Incubator
 
         std::unique_ptr<Window> createPlatformWindow(const WindowDesc& desc)
         {
-            return std::make_unique<WindowGlfw>(desc);
+            auto window = std::make_unique<WindowGlfw>(desc);
+            int width = 0;
+            int height = 0;
+            int framebufferWidth = 0;
+            int framebufferHeight = 0;
+            window->getWindowSize(width, height);
+            window->getFramebufferSize(framebufferWidth, framebufferHeight);
+            Log::Registry::get("platform.window").debug(
+                "Created window '{}': {}x{}, framebuffer {}x{}, content scale {}, resizable={}, visible={}",
+                desc.title, width, height, framebufferWidth, framebufferHeight, window->getContentScale(),
+                desc.resizable, desc.visible);
+            return window;
         }
 
     }  // namespace Window

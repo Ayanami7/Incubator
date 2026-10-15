@@ -24,8 +24,8 @@ int wmain(int argc, wchar_t* argv[])
 int main(int argc, char* argv[])
 #endif
 {
-    Incubator::Log::Registry::init();
-    auto log = Incubator::Log::Registry::get("Demo");
+    Incubator::Log::Registry::init(Incubator::Log::Level::DEBUG);
+    auto log = Incubator::Log::Registry::get("demo");
     log.info("Engine starting");
 
     try

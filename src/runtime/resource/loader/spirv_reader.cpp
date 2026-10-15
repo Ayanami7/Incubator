@@ -6,6 +6,7 @@
 #include <string>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
 
@@ -61,7 +62,8 @@ namespace Incubator
                     offset += bytesRead;
                 }
 
-                if (words.front() == SWAPPED_SPIRV_MAGIC)
+                const bool byteSwapped = words.front() == SWAPPED_SPIRV_MAGIC;
+                if (byteSwapped)
                 {
                     std::transform(words.begin(), words.end(), words.begin(), byteSwap);
                 }
@@ -70,6 +72,8 @@ namespace Incubator
                     throw Error::Exception(Error::Code::IO,
                                            fmt::format("Invalid SPIR-V magic number: {}", pathUtf8));
                 }
+                Log::Registry::get("resource").debug("Read SPIR-V '{}': {} bytes, byte order {}", pathUtf8,
+                                                      byteCount, byteSwapped ? "swapped to native" : "native");
                 return words;
             }
         }  // namespace Loader

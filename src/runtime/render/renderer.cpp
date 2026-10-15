@@ -155,6 +155,9 @@ namespace Incubator
                         throw Error::Exception(Error::Code::RENDER, "Mesh index is outside the vertex array");
                 auto mesh = std::make_shared<Mesh::Impl>(device_, vertices, indices);
                 meshes_.push_back(mesh);
+                Log::Registry::get("render").debug("Uploaded mesh: {} vertices ({} bytes), {} indices ({} bytes)",
+                                                     vertices.size(), vertices.size_bytes(), indices.size(),
+                                                     indices.size_bytes());
                 return Mesh(mesh);
             }
 

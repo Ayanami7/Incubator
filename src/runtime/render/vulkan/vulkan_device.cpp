@@ -246,12 +246,16 @@ namespace Incubator
                 vkGetDeviceQueue(device_, queueFamilies_.present, 0, &presentQueue_);
                 vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &memoryProperties_);
 
-                Log::Registry::get("Render.Vulkan").info(
+                Log::Registry::get("render.vulkan").info(
                     "Selected Vulkan device '{}' (API {}.{}; Dynamic Rendering, Synchronization2 and "
                     "swapchainMaintenance1 enabled; "
                     "graphics queue family {}, present queue family {})",
                     properties_.deviceName, VK_API_VERSION_MAJOR(properties_.apiVersion),
                     VK_API_VERSION_MINOR(properties_.apiVersion), queueFamilies_.graphics, queueFamilies_.present);
+                Log::Registry::get("render.vulkan").debug(
+                    "Device limits: maxImageDimension2D={}, maxUniformBufferRange={}, nonCoherentAtomSize={}",
+                    properties_.limits.maxImageDimension2D, properties_.limits.maxUniformBufferRange,
+                    properties_.limits.nonCoherentAtomSize);
             }
 
             VulkanDevice::~VulkanDevice()

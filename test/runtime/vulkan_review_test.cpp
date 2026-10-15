@@ -390,7 +390,7 @@ namespace
             Resource::ResourceRegistry::instance().clear();
             auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(messages_);
             sink->set_pattern("%l|%v");
-            Log::Registry::get("Render.Vulkan").addSink(sink);
+            Log::Registry::get("render.vulkan").addSink(sink);
             Log::Registry::get("render").addSink(sink);
         }
 

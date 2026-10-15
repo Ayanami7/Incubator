@@ -91,6 +91,9 @@ namespace Incubator
                     shutdownVulkan();
                     throw Error::Exception(Error::Code::RENDER, "Failed to upload ImGui font texture");
                 }
+                Log::Registry::get("render").debug(
+                    "Initialized ImGui Vulkan backend: {} images, color format {}, depth format {}, queue family {}",
+                    imageCount_, static_cast<int>(colorFormat_), static_cast<int>(depthFormat_), queueFamily_);
             }
 
             void ImGuiRenderer::beginFrame()

@@ -3,6 +3,7 @@
 #include <limits>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
 #include "runtime/render/vulkan/vulkan_device.h"
 
@@ -163,6 +164,9 @@ namespace Incubator
                     dependency.pImageMemoryBarriers = &toShaderRead;
                     vkCmdPipelineBarrier2(commandBuffer, &dependency);
                 });
+                Log::Registry::get("render.vulkan").debug("Uploaded RGBA8 texture: {}x{}, format {}, {} bytes",
+                                                          extent.width, extent.height, static_cast<int>(format),
+                                                          pixels.size());
                 return image;
             }
 

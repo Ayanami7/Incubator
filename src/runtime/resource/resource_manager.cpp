@@ -93,7 +93,11 @@ namespace Incubator
                 return nullptr;  // Loader 内部已记录失败
             }
             object->setState(ResourceState::READY);
-            return reg.attachObject(id, std::move(object)) ? reg.getObject(id) : nullptr;
+            if (!reg.attachObject(id, std::move(object)))
+                return nullptr;
+            Log::Registry::get("resource").debug("Loaded CPU resource '{}' (type {:#x})", virtualPath,
+                                                  static_cast<uint64_t>(type));
+            return reg.getObject(id);
         }
 
         void ResourceManager::acquire(ResourceId id)

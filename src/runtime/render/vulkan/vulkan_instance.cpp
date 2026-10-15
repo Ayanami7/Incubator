@@ -62,7 +62,7 @@ namespace Incubator
                                                  const VkDebugUtilsMessengerCallbackDataEXT* callbackData, void*)
                 {
                     const char* message = callbackData->pMessage ? callbackData->pMessage : "(no message)";
-                    auto logger = Log::Registry::get("Render.Vulkan");
+                    auto logger = Log::Registry::get("render.vulkan");
                     if ((severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0)
                     {
                         logger.error("{}", message);
@@ -133,7 +133,7 @@ namespace Incubator
                 const bool validationAvailable = validationLayerAvailable && debugUtilsAvailable;
                 if (validationRequested && !validationAvailable)
                 {
-                    auto logger = Log::Registry::get("Render.Vulkan");
+                    auto logger = Log::Registry::get("render.vulkan");
                     const std::string missing = !validationLayerAvailable ? VALIDATION_LAYER :
                                                                           VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
                     if (validationMode == ValidationMode::Required)
@@ -200,8 +200,12 @@ namespace Incubator
                     }
                 }
 
-                Log::Registry::get("Render.Vulkan").info("Created Vulkan 1.3 instance (validation: {})",
+                Log::Registry::get("render.vulkan").info("Created Vulkan 1.3 instance (validation: {})",
                                                           enableValidation ? "enabled" : "disabled");
+                Log::Registry::get("render.vulkan").debug(
+                    "Instance setup: loader {}.{}.{}, {} enabled extensions, {} enabled layers",
+                    VK_API_VERSION_MAJOR(loaderVersion), VK_API_VERSION_MINOR(loaderVersion),
+                    VK_API_VERSION_PATCH(loaderVersion), enabledExtensions.size(), enabledLayers.size());
             }
 
             VulkanInstance::~VulkanInstance()

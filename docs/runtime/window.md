@@ -114,7 +114,7 @@ void glfwErrorCallback(int error, const char* description)
 }
 ```
 
-GLFW 内部错误（非致命）通过 `spdlog` 输出日志，不中断程序运行。
+GLFW 内部错误（非致命）通过 `Log::Registry::get("platform.window")` 输出日志，不中断程序运行。
 
 ### 窗口参数
 

@@ -6,6 +6,7 @@
 #include <iterator>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
 #include "runtime/render/mesh.h"
 #include "runtime/render/vulkan/vulkan_device.h"
 
@@ -138,6 +139,11 @@ namespace Incubator
                     checkVk(vkCreateGraphicsPipelines(device_.handle(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
                                                       &pipeline_),
                             "vkCreateGraphicsPipelines");
+                    Log::Registry::get("render.vulkan").debug(
+                        "Created graphics pipeline: color format {}, depth format {}, "
+                        "vertex SPIR-V {} bytes, fragment SPIR-V {} bytes",
+                        static_cast<int>(colorFormat_), static_cast<int>(depthFormat_),
+                        vertexShader.size() * sizeof(uint32_t), fragmentShader.size() * sizeof(uint32_t));
                 }
                 catch (...)
                 {

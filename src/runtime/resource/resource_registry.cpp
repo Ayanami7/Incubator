@@ -164,9 +164,13 @@ namespace Incubator
         void ResourceRegistry::detachObject(ResourceId id)
         {
             auto it = idToEntry_.find(id.value());
-            if (it != idToEntry_.end())
+            if (it != idToEntry_.end() && it->second.object)
             {
                 it->second.object.reset();
+                Log::Registry::get("resource").debug("Unloaded CPU resource '{}' (type {:#x}, references {})",
+                                                      it->second.info.virtualPath,
+                                                      static_cast<uint64_t>(it->second.info.type),
+                                                      it->second.refCount);
             }
         }
     }  // namespace Resource
