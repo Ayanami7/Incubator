@@ -116,7 +116,8 @@ namespace Incubator
 
                 void setTitle(std::string_view title) override
                 {
-                    glfwSetWindowTitle(window_, title.data());
+                    const std::string terminatedTitle(title);
+                    glfwSetWindowTitle(window_, terminatedTitle.c_str());
                 }
 
                 // ---- 窗口状态查询 ----

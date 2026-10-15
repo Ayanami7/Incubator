@@ -7,6 +7,15 @@
 #include <memory>
 #include <string>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#define GLFW_INCLUDE_NONE
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
+#endif
+
 using Incubator::Window::WindowDesc;
 using Incubator::Window::Window;
 using Incubator::Window::createPlatformWindow;
@@ -70,6 +79,19 @@ protected:
     {
         window_.reset();
     }
+
+#ifdef _WIN32
+    std::wstring getWindowTitle() const
+    {
+        auto* native = static_cast<GLFWwindow*>(window_->getNativeHandle());
+        const HWND handle = glfwGetWin32Window(native);
+        const int length = GetWindowTextLengthW(handle);
+        std::wstring title(static_cast<size_t>(length) + 1, L'\0');
+        const int written = GetWindowTextW(handle, title.data(), static_cast<int>(title.size()));
+        title.resize(static_cast<size_t>(written));
+        return title;
+    }
+#endif
 
     std::unique_ptr<Window> window_;
 };
@@ -156,6 +178,40 @@ TEST_F(WindowTest, SetTitleDoesNotCrash)
     window_->setTitle("Another Title");
     window_->setTitle("");
 }
+
+#ifdef _WIN32
+TEST_F(WindowTest, SetTitleUsesSubstringLength)
+{
+    const std::string backing = "Title trailing text";
+
+    window_->setTitle(std::string_view(backing).substr(0, 5));
+
+    EXPECT_EQ(getWindowTitle(), L"Title");
+}
+
+TEST_F(WindowTest, SetTitleAcceptsNonNullTerminatedBuffer)
+{
+    const char title[] = {'T', 'i', 't', 'l', 'e'};
+
+    window_->setTitle(std::string_view(title, sizeof(title)));
+
+    EXPECT_EQ(getWindowTitle(), L"Title");
+}
+
+TEST_F(WindowTest, SetTitleAcceptsEmptyView)
+{
+    window_->setTitle(std::string_view{});
+
+    EXPECT_EQ(getWindowTitle(), L"");
+}
+
+TEST_F(WindowTest, SetTitlePreservesUtf8Chinese)
+{
+    window_->setTitle("纹理加载窗口");
+
+    EXPECT_EQ(getWindowTitle(), L"纹理加载窗口");
+}
+#endif
 
 // ============================================================
 //  Factory Function — Standalone Test

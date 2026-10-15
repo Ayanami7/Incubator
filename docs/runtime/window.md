@@ -121,6 +121,10 @@ GLFW 内部错误（非致命）通过 `spdlog` 输出日志，不中断程序�
 - 强制设置 `GLFW_CLIENT_API = GLFW_NO_API`：不创建 OpenGL 上下文，为后续 Vulkan 使用预留
 - `resizable` 和 `visible` 根据 `WindowDesc` 配置
 
+### 标题设置
+
+`WindowDesc::title` 和 `setTitle()` 的标题采用 UTF-8 编码。`setTitle()` 按 `std::string_view` 的长度复制标题，再传给 GLFW；调用方可以传入子串、没有 NUL 终止符的字符缓冲区或空视图。
+
 ### 析构清理
 
 ```cpp
