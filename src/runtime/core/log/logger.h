@@ -37,8 +37,8 @@ namespace Incubator
         /// @brief 文件日志输出配置
         struct FileSinkConfig
         {
-            std::string log_dir;                // 日志输出目录，为空则禁用文件日志
-            std::string basename = "app";       // 日志文件名（不含路径和扩展名）
+            std::string log_dir;                // UTF-8 日志输出目录，为空则禁用文件日志
+            std::string basename = "app";       // UTF-8 日志文件名（不含路径和扩展名）
             size_t max_size = 5 * 1024 * 1024;  // 单文件最大字节数，0=不轮转
             size_t max_files = 3;               // 轮转保留的历史文件数
         };

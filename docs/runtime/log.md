@@ -49,6 +49,9 @@ struct FileSinkConfig
 
 ### Registry 类（全局单例）
 
+`log_dir` 与 `basename` 均采用 UTF-8。构造文件路径时统一经 `Utils::Utf8` 转换；Windows
+启用 spdlog 的 `SPDLOG_WCHAR_FILENAMES`，以原生 UTF-16 路径打开和轮转文件，不经过系统 ANSI 代码页。
+
 管理所有 logger 的共享状态（sinks、级别、缓存）。所有静态方法线程安全。
 
 **静态方法：**

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -188,6 +189,29 @@ TEST_F(LoggerFileTest, FileSinkHotplugAppliesToExistingAndNewLoggers)
     EXPECT_THAT(contents, ::testing::HasSubstr("existing enabled"));
     EXPECT_THAT(contents, ::testing::HasSubstr("new enabled"));
     EXPECT_THAT(contents, ::testing::Not(::testing::HasSubstr("disabled")));
+}
+
+TEST_F(LoggerFileTest, Utf8DirectoryAndBasenameSurviveFileCreationAndRotation)
+{
+    const auto logDirectory = directory_ / Incubator::Utils::Utf8::toFsPath("日志 空格-😀");
+    config_.log_dir = Incubator::Utils::Utf8::toUtf8String(logDirectory);
+    config_.basename = "引擎-🚀";
+    config_.max_size = 128;
+    config_.max_files = 2;
+    Registry::init(Level::INFO, {}, config_);
+    auto logger = Registry::get("unicode");
+    for (int line = 0; line < 10; ++line)
+        logger.info("中文内容-😀 {}", line);
+    Registry::flushAll();
+    Registry::setFileSinkConfig({});
+
+    EXPECT_TRUE(std::filesystem::exists(logDirectory / Incubator::Utils::Utf8::toFsPath(config_.basename + ".log")));
+    EXPECT_TRUE(std::filesystem::exists(logDirectory / Incubator::Utils::Utf8::toFsPath(config_.basename + ".1.log")));
+    EXPECT_TRUE(std::filesystem::exists(logDirectory / Incubator::Utils::Utf8::toFsPath(config_.basename + ".2.log")));
+    EXPECT_THAT(readLog(logDirectory / Incubator::Utils::Utf8::toFsPath(config_.basename + ".log")),
+                ::testing::HasSubstr("中文内容-😀 9"));
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory_), std::filesystem::directory_iterator()), 1);
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(logDirectory), std::filesystem::directory_iterator()), 3);
 }
 
 TEST_F(LoggerFileTest, ConcurrentLoggingFlushAndSinkChangesPreserveMessagesAndIsolation)
