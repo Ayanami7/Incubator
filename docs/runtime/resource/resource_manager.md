@@ -32,6 +32,10 @@ public:
 - 额外的持有者必须显式调用 `acquire()`；`load()`/`get()` **不改变引用计数**
 - `release()` 递减计数，归零时由本类卸载对象（`detachObject`），登记保留
 - `load()`/`get()` 返回的裸指针**仅在对应持有期（登记持有 + acquire）内有效**，持有期满后不得再访问
+- 已有 refCount=0 的登记条目重新使用前需 `acquire()`；重复登记不会恢复持有。
+- `reset()` 只移除 Loader，不释放 CPU 对象、不清空 Registry，也不使已挂载缓存失效。
+  调用方须在正常或异常结束时先 release 本次持有，再移除借用 FileIO 的 Loader，最后销毁 FileIO；
+  具体资源的 GPU 使用期由 Render 另行管理。
 
 ## 同步加载语义（load）
 

@@ -79,6 +79,10 @@ Swapchain 保存并暴露 colorSpace，Renderer 在初始化和重建日志中�
 
 ## 调用与错误约定
 
+构造入口为 `Renderer(window, vertexShader, fragmentShader, texture, validationMode)`，
+Shader 和 Texture 均由调用方选择并在构造期间保持有效；Window 必须活到 Renderer 销毁之后。
+成功构造后可释放 CPU Resource，Renderer 不通过 FileIO 或 Loader 重新加载纹理。
+
 应用继续拥有主循环，负责事件轮询并准备本帧 CPU 绘制数据。Renderer 一次调用负责获取图像、录制命令、提交和呈现；调用期间消费 CPU 数据，不缓存到下一帧。应用不接触已获取 GPU 帧的取消与补救同步规则。
 
 窗口尺寸为零或交换链暂不可绘制属于正常跳帧，由 Renderer 以非错误结果结束本次调用，不保留本帧绘制数据。初始化失败、必需功能不支持或不可恢复的 Vulkan 操作失败属于渲染错误，沿用 `Error::Exception` 并使用 `Error::Code::RENDER`，通过现有 Log 上报；不吞掉错误后继续运行。

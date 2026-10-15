@@ -85,9 +85,11 @@ namespace
 
     struct FileAudit
     {
+        Demo::SceneAssetPaths paths;
         size_t textureOpens = 0;
         bool destroyed = false;
         bool routesClearedBeforeDestroy = false;
+        bool cpuReleasedBeforeDestroy = false;
     };
 
     class AuditedFileIO : public FileIO::FileIO
@@ -100,6 +102,16 @@ namespace
             audit_.routesClearedBeforeDestroy =
                 !Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::TEXTURE) &&
                 !Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::SHADER);
+            auto& registry = Resource::ResourceRegistry::instance();
+            audit_.cpuReleasedBeforeDestroy = true;
+            for (const auto& [type, path] : {std::pair{Resource::ResourceType::SHADER, audit_.paths.vertex},
+                                             std::pair{Resource::ResourceType::SHADER, audit_.paths.fragment},
+                                             std::pair{Resource::ResourceType::TEXTURE, audit_.paths.texture}})
+            {
+                const auto id = registry.lookup(type, path);
+                if (id.valid() && (registry.refCount(id) != 0 || registry.getObject(id)))
+                    audit_.cpuReleasedBeforeDestroy = false;
+            }
         }
         bool exists(const std::filesystem::path& path) override
         {
@@ -411,22 +423,32 @@ namespace
     TEST_F(VulkanReviewTest, RequiredValidationDrawResizeAndShutdown)
     {
         auto window = createWindow();
-        FileAudit audit;
-        SceneAssets assets({}, std::make_unique<AuditedFileIO>(audit));
+        for (const auto texture : {"textures/reference_rgba.png", "textures/direction_rgba.png"})
         {
-            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
-            releaseCpuAssets(assets);
-            for (int cycle = 0; cycle < 4; ++cycle)
+            FileAudit audit;
+            audit.paths.texture = texture;
             {
-                glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 640 + cycle * 30,
-                                  360 + cycle * 20);
-                int recorded = 0;
-                for (int frame = 0; frame < 5; ++frame)
-                    recorded += drawUiFrame(*window, renderer);
-                EXPECT_GT(recorded, 0);
-                EXPECT_EQ(audit.textureOpens, 1u);
+                SceneAssets assets(audit.paths, std::make_unique<AuditedFileIO>(audit));
+                Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                                  RendererValidationMode::Required);
+                releaseCpuAssets(assets);
+                for (int cycle = 0; cycle < 4; ++cycle)
+                {
+                    glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 680 + cycle * 30,
+                                      400 + cycle * 20);
+                    int recorded = 0;
+                    for (int frame = 0; frame < 5; ++frame)
+                        recorded += drawUiFrame(*window, renderer);
+                    EXPECT_GT(recorded, 0);
+                    EXPECT_EQ(audit.textureOpens, 1u);
+                }
             }
+            EXPECT_TRUE(audit.destroyed);
+            EXPECT_TRUE(audit.routesClearedBeforeDestroy);
+            EXPECT_TRUE(audit.cpuReleasedBeforeDestroy);
+            expectReleased(audit.paths);
+            std::cout << "TEXTURE=" << texture << " RESIZE_CYCLES=4 PNG_OPENS=" << audit.textureOpens
+                      << " CPU_RELEASED_BEFORE_FILEIO=" << audit.cpuReleasedBeforeDestroy << '\n';
         }
         expectCleanValidation();
     }
@@ -455,9 +477,11 @@ namespace
             if (stage == 3)
                 paths.texture = "textures/task05-truncated.png";
             FileAudit audit;
+            audit.paths = paths;
             EXPECT_THROW((SceneAssets(paths, std::make_unique<AuditedFileIO>(audit))), Error::Exception);
             EXPECT_TRUE(audit.destroyed);
             EXPECT_TRUE(audit.routesClearedBeforeDestroy);
+            EXPECT_TRUE(audit.cpuReleasedBeforeDestroy);
             expectReleased(paths);
         }
         EXPECT_TRUE(std::filesystem::remove(truncatedPath));
@@ -469,6 +493,7 @@ namespace
         Demo::SceneAssetPaths paths;
         paths.texture = "textures/direction_rgba.png";
         FileAudit audit;
+        audit.paths = paths;
         {
             SceneAssets assets(paths, std::make_unique<AuditedFileIO>(audit));
             ASSERT_EQ(assets.texture->width(), 3u);
@@ -497,9 +522,18 @@ namespace
             }
             expectReleased(paths);
             EXPECT_EQ(audit.textureOpens, 1u);
+            std::filesystem::create_directories("review");
+            std::ofstream output("review/texture-direction.ppm", std::ios::binary);
+            output << "P6\n384 256\n255\n";
+            for (size_t pixel = 0; pixel < pixels.size(); pixel += 4)
+                output.write(reinterpret_cast<const char*>(pixels.data() + pixel), 3);
+            ASSERT_TRUE(output.good());
+            std::cout << "GPU_DIRECTION_FORMAT=" << int(swapchain.format())
+                      << " COLOR_SPACE=" << int(swapchain.colorSpace()) << " RGB_TOLERANCE=1\n";
         }
         EXPECT_TRUE(audit.destroyed);
         EXPECT_TRUE(audit.routesClearedBeforeDestroy);
+        EXPECT_TRUE(audit.cpuReleasedBeforeDestroy);
         // Restart with the other asset through the same public Renderer constructor as Demo.
         {
             SceneAssets assets(paths);
@@ -526,6 +560,7 @@ namespace
                      Error::Exception);
         EXPECT_TRUE(audit.destroyed);
         EXPECT_TRUE(audit.routesClearedBeforeDestroy);
+        EXPECT_TRUE(audit.cpuReleasedBeforeDestroy);
         EXPECT_EQ(audit.textureOpens, 1u);
         expectReleased({});
         expectCleanValidation();
@@ -661,7 +696,8 @@ namespace
     TEST_F(VulkanReviewTest, VisibleWindowMinimizeRestoreAndResize)
     {
         auto window = createWindow(true);
-        SceneAssets assets;
+        FileAudit audit;
+        SceneAssets assets({}, std::make_unique<AuditedFileIO>(audit));
         {
             Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                               RendererValidationMode::Required);
@@ -691,8 +727,10 @@ namespace
                 for (int frame = 0; frame < 10; ++frame)
                     recorded += drawUiFrame(*window, renderer);
                 EXPECT_GT(recorded, 0);
+                EXPECT_EQ(audit.textureOpens, 1u);
             }
         }
+        std::cout << "MINIMIZE_RESTORE_CYCLES=4 PNG_OPENS=" << audit.textureOpens << '\n';
         expectCleanValidation();
     }
     TEST_F(VulkanReviewTest, RapidUiShutdownAfterLastSubmission)
