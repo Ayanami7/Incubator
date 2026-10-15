@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <glm/mat4x4.hpp>
 #include <iterator>
 
 #include "runtime/core/error/error.h"
@@ -51,6 +52,9 @@ namespace Incubator
                     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
                     layoutInfo.setLayoutCount = 1;
                     layoutInfo.pSetLayouts = &descriptorLayout;
+                    const VkPushConstantRange modelRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
+                    layoutInfo.pushConstantRangeCount = 1;
+                    layoutInfo.pPushConstantRanges = &modelRange;
                     checkVk(vkCreatePipelineLayout(device_.handle(), &layoutInfo, nullptr, &layout_),
                             "vkCreatePipelineLayout");
 

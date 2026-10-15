@@ -1,7 +1,6 @@
 #include "runtime/render/vulkan/vulkan_command_list.h"
 
 #include "runtime/core/error/error.h"
-#include "runtime/render/vulkan/vulkan_buffer.h"
 #include "runtime/render/vulkan/vulkan_pipeline.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
 
@@ -17,20 +16,16 @@ namespace Incubator
                 {
                     if (result != VK_SUCCESS)
                     {
-                        throw Error::Exception(Error::Code::RENDER,
-                                               fmt::format("{} failed with VkResult {}", operation,
-                                                           static_cast<int>(result)));
+                        throw Error::Exception(Error::Code::RENDER, fmt::format("{} failed with VkResult {}", operation,
+                                                                                static_cast<int>(result)));
                     }
                 }
             }  // namespace
 
-            void VulkanCommandList::recordIndexed(VkCommandBuffer commandBuffer, const VulkanSwapchain& swapchain,
-                                                  uint32_t imageIndex, const VkClearColorValue& clearColor,
-                                                  const VulkanPipeline& pipeline,
-                                                  const VulkanBuffer& vertexBuffer, const VulkanBuffer& indexBuffer,
-                                                  VkImage depthImage, VkImageView depthView,
-                                                  VkDescriptorSet descriptorSet, uint32_t indexCount,
-                                                  const std::function<void(VkCommandBuffer)>& recordUi)
+            void VulkanCommandList::record(VkCommandBuffer commandBuffer, const VulkanSwapchain& swapchain,
+                                           uint32_t imageIndex, const VkClearColorValue& clearColor, VkImage depthImage,
+                                           VkImageView depthView,
+                                           const std::function<void(VkCommandBuffer)>& recordScene)
             {
                 VkCommandBufferBeginInfo beginInfo{};
                 beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -52,10 +47,10 @@ namespace Incubator
                 toColor.subresourceRange.layerCount = 1;
                 VkImageMemoryBarrier2 toDepth{};
                 toDepth.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-                toDepth.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
-                                       VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-                toDepth.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                toDepth.dstStageMask =
+                    VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+                toDepth.dstAccessMask =
+                    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
                 toDepth.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 toDepth.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
                 toDepth.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -103,16 +98,7 @@ namespace Incubator
                 scissor.extent = extent;
                 vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
                 vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, 1,
-                                        &descriptorSet, 0, nullptr);
-                const VkDeviceSize vertexOffset = 0;
-                const VkBuffer vertexHandle = vertexBuffer.handle();
-                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexHandle, &vertexOffset);
-                vkCmdBindIndexBuffer(commandBuffer, indexBuffer.handle(), 0, VK_INDEX_TYPE_UINT16);
-                vkCmdDrawIndexed(commandBuffer, indexCount, 1, 0, 0, 0);
-                if (recordUi)
-                    recordUi(commandBuffer);
+                recordScene(commandBuffer);
                 vkCmdEndRendering(commandBuffer);
 
                 VkImageMemoryBarrier2 toPresent{};
@@ -130,6 +116,24 @@ namespace Incubator
                 dependency.imageMemoryBarrierCount = 1;
                 vkCmdPipelineBarrier2(commandBuffer, &dependency);
                 checkVk(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
+            }
+
+            void VulkanCommandList::drawIndexed(VkCommandBuffer commandBuffer, const VulkanPipeline& pipeline,
+                                                VkDescriptorSet descriptorSet, std::span<const VulkanDrawItem> draws)
+            {
+                static_assert(sizeof(glm::mat4) == 64);
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, 1,
+                                        &descriptorSet, 0, nullptr);
+                const VkDeviceSize vertexOffset = 0;
+                for (const auto& draw : draws)
+                {
+                    vkCmdPushConstants(commandBuffer, pipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                       sizeof(draw.model), &draw.model);
+                    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &draw.vertexBuffer, &vertexOffset);
+                    vkCmdBindIndexBuffer(commandBuffer, draw.indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+                    vkCmdDrawIndexed(commandBuffer, draw.indexCount, 1, 0, 0, 0);
+                }
             }
         }  // namespace Vulkan
     }  // namespace Render

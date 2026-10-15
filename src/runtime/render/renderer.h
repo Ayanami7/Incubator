@@ -62,7 +62,7 @@ namespace Incubator
             // argument is the native command buffer, valid only for this invocation.
             // clearColor RGB is sRGB encoded; alpha is linear, as with the ImGui backend.
             // An extent changed since beginUiFrame skips stale input; regenerate it next frame.
-            void drawFrame(const FrameInput& input, const Mesh& mesh, const std::array<float, 4>& clearColor,
+            void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
                            const std::function<void(void*)>& recordUi = {});
             Integration::ImGuiRenderer& imgui();
 

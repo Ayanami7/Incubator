@@ -12,6 +12,7 @@
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
+#include "runtime/render/vulkan/vulkan_command_list.h"
 #include "runtime/render/vulkan/vulkan_device.h"
 #include "runtime/render/vulkan/vulkan_image.h"
 #include "runtime/render/vulkan/vulkan_pipeline.h"
@@ -105,7 +106,6 @@ namespace TextureGpuReview
         VulkanSampler sampler(device);
         struct alignas(16) Transforms
         {
-            glm::mat4 model{1.0f};
             glm::mat4 view{1.0f};
             glm::mat4 projection{1.0f};
         } transforms;
@@ -198,15 +198,9 @@ namespace TextureGpuReview
             const VkRect2D scissor{{0, 0}, EXTENT};
             vkCmdSetViewport(commands, 0, 1, &viewport);
             vkCmdSetScissor(commands, 0, 1, &scissor);
-            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-            const auto descriptor = bindings.descriptorSet(0);
-            vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, 1, &descriptor, 0,
-                                    nullptr);
-            const VkDeviceSize offset = 0;
-            const auto vertexBuffer = vertices->handle();
-            vkCmdBindVertexBuffers(commands, 0, 1, &vertexBuffer, &offset);
-            vkCmdBindIndexBuffer(commands, indices->handle(), 0, VK_INDEX_TYPE_UINT16);
-            vkCmdDrawIndexed(commands, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
+            const std::array draws = {VulkanDrawItem{vertices->handle(), indices->handle(),
+                                                     static_cast<uint32_t>(mesh.indices.size()), glm::mat4(1.0f)}};
+            VulkanCommandList::drawIndexed(commands, pipeline, bindings.descriptorSet(0), draws);
             ui.recordDrawData(ui.drawData(), commands);
             vkCmdEndRendering(commands);
 

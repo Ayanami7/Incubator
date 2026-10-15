@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <sstream>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "examples/demo/scene_assets.h"
@@ -174,11 +176,10 @@ namespace
 
     TEST(RenderFrameInputTest, ApplicationOwnsAnimationAndFinalProjection)
     {
-        const auto wide = Demo::makeSceneFrame({800, 400}, 0.0f);
-        const auto square = Demo::makeSceneFrame({400, 400}, 0.0f);
-        EXPECT_EQ(wide.model, glm::mat4(1.0f));
-        EXPECT_NE(Demo::makeSceneFrame({800, 400}, 1.0f).model, wide.model);
-        EXPECT_EQ(Demo::makeSceneFrame({800, 400}, 0.0f).model, wide.model);
+        const auto wide = Demo::makeSceneFrame({800, 400}, {});
+        const auto square = Demo::makeSceneFrame({400, 400}, {});
+        EXPECT_EQ(Demo::makeSceneModel(0.0f), glm::mat4(1.0f));
+        EXPECT_NE(Demo::makeSceneModel(1.0f), Demo::makeSceneModel(0.0f));
         EXPECT_NEAR(wide.camera.projection[0][0] * 2.0f, square.camera.projection[0][0], 0.00001f);
         EXPECT_EQ(wide.camera.projection[1][1], square.camera.projection[1][1]);
         EXPECT_LT(wide.camera.projection[1][1], 0.0f);
@@ -380,12 +381,43 @@ namespace
             renderer.imgui().endFrame();
             auto* data = renderer.imgui().drawData();
             int recorded = 0;
-            renderer.drawFrame(Demo::makeSceneFrame(*extent, 0.0f), mesh, {0.12f, 0.16f, 0.22f, 1.0f},
-                               [&](void* commands) {
-                                   ++recorded;
-                                   renderer.imgui().recordDrawData(data, commands);
-                               });
+            const auto scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.6f));
+            const std::array draws = {
+                DrawItem{mesh, glm::translate(glm::mat4(1.0f), glm::vec3(-0.65f, 0.0f, 0.0f)) * scale},
+                DrawItem{mesh, glm::translate(glm::mat4(1.0f), glm::vec3(0.65f, 0.0f, 0.0f)) * scale}};
+            renderer.drawFrame(Demo::makeSceneFrame(*extent, draws), {0.12f, 0.16f, 0.22f, 1.0f}, [&](void* commands) {
+                ++recorded;
+                renderer.imgui().recordDrawData(data, commands);
+            });
             return recorded;
+        }
+
+        FrameInput controlledFrame(FrameExtent extent, std::span<const DrawItem> draws)
+        {
+            const float aspect = static_cast<float>(extent.width) / extent.height;
+            auto projection = glm::orthoRH_ZO(-aspect, aspect, -1.0f, 1.0f, 0.1f, 10.0f);
+            projection[1][1] *= -1.0f;
+            const auto view = glm::lookAtRH(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            return {extent, {view, projection}, draws};
+        }
+
+        FrameExtent submitControlledScene(Window::Window& window, Renderer& renderer, std::span<const DrawItem> draws,
+                                          bool withUi = false)
+        {
+            window.pollEvents();
+            const auto extent = renderer.beginUiFrame();
+            if (!extent)
+                throw Error::Exception(Error::Code::RENDER, "Controlled scene requires a drawable frame");
+            if (withUi)
+                ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(16, 16), ImVec2(48, 48),
+                                                              IM_COL32(255, 0, 255, 255));
+            renderer.imgui().endFrame();
+            auto* ui = renderer.imgui().drawData();
+            renderer.drawFrame(controlledFrame(*extent, draws), {0.2f, 0.24f, 0.28f, 1.0f}, [&](void* commands) {
+                if (withUi)
+                    renderer.imgui().recordDrawData(ui, commands);
+            });
+            return *extent;
         }
 
         void expectCleanValidation()
@@ -725,10 +757,14 @@ namespace
             EXPECT_FALSE(Mesh{}.valid());
             const auto extent = renderer.beginUiFrame();
             ASSERT_TRUE(extent);
-            const auto frame = Demo::makeSceneFrame(*extent, 0.0f);
+            const std::array draws = {DrawItem{mesh, glm::mat4(1.0f)}};
+            const auto frame = Demo::makeSceneFrame(*extent, draws);
             renderer.imgui().endFrame();
-            EXPECT_THROW(renderer.drawFrame(frame, Mesh{}, {0.2f, 0.3f, 0.4f, 1.0f}), Error::Exception);
-            renderer.drawFrame(frame, mesh, {0.2f, 0.3f, 0.4f, 1.0f});
+            const std::array invalidDraws = {DrawItem{mesh, glm::mat4(1.0f)}, DrawItem{Mesh{}, glm::mat4(1.0f)}};
+            auto invalidFrame = frame;
+            invalidFrame.draws = invalidDraws;
+            EXPECT_THROW(renderer.drawFrame(invalidFrame, {0.2f, 0.3f, 0.4f, 1.0f}), Error::Exception);
+            renderer.drawFrame(frame, {0.2f, 0.3f, 0.4f, 1.0f});
             mesh = Mesh{};
             // Copies share one upload after the CPU arrays and original reference are gone.
             for (int frameIndex = 0; frameIndex < 6; ++frameIndex)
@@ -768,10 +804,14 @@ namespace
                 const auto ownMesh = createCubeMesh(second);
                 const auto extent = second.beginUiFrame();
                 ASSERT_TRUE(extent);
-                const auto frame = Demo::makeSceneFrame(*extent, 0.0f);
+                const std::array ownDraws = {DrawItem{ownMesh, glm::mat4(1.0f)}};
+                const std::array foreignDraws = {DrawItem{mesh, glm::mat4(1.0f)}};
+                const auto frame = Demo::makeSceneFrame(*extent, ownDraws);
                 second.imgui().endFrame();
-                EXPECT_THROW(second.drawFrame(frame, mesh, {0.2f, 0.3f, 0.4f, 1.0f}), Error::Exception);
-                second.drawFrame(frame, ownMesh, {0.2f, 0.3f, 0.4f, 1.0f});
+                auto foreignFrame = frame;
+                foreignFrame.draws = foreignDraws;
+                EXPECT_THROW(second.drawFrame(foreignFrame, {0.2f, 0.3f, 0.4f, 1.0f}), Error::Exception);
+                second.drawFrame(frame, {0.2f, 0.3f, 0.4f, 1.0f});
             }
             releaseCpuAssets(assets);
             EXPECT_GT(drawUiFrame(*firstWindow, first, mesh), 0);
@@ -915,11 +955,11 @@ namespace
             ImGui::End();
             renderer.imgui().endFrame();
             auto* data = renderer.imgui().drawData();
-            renderer.drawFrame(Demo::makeSceneFrame(*extent, 0.0f), mesh, {0.1f, 0.2f, 0.3f, 1.0f},
-                               [&](void* commands) {
-                                   renderer.imgui().recordDrawData(data, commands);
-                                   glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 710, 430);
-                               });
+            const std::array draws = {DrawItem{mesh, glm::mat4(1.0f)}};
+            renderer.drawFrame(Demo::makeSceneFrame(*extent, draws), {0.1f, 0.2f, 0.3f, 1.0f}, [&](void* commands) {
+                renderer.imgui().recordDrawData(data, commands);
+                glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 710, 430);
+            });
             int recorded = 0;
             for (int frame = 0; frame < 10; ++frame)
                 recorded += drawUiFrame(*window, renderer, mesh);
@@ -940,12 +980,13 @@ namespace
             releaseCpuAssets(assets);
             const auto extent = renderer.beginUiFrame();
             ASSERT_TRUE(extent);
-            const auto staleInput = Demo::makeSceneFrame(*extent, 0.0f);
+            const std::array draws = {DrawItem{mesh, glm::mat4(1.0f)}};
+            const auto staleInput = Demo::makeSceneFrame(*extent, draws);
             renderer.imgui().endFrame();
             glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 810, 450);
             window->pollEvents();
             int recorded = 0;
-            renderer.drawFrame(staleInput, mesh, {0.1f, 0.2f, 0.3f, 1.0f}, [&](void*) { ++recorded; });
+            renderer.drawFrame(staleInput, {0.1f, 0.2f, 0.3f, 1.0f}, [&](void*) { ++recorded; });
             EXPECT_EQ(recorded, 0);
             const auto resized = renderer.beginUiFrame();
             ASSERT_TRUE(resized);
@@ -957,7 +998,7 @@ namespace
             EXPECT_EQ(resized->width, static_cast<uint32_t>(width));
             EXPECT_EQ(resized->height, static_cast<uint32_t>(height));
             renderer.imgui().endFrame();
-            renderer.drawFrame(Demo::makeSceneFrame(*resized, 0.0f), mesh, {0.1f, 0.2f, 0.3f, 1.0f},
+            renderer.drawFrame(Demo::makeSceneFrame(*resized, draws), {0.1f, 0.2f, 0.3f, 1.0f},
                                [&](void*) { ++recorded; });
             EXPECT_EQ(recorded, 1);
         }
@@ -982,67 +1023,41 @@ namespace
                     const auto extent = renderer.beginUiFrame();
                     if (!extent)
                         throw Error::Exception(Error::Code::RENDER, "Visible matrix review frame was unavailable");
-                    auto input = Demo::makeSceneFrame(*extent, 0.0f);
-                    input.model = glm::translate(glm::mat4(1.0f), glm::vec3(modelX, 0.0f, 0.0f));
+                    std::array draws = {
+                        DrawItem{selectedMesh, glm::translate(glm::mat4(1.0f), glm::vec3(modelX, 0.0f, 0.0f))}};
+                    auto input = Demo::makeSceneFrame(*extent, draws);
                     input.camera.view = glm::lookAtRH(glm::vec3(cameraX, 0.0f, 3.0f), glm::vec3(cameraX, 0.0f, 0.0f),
                                                       glm::vec3(0.0f, 1.0f, 0.0f));
                     renderer.imgui().endFrame();
-                    renderer.drawFrame(input, selectedMesh, {0.2f, 0.24f, 0.28f, 1.0f});
-                    input.model = glm::mat4(0.0f);
+                    renderer.drawFrame(input, {0.2f, 0.24f, 0.28f, 1.0f});
+                    draws[0].model = glm::mat4(0.0f);
                     input.camera.projection = glm::mat4(0.0f);
                     glfwWaitEventsTimeout(0.025);
                 }
                 return WindowCapture::capture(*window);
             };
-            const auto bounds = [](const WindowCapture::Image& image) {
-                // Compare against the displayed clear color, leaving display color transforms
-                // outside the exact +/-1 code assertions of the offscreen color tests.
-                std::array<int, 4> rect{image.width, image.height, -1, -1};
-                // Windows can round client corners; keep their desktop pixels out of scene bounds.
-                for (int y = 8; y < image.height - 8; ++y)
-                {
-                    for (int x = 8; x < image.width - 8; ++x)
-                    {
-                        const size_t offset = (static_cast<size_t>(y) * image.width + x) * 4;
-                        int difference = 0;
-                        for (int channel = 0; channel < 3; ++channel)
-                            difference += std::abs(int(image.rgba[offset + channel]) - int(image.rgba[channel]));
-                        if (difference > 40)
-                        {
-                            rect[0] = std::min(rect[0], x);
-                            rect[1] = std::min(rect[1], y);
-                            rect[2] = std::max(rect[2], x);
-                            rect[3] = std::max(rect[3], y);
-                        }
-                    }
-                }
-                return rect;
-            };
-            const auto save = [](const WindowCapture::Image& image, const char* path) {
-                std::filesystem::create_directories("review");
-                std::ofstream output(path, std::ios::binary);
-                output << "P6\n" << image.width << ' ' << image.height << "\n255\n";
-                for (size_t pixel = 0; pixel < image.rgba.size(); pixel += 4)
-                    output.write(reinterpret_cast<const char*>(image.rgba.data() + pixel), 3);
-                EXPECT_TRUE(output.good());
-            };
 
             const auto first = present(mesh, 0.0f, 0.0f);
             const auto sharedMesh = mesh;
             const auto stable = present(sharedMesh, 0.0f, 0.0f);
-            save(first, "review/frame-input-fixed.ppm");
-            const auto baseBounds = bounds(first);
+            WindowCapture::save(first, "review/frame-input-fixed.ppm");
+            const auto baseBounds = WindowCapture::bounds(first);
             ASSERT_GT(baseBounds[2] - baseBounds[0], 100);
             ASSERT_GT(baseBounds[3] - baseBounds[1], 100);
             EXPECT_NEAR(baseBounds[2] - baseBounds[0], baseBounds[3] - baseBounds[1], 2);
             ASSERT_EQ(first.rgba.size(), stable.rgba.size());
             size_t changed = 0;
-            for (size_t pixel = 0; pixel < first.rgba.size(); pixel += 4)
+            // Compare scene pixels, excluding Windows' rounded corners and desktop border pixels.
+            for (int y = 8; y < first.height - 8; ++y)
             {
-                int difference = 0;
-                for (int channel = 0; channel < 3; ++channel)
-                    difference += std::abs(int(first.rgba[pixel + channel]) - int(stable.rgba[pixel + channel]));
-                changed += difference > 12;
+                for (int x = 8; x < first.width - 8; ++x)
+                {
+                    const size_t pixel = (static_cast<size_t>(y) * first.width + x) * 4;
+                    int difference = 0;
+                    for (int channel = 0; channel < 3; ++channel)
+                        difference += std::abs(int(first.rgba[pixel + channel]) - int(stable.rgba[pixel + channel]));
+                    changed += difference > 12;
+                }
             }
             EXPECT_LT(changed, 32u);
             // The visible +Z top row must still read red, green, blue, yellow.
@@ -1058,38 +1073,198 @@ namespace
 
             const auto modelImage = present(mesh, 0.5f, 0.0f);
             const auto cameraImage = present(mesh, 0.0f, 0.5f);
-            const auto modelBounds = bounds(modelImage);
-            const auto cameraBounds = bounds(cameraImage);
+            const auto modelBounds = WindowCapture::bounds(modelImage);
+            const auto cameraBounds = WindowCapture::bounds(cameraImage);
             EXPECT_GT(modelBounds[0] - baseBounds[0], 50);
             EXPECT_GT(baseBounds[0] - cameraBounds[0], 50);
-            save(modelImage, "review/frame-input-model.ppm");
-            save(cameraImage, "review/frame-input-camera.ppm");
+            WindowCapture::save(modelImage, "review/frame-input-model.ppm");
+            WindowCapture::save(cameraImage, "review/frame-input-camera.ppm");
 
             glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 800, 400);
             const auto resized = present(sharedMesh, 0.0f, 0.0f);
-            const auto resizedBounds = bounds(resized);
+            const auto resizedBounds = WindowCapture::bounds(resized);
             EXPECT_EQ(resized.width, 800);
             EXPECT_EQ(resized.height, 400);
             EXPECT_GT(resizedBounds[2] - resizedBounds[0], 100);
             EXPECT_NEAR(resizedBounds[2] - resizedBounds[0], resizedBounds[3] - resizedBounds[1], 2);
-            save(resized, "review/frame-input-resized.ppm");
+            WindowCapture::save(resized, "review/frame-input-resized.ppm");
             const auto plane = [&] {
                 const auto data = Demo::makePlaneMesh();
                 return renderer.createMesh(data.vertices, data.indices);
             }();
             const auto planeImage = present(plane, 0.0f, 0.0f);
-            const auto planeBounds = bounds(planeImage);
+            const auto planeBounds = WindowCapture::bounds(planeImage);
             const auto planeWidth = planeBounds[2] - planeBounds[0];
             EXPECT_GT(planeWidth, 100);
             EXPECT_LT(planeWidth, resizedBounds[2] - resizedBounds[0] - 20);
             EXPECT_NEAR(planeWidth, planeBounds[3] - planeBounds[1], 2);
-            save(planeImage, "review/mesh-plane.ppm");
+            WindowCapture::save(planeImage, "review/mesh-plane.ppm");
             std::cout << "PRODUCTION_FRAME_INPUT: stable_changed_pixels=" << changed
                       << " model_shift=" << modelBounds[0] - baseBounds[0]
                       << " camera_shift=" << cameraBounds[0] - baseBounds[0] << " resized=" << resized.width << 'x'
                       << resized.height << " cube_width=" << resizedBounds[2] - resizedBounds[0]
                       << " plane_width=" << planeWidth << '\n';
         }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, MultiObjectTransformsStayIndependentAcrossFrameSlotsAndCpuListRelease)
+    {
+        auto window = createWindow(true, 640, 480);
+        FileAudit audit;
+        SceneAssets assets({}, std::make_unique<AuditedFileIO>(audit));
+        Mesh planeObserver;
+        Mesh cubeObserver;
+        {
+            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            auto cube = createCubeMesh(renderer);
+            auto plane = [&] {
+                const auto data = Demo::makePlaneMesh();
+                return renderer.createMesh(data.vertices, data.indices);
+            }();
+            cubeObserver = cube;
+            planeObserver = plane;
+            releaseCpuAssets(assets);
+            const auto scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.55f));
+            const auto leftModel = glm::translate(glm::mat4(1.0f), glm::vec3(-0.6f, 0.0f, 0.0f)) * scale;
+            std::array<int, 4> fixedBounds{};
+            for (int frameIndex = 0; frameIndex < 6; ++frameIndex)
+            {
+                const float y = frameIndex % 2 == 0 ? 0.25f : -0.25f;
+                const auto rightModel = glm::translate(glm::mat4(1.0f), glm::vec3(0.6f, y, 0.0f)) *
+                                        glm::rotate(glm::mat4(1.0f), 0.4f, glm::vec3(0.0f, 1.0f, 0.0f)) * scale;
+                // First four frames use different meshes; last two share the plane upload.
+                std::vector<DrawItem> draws = {{plane, leftModel}, {frameIndex < 4 ? cube : plane, rightModel}};
+                submitControlledScene(*window, renderer, draws);
+                for (auto& draw : draws)
+                    draw.model = glm::mat4(0.0f);
+                draws.clear();
+                draws.shrink_to_fit();
+                if (frameIndex == 5)
+                {
+                    cube = Mesh{};
+                    plane = Mesh{};
+                }
+                // Wait for desktop presentation only; production has no added device-idle wait.
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                const auto image = WindowCapture::capture(*window);
+                const auto left = WindowCapture::bounds(image, 8, image.width / 2);
+                const auto right = WindowCapture::bounds(image, image.width / 2, image.width - 8);
+                ASSERT_GT(left[2] - left[0], 100);
+                ASSERT_GT(right[2] - right[0], 100);
+                EXPECT_NEAR((left[0] + left[2]) * 0.5f, image.width * 0.5f - 0.6f * image.height * 0.5f, 2.0f);
+                EXPECT_NEAR((right[1] + right[3]) * 0.5f, image.height * (0.5f - y * 0.5f), 2.0f);
+                if (frameIndex == 0)
+                    fixedBounds = left;
+                else
+                    EXPECT_EQ(left, fixedBounds);
+                if (frameIndex == 0)
+                    WindowCapture::save(image, "review/multi-object-independent.ppm");
+                if (frameIndex == 5)
+                    WindowCapture::save(image, "review/multi-object-shared.ppm");
+            }
+            EXPECT_EQ(audit.textureOpens, 1u);
+            std::cout << "MULTI_OBJECT: UPDATED_FRAMES=6 STATIC_LEFT=1 SHARED_MESH_FRAMES=2 "
+                         "CPU_LIST_RELEASED_AFTER_SUBMIT=1 PNG_OPENS="
+                      << audit.textureOpens << '\n';
+        }
+        EXPECT_FALSE(cubeObserver.valid());
+        EXPECT_FALSE(planeObserver.valid());
+        expectReleased({});
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, MultiObjectDepthOrderAndListCountsPreserveClearUiAndFreshRestore)
+    {
+        auto native = createWindow(true, 640, 480);
+        DeferredFramebufferWindow window(*native);
+        window.drawable = true;
+        SceneAssets assets;
+        {
+            Renderer renderer(window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            const auto plane = [&] {
+                const auto data = Demo::makePlaneMesh();
+                return renderer.createMesh(data.vertices, data.indices);
+            }();
+            releaseCpuAssets(assets);
+            FrameExtent lastExtent{};
+            const auto present = [&](std::vector<DrawItem> draws) {
+                lastExtent = submitControlledScene(window, renderer, draws, true);
+                draws.clear();
+                draws.shrink_to_fit();
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                return WindowCapture::capture(window);
+            };
+            const auto sample = [](const WindowCapture::Image& image, int x, int y, int channel) {
+                return image.rgba[(static_cast<size_t>(y) * image.width + x) * 4 + channel];
+            };
+            const auto expectClearAndUi = [&](const WindowCapture::Image& image) {
+                for (int channel = 0; channel < 3; ++channel)
+                    EXPECT_EQ(sample(image, image.width / 2, image.height / 2, channel), sample(image, 8, 8, channel));
+                EXPECT_GT(sample(image, 24, 24, 0), 220);
+                EXPECT_LT(sample(image, 24, 24, 1), 30);
+                EXPECT_GT(sample(image, 24, 24, 2), 220);
+            };
+            const auto empty = present({});
+            expectClearAndUi(empty);
+            const auto scale = glm::scale(glm::mat4(1.0f), glm::vec3(1.4f));
+            const DrawItem back{plane, glm::translate(glm::mat4(1.0f), glm::vec3(-0.2f, 0.0f, -0.3f)) * scale};
+            const DrawItem front{plane, glm::translate(glm::mat4(1.0f), glm::vec3(0.2f, 0.0f, 0.3f)) * scale};
+            const auto one = present({back});
+            const int sampleX = one.width / 2;
+            const int sampleY = one.height * 3 / 10;
+            EXPECT_GT(sample(one, sampleX, sampleY, 2), 220);
+            const auto frontFirst = present({front, back});
+            const auto frontLast = present({back, front});
+            EXPECT_GT(sample(frontFirst, sampleX, sampleY, 1), 220);
+            EXPECT_LT(sample(frontFirst, sampleX, sampleY, 2), 30);
+            size_t changed = 0;
+            for (int y = 8; y < frontFirst.height - 8; ++y)
+            {
+                for (int x = 8; x < frontFirst.width - 8; ++x)
+                {
+                    int difference = 0;
+                    for (int channel = 0; channel < 3; ++channel)
+                        difference +=
+                            std::abs(int(sample(frontFirst, x, y, channel)) - int(sample(frontLast, x, y, channel)));
+                    changed += difference > 12;
+                }
+            }
+            EXPECT_EQ(changed, 0u);
+            WindowCapture::save(frontFirst, "review/multi-object-depth.ppm");
+            std::vector<DrawItem> grid;
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x)
+                    grid.push_back(
+                        {plane, glm::translate(glm::mat4(1.0f), glm::vec3((x - 1.5f) * 0.5f, (1.5f - y) * 0.5f, 0.0f)) *
+                                    glm::scale(glm::mat4(1.0f), glm::vec3(0.25f))});
+            const auto many = present(grid);
+            for (int y = 0; y < 4; ++y)
+            {
+                for (int x = 0; x < 4; ++x)
+                {
+                    const int px = many.width / 2 + static_cast<int>((x - 1.5f) * many.height / 4);
+                    const int py = many.height / 2 + static_cast<int>((y - 1.5f) * many.height / 4);
+                    int difference = 0;
+                    for (int channel = 0; channel < 3; ++channel)
+                        difference += std::abs(int(sample(many, px, py, channel)) - int(sample(many, 8, 8, channel)));
+                    EXPECT_GT(difference, 40) << "Missing grid object " << x << ',' << y;
+                }
+            }
+            WindowCapture::save(many, "review/multi-object-grid.ppm");
+            window.drawable = false;
+            renderer.drawFrame(controlledFrame(lastExtent, grid), {0.2f, 0.24f, 0.28f, 1.0f});
+            grid.clear();
+            window.drawable = true;
+            const auto restoredEmpty = present({});
+            expectClearAndUi(restoredEmpty);
+            WindowCapture::save(restoredEmpty, "review/multi-object-empty-ui.ppm");
+            std::cout << "MULTI_OBJECT: COUNTS=0,1,2,16,0 DEPTH_ORDER_CHANGED_PIXELS=" << changed
+                      << " ALL_16_CENTERS=1 EMPTY_UI=1 SKIPPED_LIST_NOT_RETAINED=1\n";
+        }
+        expectReleased({});
         expectCleanValidation();
     }
 

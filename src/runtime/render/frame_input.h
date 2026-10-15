@@ -2,6 +2,9 @@
 
 #include <cstdint>
 #include <glm/mat4x4.hpp>
+#include <span>
+
+#include "runtime/render/mesh.h"
 
 namespace Incubator
 {
@@ -22,12 +25,18 @@ namespace Incubator
             glm::mat4 projection;
         };
 
-        // Required application input. Matrices are consumed/copied during drawFrame, never retained by reference.
+        struct DrawItem
+        {
+            Mesh mesh;
+            glm::mat4 model;
+        };
+
+        // Required application input. The list is borrowed only during drawFrame and may be empty.
         struct FrameInput
         {
             FrameExtent extent;
             CameraMatrices camera;
-            glm::mat4 model;
+            std::span<const DrawItem> draws;
         };
     }  // namespace Render
 }  // namespace Incubator

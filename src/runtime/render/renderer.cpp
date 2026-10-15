@@ -8,6 +8,7 @@
 #include <memory>
 #include <span>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "runtime/core/error/error.h"
@@ -17,6 +18,7 @@
 #include "runtime/render/vulkan/glfw_surface.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
+#include "runtime/render/vulkan/vulkan_command_list.h"
 #include "runtime/render/vulkan/vulkan_device.h"
 #include "runtime/render/vulkan/vulkan_frame_scheduler.h"
 #include "runtime/render/vulkan/vulkan_image.h"
@@ -33,13 +35,12 @@ namespace Incubator
     {
         namespace
         {
-            struct alignas(16) TransformUniform
+            struct alignas(16) CameraUniform
             {
-                glm::mat4 model;
                 glm::mat4 view;
                 glm::mat4 projection;
             };
-            static_assert(sizeof(TransformUniform) == 3 * 16 * sizeof(float));
+            static_assert(sizeof(CameraUniform) == 2 * 16 * sizeof(float));
 
             std::vector<const char*> requiredRendererInstanceExtensions()
             {
@@ -112,7 +113,7 @@ namespace Incubator
                 for (auto& uniformBuffer : uniformBuffers_)
                 {
                     uniformBuffer = std::make_shared<Vulkan::VulkanBuffer>(
-                        device_, sizeof(TransformUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                        device_, sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 }
                 bindingSet_ =
@@ -166,12 +167,22 @@ namespace Incubator
                 return FrameExtent{extent.width, extent.height};
             }
 
-            void drawFrame(const FrameInput& input, const Mesh& mesh, const std::array<float, 4>& clearColor,
+            void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
                            const std::function<void(void*)>& recordUi)
             {
-                const auto gpuMesh = mesh.impl_.lock();
-                if (!gpuMesh || gpuMesh->owner != &device_)
-                    throw Error::Exception(Error::Code::RENDER, "Mesh is invalid or belongs to another Renderer");
+                std::vector<Vulkan::VulkanDrawItem> draws;
+                std::vector<std::shared_ptr<void>> inFlightResources;
+                draws.reserve(input.draws.size());
+                inFlightResources.reserve(input.draws.size() + 3);
+                for (const auto& draw : input.draws)
+                {
+                    auto gpuMesh = draw.mesh.impl_.lock();
+                    if (!gpuMesh || gpuMesh->owner != &device_)
+                        throw Error::Exception(Error::Code::RENDER, "Mesh is invalid or belongs to another Renderer");
+                    draws.push_back({gpuMesh->vertexBuffer->handle(), gpuMesh->indexBuffer->handle(),
+                                     gpuMesh->indexCount, draw.model});
+                    inFlightResources.push_back(std::move(gpuMesh));
+                }
                 if (!prepareFrame())
                     return;
                 const auto extent = swapchain_->extent();
@@ -180,22 +191,22 @@ namespace Incubator
 
                 const uint32_t frameIndex = scheduler_->currentFrameIndex();
                 scheduler_->waitForCurrentFrame();
-                const TransformUniform transforms{input.model, input.camera.view, input.camera.projection};
-                uniformBuffers_[frameIndex]->write(0, std::as_bytes(std::span<const TransformUniform>(&transforms, 1)));
+                const CameraUniform camera{input.camera.view, input.camera.projection};
+                uniformBuffers_[frameIndex]->write(0, std::as_bytes(std::span(&camera, 1)));
 
                 VkClearColorValue color{};
                 color.float32[0] = clearColor[0];
                 color.float32[1] = clearColor[1];
                 color.float32[2] = clearColor[2];
                 color.float32[3] = clearColor[3];
-                const std::array<std::shared_ptr<void>, 4> inFlightResources = {
-                    std::static_pointer_cast<void>(gpuMesh),
-                    std::static_pointer_cast<void>(uniformBuffers_[frameIndex]),
-                    std::static_pointer_cast<void>(texture_), std::static_pointer_cast<void>(sampler_)};
+                inFlightResources.push_back(uniformBuffers_[frameIndex]);
+                inFlightResources.push_back(texture_);
+                inFlightResources.push_back(sampler_);
                 if (!scheduler_->renderAndPresent(
-                        *swapchain_, color, *pipeline_, *gpuMesh->vertexBuffer, *gpuMesh->indexBuffer,
-                        bindingSet_->descriptorSet(frameIndex), gpuMesh->indexCount,
-                        [&recordUi](VkCommandBuffer commandBuffer) {
+                        *swapchain_, color,
+                        [&](VkCommandBuffer commandBuffer) {
+                            Vulkan::VulkanCommandList::drawIndexed(commandBuffer, *pipeline_,
+                                                                   bindingSet_->descriptorSet(frameIndex), draws);
                             if (recordUi)
                                 recordUi(static_cast<void*>(commandBuffer));
                         },
@@ -301,12 +312,12 @@ namespace Incubator
             return impl_->beginUiFrame();
         }
 
-        void Renderer::drawFrame(const FrameInput& input, const Mesh& mesh, const std::array<float, 4>& clearColor,
+        void Renderer::drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
                                  const std::function<void(void*)>& recordUi)
         {
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
-            impl_->drawFrame(input, mesh, clearColor, recordUi);
+            impl_->drawFrame(input, clearColor, recordUi);
         }
 
         Integration::ImGuiRenderer& Renderer::imgui()

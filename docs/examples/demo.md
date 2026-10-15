@@ -72,14 +72,19 @@ Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁
 
 ## 应用帧输入
 
-相机和运动的默认选择位于 `examples/demo/scene_frame.h` 的 `makeSceneFrame(extent, seconds)`，
-时间由 Demo 的 `steady_clock` 计算。Renderer 只消费最终矩阵，不再自行旋转或生成相机。
-修改应用提供的时间、model 或 camera 可改变场景，传入固定时间则保持固定姿态。
+相机由 `examples/demo/scene_frame.h` 的 `makeSceneFrame(extent, draws)` 生成，
+`makeSceneModel(seconds)` 使用 Demo 的 `steady_clock` 时间生成模型矩阵。Renderer 只消费最终
+矩阵，不再自行旋转或生成相机；固定时间得到固定姿态。
 
 每轮先轮询事件，调用 `beginUiFrame()`；只有返回实际绘制 extent 后才计算投影、开始 UI
-内容并提交 `drawFrame(frameInput, mesh, clearColor, recordUi)`。返回空值时跳过该轮，避免零尺寸
+内容并提交 `drawFrame(frameInput, clearColor, recordUi)`。返回空值时跳过该轮，避免零尺寸
 或最小化期间计算无效宽高比。投影采用 `perspectiveRH_ZO`，应用对 Y 方向适配一次；
 缩放后使用新 extent，Renderer 不再翻转。准备与提交之间若尺寸改变，本轮旧输入会被跳过。
+
+`FrameInput.draws` 借用 `DrawItem {mesh, model}` 列表。当前 Demo 将启动所选网格放入单项列表，
+应用可用相同入口提交多项或空列表；完整的多物体交互界面由后续集成任务提供。不同绘制项可
+共享 Mesh，各自独立设置 model，相机和纹理共用。提交返回后可修改或销毁原始列表；
+GPU 网格仍由 Renderer 持有至关闭。空列表只清屏并显示本帧 UI。
 
 ## 资产生成与部署
 

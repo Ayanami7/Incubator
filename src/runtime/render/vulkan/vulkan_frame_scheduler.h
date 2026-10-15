@@ -16,8 +16,6 @@ namespace Incubator
         namespace Vulkan
         {
             class VulkanDevice;
-            class VulkanBuffer;
-            class VulkanPipeline;
             class VulkanImage;
             class VulkanSwapchain;
 
@@ -38,11 +36,8 @@ namespace Incubator
                 void waitForPresentation();
                 uint32_t currentFrameIndex() const noexcept;
                 bool renderAndPresent(const VulkanSwapchain& swapchain, const VkClearColorValue& clearColor,
-                                     const VulkanPipeline& pipeline, const VulkanBuffer& vertexBuffer,
-                                     const VulkanBuffer& indexBuffer, VkDescriptorSet descriptorSet,
-                                     uint32_t indexCount,
-                                     const std::function<void(VkCommandBuffer)>& recordUi,
-                                     std::span<const std::shared_ptr<void>> inFlightResources = {});
+                                      const std::function<void(VkCommandBuffer)>& recordScene,
+                                      std::span<const std::shared_ptr<void>> inFlightResources = {});
 
             private:
                 struct FrameSlot

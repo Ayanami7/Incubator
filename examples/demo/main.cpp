@@ -92,7 +92,8 @@ int main(int argc, char* argv[])
                 continue;
             }
             const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime).count();
-            const auto frame = Incubator::Demo::makeSceneFrame(*extent, seconds);
+            const std::array draws = {Incubator::Render::DrawItem{mesh, Incubator::Demo::makeSceneModel(seconds)}};
+            const auto frame = Incubator::Demo::makeSceneFrame(*extent, draws);
             ImGui::Begin("Incubator Demo");
             ImGui::Text("Vulkan textured %s", meshName.c_str());
             ImGui::Text("Texture: %.*s", static_cast<int>(paths.texture.size()), paths.texture.data());
@@ -102,7 +103,7 @@ int main(int argc, char* argv[])
             renderer.imgui().endFrame();
 
             void* uiDrawData = renderer.imgui().drawData();
-            renderer.drawFrame(frame, mesh, clearColor, [&renderer, uiDrawData](void* commandBuffer) {
+            renderer.drawFrame(frame, clearColor, [&renderer, uiDrawData](void* commandBuffer) {
                 renderer.imgui().recordDrawData(uiDrawData, commandBuffer);
             });
         }

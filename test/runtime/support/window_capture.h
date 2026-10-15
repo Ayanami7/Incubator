@@ -15,7 +15,11 @@
 #include <GLFW/glfw3native.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 #include "runtime/core/error/error.h"
@@ -119,5 +123,40 @@ namespace WindowCapture
             image.rgba[offset + 3] = 255;
         }
         return image;
+    }
+    // Geometry comparisons use the displayed clear color; exact color checks remain offscreen.
+    inline std::array<int, 4> bounds(const Image& image, int left = 8, int right = -1)
+    {
+        std::array<int, 4> rect{image.width, image.height, -1, -1};
+        // Exclude desktop pixels in Windows' rounded client corners.
+        for (int y = 8; y < image.height - 8; ++y)
+        {
+            for (int x = left; x < (right < 0 ? image.width - 8 : right); ++x)
+            {
+                const size_t offset = (static_cast<size_t>(y) * image.width + x) * 4;
+                int difference = 0;
+                for (int channel = 0; channel < 3; ++channel)
+                    difference += std::abs(int(image.rgba[offset + channel]) - int(image.rgba[channel]));
+                if (difference > 40)
+                {
+                    rect[0] = std::min(rect[0], x);
+                    rect[1] = std::min(rect[1], y);
+                    rect[2] = std::max(rect[2], x);
+                    rect[3] = std::max(rect[3], y);
+                }
+            }
+        }
+        return rect;
+    }
+
+    inline void save(const Image& image, const std::filesystem::path& path)
+    {
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream output(path, std::ios::binary);
+        output << "P6\n" << image.width << ' ' << image.height << "\n255\n";
+        for (size_t pixel = 0; pixel < image.rgba.size(); pixel += 4)
+            output.write(reinterpret_cast<const char*>(image.rgba.data() + pixel), 3);
+        if (!output.good())
+            throw Incubator::Error::Exception(Incubator::Error::Code::RENDER, "Window capture could not be saved");
     }
 }  // namespace WindowCapture
