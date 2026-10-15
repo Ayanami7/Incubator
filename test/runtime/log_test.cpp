@@ -214,6 +214,27 @@ TEST_F(LoggerFileTest, Utf8DirectoryAndBasenameSurviveFileCreationAndRotation)
     EXPECT_EQ(std::distance(std::filesystem::directory_iterator(logDirectory), std::filesystem::directory_iterator()), 3);
 }
 
+TEST_F(LoggerFileTest, ZeroMaxSizeAppendsWithoutRotationAcrossReenable)
+{
+    config_.max_size = 0;
+    config_.basename = "不轮转-😀";
+    const auto filename = Incubator::Utils::Utf8::toFsPath(config_.basename + ".log");
+    Registry::init(Level::INFO, {}, config_);
+    auto logger = Registry::get("unlimited");
+    const std::string payload(256, 'x');
+    logger.info("first {}", payload);
+    Registry::flushAll();
+    Registry::setFileSinkConfig({});
+    Registry::setFileSinkConfig(config_);
+    logger.info("second {}", payload);
+    Registry::flushAll();
+    Registry::setFileSinkConfig({});
+
+    EXPECT_THAT(readLog(filename), ::testing::HasSubstr("first " + payload));
+    EXPECT_THAT(readLog(filename), ::testing::HasSubstr("second " + payload));
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory_), std::filesystem::directory_iterator()), 1);
+}
+
 TEST_F(LoggerFileTest, ConcurrentLoggingFlushAndSinkChangesPreserveMessagesAndIsolation)
 {
     Registry::init();

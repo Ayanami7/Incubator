@@ -1,5 +1,6 @@
 #include "runtime/core/log/logger.h"
 
+#include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
@@ -44,8 +45,12 @@ namespace Incubator
                 std::error_code ec;
                 fs::create_directories(dir, ec);
 
-                auto sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                    filepath.native(), config.max_size, config.max_files);
+                spdlog::sink_ptr sink;
+                if (config.max_size == 0)
+                    sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(filepath.native());
+                else
+                    sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+                        filepath.native(), config.max_size, config.max_files);
 
                 sink->set_pattern(std::string(DEFAULT_PATTERN));
                 return sink;
