@@ -1,7 +1,8 @@
-# 纹理网格 Demo
+# 多物体纹理 Demo
 
 `examples/demo` 演示通过 ResourceManager 加载外部 SPIR-V 和 PNG，将资源传给 Renderer，
-上传应用生成的立方体或平面，绘制旋转的纹理网格并叠加 ImGui 界面。应用负责事件轮询、界面构建和主循环。
+上传应用生成的立方体和平面，提交独立模型变换与共享相机，并叠加 ImGui 控件。
+应用负责事件轮询、场景状态、矩阵、绘制列表、界面构建和主循环。
 
 ## 构建与启动
 
@@ -50,19 +51,22 @@ Windows 入口使用 Unicode 命令行，再通过 `Utils::Utf8` 转为资源系
 | `direction_rgba.png` | 3×4 | 顶行白→橙→黑，次行蓝→中灰→红，底行暗色→黄→紫 |
 
 两张图都含中灰和已知透明通道。场景材质不透明，半透明和透明格子仍显示自身 RGB。
-UI 可修改清屏颜色，立方体使用固定相机并自动旋转。
+UI 可修改清屏颜色；两个物体默认同时显示，姿态固定，直到用户调整控件。
 
-## 启动时选择网格
+## 初始显示与网格上传
 
-第二个可选位置参数为 `cube` 或 `plane`；默认使用立方体。选择平面时保留第一个纹理参数：
+第二个可选位置参数为 `both`、`cube` 或 `plane`，只决定初始显示状态；默认 `both`。
+使用此参数时保留第一个纹理参数：
 
 ```powershell
+& './examples/demo/demo.exe' 'textures/reference_rgba.png' 'both'
 & './examples/demo/demo.exe' 'textures/reference_rgba.png' 'cube'
 & './examples/demo/demo.exe' 'textures/reference_rgba.png' 'plane'
 & './examples/demo/demo.exe' 'textures/direction_rgba.png' 'plane'
 ```
 
-未知网格名会明确报告启动错误，退出码为 1。`examples/demo/scene_mesh.h` 生成立方体的
+未知选项会明确报告启动错误，退出码为 1。两种网格均在初始化时创建一次，显示开关不触发上传。
+`examples/demo/scene_mesh.h` 生成立方体的
 24 顶点/36 索引和平面的 4 顶点/6 索引。平面位于 XY、面向 +Z，边长 1，UV 原点在左上。
 两个样本共用 `MeshVertex` position+UV、uint16 索引、同一纹理和 Pipeline。
 
@@ -70,20 +74,50 @@ Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁
 绘制时提交返回的 `Mesh`。Renderer 持有 GPU 网格至关闭，复制网格引用不会重新上传，
 缩放或相机/变换更新也不重新上传静态网格。该步骤不通过 ResourceManager 或 MODEL Loader。
 
+## ImGui 交互
+
+左侧 `Incubator Demo` 面板提供以下控件。三分量控件从左到右为 X、Y、Z，旋转使用角度。
+拖动滑块修改数值，也可 Ctrl+单击输入；输入同样受范围限制。
+
+| 分组 | 控件 | 范围与效果 |
+|---|---|---|
+| Cube / Plane | Visible | 分别显示或隐藏；均关闭时只清屏并显示 UI |
+| Cube / Plane | Position | 各轴 −3～3；只平移该物体 |
+| Cube / Plane | Rotation | 各轴 −180°～180°；只旋转该物体 |
+| Cube / Plane | Scale | 各轴 0.1～3；只缩放该物体，保持正尺度 |
+| Camera | Target | 各轴 −2～2；移动相机观察目标 |
+| Camera | Yaw / Pitch | −180°～180° / −80°～80°；绕目标旋转，避开俯仰极点 |
+| Camera | Distance | 2～12；调整与目标的距离 |
+| Camera | FOV | 20°～80°；调整垂直视野 |
+| 面板 | Clear color | 调整背景的 sRGB 颜色 |
+| 面板 | Reset scene | 恢复两个物体、相机、显示开关和清屏颜色的默认值 |
+
+可按下列步骤观察行为：
+
+1. 默认启动，立方体位于左侧、平面位于右侧；调整 Cube 的位置、旋转和缩放，Plane 保持原姿态。
+2. 调整 Plane 的同名控件，Cube 保持原姿态；两者共用当前纹理。
+3. 修改 Camera 的 Yaw、Distance 或 FOV，两个物体共同受相机影响；缩放窗口后投影使用新绘制尺寸。
+4. 依次关闭 Cube 和 Plane 的 Visible，物体数由 2 变为 1、0；背景和面板保留。重新开启后恢复各自编辑过的姿态。
+5. 点击 Reset scene 回到默认场景；重启并选择第二张纹理，可重复相同操作。
+
+默认相机目标为原点，Yaw=0°、Pitch=15°、Distance=5、FOV=45°。立方体位置为
+(-0.8, 0, 0)，旋转为 (20°, 30°, 0°)，尺度为 1；平面位置为 (0.8, 0, 0)，无旋转，尺度为 1.3。
+没有自动旋转；固定状态产生固定矩阵。物体移出视野时可通过 Reset scene 返回。
+
 ## 应用帧输入
 
-相机由 `examples/demo/scene_frame.h` 的 `makeSceneFrame(extent, draws)` 生成，
-`makeSceneModel(seconds)` 使用 Demo 的 `steady_clock` 时间生成模型矩阵。Renderer 只消费最终
-矩阵，不再自行旋转或生成相机；固定时间得到固定姿态。
+`examples/demo/scene_controls.h` 保存应用场景状态并构建控件，`makeSceneDraws(scene, cube, plane)`
+按显示开关生成绘制列表。`scene_frame.h` 的 `makeSceneModel(transform)` 按
+`T * Rz * Ry * Rx * S` 生成模型矩阵；`makeSceneFrame(extent, draws, camera)` 生成绕目标的
+右手相机和透视投影，近/远裁面固定为 0.1/50。Renderer 只消费最终矩阵。
 
-每轮先轮询事件，调用 `beginUiFrame()`；只有返回实际绘制 extent 后才计算投影、开始 UI
-内容并提交 `drawFrame(frameInput, clearColor, recordUi)`。返回空值时跳过该轮，避免零尺寸
+每轮先轮询事件，调用 `beginUiFrame()`；返回实际绘制 extent 后构建 UI，再从本轮编辑后的状态
+生成矩阵和列表，提交 `drawFrame(frameInput, clearColor, recordUi)`。返回空值时跳过该轮，避免零尺寸
 或最小化期间计算无效宽高比。投影采用 `perspectiveRH_ZO`，应用对 Y 方向适配一次；
 缩放后使用新 extent，Renderer 不再翻转。准备与提交之间若尺寸改变，本轮旧输入会被跳过。
 
-`FrameInput.draws` 借用 `DrawItem {mesh, model}` 列表。当前 Demo 将启动所选网格放入单项列表，
-应用可用相同入口提交多项或空列表；完整的多物体交互界面由后续集成任务提供。不同绘制项可
-共享 Mesh，各自独立设置 model，相机和纹理共用。提交返回后可修改或销毁原始列表；
+`FrameInput.draws` 借用 `DrawItem {mesh, model}` 列表，当前 Demo 根据两个开关提交 0、1 或 2 项。
+不同绘制项可共享 Mesh，各自独立设置 model，相机和纹理共用。提交返回后可修改或销毁原始列表；
 GPU 网格仍由 Renderer 持有至关闭。空列表只清屏并显示本帧 UI。
 
 ## 资产生成与部署

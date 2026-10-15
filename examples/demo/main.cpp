@@ -1,6 +1,5 @@
 #include <imgui.h>
 
-#include <array>
 #include <chrono>
 #include <exception>
 #include <filesystem>
@@ -15,7 +14,7 @@
 #include "runtime/render/renderer.h"
 #include "runtime/resource/resource_registry.h"
 #include "scene_assets.h"
-#include "scene_frame.h"
+#include "scene_controls.h"
 #include "scene_mesh.h"
 #include "validation_mode.h"
 
@@ -33,7 +32,7 @@ int main(int argc, char* argv[])
     {
         if (argc > 3)
         {
-            log.error("Usage: demo.exe [texture virtual path] [cube|plane]");
+            log.error("Usage: demo.exe [texture virtual path] [both|cube|plane]");
             return 1;
         }
         Incubator::Demo::SceneAssetPaths paths;
@@ -48,7 +47,7 @@ int main(int argc, char* argv[])
 #endif
             paths.texture = texturePath;
         }
-        std::string meshName = "cube";
+        std::string meshName = "both";
         if (argc == 3)
         {
 #ifdef _WIN32
@@ -56,8 +55,9 @@ int main(int argc, char* argv[])
 #else
             meshName = argv[2];
 #endif
-            if (meshName != "cube" && meshName != "plane")
-                throw Incubator::Error::Exception(Incubator::Error::Code::CONFIG, "Expected mesh 'cube' or 'plane'");
+            if (meshName != "both" && meshName != "cube" && meshName != "plane")
+                throw Incubator::Error::Exception(Incubator::Error::Code::CONFIG,
+                                                  "Expected initial visibility 'both', 'cube' or 'plane'");
         }
         log.info("Scene texture: {}", paths.texture);
         Incubator::Demo::SceneAssets assets(paths);
@@ -71,16 +71,21 @@ int main(int argc, char* argv[])
         const auto textureId = assets.texture->id();
         Incubator::Render::Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                                              Incubator::Demo::VALIDATION_MODE);
-        const auto mesh = [&] {
-            const auto data = meshName == "plane" ? Incubator::Demo::makePlaneMesh() : Incubator::Demo::makeCubeMesh();
+        const auto cube = [&] {
+            const auto data = Incubator::Demo::makeCubeMesh();
             return renderer.createMesh(data.vertices, data.indices);
         }();
-        log.info("Scene mesh: {}", meshName);
+        const auto plane = [&] {
+            const auto data = Incubator::Demo::makePlaneMesh();
+            return renderer.createMesh(data.vertices, data.indices);
+        }();
+        Incubator::Demo::SceneControls scene;
+        scene.cube.visible = meshName != "plane";
+        scene.plane.visible = meshName != "cube";
+        log.info("Initial scene visibility: {}", meshName);
         assets.releaseCpuResources();
         if (Incubator::Resource::ResourceRegistry::instance().getObject(textureId))
             throw Incubator::Error::Exception(Incubator::Error::Code::RENDER, "CPU scene texture was not unloaded");
-        std::array<float, 4> clearColor = {0.12f, 0.16f, 0.22f, 1.0f};
-        const auto startTime = std::chrono::steady_clock::now();
 
         while (!window->shouldClose())
         {
@@ -91,19 +96,13 @@ int main(int argc, char* argv[])
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
             }
-            const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime).count();
-            const std::array draws = {Incubator::Render::DrawItem{mesh, Incubator::Demo::makeSceneModel(seconds)}};
-            const auto frame = Incubator::Demo::makeSceneFrame(*extent, draws);
-            ImGui::Begin("Incubator Demo");
-            ImGui::Text("Vulkan textured %s", meshName.c_str());
-            ImGui::Text("Texture: %.*s", static_cast<int>(paths.texture.size()), paths.texture.data());
-            ImGui::ColorEdit3("Clear color", clearColor.data());
-            ImGui::Text("Application controls events; Renderer owns frame submission.");
-            ImGui::End();
+            Incubator::Demo::drawSceneControls(scene, paths.texture);
+            const auto draws = Incubator::Demo::makeSceneDraws(scene, cube, plane);
+            const auto frame = Incubator::Demo::makeSceneFrame(*extent, draws, scene.camera);
             renderer.imgui().endFrame();
 
             void* uiDrawData = renderer.imgui().drawData();
-            renderer.drawFrame(frame, clearColor, [&renderer, uiDrawData](void* commandBuffer) {
+            renderer.drawFrame(frame, scene.clearColor, [&renderer, uiDrawData](void* commandBuffer) {
                 renderer.imgui().recordDrawData(uiDrawData, commandBuffer);
             });
         }

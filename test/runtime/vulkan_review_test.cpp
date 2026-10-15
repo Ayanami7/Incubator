@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -17,6 +18,7 @@
 #include <vector>
 
 #include "examples/demo/scene_assets.h"
+#include "examples/demo/scene_controls.h"
 #include "examples/demo/scene_frame.h"
 #include "examples/demo/scene_mesh.h"
 #include "examples/demo/validation_mode.h"
@@ -174,19 +176,65 @@ namespace
         EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::TEXTURE));
     }
 
-    TEST(RenderFrameInputTest, ApplicationOwnsAnimationAndFinalProjection)
+    TEST(RenderFrameInputTest, ApplicationOwnsTransformsAndFinalProjection)
     {
         const auto wide = Demo::makeSceneFrame({800, 400}, {});
         const auto square = Demo::makeSceneFrame({400, 400}, {});
-        EXPECT_EQ(Demo::makeSceneModel(0.0f), glm::mat4(1.0f));
-        EXPECT_NE(Demo::makeSceneModel(1.0f), Demo::makeSceneModel(0.0f));
+        EXPECT_EQ(Demo::makeSceneModel({}), glm::mat4(1.0f));
+        Demo::SceneTransform transform;
+        transform.position = {1.0f, 2.0f, 3.0f};
+        transform.rotationDegrees.z = 90.0f;
+        transform.scale = {2.0f, 3.0f, 4.0f};
+        const auto model = Demo::makeSceneModel(transform);
+        const auto point = model * glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+        EXPECT_NEAR(point.x, 1.0f, 0.00001f);
+        EXPECT_NEAR(point.y, 4.0f, 0.00001f);
+        EXPECT_NEAR(point.z, 3.0f, 0.00001f);
+        EXPECT_EQ(Demo::makeSceneModel(transform), model);
         EXPECT_NEAR(wide.camera.projection[0][0] * 2.0f, square.camera.projection[0][0], 0.00001f);
         EXPECT_EQ(wide.camera.projection[1][1], square.camera.projection[1][1]);
         EXPECT_LT(wide.camera.projection[1][1], 0.0f);
         const auto nearPoint = wide.camera.projection * glm::vec4(0.0f, 0.0f, -0.1f, 1.0f);
-        const auto farPoint = wide.camera.projection * glm::vec4(0.0f, 0.0f, -10.0f, 1.0f);
+        const auto farPoint = wide.camera.projection * glm::vec4(0.0f, 0.0f, -50.0f, 1.0f);
         EXPECT_NEAR(nearPoint.z / nearPoint.w, 0.0f, 0.00001f);
         EXPECT_NEAR(farPoint.z / farPoint.w, 1.0f, 0.00001f);
+    }
+
+    TEST(RenderFrameInputTest, DemoControlsKeepModelsIndependentAndCameraFiniteWithinUiRanges)
+    {
+        Demo::SceneControls scene;
+        const auto initial = Demo::makeSceneDraws(scene, {}, {});
+        ASSERT_EQ(initial.size(), 2u);
+        scene.cube.transform.position.x += 0.5f;
+        scene.cube.transform.rotationDegrees.y += 30.0f;
+        scene.cube.transform.scale.z = 2.0f;
+        const auto changed = Demo::makeSceneDraws(scene, {}, {});
+        EXPECT_NE(initial[0].model, changed[0].model);
+        EXPECT_EQ(initial[1].model, changed[1].model);
+        scene.cube.visible = false;
+        EXPECT_EQ(Demo::makeSceneDraws(scene, {}, {}).size(), 1u);
+        scene.plane.visible = false;
+        EXPECT_TRUE(Demo::makeSceneDraws(scene, {}, {}).empty());
+        scene.cube.visible = scene.plane.visible = true;
+        EXPECT_EQ(Demo::makeSceneDraws(scene, {}, {}).size(), 2u);
+        const auto defaultFrame = Demo::makeSceneFrame({1280, 720}, {}, scene.camera);
+        for (const float pitch : {-80.0f, 80.0f})
+            for (const float distance : {2.0f, 12.0f})
+                for (const float fov : {20.0f, 80.0f})
+                {
+                    scene.camera.pitchDegrees = pitch;
+                    scene.camera.distance = distance;
+                    scene.camera.fieldOfViewDegrees = fov;
+                    const auto frame = Demo::makeSceneFrame({1280, 720}, {}, scene.camera);
+                    EXPECT_NE(frame.camera.view, defaultFrame.camera.view);
+                    EXPECT_NE(frame.camera.projection, defaultFrame.camera.projection);
+                    for (int column = 0; column < 4; ++column)
+                        for (int row = 0; row < 4; ++row)
+                        {
+                            EXPECT_TRUE(std::isfinite(frame.camera.view[column][row]));
+                            EXPECT_TRUE(std::isfinite(frame.camera.projection[column][row]));
+                        }
+                }
     }
 
     TEST(RenderColorTest, SurfaceSelectionHasStablePriorityAndExplicitFallback)
@@ -1265,6 +1313,144 @@ namespace
                       << " ALL_16_CENTERS=1 EMPTY_UI=1 SKIPPED_LIST_NOT_RETAINED=1\n";
         }
         expectReleased({});
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, DemoControlsDrivePresentedSceneWithBothTextures)
+    {
+        auto window = createWindow(true, 1280, 720);
+        for (const auto texture : {"textures/reference_rgba.png", "textures/direction_rgba.png"})
+        {
+            FileAudit audit;
+            audit.paths.texture = texture;
+            {
+                SceneAssets assets(audit.paths, std::make_unique<AuditedFileIO>(audit));
+                Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                                  RendererValidationMode::Required);
+                const auto cube = createCubeMesh(renderer);
+                const auto plane = [&] {
+                    const auto data = Demo::makePlaneMesh();
+                    return renderer.createMesh(data.vertices, data.indices);
+                }();
+                releaseCpuAssets(assets);
+                Demo::SceneControls scene;
+                const auto frame = [&] {
+                    window->pollEvents();
+                    const auto extent = renderer.beginUiFrame();
+                    if (!extent)
+                        throw Error::Exception(Error::Code::RENDER, "Demo review requires a drawable frame");
+                    Demo::drawSceneControls(scene, texture);
+                    const auto draws = Demo::makeSceneDraws(scene, cube, plane);
+                    const auto input = Demo::makeSceneFrame(*extent, draws, scene.camera);
+                    renderer.imgui().endFrame();
+                    auto* ui = renderer.imgui().drawData();
+                    renderer.drawFrame(input, scene.clearColor,
+                                       [&](void* commands) { renderer.imgui().recordDrawData(ui, commands); });
+                    return draws.size();
+                };
+                for (int warmup = 0; warmup < 3; ++warmup)
+                    EXPECT_EQ(frame(), 2u);
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                const bool reference = audit.paths.texture == "textures/reference_rgba.png";
+                WindowCapture::save(WindowCapture::capture(*window),
+                                    reference ? "review/demo-multi-reference.ppm" : "review/demo-multi-direction.ppm");
+                const auto click = [&](float x, float y, float dragX = 0.0f) {
+                    auto& io = ImGui::GetIO();
+                    // Isolate this controlled input stream from desktop cursor/focus events.
+                    io.SetAppAcceptingEvents(true);
+                    io.AddFocusEvent(true);
+                    io.AddMousePosEvent(x, y);
+                    io.SetAppAcceptingEvents(false);
+                    frame();
+                    io.SetAppAcceptingEvents(true);
+                    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+                    io.SetAppAcceptingEvents(false);
+                    frame();
+                    if (dragX != 0.0f)
+                    {
+                        io.SetAppAcceptingEvents(true);
+                        io.AddMousePosEvent(x + dragX, y);
+                        io.SetAppAcceptingEvents(false);
+                        frame();
+                    }
+                    io.SetAppAcceptingEvents(true);
+                    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+                    io.SetAppAcceptingEvents(false);
+                    return frame();
+                };
+                // Client coordinates of the Demo's default 350-pixel panel and default font.
+                // Exercise the actual widgets through ImGui input, without scene-state test hooks.
+                const auto initial = Demo::makeSceneDraws(scene, cube, plane);
+                click(60, 135);
+                click(61, 158, 10);
+                click(58, 181);
+                EXPECT_NE(scene.cube.transform.position.x, -0.8f);
+                EXPECT_NE(scene.cube.transform.rotationDegrees.x, 20.0f);
+                EXPECT_NE(scene.cube.transform.scale.x, 1.0f);
+                auto edited = Demo::makeSceneDraws(scene, cube, plane);
+                EXPECT_NE(edited[0].model, initial[0].model);
+                EXPECT_EQ(edited[1].model, initial[1].model);
+                const auto cubeModel = edited[0].model;
+                click(60, 250, -12);
+                click(61, 273, 8);
+                click(58, 296, 8);
+                EXPECT_NE(scene.plane.transform.position.x, 0.8f);
+                EXPECT_NE(scene.plane.transform.rotationDegrees.x, 0.0f);
+                EXPECT_NE(scene.plane.transform.scale.x, 1.3f);
+                edited = Demo::makeSceneDraws(scene, cube, plane);
+                EXPECT_EQ(edited[0].model, cubeModel);
+                EXPECT_NE(edited[1].model, initial[1].model);
+                const auto beforeCamera = Demo::makeSceneFrame({1280, 720}, edited, scene.camera);
+                click(52, 342, 8);
+                click(147, 365);
+                click(144, 388);
+                click(124, 411);
+                click(145, 434);
+                EXPECT_NE(scene.camera.target.x, 0.0f);
+                EXPECT_NE(scene.camera.yawDegrees, 0.0f);
+                EXPECT_NE(scene.camera.pitchDegrees, 15.0f);
+                EXPECT_NE(scene.camera.distance, 5.0f);
+                EXPECT_NE(scene.camera.fieldOfViewDegrees, 45.0f);
+                const auto afterCamera = Demo::makeSceneFrame({1280, 720}, edited, scene.camera);
+                EXPECT_NE(afterCamera.camera.view, beforeCamera.camera.view);
+                EXPECT_NE(afterCamera.camera.projection, beforeCamera.camera.projection);
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                if (reference)
+                    WindowCapture::save(WindowCapture::capture(*window), "review/demo-multi-edited.ppm");
+                EXPECT_EQ(click(30, 111), 1u);
+                EXPECT_FALSE(scene.cube.visible);
+                EXPECT_EQ(click(30, 227), 0u);
+                EXPECT_FALSE(scene.plane.visible);
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                const auto empty = WindowCapture::capture(*window);
+                if (reference)
+                    WindowCapture::save(empty, "review/demo-multi-empty.ppm");
+                size_t scenePixels = 0;
+                for (int y = 8; y < empty.height - 8; ++y)
+                    for (int x = 380; x < empty.width - 8; ++x)
+                    {
+                        const size_t pixel = (static_cast<size_t>(y) * empty.width + x) * 4;
+                        int difference = 0;
+                        for (int channel = 0; channel < 3; ++channel)
+                            difference += std::abs(int(empty.rgba[pixel + channel]) - int(empty.rgba[channel]));
+                        scenePixels += difference > 12;
+                    }
+                EXPECT_EQ(scenePixels, 0u);
+                EXPECT_EQ(click(30, 111), 1u);
+                EXPECT_EQ(click(30, 227), 2u);
+                EXPECT_EQ(click(60, 457), 2u);
+                const Demo::SceneControls defaults;
+                EXPECT_EQ(scene.cube.transform.position, defaults.cube.transform.position);
+                EXPECT_EQ(scene.plane.transform.scale, defaults.plane.transform.scale);
+                EXPECT_EQ(scene.camera.yawDegrees, defaults.camera.yawDegrees);
+                ImGui::GetIO().SetAppAcceptingEvents(true);
+                EXPECT_EQ(audit.textureOpens, 1u);
+                std::cout << "DEMO_UI: TEXTURE=" << texture
+                          << " INDEPENDENT_OBJECT_EDITS=2 CAMERA_CONTROLS=5 VISIBILITY=2,1,0,1,2 RESET=1 PNG_OPENS="
+                          << audit.textureOpens << '\n';
+            }
+            expectReleased(audit.paths);
+        }
         expectCleanValidation();
     }
 

@@ -7,6 +7,7 @@ add_executable(
     main.cpp
     scene_mesh.h
     scene_frame.h
+    scene_controls.h
     scene_assets.h
     validation_mode.h
 )
