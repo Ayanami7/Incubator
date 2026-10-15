@@ -24,13 +24,14 @@ namespace Incubator
         namespace
         {
             constexpr uint64_t MAX_INPUT_BYTES = 64u * 1024u * 1024u;
+            static_assert(MAX_INPUT_BYTES <= std::numeric_limits<int>::max() &&
+                          MAX_INPUT_BYTES <= std::numeric_limits<size_t>::max());
             constexpr std::array<uint8_t, 8> PNG_SIGNATURE = {137, 80, 78, 71, 13, 10, 26, 10};
 
             std::vector<uint8_t> readInput(FileIO::FileHandle& file)
             {
                 const uint64_t size = file.size();
-                if (size == 0 || size > MAX_INPUT_BYTES || size > std::numeric_limits<int>::max() ||
-                    size > std::numeric_limits<size_t>::max())
+                if (size == 0 || size > MAX_INPUT_BYTES)
                 {
                     throw Error::Exception(Error::Code::IO,
                                            fmt::format("Invalid PNG input size: {} (limit 64 MiB)", size));

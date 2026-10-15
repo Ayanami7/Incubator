@@ -8,7 +8,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <limits>
 #include <memory>
 #include <sstream>
 #include <span>
@@ -596,7 +595,5 @@ namespace
 
     INSTANTIATE_TEST_SUITE_P(
         InputBoundaries, TextureInputLimitTest,
-        ::testing::Values(uint64_t{0}, uint64_t{64u * 1024u * 1024u + 1u},
-                          static_cast<uint64_t>(std::numeric_limits<int>::max()) + 1u,
-                          std::numeric_limits<uint64_t>::max()));
+        ::testing::Values(uint64_t{0}, uint64_t{64u * 1024u * 1024u + 1u}));
 }  // namespace

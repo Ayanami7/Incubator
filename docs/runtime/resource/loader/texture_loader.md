@@ -14,8 +14,9 @@ RGB 为 sRGB 编码字节，alpha 为线性 straight alpha，透明 RGB 保留�
 
 TextureLoader 借用 FileIO，按 `Path::join("assets", virtualPath)` 和
 `Utils::Utf8::toFsPath` 定位启动 CWD 下的资源。虚拟路径规范化继续由 Registry 负责。
-Loader 只使用已打开 FileHandle 的 `size()`，检查 `0 < size <= 64 MiB`、`int` 与
-`size_t` 可表示性后分配输入。循环累积短读；未读满遇到 read=0 就报告 expected/actual，
+Loader 只使用已打开 FileHandle 的 `size()`，检查 `0 < size <= 64 MiB` 后分配输入。
+编译期断言保证该上限可由 `int` 与 `size_t` 表示，不重复检查已被上限覆盖的范围。
+循环累积短读；未读满遇到 read=0 就报告 expected/actual，
 读取异常保留原因，不将部分输入送入解码器。
 
 ## PNG 解码范围
