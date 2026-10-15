@@ -3,6 +3,9 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <optional>
+
+#include "runtime/render/frame_input.h"
 
 namespace Incubator
 {
@@ -45,13 +48,16 @@ namespace Incubator
             Renderer(Renderer&&) noexcept;
             Renderer& operator=(Renderer&&) noexcept;
 
-            // Prepares swapchain/backend before generating UI data; false skips this UI frame.
-            bool beginUiFrame();
+            // Prepares the swapchain/backend and starts UI. No extent means skip the frame.
+            // The returned nonzero extent is the actual rendering extent for application projection.
+            std::optional<FrameExtent> beginUiFrame();
 
             // The callback runs inside the active color/depth rendering scope. Its opaque
             // argument is the native command buffer, valid only for this invocation.
             // clearColor RGB is sRGB encoded; alpha is linear, as with the ImGui backend.
-            void drawFrame(const std::array<float, 4>& clearColor, const std::function<void(void*)>& recordUi = {});
+            // An extent changed since beginUiFrame skips stale input; regenerate it next frame.
+            void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
+                           const std::function<void(void*)>& recordUi = {});
             Integration::ImGuiRenderer& imgui();
 
         private:

@@ -43,11 +43,11 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 
 `VulkanFrameScheduler` 每帧槽可持有本帧命令引用的共享 GPU 资源。帧槽 Fence 确认提交完成后才清除这些引用；重建和关闭时等待在途帧完成后释放。CPU 可写 Buffer 本身不允许与 GPU 并发读写，调用方需按帧槽隔离区域或等待对应 Fence 后再写。
 
-`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新帧变换前等待对应帧槽 Fence，Uniform Buffer 与深度附件按帧槽隔离；`VulkanCommandList` 录制颜色/深度布局、动态渲染、DescriptorSet 绑定、立方体 indexed draw 和呈现布局。固定相机使用 GLM，模型每帧旋转；应用提供的 TextureResource 在初始化时同步上传，通过 Combined Image Sampler 采样。窗口尺寸变化会重建匹配 extent 的深度附件并更新投影，交换链颜色格式变化时重建兼容 Pipeline。
+`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新帧变换前等待对应帧槽 Fence，Uniform Buffer 与深度附件按帧槽隔离；`VulkanCommandList` 录制颜色/深度布局、动态渲染、DescriptorSet 绑定、立方体 indexed draw 和呈现布局。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。应用提供的 TextureResource 在初始化时同步上传，通过 Combined Image Sampler 采样。窗口尺寸变化会重建匹配 extent 的深度附件，应用按返回的实际 extent 更新投影；交换链颜色格式变化时重建兼容 Pipeline。
 
 `Integration::ImGuiRenderer` 将仓库内 ImGui 1.91.9b 的 GLFW 与 Vulkan 后端接入 Runtime。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色和深度格式。交换链图像数量或附件格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭或重配置时适配器先调用 `vkDeviceWaitIdle`，再释放 ImGui Vulkan 资源。后端要求交换链至少有两个图像，数量不足时明确报渲染错误。
 
-应用每轮先轮询事件，再调用 `renderer.beginUiFrame()`。Renderer 在此入口准备交换链、ImGui Vulkan 后端与字体图集，成功才开始 UI 帧；首次零尺寸、最小化或暂不可创建时返回 false，应用跳过本轮 UI 构建及绘制。成功后应用使用 ImGui API 构建界面并通过适配器调用 `endFrame()`。`drawData()` 返回仅供本次 `Renderer::drawFrame` 使用的数据；Renderer 在场景 indexed draw 后、结束同一动态渲染作用域前执行 UI 录制回调。UI 数据不跨帧保留；acquire 结果要求跳帧时不提交本轮数据，下一轮在准备后端后重新生成 UI。颜色附件使用 CLEAR 加载和 STORE 保存，因此 UI 叠加时保留场景颜色。
+应用每轮先轮询事件，再调用 `renderer.beginUiFrame()`。Renderer 在此入口准备交换链、ImGui Vulkan 后端与字体图集，成功才开始 UI 帧并返回 `std::optional<FrameExtent>` 中的实际绘制尺寸；首次零尺寸、最小化或暂不可创建时返回 `std::nullopt`，应用跳过投影计算、UI 构建及绘制。成功后应用使用 ImGui API 构建界面并通过适配器调用 `endFrame()`。`drawData()` 返回仅供本次 `Renderer::drawFrame` 使用的数据；Renderer 在场景 indexed draw 后、结束同一动态渲染作用域前执行 UI 录制回调。UI 数据不跨帧保留；acquire 结果要求跳帧时不提交本轮数据，下一轮在准备后端后重新生成 UI。颜色附件使用 CLEAR 加载和 STORE 保存，因此 UI 叠加时保留场景颜色。
 
 `ShaderResource` 拥有 CPU 字载荷；应用将资源借给 Renderer 构造，Renderer 复制载荷后应用即可释放 CPU Resource。Vulkan Pipeline 创建 ShaderModule 时借用 Renderer 的字数组，Pipeline 创建完成后临时 ShaderModule 即销毁；Renderer 保留自己的 CPU 副本以支持交换链格式变化后的 Pipeline 重建。CPU Resource 的 release 不决定 GPU Pipeline 的销毁时机。
 
@@ -83,6 +83,23 @@ Swapchain 保存并暴露 colorSpace，Renderer 在初始化和重建日志中�
 Shader 和 Texture 均由调用方选择并在构造期间保持有效；Window 必须活到 Renderer 销毁之后。
 成功构造后可释放 CPU Resource，Renderer 不通过 FileIO 或 Loader 重新加载纹理。
 
+`frame_input.h` 定义当前单网格的帧输入：
+
+| 类型/字段 | 调用方责任 |
+|---|---|
+| `FrameExtent { width, height }` | 使用 `beginUiFrame()` 返回的非零实际交换链 extent，不用窗口逻辑尺寸代替 |
+| `CameraMatrices { view, projection }` | 提供最终 GLM 列主序矩阵；右手坐标，深度 0–1，应用对投影 Y 方向适配一次 |
+| `FrameInput { extent, camera, model }` | 模型、相机、投影均为必需输入，动画时间由应用决定；Renderer 不补默认场景 |
+
+提交签名为 `drawFrame(input, clearColor, recordUi)`，变换顺序为
+`projection * view * model * position`。输入只在本次调用内借用，矩阵在等待当前帧槽
+Fence 后写入该槽 Uniform Buffer；返回后调用方可修改或销毁原始 CPU 输入。
+Renderer 不额外翻转 Y，不保留输入引用，正常跳帧也不缓存上一帧输入。
+
+提交前 Renderer 会复查可绘制状态。若交换链 extent 已与 `input.extent` 不同，跳过本次
+场景及 UI 提交；下一轮重新准备并生成投影，避免旧比例用于新目标。若缩放发生在已获取图像的
+命令录制期间，则按该帧已有 extent 完成提交，后续一帧准备新交换链。纹理和静态网格复用。
+
 应用继续拥有主循环，负责事件轮询并准备本帧 CPU 绘制数据。Renderer 一次调用负责获取图像、录制命令、提交和呈现；调用期间消费 CPU 数据，不缓存到下一帧。应用不接触已获取 GPU 帧的取消与补救同步规则。
 
 窗口尺寸为零或交换链暂不可绘制属于正常跳帧，由 Renderer 以非错误结果结束本次调用，不保留本帧绘制数据。初始化失败、必需功能不支持或不可恢复的 Vulkan 操作失败属于渲染错误，沿用 `Error::Exception` 并使用 `Error::Code::RENDER`，通过现有 Log 上报；不吞掉错误后继续运行。
@@ -91,4 +108,4 @@ ImGui 接入后，应用通过 UI 适配层开始 UI 帧、构建界面并结束
 
 ## 功能边界
 
-当前使用固定立方体、相机与旋转变换，不提供通用场景提交接口或运行中换图。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供异步资产加载、热重载、显存池、多后端或多视口。
+当前仍使用内置单立方体，应用控制相机、模型与动画；不提供外部网格、多对象列表或运行中换图。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供异步资产加载、热重载、显存池、多后端或多视口。

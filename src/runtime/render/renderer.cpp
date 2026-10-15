@@ -2,10 +2,8 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstdint>
 #include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -136,22 +134,27 @@ namespace Incubator
                 return swapchain_ && swapchain_->handle() != VK_NULL_HANDLE;
             }
 
-            bool beginUiFrame()
+            std::optional<FrameExtent> beginUiFrame()
             {
                 if (!prepareFrame())
-                    return false;
+                    return std::nullopt;
                 imguiRenderer_->beginFrame();
-                return true;
+                const auto extent = swapchain_->extent();
+                return FrameExtent{extent.width, extent.height};
             }
 
-            void drawFrame(const std::array<float, 4>& clearColor, const std::function<void(void*)>& recordUi)
+            void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
+                           const std::function<void(void*)>& recordUi)
             {
                 if (!prepareFrame())
+                    return;
+                const auto extent = swapchain_->extent();
+                if (input.extent != FrameExtent{extent.width, extent.height})
                     return;
 
                 const uint32_t frameIndex = scheduler_->currentFrameIndex();
                 scheduler_->waitForCurrentFrame();
-                const TransformUniform transforms = makeTransforms(swapchain_->extent());
+                const TransformUniform transforms{input.model, input.camera.view, input.camera.projection};
                 uniformBuffers_[frameIndex]->write(0, std::as_bytes(std::span<const TransformUniform>(&transforms, 1)));
 
                 VkClearColorValue color{};
@@ -180,21 +183,6 @@ namespace Incubator
             }
 
         private:
-            TransformUniform makeTransforms(VkExtent2D extent) const
-            {
-                const float seconds =
-                    std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime_).count();
-                TransformUniform transforms{};
-                transforms.model = glm::rotate(glm::mat4(1.0f), seconds * 0.8f, glm::vec3(0.0f, 1.0f, 0.0f));
-                transforms.model = glm::rotate(transforms.model, seconds * 0.55f, glm::vec3(1.0f, 0.0f, 0.0f));
-                transforms.view =
-                    glm::lookAt(glm::vec3(2.5f, 1.9f, 3.2f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-                transforms.projection = glm::perspectiveRH_ZO(
-                    glm::radians(45.0f), static_cast<float>(extent.width) / extent.height, 0.1f, 10.0f);
-                transforms.projection[1][1] *= -1.0f;
-                return transforms;
-            }
-
             bool rebuild(int width, int height, const char* reason)
             {
                 scheduler_->waitForFrames();
@@ -257,7 +245,6 @@ namespace Incubator
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
             std::unique_ptr<Integration::ImGuiRenderer> imguiRenderer_;
             VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
-            const std::chrono::steady_clock::time_point startTime_ = std::chrono::steady_clock::now();
             int requestedWidth_ = 0;
             int requestedHeight_ = 0;
             bool needsRebuild_ = false;
@@ -275,18 +262,19 @@ namespace Incubator
 
         Renderer& Renderer::operator=(Renderer&&) noexcept = default;
 
-        bool Renderer::beginUiFrame()
+        std::optional<FrameExtent> Renderer::beginUiFrame()
         {
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
             return impl_->beginUiFrame();
         }
 
-        void Renderer::drawFrame(const std::array<float, 4>& clearColor, const std::function<void(void*)>& recordUi)
+        void Renderer::drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
+                                 const std::function<void(void*)>& recordUi)
         {
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
-            impl_->drawFrame(clearColor, recordUi);
+            impl_->drawFrame(input, clearColor, recordUi);
         }
 
         Integration::ImGuiRenderer& Renderer::imgui()

@@ -15,6 +15,7 @@
 #include "runtime/render/renderer.h"
 #include "runtime/resource/resource_registry.h"
 #include "scene_assets.h"
+#include "scene_frame.h"
 #include "validation_mode.h"
 
 #ifdef _WIN32
@@ -62,15 +63,19 @@ int main(int argc, char* argv[])
         if (Incubator::Resource::ResourceRegistry::instance().getObject(textureId))
             throw Incubator::Error::Exception(Incubator::Error::Code::RENDER, "CPU scene texture was not unloaded");
         std::array<float, 4> clearColor = {0.12f, 0.16f, 0.22f, 1.0f};
+        const auto startTime = std::chrono::steady_clock::now();
 
         while (!window->shouldClose())
         {
             window->pollEvents();
-            if (!renderer.beginUiFrame())
+            const auto extent = renderer.beginUiFrame();
+            if (!extent)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
             }
+            const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime).count();
+            const auto frame = Incubator::Demo::makeSceneFrame(*extent, seconds);
             ImGui::Begin("Incubator Demo");
             ImGui::Text("Vulkan textured cube");
             ImGui::Text("Texture: %.*s", static_cast<int>(paths.texture.size()), paths.texture.data());
@@ -80,7 +85,7 @@ int main(int argc, char* argv[])
             renderer.imgui().endFrame();
 
             void* uiDrawData = renderer.imgui().drawData();
-            renderer.drawFrame(clearColor, [&renderer, uiDrawData](void* commandBuffer) {
+            renderer.drawFrame(frame, clearColor, [&renderer, uiDrawData](void* commandBuffer) {
                 renderer.imgui().recordDrawData(uiDrawData, commandBuffer);
             });
         }

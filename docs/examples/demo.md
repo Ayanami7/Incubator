@@ -52,6 +52,17 @@ Windows 入口使用 Unicode 命令行，再通过 `Utils::Utf8` 转为资源系
 两张图都含中灰和已知透明通道。场景材质不透明，半透明和透明格子仍显示自身 RGB。
 UI 可修改清屏颜色，立方体使用固定相机并自动旋转。
 
+## 应用帧输入
+
+相机和运动的默认选择位于 `examples/demo/scene_frame.h` 的 `makeSceneFrame(extent, seconds)`，
+时间由 Demo 的 `steady_clock` 计算。Renderer 只消费最终矩阵，不再自行旋转或生成相机。
+修改应用提供的时间、model 或 camera 可改变场景，传入固定时间则保持固定姿态。
+
+每轮先轮询事件，调用 `beginUiFrame()`；只有返回实际绘制 extent 后才计算投影、开始 UI
+内容并提交 `drawFrame(frameInput, clearColor, recordUi)`。返回空值时跳过该轮，避免零尺寸
+或最小化期间计算无效宽高比。投影采用 `perspectiveRH_ZO`，应用对 Y 方向适配一次；
+缩放后使用新 extent，Renderer 不再翻转。准备与提交之间若尺寸改变，本轮旧输入会被跳过。
+
 ## 资产生成与部署
 
 `demo_shaders` 使用仓库内的 `glslangValidator.exe` 编译 `assets/shaders/cube.vert` 和

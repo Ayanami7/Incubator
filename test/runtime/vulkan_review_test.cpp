@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "examples/demo/scene_assets.h"
+#include "examples/demo/scene_frame.h"
 #include "examples/demo/validation_mode.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
@@ -32,6 +33,7 @@
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
 #include "support/texture_gpu_review.h"
+#include "support/window_capture.h"
 
 namespace
 {
@@ -167,6 +169,22 @@ namespace
         }
         EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::SHADER));
         EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::TEXTURE));
+    }
+
+    TEST(RenderFrameInputTest, ApplicationOwnsAnimationAndFinalProjection)
+    {
+        const auto wide = Demo::makeSceneFrame({800, 400}, 0.0f);
+        const auto square = Demo::makeSceneFrame({400, 400}, 0.0f);
+        EXPECT_EQ(wide.model, glm::mat4(1.0f));
+        EXPECT_NE(Demo::makeSceneFrame({800, 400}, 1.0f).model, wide.model);
+        EXPECT_EQ(Demo::makeSceneFrame({800, 400}, 0.0f).model, wide.model);
+        EXPECT_NEAR(wide.camera.projection[0][0] * 2.0f, square.camera.projection[0][0], 0.00001f);
+        EXPECT_EQ(wide.camera.projection[1][1], square.camera.projection[1][1]);
+        EXPECT_LT(wide.camera.projection[1][1], 0.0f);
+        const auto nearPoint = wide.camera.projection * glm::vec4(0.0f, 0.0f, -0.1f, 1.0f);
+        const auto farPoint = wide.camera.projection * glm::vec4(0.0f, 0.0f, -10.0f, 1.0f);
+        EXPECT_NEAR(nearPoint.z / nearPoint.w, 0.0f, 0.00001f);
+        EXPECT_NEAR(farPoint.z / farPoint.w, 1.0f, 0.00001f);
     }
 
     TEST(RenderColorTest, SurfaceSelectionHasStablePriorityAndExplicitFallback)
@@ -346,7 +364,8 @@ namespace
         int drawUiFrame(Window::Window& window, Renderer& renderer)
         {
             window.pollEvents();
-            if (!renderer.beginUiFrame())
+            const auto extent = renderer.beginUiFrame();
+            if (!extent)
                 return 0;
             ImGui::Begin("Vulkan review");
             ImGui::Text("Textured cube and UI lifecycle verification");
@@ -354,7 +373,7 @@ namespace
             renderer.imgui().endFrame();
             auto* data = renderer.imgui().drawData();
             int recorded = 0;
-            renderer.drawFrame({0.12f, 0.16f, 0.22f, 1.0f}, [&](void* commands) {
+            renderer.drawFrame(Demo::makeSceneFrame(*extent, 0.0f), {0.12f, 0.16f, 0.22f, 1.0f}, [&](void* commands) {
                 ++recorded;
                 renderer.imgui().recordDrawData(data, commands);
             });
@@ -792,13 +811,14 @@ namespace
             Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
                               RendererValidationMode::Required);
             releaseCpuAssets(assets);
-            ASSERT_TRUE(renderer.beginUiFrame());
+            const auto extent = renderer.beginUiFrame();
+            ASSERT_TRUE(extent);
             ImGui::Begin("Resize during acquired frame");
             ImGui::Text("Review");
             ImGui::End();
             renderer.imgui().endFrame();
             auto* data = renderer.imgui().drawData();
-            renderer.drawFrame({0.1f, 0.2f, 0.3f, 1.0f}, [&](void* commands) {
+            renderer.drawFrame(Demo::makeSceneFrame(*extent, 0.0f), {0.1f, 0.2f, 0.3f, 1.0f}, [&](void* commands) {
                 renderer.imgui().recordDrawData(data, commands);
                 glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 710, 430);
             });
@@ -807,6 +827,155 @@ namespace
                 recorded += drawUiFrame(*window, renderer);
             EXPECT_GT(recorded, 0);
             EXPECT_NE(messages_.str().find("710x430"), std::string::npos);
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, ResizeBeforeSubmissionSkipsStaleProjectionAndUsesNewExtent)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            releaseCpuAssets(assets);
+            const auto extent = renderer.beginUiFrame();
+            ASSERT_TRUE(extent);
+            const auto staleInput = Demo::makeSceneFrame(*extent, 0.0f);
+            renderer.imgui().endFrame();
+            glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 810, 450);
+            window->pollEvents();
+            int recorded = 0;
+            renderer.drawFrame(staleInput, {0.1f, 0.2f, 0.3f, 1.0f}, [&](void*) { ++recorded; });
+            EXPECT_EQ(recorded, 0);
+            const auto resized = renderer.beginUiFrame();
+            ASSERT_TRUE(resized);
+            EXPECT_EQ(resized->width, 810u);
+            EXPECT_EQ(resized->height, 450u);
+            int width = 0;
+            int height = 0;
+            window->getFramebufferSize(width, height);
+            EXPECT_EQ(resized->width, static_cast<uint32_t>(width));
+            EXPECT_EQ(resized->height, static_cast<uint32_t>(height));
+            renderer.imgui().endFrame();
+            renderer.drawFrame(Demo::makeSceneFrame(*resized, 0.0f), {0.1f, 0.2f, 0.3f, 1.0f},
+                               [&](void*) { ++recorded; });
+            EXPECT_EQ(recorded, 1);
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, ApplicationMatricesControlPresentedImageAndResizeProjection)
+    {
+        auto window = createWindow(true, 640, 480);
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            releaseCpuAssets(assets);
+            auto present = [&](float modelX, float cameraX) {
+                // Exercise the public submit path across both GPU frame slots. After return,
+                // changing application input must not change uniforms already submitted.
+                for (int frame = 0; frame < 8; ++frame)
+                {
+                    window->pollEvents();
+                    const auto extent = renderer.beginUiFrame();
+                    if (!extent)
+                        throw Error::Exception(Error::Code::RENDER, "Visible matrix review frame was unavailable");
+                    auto input = Demo::makeSceneFrame(*extent, 0.0f);
+                    input.model = glm::translate(glm::mat4(1.0f), glm::vec3(modelX, 0.0f, 0.0f));
+                    input.camera.view = glm::lookAtRH(glm::vec3(cameraX, 0.0f, 3.0f), glm::vec3(cameraX, 0.0f, 0.0f),
+                                                      glm::vec3(0.0f, 1.0f, 0.0f));
+                    renderer.imgui().endFrame();
+                    renderer.drawFrame(input, {0.2f, 0.24f, 0.28f, 1.0f});
+                    input.model = glm::mat4(0.0f);
+                    input.camera.projection = glm::mat4(0.0f);
+                    glfwWaitEventsTimeout(0.025);
+                }
+                return WindowCapture::capture(*window);
+            };
+            const auto bounds = [](const WindowCapture::Image& image) {
+                // Compare against the displayed clear color, leaving display color transforms
+                // outside the exact +/-1 code assertions of the offscreen color tests.
+                std::array<int, 4> rect{image.width, image.height, -1, -1};
+                // Windows can round client corners; keep their desktop pixels out of scene bounds.
+                for (int y = 8; y < image.height - 8; ++y)
+                {
+                    for (int x = 8; x < image.width - 8; ++x)
+                    {
+                        const size_t offset = (static_cast<size_t>(y) * image.width + x) * 4;
+                        int difference = 0;
+                        for (int channel = 0; channel < 3; ++channel)
+                            difference += std::abs(int(image.rgba[offset + channel]) - int(image.rgba[channel]));
+                        if (difference > 40)
+                        {
+                            rect[0] = std::min(rect[0], x);
+                            rect[1] = std::min(rect[1], y);
+                            rect[2] = std::max(rect[2], x);
+                            rect[3] = std::max(rect[3], y);
+                        }
+                    }
+                }
+                return rect;
+            };
+            const auto save = [](const WindowCapture::Image& image, const char* path) {
+                std::filesystem::create_directories("review");
+                std::ofstream output(path, std::ios::binary);
+                output << "P6\n" << image.width << ' ' << image.height << "\n255\n";
+                for (size_t pixel = 0; pixel < image.rgba.size(); pixel += 4)
+                    output.write(reinterpret_cast<const char*>(image.rgba.data() + pixel), 3);
+                EXPECT_TRUE(output.good());
+            };
+
+            const auto first = present(0.0f, 0.0f);
+            const auto stable = present(0.0f, 0.0f);
+            save(first, "review/frame-input-fixed.ppm");
+            const auto baseBounds = bounds(first);
+            ASSERT_GT(baseBounds[2] - baseBounds[0], 100);
+            ASSERT_GT(baseBounds[3] - baseBounds[1], 100);
+            EXPECT_NEAR(baseBounds[2] - baseBounds[0], baseBounds[3] - baseBounds[1], 2);
+            ASSERT_EQ(first.rgba.size(), stable.rgba.size());
+            size_t changed = 0;
+            for (size_t pixel = 0; pixel < first.rgba.size(); pixel += 4)
+            {
+                int difference = 0;
+                for (int channel = 0; channel < 3; ++channel)
+                    difference += std::abs(int(first.rgba[pixel + channel]) - int(stable.rgba[pixel + channel]));
+                changed += difference > 12;
+            }
+            EXPECT_LT(changed, 32u);
+            // The visible +Z top row must still read red, green, blue, yellow.
+            const int sampleY = baseBounds[1] + (baseBounds[3] - baseBounds[1]) / 6;
+            for (int column = 0; column < 3; ++column)
+            {
+                const int sampleX = baseBounds[0] + (2 * column + 1) * (baseBounds[2] - baseBounds[0]) / 8;
+                const size_t offset = (static_cast<size_t>(sampleY) * first.width + sampleX) * 4;
+                for (int channel = 0; channel < 3; ++channel)
+                    if (channel != column)
+                        EXPECT_GT(int(first.rgba[offset + column]) - int(first.rgba[offset + channel]), 100);
+            }
+
+            const auto modelImage = present(0.5f, 0.0f);
+            const auto cameraImage = present(0.0f, 0.5f);
+            const auto modelBounds = bounds(modelImage);
+            const auto cameraBounds = bounds(cameraImage);
+            EXPECT_GT(modelBounds[0] - baseBounds[0], 50);
+            EXPECT_GT(baseBounds[0] - cameraBounds[0], 50);
+            save(modelImage, "review/frame-input-model.ppm");
+            save(cameraImage, "review/frame-input-camera.ppm");
+
+            glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 800, 400);
+            const auto resized = present(0.0f, 0.0f);
+            const auto resizedBounds = bounds(resized);
+            EXPECT_EQ(resized.width, 800);
+            EXPECT_EQ(resized.height, 400);
+            EXPECT_GT(resizedBounds[2] - resizedBounds[0], 100);
+            EXPECT_NEAR(resizedBounds[2] - resizedBounds[0], resizedBounds[3] - resizedBounds[1], 2);
+            save(resized, "review/frame-input-resized.ppm");
+            std::cout << "PRODUCTION_FRAME_INPUT: stable_changed_pixels=" << changed
+                      << " model_shift=" << modelBounds[0] - baseBounds[0]
+                      << " camera_shift=" << cameraBounds[0] - baseBounds[0] << " resized=" << resized.width << 'x'
+                      << resized.height << '\n';
         }
         expectCleanValidation();
     }
