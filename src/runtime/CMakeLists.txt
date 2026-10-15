@@ -66,6 +66,7 @@ set(RESOURCE_SOURCES
 # render 模块头文件、源文件
 set(RENDER_HEADERS
     render/renderer.h
+    render/cube_mesh.h
     render/integration/imgui_renderer.h
     render/vulkan/vulkan_swapchain.h
     render/vulkan/vulkan_frame_scheduler.h

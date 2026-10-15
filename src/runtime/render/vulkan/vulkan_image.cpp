@@ -18,9 +18,8 @@ namespace Incubator
                 {
                     if (result != VK_SUCCESS)
                     {
-                        throw Error::Exception(Error::Code::RENDER,
-                                               fmt::format("{} failed with VkResult {}", operation,
-                                                           static_cast<int>(result)));
+                        throw Error::Exception(Error::Code::RENDER, fmt::format("{} failed with VkResult {}", operation,
+                                                                                static_cast<int>(result)));
                     }
                 }
             }  // namespace
@@ -52,9 +51,9 @@ namespace Incubator
                     VkMemoryAllocateInfo allocateInfo{};
                     allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
                     allocateInfo.allocationSize = requirements.size;
-                    allocateInfo.memoryTypeIndex = device_.findMemoryType(
-                        requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                    allocateInfo.memoryTypeIndex =
+                        device_.findMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
                     checkVk(vkAllocateMemory(device_.handle(), &allocateInfo, nullptr, &memory_), "vkAllocateMemory");
                     checkVk(vkBindImageMemory(device_.handle(), image_, memory_, 0), "vkBindImageMemory");
 
@@ -93,9 +92,8 @@ namespace Incubator
             }
 
             std::shared_ptr<VulkanImage> VulkanImage::uploadRgba8(const VulkanDevice& device, VkExtent2D extent,
-                                                                   VkFormat format,
-                                                                   std::span<const uint8_t> pixels,
-                                                                   VkImageUsageFlags usage)
+                                                                  VkFormat format, std::span<const uint8_t> pixels,
+                                                                  VkImageUsageFlags usage)
             {
                 if (extent.width == 0 || extent.height == 0)
                     throw Error::Exception(Error::Code::RENDER, "Cannot upload an empty RGBA8 image");
@@ -103,6 +101,14 @@ namespace Incubator
                     throw Error::Exception(Error::Code::RENDER, "RGBA8 upload requires an R8G8B8A8 image format");
                 if ((usage & VK_IMAGE_USAGE_SAMPLED_BIT) == 0)
                     throw Error::Exception(Error::Code::RENDER, "RGBA8 upload requires sampled image usage");
+                VkFormatProperties formatProperties{};
+                vkGetPhysicalDeviceFormatProperties(device.physicalDevice(), format, &formatProperties);
+                VkImageFormatProperties imageProperties{};
+                checkVk(vkGetPhysicalDeviceImageFormatProperties(
+                            device.physicalDevice(), format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+                            usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0, &imageProperties),
+                        "vkGetPhysicalDeviceImageFormatProperties(RGBA8 sampled/transfer destination)");
+                validateRgba8Support(extent, device.properties().limits, formatProperties, imageProperties);
                 const uint64_t pixelCount = static_cast<uint64_t>(extent.width) * extent.height;
                 if (pixelCount > std::numeric_limits<size_t>::max() / 4 || pixels.size() != pixelCount * 4)
                 {
@@ -114,9 +120,8 @@ namespace Incubator
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
                 staging.write(0, bytes);
-                auto image = std::make_shared<VulkanImage>(device, extent, format,
-                                                           usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                                           VK_IMAGE_ASPECT_COLOR_BIT);
+                auto image = std::make_shared<VulkanImage>(
+                    device, extent, format, usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
                 device.executeImmediate([&](VkCommandBuffer commandBuffer) {
                     VkImageMemoryBarrier2 toTransfer{};
                     toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
@@ -159,6 +164,30 @@ namespace Incubator
                     vkCmdPipelineBarrier2(commandBuffer, &dependency);
                 });
                 return image;
+            }
+
+            void VulkanImage::validateRgba8Support(VkExtent2D extent, const VkPhysicalDeviceLimits& deviceLimits,
+                                                   const VkFormatProperties& formatProperties,
+                                                   const VkImageFormatProperties& imageProperties)
+            {
+                constexpr VkFormatFeatureFlags FEATURES =
+                    VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+                if (extent.width == 0 || extent.height == 0 || extent.width > deviceLimits.maxImageDimension2D ||
+                    extent.height > deviceLimits.maxImageDimension2D)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           fmt::format("RGBA8 extent {}x{} exceeds device maxImageDimension2D {}",
+                                                       extent.width, extent.height, deviceLimits.maxImageDimension2D));
+                if ((formatProperties.optimalTilingFeatures & FEATURES) != FEATURES)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "RGBA8 optimal tiling lacks sampled/transfer-dst support");
+                const uint64_t pixels = static_cast<uint64_t>(extent.width) * extent.height;
+                if (extent.width > imageProperties.maxExtent.width ||
+                    extent.height > imageProperties.maxExtent.height || imageProperties.maxExtent.depth < 1 ||
+                    imageProperties.maxMipLevels < 1 || imageProperties.maxArrayLayers < 1 ||
+                    (imageProperties.sampleCounts & VK_SAMPLE_COUNT_1_BIT) == 0 ||
+                    pixels > imageProperties.maxResourceSize / 4u)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "RGBA8 image format limits do not support this single-mip 2D texture");
             }
 
             VkImage VulkanImage::handle() const noexcept

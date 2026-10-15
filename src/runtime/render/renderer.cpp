@@ -1,32 +1,33 @@
 #include "runtime/render/renderer.h"
-#include "runtime/render/integration/imgui_renderer.h"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <memory>
 #include <span>
 #include <string_view>
 #include <vector>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/platform/window/window.h"
-#include "runtime/resource/loader/shader_resource.h"
+#include "runtime/render/cube_mesh.h"
+#include "runtime/render/integration/imgui_renderer.h"
+#include "runtime/render/vulkan/glfw_surface.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
-#include "runtime/render/vulkan/glfw_surface.h"
 #include "runtime/render/vulkan/vulkan_device.h"
 #include "runtime/render/vulkan/vulkan_frame_scheduler.h"
-#include "runtime/render/vulkan/vulkan_instance.h"
 #include "runtime/render/vulkan/vulkan_image.h"
+#include "runtime/render/vulkan/vulkan_instance.h"
 #include "runtime/render/vulkan/vulkan_pipeline.h"
 #include "runtime/render/vulkan/vulkan_sampler.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
+#include "runtime/resource/loader/shader_resource.h"
+#include "runtime/resource/loader/texture_resource.h"
 
 namespace Incubator
 {
@@ -34,80 +35,9 @@ namespace Incubator
     {
         namespace
         {
-            struct CubeVertex
-            {
-                float position[3];
-                float uv[2];
-            };
-            static_assert(sizeof(CubeVertex) == 5 * sizeof(float));
-
-            constexpr std::array<CubeVertex, 24> makeCubeVertices()
-            {
-                constexpr std::array<std::array<float, 3>, 8> positions = {{{-0.5f, -0.5f, -0.5f},
-                                                                              {0.5f, -0.5f, -0.5f},
-                                                                              {0.5f, 0.5f, -0.5f},
-                                                                              {-0.5f, 0.5f, -0.5f},
-                                                                              {-0.5f, -0.5f, 0.5f},
-                                                                              {0.5f, -0.5f, 0.5f},
-                                                                              {0.5f, 0.5f, 0.5f},
-                                                                              {-0.5f, 0.5f, 0.5f}}};
-                constexpr std::array<std::array<uint8_t, 4>, 6> faces = {{{4, 5, 6, 7}, {1, 0, 3, 2},
-                                                                           {5, 1, 2, 6}, {0, 4, 7, 3},
-                                                                           {7, 6, 2, 3}, {0, 1, 5, 4}}};
-                constexpr std::array<std::array<float, 2>, 4> uv = {
-                    {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}}};
-                std::array<CubeVertex, 24> vertices{};
-                for (size_t face = 0; face < faces.size(); ++face)
-                {
-                    for (size_t corner = 0; corner < 4; ++corner)
-                    {
-                        const auto& position = positions[faces[face][corner]];
-                        vertices[face * 4 + corner] = {{position[0], position[1], position[2]},
-                                                       {uv[corner][0], uv[corner][1]}};
-                    }
-                }
-                return vertices;
-            }
-
-            constexpr std::array<uint16_t, 36> makeCubeIndices()
-            {
-                std::array<uint16_t, 36> indices{};
-                for (uint16_t face = 0; face < 6; ++face)
-                {
-                    const uint16_t vertex = face * 4;
-                    const size_t index = face * 6;
-                    indices[index + 0] = vertex + 0;
-                    indices[index + 1] = vertex + 1;
-                    indices[index + 2] = vertex + 2;
-                    indices[index + 3] = vertex + 0;
-                    indices[index + 4] = vertex + 2;
-                    indices[index + 5] = vertex + 3;
-                }
-                return indices;
-            }
-
-            constexpr std::array<CubeVertex, 24> CUBE_VERTICES = makeCubeVertices();
-            constexpr std::array<uint16_t, 36> CUBE_INDICES = makeCubeIndices();
-
-            constexpr std::array<uint8_t, 8 * 8 * 4> makeCheckerTexture()
-            {
-                std::array<uint8_t, 8 * 8 * 4> pixels{};
-                for (uint32_t y = 0; y < 8; ++y)
-                {
-                    for (uint32_t x = 0; x < 8; ++x)
-                    {
-                        const bool light = ((x / 2) + (y / 2)) % 2 == 0;
-                        const size_t pixel = (y * 8 + x) * 4;
-                        pixels[pixel + 0] = light ? 245 : 30;
-                        pixels[pixel + 1] = light ? 210 : 90;
-                        pixels[pixel + 2] = light ? 70 : 220;
-                        pixels[pixel + 3] = 255;
-                    }
-                }
-                return pixels;
-            }
-
-            constexpr auto CHECKER_TEXTURE = makeCheckerTexture();
+            using Detail::CUBE_INDICES;
+            using Detail::CUBE_VERTICES;
+            using Detail::CubeVertex;
 
             struct alignas(16) TransformUniform
             {
@@ -122,9 +52,8 @@ namespace Incubator
                 std::vector<const char*> extensions = Vulkan::GlfwSurface::requiredInstanceExtensions();
                 const auto addIfMissing = [&extensions](const char* extension) {
                     const bool alreadyPresent = std::any_of(
-                        extensions.begin(), extensions.end(), [extension](const char* current) {
-                            return std::string_view(current) == extension;
-                        });
+                        extensions.begin(), extensions.end(),
+                        [extension](const char* current) { return std::string_view(current) == extension; });
                     if (!alreadyPresent)
                         extensions.push_back(extension);
                 };
@@ -152,11 +81,14 @@ namespace Incubator
         {
         public:
             Impl(Window::Window& window, const Resource::ShaderResource& vertexShader,
-                 const Resource::ShaderResource& fragmentShader, RendererValidationMode validationMode)
-                : window_(window), instance_(requiredRendererInstanceExtensions(),
-                                             toVulkanValidationMode(validationMode)),
-                  surface_(instance_, window_), device_(instance_, surface_),
-                  vertexShader_(vertexShader.words()), fragmentShader_(fragmentShader.words())
+                 const Resource::ShaderResource& fragmentShader, const Resource::TextureResource& texture,
+                 RendererValidationMode validationMode)
+                : window_(window),
+                  instance_(requiredRendererInstanceExtensions(), toVulkanValidationMode(validationMode)),
+                  surface_(instance_, window_),
+                  device_(instance_, surface_),
+                  vertexShader_(vertexShader.words()),
+                  fragmentShader_(fragmentShader.words())
             {
                 depthFormat_ = device_.findDepthFormat();
                 vertexBuffer_ = Vulkan::VulkanBuffer::uploadStatic(
@@ -164,11 +96,11 @@ namespace Incubator
                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
                     VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT);
                 indexBuffer_ = Vulkan::VulkanBuffer::uploadStatic(
-                    device_, std::as_bytes(std::span<const uint16_t>(CUBE_INDICES)),
-                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT,
-                    VK_ACCESS_2_INDEX_READ_BIT);
-                checkerTexture_ = Vulkan::VulkanImage::uploadRgba8(
-                    device_, {8, 8}, VK_FORMAT_R8G8B8A8_SRGB, CHECKER_TEXTURE, VK_IMAGE_USAGE_SAMPLED_BIT);
+                    device_, std::as_bytes(std::span<const uint16_t>(CUBE_INDICES)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                    VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT);
+                texture_ = Vulkan::VulkanImage::uploadRgba8(device_, {texture.width(), texture.height()},
+                                                            VK_FORMAT_R8G8B8A8_SRGB, texture.pixels(),
+                                                            VK_IMAGE_USAGE_SAMPLED_BIT);
                 sampler_ = std::make_shared<Vulkan::VulkanSampler>(device_);
                 for (auto& uniformBuffer : uniformBuffers_)
                 {
@@ -176,8 +108,8 @@ namespace Incubator
                         device_, sizeof(TransformUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 }
-                bindingSet_ = std::make_unique<Vulkan::VulkanBindingSet>(
-                    device_, uniformBuffers_, *checkerTexture_, *sampler_);
+                bindingSet_ =
+                    std::make_unique<Vulkan::VulkanBindingSet>(device_, uniformBuffers_, *texture_, *sampler_);
                 scheduler_ = std::make_unique<Vulkan::VulkanFrameScheduler>(device_);
                 imguiRenderer_ = std::make_unique<Integration::ImGuiRenderer>(window_);
                 int width = 0;
@@ -196,9 +128,9 @@ namespace Incubator
                     return false;
 
                 const bool sizeChanged = requestedWidth_ != width || requestedHeight_ != height;
-                const char* rebuildReason = !swapchain_ ? "initialization"
-                                             : needsRebuild_ ? "status recovery"
-                                             : "framebuffer size changed";
+                const char* rebuildReason = !swapchain_     ? "initialization"
+                                            : needsRebuild_ ? "status recovery"
+                                                            : "framebuffer size changed";
                 if ((!swapchain_ || needsRebuild_ || sizeChanged) && !rebuild(width, height, rebuildReason))
                     return false;
                 return swapchain_ && swapchain_->handle() != VK_NULL_HANDLE;
@@ -212,8 +144,7 @@ namespace Incubator
                 return true;
             }
 
-            void drawFrame(const std::array<float, 4>& clearColor,
-                           const std::function<void(void*)>& recordUi)
+            void drawFrame(const std::array<float, 4>& clearColor, const std::function<void(void*)>& recordUi)
             {
                 if (!prepareFrame())
                     return;
@@ -231,15 +162,15 @@ namespace Incubator
                 const std::array<std::shared_ptr<void>, 5> inFlightResources = {
                     std::static_pointer_cast<void>(vertexBuffer_), std::static_pointer_cast<void>(indexBuffer_),
                     std::static_pointer_cast<void>(uniformBuffers_[frameIndex]),
-                    std::static_pointer_cast<void>(checkerTexture_), std::static_pointer_cast<void>(sampler_)};
-                if (!scheduler_->renderAndPresent(*swapchain_, color, *pipeline_, *vertexBuffer_, *indexBuffer_,
-                                                  bindingSet_->descriptorSet(frameIndex),
-                                                  static_cast<uint32_t>(CUBE_INDICES.size()),
-                                                  [&recordUi](VkCommandBuffer commandBuffer) {
-                                                      if (recordUi)
-                                                          recordUi(static_cast<void*>(commandBuffer));
-                                                  },
-                                                  inFlightResources))
+                    std::static_pointer_cast<void>(texture_), std::static_pointer_cast<void>(sampler_)};
+                if (!scheduler_->renderAndPresent(
+                        *swapchain_, color, *pipeline_, *vertexBuffer_, *indexBuffer_,
+                        bindingSet_->descriptorSet(frameIndex), static_cast<uint32_t>(CUBE_INDICES.size()),
+                        [&recordUi](VkCommandBuffer commandBuffer) {
+                            if (recordUi)
+                                recordUi(static_cast<void*>(commandBuffer));
+                        },
+                        inFlightResources))
                     needsRebuild_ = true;
             }
 
@@ -251,16 +182,15 @@ namespace Incubator
         private:
             TransformUniform makeTransforms(VkExtent2D extent) const
             {
-                const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime_)
-                                          .count();
+                const float seconds =
+                    std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime_).count();
                 TransformUniform transforms{};
                 transforms.model = glm::rotate(glm::mat4(1.0f), seconds * 0.8f, glm::vec3(0.0f, 1.0f, 0.0f));
                 transforms.model = glm::rotate(transforms.model, seconds * 0.55f, glm::vec3(1.0f, 0.0f, 0.0f));
-                transforms.view = glm::lookAt(glm::vec3(2.5f, 1.9f, 3.2f), glm::vec3(0.0f),
-                                              glm::vec3(0.0f, 1.0f, 0.0f));
-                transforms.projection = glm::perspectiveRH_ZO(glm::radians(45.0f),
-                                                              static_cast<float>(extent.width) / extent.height,
-                                                              0.1f, 10.0f);
+                transforms.view =
+                    glm::lookAt(glm::vec3(2.5f, 1.9f, 3.2f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+                transforms.projection = glm::perspectiveRH_ZO(
+                    glm::radians(45.0f), static_cast<float>(extent.width) / extent.height, 0.1f, 10.0f);
                 transforms.projection[1][1] *= -1.0f;
                 return transforms;
             }
@@ -291,9 +221,9 @@ namespace Incubator
                     scheduler_->initializeSwapchainImages(swapchain_->imageCount(), swapchain_->extent(), depthFormat_);
                     if (!pipeline_ || previousFormat != swapchain_->format())
                     {
-                        pipeline_ = std::make_unique<Vulkan::VulkanPipeline>(
-                            device_, swapchain_->format(), depthFormat_, bindingSet_->layout(), vertexShader_,
-                            fragmentShader_);
+                        pipeline_ = std::make_unique<Vulkan::VulkanPipeline>(device_, swapchain_->format(),
+                                                                             depthFormat_, bindingSet_->layout(),
+                                                                             vertexShader_, fragmentShader_);
                     }
                     imguiRenderer_->initializeVulkan(instance_.handle(), device_.physicalDevice(), device_.handle(),
                                                      device_.queueFamilies().graphics, device_.graphicsQueue(),
@@ -303,9 +233,9 @@ namespace Incubator
                 requestedHeight_ = height;
                 needsRebuild_ = false;
                 Log::Registry::get("render").info(
-                    "Swapchain {}: {}x{}, format {}, {} images, present mode FIFO", reason,
+                    "Swapchain {}: {}x{}, format {}, colorSpace {}, {} images, present mode FIFO", reason,
                     swapchain_->extent().width, swapchain_->extent().height, static_cast<int>(swapchain_->format()),
-                    swapchain_->imageCount());
+                    static_cast<int>(swapchain_->colorSpace()), swapchain_->imageCount());
                 return true;
             }
 
@@ -319,7 +249,7 @@ namespace Incubator
             std::shared_ptr<Vulkan::VulkanBuffer> indexBuffer_;
             std::array<std::shared_ptr<Vulkan::VulkanBuffer>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
                 uniformBuffers_{};
-            std::shared_ptr<Vulkan::VulkanImage> checkerTexture_;
+            std::shared_ptr<Vulkan::VulkanImage> texture_;
             std::shared_ptr<Vulkan::VulkanSampler> sampler_;
             std::unique_ptr<Vulkan::VulkanBindingSet> bindingSet_;
             std::unique_ptr<Vulkan::VulkanSwapchain> swapchain_;
@@ -334,11 +264,10 @@ namespace Incubator
         };
 
         Renderer::Renderer(Window::Window& window, const Resource::ShaderResource& vertexShader,
-                           const Resource::ShaderResource& fragmentShader,
+                           const Resource::ShaderResource& fragmentShader, const Resource::TextureResource& texture,
                            RendererValidationMode validationMode)
-            : impl_(std::make_unique<Impl>(window, vertexShader, fragmentShader, validationMode))
-        {
-        }
+            : impl_(std::make_unique<Impl>(window, vertexShader, fragmentShader, texture, validationMode))
+        {}
 
         Renderer::~Renderer() = default;
 
@@ -353,8 +282,7 @@ namespace Incubator
             return impl_->beginUiFrame();
         }
 
-        void Renderer::drawFrame(const std::array<float, 4>& clearColor,
-                                 const std::function<void(void*)>& recordUi)
+        void Renderer::drawFrame(const std::array<float, 4>& clearColor, const std::function<void(void*)>& recordUi)
         {
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");

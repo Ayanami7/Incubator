@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include "runtime/core/error/error.h"
@@ -20,27 +21,9 @@ namespace Incubator
                 {
                     if (result != VK_SUCCESS)
                     {
-                        throw Error::Exception(Error::Code::RENDER,
-                                               fmt::format("{} failed with VkResult {}", operation,
-                                                           static_cast<int>(result)));
+                        throw Error::Exception(Error::Code::RENDER, fmt::format("{} failed with VkResult {}", operation,
+                                                                                static_cast<int>(result)));
                     }
-                }
-
-                VkSurfaceFormatKHR chooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats)
-                {
-                    constexpr VkFormat preferredFormat = VK_FORMAT_B8G8R8A8_UNORM;
-                    for (const VkSurfaceFormatKHR& format : formats)
-                    {
-                        if (format.format == preferredFormat && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-                        {
-                            return format;
-                        }
-                    }
-                    if (formats.size() == 1 && formats.front().format == VK_FORMAT_UNDEFINED)
-                    {
-                        return {preferredFormat, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
-                    }
-                    return formats.front();
                 }
 
                 VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR& capabilities, int width, int height)
@@ -66,6 +49,28 @@ namespace Incubator
             VulkanSwapchain::~VulkanSwapchain()
             {
                 destroy();
+            }
+
+            VkSurfaceFormatKHR VulkanSwapchain::chooseSurfaceFormat(std::span<const VkSurfaceFormatKHR> formats)
+            {
+                constexpr VkColorSpaceKHR COLOR_SPACE = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+                if (formats.size() == 1 && formats[0].format == VK_FORMAT_UNDEFINED &&
+                    formats[0].colorSpace == COLOR_SPACE)
+                    return {VK_FORMAT_B8G8R8A8_UNORM, COLOR_SPACE};
+                for (const auto preferred : {VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM})
+                {
+                    for (const auto& candidate : formats)
+                    {
+                        if (candidate.format == preferred && candidate.colorSpace == COLOR_SPACE)
+                            return candidate;
+                    }
+                }
+                std::string candidates;
+                for (const auto& candidate : formats)
+                    candidates += fmt::format(" (format {}, colorSpace {})", static_cast<int>(candidate.format),
+                                              static_cast<int>(candidate.colorSpace));
+                throw Error::Exception(Error::Code::RENDER,
+                                       "No supported UNORM/SRGB_NONLINEAR surface format; candidates:" + candidates);
             }
 
             bool VulkanSwapchain::recreate(int width, int height)
@@ -94,6 +99,10 @@ namespace Incubator
                         "vkGetPhysicalDeviceSurfaceFormatsKHR");
                 formats.resize(formatCount);
                 const VkSurfaceFormatKHR surfaceFormat = chooseSurfaceFormat(formats);
+                VkFormatProperties formatProperties{};
+                vkGetPhysicalDeviceFormatProperties(device_.physicalDevice(), surfaceFormat.format, &formatProperties);
+                if ((formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) == 0)
+                    throw Error::Exception(Error::Code::RENDER, "Selected surface format cannot be a color attachment");
                 const VkExtent2D newExtent = chooseExtent(capabilities, width, height);
                 if (newExtent.width == 0 || newExtent.height == 0)
                 {
@@ -189,6 +198,7 @@ namespace Incubator
                 destroy();
                 swapchain_ = newSwapchain;
                 format_ = surfaceFormat.format;
+                colorSpace_ = surfaceFormat.colorSpace;
                 extent_ = newExtent;
                 images_ = std::move(newImages);
                 imageViews_ = std::move(newViews);
@@ -240,6 +250,11 @@ namespace Incubator
             VkExtent2D VulkanSwapchain::extent() const noexcept
             {
                 return extent_;
+            }
+
+            VkColorSpaceKHR VulkanSwapchain::colorSpace() const noexcept
+            {
+                return colorSpace_;
             }
         }  // namespace Vulkan
     }  // namespace Render

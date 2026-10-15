@@ -7,12 +7,14 @@
 #include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <sstream>
 #include <string_view>
 #include <vector>
 
+#include "examples/demo/scene_assets.h"
 #include "examples/demo/validation_mode.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
@@ -22,11 +24,14 @@
 #include "runtime/render/renderer.h"
 #include "runtime/render/vulkan/glfw_surface.h"
 #include "runtime/render/vulkan/vulkan_device.h"
+#include "runtime/render/vulkan/vulkan_image.h"
 #include "runtime/render/vulkan/vulkan_instance.h"
+#include "runtime/render/vulkan/vulkan_swapchain.h"
 #include "runtime/resource/loader/shader_loader.h"
 #include "runtime/resource/loader/shader_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
+#include "support/texture_gpu_review.h"
 
 namespace
 {
@@ -76,37 +81,171 @@ namespace
         std::array<std::string, 2> previous_;
     };
 
-    class ShaderAssets
+    using SceneAssets = Demo::SceneAssets;
+
+    struct FileAudit
+    {
+        size_t textureOpens = 0;
+        bool destroyed = false;
+        bool routesClearedBeforeDestroy = false;
+    };
+
+    class AuditedFileIO : public FileIO::FileIO
     {
     public:
-        ShaderAssets() : fileIO_(FileIO::createPlatformFileIO())
+        explicit AuditedFileIO(FileAudit& audit) : audit_(audit), inner_(Incubator::FileIO::createPlatformFileIO()) {}
+        ~AuditedFileIO()
         {
-            auto& manager = Resource::ResourceManager::instance();
-            manager.registerLoader(Resource::ResourceType::SHADER, std::make_unique<Resource::ShaderLoader>(*fileIO_));
-            vertexId_ = manager.registerResource(Resource::ResourceType::SHADER, "shaders/cube.vert.spv");
-            fragmentId_ = manager.registerResource(Resource::ResourceType::SHADER, "shaders/cube.frag.spv");
-            vertex = manager.get<Resource::ShaderResource>(vertexId_);
-            fragment = manager.get<Resource::ShaderResource>(fragmentId_);
-            if (!vertex || !fragment)
-                throw Error::Exception(Error::Code::RENDER, "Review shaders were not built");
+            audit_.destroyed = true;
+            audit_.routesClearedBeforeDestroy =
+                !Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::TEXTURE) &&
+                !Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::SHADER);
         }
-
-        ~ShaderAssets()
+        bool exists(const std::filesystem::path& path) override
         {
-            auto& manager = Resource::ResourceManager::instance();
-            manager.release(vertexId_);
-            manager.release(fragmentId_);
-            manager.reset();
+            return inner_->exists(path);
         }
-
-        Resource::ShaderResource* vertex = nullptr;
-        Resource::ShaderResource* fragment = nullptr;
+        uint64_t getFileSize(const std::filesystem::path& path) override
+        {
+            return inner_->getFileSize(path);
+        }
+        bool remove(const std::filesystem::path& path) override
+        {
+            return inner_->remove(path);
+        }
+        std::unique_ptr<Incubator::FileIO::FileHandle> open(const std::filesystem::path& path,
+                                                            Incubator::FileIO::OpenMode mode,
+                                                            Incubator::FileIO::ShareMode share) override
+        {
+            if (path.extension() == ".png")
+                ++audit_.textureOpens;
+            return inner_->open(path, mode, share);
+        }
+        bool directoryExists(const std::filesystem::path& path) override
+        {
+            return inner_->directoryExists(path);
+        }
+        bool createDirectory(const std::filesystem::path& path) override
+        {
+            return inner_->createDirectory(path);
+        }
+        bool removeDirectory(const std::filesystem::path& path) override
+        {
+            return inner_->removeDirectory(path);
+        }
 
     private:
-        std::unique_ptr<FileIO::FileIO> fileIO_;
-        Resource::ResourceId vertexId_;
-        Resource::ResourceId fragmentId_;
+        FileAudit& audit_;
+        std::unique_ptr<Incubator::FileIO::FileIO> inner_;
     };
+
+    void expectReleased(Demo::SceneAssetPaths paths)
+    {
+        auto& registry = Resource::ResourceRegistry::instance();
+        for (const auto& [type, path] : {std::pair{Resource::ResourceType::SHADER, paths.vertex},
+                                         std::pair{Resource::ResourceType::SHADER, paths.fragment},
+                                         std::pair{Resource::ResourceType::TEXTURE, paths.texture}})
+        {
+            const auto id = registry.lookup(type, path);
+            if (id.valid())
+            {
+                EXPECT_EQ(registry.refCount(id), 0u);
+                EXPECT_EQ(registry.getObject(id), nullptr);
+            }
+        }
+        EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::SHADER));
+        EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::TEXTURE));
+    }
+
+    TEST(RenderColorTest, SurfaceSelectionHasStablePriorityAndExplicitFallback)
+    {
+        const VkSurfaceFormatKHR bgra{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+        const VkSurfaceFormatKHR rgba{VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+        const std::array formats = {rgba, bgra};
+        EXPECT_EQ(VulkanSwapchain::chooseSurfaceFormat(formats).format, bgra.format);
+        EXPECT_EQ(VulkanSwapchain::chooseSurfaceFormat(std::span(&rgba, 1)).format, rgba.format);
+        const VkSurfaceFormatKHR any{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+        EXPECT_EQ(VulkanSwapchain::chooseSurfaceFormat(std::span(&any, 1)).format, bgra.format);
+    }
+
+    TEST(RenderColorTest, SurfaceSelectionRejectsSrgbAttachmentsHdrAndEmptyLists)
+    {
+        for (const VkSurfaceFormatKHR candidate :
+             {VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+              VkSurfaceFormatKHR{VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT},
+              VkSurfaceFormatKHR{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_HDR10_ST2084_EXT}})
+        {
+            try
+            {
+                VulkanSwapchain::chooseSurfaceFormat(std::span(&candidate, 1));
+                FAIL() << "Unsupported surface was accepted";
+            }
+            catch (const Error::Exception& error)
+            {
+                EXPECT_EQ(error.code(), Error::Code::RENDER);
+                EXPECT_NE(error.message().find(fmt::format("format {}", static_cast<int>(candidate.format))),
+                          std::string::npos);
+                EXPECT_NE(error.message().find(fmt::format("colorSpace {}", static_cast<int>(candidate.colorSpace))),
+                          std::string::npos);
+            }
+        }
+        EXPECT_THROW(VulkanSwapchain::chooseSurfaceFormat({}), Error::Exception);
+    }
+
+    TEST(RenderColorTest, ImageSupportRejectsControlledLimitsBeforeAnyAllocation)
+    {
+        VkPhysicalDeviceLimits limits{};
+        limits.maxImageDimension2D = 4;
+        VkFormatProperties format{};
+        format.optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        VkImageFormatProperties image{};
+        image.maxExtent = {4, 4, 1};
+        image.maxMipLevels = image.maxArrayLayers = 1;
+        image.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
+        image.maxResourceSize = 64;
+        EXPECT_NO_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image));
+        EXPECT_THROW(VulkanImage::validateRgba8Support({5, 1}, limits, format, image), Error::Exception);
+        EXPECT_THROW(VulkanImage::validateRgba8Support({1, 5}, limits, format, image), Error::Exception);
+        EXPECT_THROW(VulkanImage::validateRgba8Support({0, 1}, limits, format, image), Error::Exception);
+        for (auto feature : {VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, VK_FORMAT_FEATURE_TRANSFER_DST_BIT})
+        {
+            auto unavailable = format;
+            unavailable.optimalTilingFeatures &= ~feature;
+            EXPECT_THROW(VulkanImage::validateRgba8Support({2, 1}, limits, unavailable, image), Error::Exception);
+        }
+        for (int kind = 0; kind < 7; ++kind)
+        {
+            auto unavailable = image;
+            if (kind == 0)
+                unavailable.maxExtent.width = 1;
+            if (kind == 1)
+                unavailable.maxExtent.height = 0;
+            if (kind == 2)
+                unavailable.maxExtent.depth = 0;
+            if (kind == 3)
+                unavailable.maxMipLevels = 0;
+            if (kind == 4)
+                unavailable.maxArrayLayers = 0;
+            if (kind == 5)
+                unavailable.sampleCounts = 0;
+            if (kind == 6)
+                unavailable.maxResourceSize = 7;
+            EXPECT_THROW(VulkanImage::validateRgba8Support({2, 1}, limits, format, unavailable), Error::Exception);
+        }
+    }
+
+    void releaseCpuAssets(SceneAssets& assets)
+    {
+        const std::array ids = {assets.vertex->id(), assets.fragment->id(), assets.texture->id()};
+        assets.releaseCpuResources();
+        for (auto id : ids)
+        {
+            EXPECT_EQ(Resource::ResourceRegistry::instance().refCount(id), 0u);
+            EXPECT_EQ(Resource::ResourceRegistry::instance().getObject(id), nullptr);
+        }
+        EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::SHADER));
+        EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::TEXTURE));
+    }
 
     // Simulates the application's initial unavailable framebuffer without mocking Vulkan.
     class DeferredFramebufferWindow final : public Window::Window
@@ -127,6 +266,8 @@ namespace
         }
         void getFramebufferSize(int& width, int& height) const override
         {
+            if (throwOnSize)
+                throw Error::Exception(Error::Code::RENDER, "Injected framebuffer query failure");
             if (drawable)
                 native_.getFramebufferSize(width, height);
             else
@@ -153,6 +294,7 @@ namespace
             return native_.getNativeHandle();
         }
         bool drawable = false;
+        bool throwOnSize = false;
 
     private:
         Incubator::Window::Window& native_;
@@ -179,12 +321,12 @@ namespace
             Resource::ResourceRegistry::instance().clear();
         }
 
-        std::unique_ptr<Window::Window> createWindow(bool visible = false)
+        std::unique_ptr<Window::Window> createWindow(bool visible = false, int width = 640, int height = 360)
         {
             Window::WindowDesc desc;
             desc.title = "Incubator Vulkan review";
-            desc.width = 640;
-            desc.height = 360;
+            desc.width = width;
+            desc.height = height;
             desc.visible = visible;
             return Window::createPlatformWindow(desc);
         }
@@ -269,9 +411,12 @@ namespace
     TEST_F(VulkanReviewTest, RequiredValidationDrawResizeAndShutdown)
     {
         auto window = createWindow();
-        ShaderAssets shaders;
+        FileAudit audit;
+        SceneAssets assets({}, std::make_unique<AuditedFileIO>(audit));
         {
-            Renderer renderer(*window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            releaseCpuAssets(assets);
             for (int cycle = 0; cycle < 4; ++cycle)
             {
                 glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 640 + cycle * 30,
@@ -280,7 +425,150 @@ namespace
                 for (int frame = 0; frame < 5; ++frame)
                     recorded += drawUiFrame(*window, renderer);
                 EXPECT_GT(recorded, 0);
+                EXPECT_EQ(audit.textureOpens, 1u);
             }
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, PartialAssetConstructionReleasesBeforeFixtureCleanup)
+    {
+        for (int stage = 0; stage < 3; ++stage)
+        {
+            Demo::SceneAssetPaths paths;
+            if (stage == 0)
+                paths.vertex = "shaders/missing-first.spv";
+            if (stage == 1)
+                paths.fragment = "shaders/missing-second.spv";
+            if (stage == 2)
+                paths.texture = "textures/missing-third.png";
+            FileAudit audit;
+            EXPECT_THROW((SceneAssets(paths, std::make_unique<AuditedFileIO>(audit))), Error::Exception);
+            EXPECT_TRUE(audit.destroyed);
+            EXPECT_TRUE(audit.routesClearedBeforeDestroy);
+            expectReleased(paths);
+        }
+    }
+
+    TEST_F(VulkanReviewTest, RendererConstructionFailureReleasesUploadedGpuAndCpuAssets)
+    {
+        auto native = createWindow();
+        DeferredFramebufferWindow window(*native);
+        window.throwOnSize = true;
+        FileAudit audit;
+        EXPECT_THROW(([&] {
+                         SceneAssets assets({}, std::make_unique<AuditedFileIO>(audit));
+                         Renderer renderer(window, *assets.vertex, *assets.fragment, *assets.texture,
+                                           RendererValidationMode::Required);
+                     }()),
+                     Error::Exception);
+        EXPECT_TRUE(audit.destroyed);
+        EXPECT_TRUE(audit.routesClearedBeforeDestroy);
+        EXPECT_EQ(audit.textureOpens, 1u);
+        expectReleased({});
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, AssetScopePreservesExistingOwnersAndReacquiresZeroReferenceEntries)
+    {
+        auto& registry = Resource::ResourceRegistry::instance();
+        auto& manager = Resource::ResourceManager::instance();
+        const auto held = manager.registerResource(Resource::ResourceType::TEXTURE, "textures/reference_rgba.png");
+        {
+            SceneAssets assets;
+            EXPECT_EQ(registry.refCount(held), 2u);
+        }
+        EXPECT_EQ(registry.refCount(held), 1u);
+        EXPECT_NE(registry.getObject(held), nullptr);
+        manager.release(held);
+        EXPECT_EQ(registry.getObject(held), nullptr);
+        {
+            SceneAssets assets;
+            EXPECT_EQ(registry.refCount(held), 1u);
+            releaseCpuAssets(assets);
+        }
+        expectReleased({});
+    }
+
+    TEST_F(VulkanReviewTest, ActualShaderAndCubeFaceMatchReferenceAndUiGrayOnGpu)
+    {
+        auto window = createWindow(false, 384, 256);
+        {
+            SceneAssets assets;
+            VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
+            GlfwSurface surface(instance, *window);
+            VulkanDevice device(instance, surface);
+            VulkanSwapchain swapchain(device, surface, 384, 256);
+            EXPECT_EQ(swapchain.colorSpace(), VK_COLOR_SPACE_SRGB_NONLINEAR_KHR);
+            const auto pixels =
+                TextureGpuReview::capture(instance.handle(), device, *window, assets, swapchain.format());
+            const std::array<std::array<int, 3>, 12> expected = {{{255, 0, 0},
+                                                                  {0, 255, 0},
+                                                                  {0, 0, 255},
+                                                                  {255, 255, 0},
+                                                                  {0, 255, 255},
+                                                                  {255, 0, 255},
+                                                                  {128, 128, 128},
+                                                                  {255, 255, 255},
+                                                                  {255, 128, 0},
+                                                                  {128, 0, 255},
+                                                                  {17, 34, 51},
+                                                                  {0, 0, 0}}};
+            for (int y = 0; y < 3; ++y)
+            {
+                for (int x = 0; x < 4; ++x)
+                {
+                    const size_t offset = ((16 + y * 64 + 32) * 384 + 16 + x * 64 + 32) * 4;
+                    for (int channel = 0; channel < 3; ++channel)
+                        EXPECT_NEAR(pixels[offset + channel], expected[y * 4 + x][channel], 1);
+                    EXPECT_EQ(pixels[offset + 3], 255);
+                }
+            }
+            for (const auto position : {std::array{320, 64}, std::array{320, 160}})
+            {
+                const auto offset = (position[1] * 384 + position[0]) * 4;
+                for (int channel = 0; channel < 3; ++channel)
+                    EXPECT_NEAR(pixels[offset + channel], 128, 1);
+            }
+            const auto marker = (34 * 384 + 290) * 4;
+            EXPECT_EQ(pixels[marker], 255);
+            EXPECT_EQ(pixels[marker + 1], 0);
+            EXPECT_EQ(pixels[marker + 2], 255);
+            const auto blended = (200 * 384 + 320) * 4;
+            for (int channel = 0; channel < 3; ++channel)
+                EXPECT_NEAR(pixels[blended + channel], 64, 1);
+            expectReleased({});
+            std::filesystem::create_directories("review");
+            std::ofstream output("review/task04-color.ppm", std::ios::binary);
+            output << "P6\n384 256\n255\n";
+            for (size_t pixel = 0; pixel < pixels.size(); pixel += 4)
+                output.write(reinterpret_cast<const char*>(pixels.data() + pixel), 3);
+            ASSERT_TRUE(output.good());
+            std::cout << "GPU_COLOR_FORMAT=" << int(swapchain.format())
+                      << " COLOR_SPACE=" << int(swapchain.colorSpace())
+                      << " CPU_UNLOADED_BEFORE_DRAW=1 GRAY_TEXEL_UI_CLEAR=128(+/-1)\n";
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, TextureUploadRejectsDeviceOversizeAndMismatchedPayload)
+    {
+        auto window = createWindow();
+        {
+            VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
+            GlfwSurface surface(instance, *window);
+            VulkanDevice device(instance, surface);
+            const std::array<uint8_t, 4> pixel{128, 128, 128, 255};
+            EXPECT_THROW(VulkanImage::uploadRgba8(device, {device.properties().limits.maxImageDimension2D + 1, 1},
+                                                  VK_FORMAT_R8G8B8A8_SRGB, pixel, VK_IMAGE_USAGE_SAMPLED_BIT),
+                         Error::Exception);
+            EXPECT_THROW(
+                VulkanImage::uploadRgba8(device, {2, 1}, VK_FORMAT_R8G8B8A8_SRGB, pixel, VK_IMAGE_USAGE_SAMPLED_BIT),
+                Error::Exception);
+            auto image =
+                VulkanImage::uploadRgba8(device, {1, 1}, VK_FORMAT_R8G8B8A8_SRGB, pixel, VK_IMAGE_USAGE_SAMPLED_BIT);
+            EXPECT_EQ(image->format(), VK_FORMAT_R8G8B8A8_SRGB);
+            EXPECT_NE(image->view(), VK_NULL_HANDLE);
         }
         expectCleanValidation();
     }
@@ -288,9 +576,11 @@ namespace
     {
         auto native = createWindow();
         DeferredFramebufferWindow window(*native);
-        ShaderAssets shaders;
+        SceneAssets assets;
         {
-            Renderer renderer(window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            Renderer renderer(window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            releaseCpuAssets(assets);
             EXPECT_EQ(ImGui::GetIO().BackendRendererUserData, nullptr);
             for (int frame = 0; frame < 5; ++frame)
                 EXPECT_FALSE(renderer.beginUiFrame());
@@ -309,9 +599,11 @@ namespace
     TEST_F(VulkanReviewTest, VisibleWindowMinimizeRestoreAndResize)
     {
         auto window = createWindow(true);
-        ShaderAssets shaders;
+        SceneAssets assets;
         {
-            Renderer renderer(*window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            releaseCpuAssets(assets);
             auto* native = static_cast<GLFWwindow*>(window->getNativeHandle());
             for (int cycle = 0; cycle < 4; ++cycle)
             {
@@ -344,10 +636,12 @@ namespace
     TEST_F(VulkanReviewTest, RapidUiShutdownAfterLastSubmission)
     {
         auto window = createWindow();
-        ShaderAssets shaders;
         for (int cycle = 0; cycle < 12; ++cycle)
         {
-            Renderer renderer(*window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            SceneAssets assets;
+            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            releaseCpuAssets(assets);
             int recorded = 0;
             for (int frame = 0; frame < 1 + cycle % 3; ++frame)
                 recorded += drawUiFrame(*window, renderer);
@@ -360,9 +654,11 @@ namespace
     {
         auto native = createWindow();
         DeferredFramebufferWindow window(*native);
-        ShaderAssets shaders;
+        SceneAssets assets;
         {
-            Renderer renderer(window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            Renderer renderer(window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            releaseCpuAssets(assets);
             for (int frame = 0; frame < 10; ++frame)
                 EXPECT_FALSE(renderer.beginUiFrame());
             EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain "), 0u);
@@ -391,9 +687,11 @@ namespace
     TEST_F(VulkanReviewTest, ResizeAfterAcquirePreservesFrameAndRebuilds)
     {
         auto window = createWindow();
-        ShaderAssets shaders;
+        SceneAssets assets;
         {
-            Renderer renderer(*window, *shaders.vertex, *shaders.fragment, RendererValidationMode::Required);
+            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
+                              RendererValidationMode::Required);
+            releaseCpuAssets(assets);
             ASSERT_TRUE(renderer.beginUiFrame());
             ImGui::Begin("Resize during acquired frame");
             ImGui::Text("Review");
@@ -479,14 +777,15 @@ namespace
     TEST_F(VulkanReviewTest, DefaultDemoPolicyMatchesBuild)
     {
         auto window = createWindow();
-        ShaderAssets shaders;
+        SceneAssets assets;
 #ifdef _DEBUG
         EXPECT_EQ(Demo::VALIDATION_MODE, RendererValidationMode::Optional);
 #else
         EXPECT_EQ(Demo::VALIDATION_MODE, RendererValidationMode::Disabled);
 #endif
         {
-            Renderer renderer(*window, *shaders.vertex, *shaders.fragment, Demo::VALIDATION_MODE);
+            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture, Demo::VALIDATION_MODE);
+            releaseCpuAssets(assets);
             for (int frame = 0; frame < 5; ++frame)
                 EXPECT_GT(drawUiFrame(*window, renderer), 0);
         }

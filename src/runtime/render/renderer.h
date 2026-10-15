@@ -14,7 +14,8 @@ namespace Incubator
     namespace Resource
     {
         class ShaderResource;
-    }
+        class TextureResource;
+    }  // namespace Resource
 
     namespace Render
     {
@@ -34,7 +35,7 @@ namespace Incubator
         {
         public:
             Renderer(Window::Window& window, const Resource::ShaderResource& vertexShader,
-                     const Resource::ShaderResource& fragmentShader,
+                     const Resource::ShaderResource& fragmentShader, const Resource::TextureResource& texture,
                      RendererValidationMode validationMode = RendererValidationMode::Disabled);
             ~Renderer();
 
@@ -49,8 +50,8 @@ namespace Incubator
 
             // The callback runs inside the active color/depth rendering scope. Its opaque
             // argument is the native command buffer, valid only for this invocation.
-            void drawFrame(const std::array<float, 4>& clearColor,
-                           const std::function<void(void*)>& recordUi = {});
+            // clearColor RGB is sRGB encoded; alpha is linear, as with the ImGui backend.
+            void drawFrame(const std::array<float, 4>& clearColor, const std::function<void(void*)>& recordUi = {});
             Integration::ImGuiRenderer& imgui();
 
         private:
