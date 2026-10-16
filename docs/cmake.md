@@ -11,7 +11,8 @@
 | CMake 最低版本 | 3.15 |
 | C++ 标准 | C++20（`CMAKE_CXX_STANDARD 20`） |
 | 构建类型 | 静态库为主（`BUILD_SHARED_LIBS OFF`） |
-| 源码目录 | `src/`，二进制输出 | `build/` |
+| 源码目录 | `src/` |
+| 构建输出目录 | `build/` |
 | 禁止源码内构建 | 根 CMakeLists 检测并报错 |
 
 ## 目录结构
@@ -22,9 +23,13 @@ Incubator/
 ├── 3rdparty/
 │   └── CMakeLists.txt  # 第三方依赖库（各库独立 CMakeLists 或子目录）
 ├── src/
-│   ├── CMakeLists.txt  # 源码入口（仅 add_subdirectory 各层）
-│   └── <layer>/        # 按层组织（core/platform/resource/...）
-│       └── CMakeLists.txt  # 每层定义静态库目标
+│   ├── CMakeLists.txt  # 源码入口：add_subdirectory(runtime)
+│   └── runtime/
+│       ├── CMakeLists.txt  # 收集模块源码，定义唯一的运行时库 IncubatorRuntime
+│       ├── core/          # 以下为逻辑模块目录，各自没有 CMakeLists.txt
+│       ├── platform/
+│       ├── resource/
+│       └── render/
 ├── assets/
 │   └── CMakeLists.txt  # 运行资源部署（文件依赖与增量复制）
 ├── test/
@@ -40,9 +45,10 @@ Incubator/
 - 设置全局变量：CMake 版本、C++ 标准、路径变量（`SRC_DIR`、`THIRD_PARTY_DIR` 等）
 - 依次添加 `3rdparty` → `src` → `assets` → `test` → `examples`
 
-### 库目标（src/ 下各层）
+### 运行时库目标（src/runtime/）
 
-- 每层一个静态库目标（如 `IncubatorRuntime`），头文件与源文件按模块分组收集
+- Core、Platform、Resource、Render 是逻辑模块，由 `src/runtime/CMakeLists.txt` 按模块收集头文件与源文件，共同编译为 `IncubatorRuntime` 静态库
+- 源码分层的依赖方向由模块边界维护；目录层次不代表独立库目标
 - 使用 `FOLDER "Engine"` 属性在 IDE 中分组显示
 - 依赖关系通过 `add_dependencies` + `target_link_libraries` 声明
 - 平台相关配置（如 MSVC 的 `/utf-8` 编码支持）在库目标处集中设置
@@ -51,7 +57,7 @@ Incubator/
 
 - 为每个被测模块创建独立可执行目标（`<模块>_test.exe`）
 - 链接测试框架与对应的运行时库
-- 使用 `FOLDER "Tests"` 属性分组
+- 使用 `FOLDER "UnitTest/runtime"` 属性分组
 
 ### 示例目标（examples/ 下）
 
@@ -63,18 +69,19 @@ Incubator/
 - 源文件到构建目录使用 `add_custom_command(OUTPUT ... DEPENDS ...)` 与 `copy_if_different`。
 - 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
+- 当前 PNG 部署目标 `demo_textures` 定义于 `assets/CMakeLists.txt`，Shader 编译目标 `demo_shaders` 定义于 `examples/demo/CMakeLists.txt`；Demo 和相关 GPU 测试显式依赖这两个目标。
 
 ## 扩展新模块的约定
 
-新增一个模块时，遵循以下模式即可（**无需修改本文档**）：
+新增 Runtime 模块时，沿用当前单库组织：
 
-1. 在对应层目录创建源码文件
-2. 在该层的 `CMakeLists.txt` 中，把新文件的头文件/源文件加入对应分组变量
-3. 在 `test/` 下创建 `<模块>_test.cpp` 并接入测试目标
+1. 在 `src/runtime/` 对应逻辑模块目录创建源码文件
+2. 在 `src/runtime/CMakeLists.txt` 中，把头文件/源文件加入对应模块分组变量
+3. 在 `test/runtime/` 下创建 `<模块>_test.cpp`，现有 `CONFIGURE_DEPENDS` 源文件收集规则会为其创建测试目标
 4. 若需要示例，在 `examples/` 下添加或修改示例
 
 ## 注意事项
 
-- 依赖方向保持单向：上层库只能依赖下层库，避免循环依赖
+- 逻辑模块的依赖方向保持单向，遵循对应模块文档的职责边界
 - 测试与示例通过库目标消费引擎能力，不重复编译引擎源码
 - 引入新第三方库时，在 `3rdparty/CMakeLists.txt` 中按既有模式注册，并处理 `NOT TARGET` 防重复

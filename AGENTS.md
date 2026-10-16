@@ -41,4 +41,17 @@ Incubator/
 - [代码风格](./.agents/rules/code_style.md) - 命名规范和格式规则
 - [当前任务](./.agents/specs/tasks) - 当前任务列表和分析情况
 
+## 推荐阅读顺序
+
+首次接手时，按以下顺序建立当前项目上下文：
+
+1. 阅读本文件、[开发工作流](./WORKFLOW.md)和[代码风格](./.agents/rules/code_style.md)，明确本机开发约束。
+2. 阅读 [ARCHITECTURE.md 的当前阶段](./ARCHITECTURE.md#当前阶段)，了解已实现能力与逻辑分层；涉及构建组织时查阅 [CMake 结构](./docs/cmake.md)。
+3. 阅读 [Demo 使用说明](./docs/examples/demo.md)和 [main.cpp](./examples/demo/main.cpp)，串起资产准备、窗口创建、网格上传、UI 与帧提交。
+4. 对照 [Render 模块](./docs/runtime/render.md)阅读 [renderer.h](./src/runtime/render/renderer.h)、[frame_input.h](./src/runtime/render/frame_input.h)和 [mesh.h](./src/runtime/render/mesh.h)，掌握应用输入、借用期与 GPU 所有权。
+5. 阅读 [Resource 总览](./docs/runtime/resource/resource.md)，按需进入 Manager、Registry 和 Loader 文档，确认资源持有、卸载、路径与 UTF-8 约定。
+6. 根据当前任务补读对应实现、测试和模块文档；任务范围见 [.agents/specs/tasks](./.agents/specs/tasks)。
+
+文档与源码存在冲突时，对照当前公开接口及实现确认行为，并同步修正负责该约定的模块文档。
+
 

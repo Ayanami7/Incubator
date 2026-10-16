@@ -2,7 +2,7 @@
 
 ## 目标
 
-Window 模块封装 GLFW 窗口的创建与生命周期管理，通过抽象类提供可 Mock 的平台无关接口。上层代码通过 `createPlatformWindow()` 工厂函数获取窗口实例，无需关心底层窗口库细节。它不处理事件分发（留给未来的 Event 模块），也不涉及渲染集成（留给未来的 Function 模块）。
+Window 模块封装 GLFW 窗口的创建与生命周期管理，通过抽象类提供可 Mock 的平台无关接口。上层代码通过 `createPlatformWindow()` 工厂函数获取窗口实例。事件对象分发留给后续 Event 模块；Vulkan Surface 和 ImGui 集成由现有 Render 模块负责，应用拥有主循环。
 
 ## 设计原则
 
@@ -23,7 +23,7 @@ namespace Incubator::Window
 |------|------|------|
 | **Platform** | `Window` | 窗口创建、轮询（`pollEvents()`）、关闭检查、尺寸查询、标题设置、原生句柄暴露 |
 | **Core**（未来） | `Event` | 事件分发：将 GLFW 回调中的原始事件转换为引擎事件对象并传递给订阅者 |
-| **Function**（未来） | `Render` / `ImGui` | Vulkan surface 创建、ImGui 初始化、渲染循环管理 |
+| **Function** | `Render` / `ImGui` | Vulkan Surface 创建、ImGui 后端初始化与 GPU 绘制；主循环由应用拥有 |
 
 本模块**不会**实现：
 - 事件分发与回调注册（`pollEvents()` 仅调用 `glfwPollEvents()`，不构造事件对象）
@@ -35,7 +35,7 @@ namespace Incubator::Window
 
 | 文件 | 内容 |
 |------|------|
-| `src/runtime/platform/window/window.h` | `WindowDesc` 结构体、`Window` 抽象类（7 个纯虚方法）、`createPlatformWindow()` 工厂声明 |
+| `src/runtime/platform/window/window.h` | `WindowDesc` 结构体、`Window` 抽象类、`createPlatformWindow()` 工厂声明 |
 | `src/runtime/platform/window/window.cpp` | `WindowGlfw` 匿名命名空间实现 + `createPlatformWindow()` 工厂定义 |
 
 ## 接口设计
@@ -46,14 +46,14 @@ namespace Incubator::Window
 struct WindowDesc
 {
     std::string title = "Incubator";    // 窗口标题
-    int32_t width = 1280;               // 窗口宽度（像素）
-    int32_t height = 720;               // 窗口高度（像素）
+    int32_t width = 1280;               // 窗口宽度（屏幕坐标）
+    int32_t height = 720;               // 窗口高度（屏幕坐标）
     bool resizable = true;              // 是否允许用户调整窗口大小
     bool visible = true;                // 创建后是否立即可见
 };
 ```
 
-### Window 抽象类（7 个纯虚方法）
+### Window 抽象类
 
 ```cpp
 class Window
@@ -74,6 +74,10 @@ public:
 
     // ---- 窗口控制 ----
     virtual void setTitle(std::string_view title) = 0;                   // 设置窗口标题
+
+    // ---- 窗口状态查询 ----
+    virtual bool isIconified() const = 0;                             // 是否最小化
+    virtual float getContentScale() const = 0;                         // DPI 缩放比例（当前取 X 方向）
     virtual void* getNativeHandle() const = 0;                           // 获取 GLFWwindow*
 
     // 禁止拷贝，允许移动
@@ -96,13 +100,13 @@ protected:
 ```
 构造函数(WindowDesc)
 ├── glfwSetErrorCallback()           // 注册 GLFW 错误回调
-├── glfwInit()                       // 初始化 GLFW
-│   └── 失败 → 抛出 Error::IO 异常
+├── GLFW 引用计数 +1；首个窗口调用 glfwInit()
+│   └── 初始化失败 → 计数恢复为 0，抛出 Error::Code::IO 异常
 ├── glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API)  // 不创建 OpenGL 上下文
 ├── glfwWindowHint(GLFW_RESIZABLE, ...)           // 按 desc 设置
 ├── glfwWindowHint(GLFW_VISIBLE, ...)             // 按 desc 设置
 └── glfwCreateWindow(...)            // 创建窗口
-    └── 失败 → glfwTerminate() + 抛出 Error::IO 异常
+    └── 失败 → 引用计数 -1，仅减到 0 时调用 glfwTerminate()，抛出 Error::Code::IO 异常
 ```
 
 ### 错误回调
@@ -110,7 +114,7 @@ protected:
 ```cpp
 void glfwErrorCallback(int error, const char* description)
 {
-    spdlog::error("[GLFW] Error {}: {}", error, description);
+    Log::Registry::get("platform.window").error("GLFW error {}: {}", error, description);
 }
 ```
 
@@ -135,14 +139,18 @@ GLFW 内部错误（非致命）通过 `Log::Registry::get("platform.window")` �
         glfwDestroyWindow(window_);
         window_ = nullptr;
     }
+    if (--s_glfwRefCount == 0)
+    {
+        glfwTerminate();
+    }
 }
 ```
 
-析构时自动销毁 GLFW 窗口。`glfwTerminate()` 不在析构中调用，因为可能有多个窗口共享 GLFW 实例。
+析构时先销毁本窗口，再递减共享 GLFW 引用计数；最后一个窗口销毁时自动调用 `glfwTerminate()`。仍有其他窗口时保留 GLFW 全局状态，应用无需额外调用终止函数。
 
-### 禁止拷贝 / 允许移动
+### 所有权与转移
 
-`Window` 基类已声明拷贝为 `delete`，移动为 `default`。`WindowGlfw` 作为子类仅持有 `GLFWwindow*` 指针，默认移动语义正确。
+调用方通过 `std::move(window)` 转移 `std::unique_ptr<Window>` 的所有权，底层 `WindowGlfw` 对象和原生句柄保持原位。具体实现不对外提供按值拷贝或移动入口。
 
 ## 工厂模式
 
@@ -154,7 +162,7 @@ std::unique_ptr<Window> createPlatformWindow(const WindowDesc& desc);
 
 - 返回 `std::unique_ptr<Window>`，调用者拥有所有权
 - 创建失败时抛出 `Incubator::Error::Exception`
-- 内部实现仅一行：`return std::make_unique<WindowGlfw>(desc);`
+- 工厂构造 `WindowGlfw`，成功后查询实际窗口/Framebuffer 尺寸与缩放比例，通过 `platform.window` 记录一次 DEBUG 日志并返回所有权
 
 ## 使用示例
 
@@ -212,14 +220,14 @@ glfwSetMouseButtonCallback(native, mouseButtonCallback);
 | 依赖 | 用途 | 类型 |
 |------|------|------|
 | `GLFW/glfw3.h` | 窗口创建、事件轮询、尺寸查询、原生句柄 | 链接库（运行时依赖） |
-| `spdlog/spdlog.h` | GLFW 错误日志输出 | 链接库 |
+| `runtime/core/log/logger.h` | `platform.window` 创建参数与 GLFW 错误日志 | 内部依赖 |
 | `runtime/core/error/error.h` | 异常类型（用于窗口创建失败时抛异常） | 内部依赖 |
 
 ## 注意事项
 
 1. `pollEvents()` 仅调用 `glfwPollEvents()`，**不返回任何事件对象**。当前版本不包含事件系统，GLFW 回调需通过 `getNativeHandle()` 自行注册
 2. 构造函数中强制设置 `GLFW_NO_API`，窗口**不创建 OpenGL 上下文**。若需 OpenGL 渲染，需修改此标志或使用单独的上下文创建接口
-3. `glfwTerminate()` **不在 WindowGlfw 析构中调用**。若整个应用程序只创建单个窗口，调用方需在 `main()` 末尾手动调用 `glfwTerminate()` 释放 GLFW 全局状态
-4. Window 创建失败时抛出 `Error::IO` 类型异常，调用方应使用 try-catch 处理
+3. GLFW 初始化与终止由窗口引用计数管理；最后一个窗口销毁时自动终止，应用在所有借用窗口的 Renderer/Surface 销毁后再释放窗口
+4. Window 创建失败时抛出 `Error::Exception`，错误码为 `Error::Code::IO`，调用方应使用 try-catch 处理
 5. `getFramebufferSize()` 与 `getWindowSize()` 在 HiDPI 显示器上可能返回不同值：帧缓冲尺寸为实际像素，窗口尺寸为逻辑坐标。渲染相关操作应使用帧缓冲尺寸
 6. 工厂函数返回 `unique_ptr`，所有权明确，不可复制，可通过 `std::move` 转移
