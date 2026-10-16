@@ -880,6 +880,42 @@ namespace
         expectCleanValidation();
     }
 
+    TEST_F(VulkanReviewTest, MaterialBindingsSurviveControlledPipelineFormatRebuild)
+    {
+        Log::Registry::get("render.vulkan").setLevel(Log::Level::DEBUG);
+        auto window = createWindow(false, 384, 256);
+        {
+            VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
+            GlfwSurface surface(instance, *window);
+            VulkanDevice device(instance, surface);
+            VulkanSwapchain swapchain(device, surface, 384, 256);
+            const auto target =
+                swapchain.format() == VK_FORMAT_B8G8R8A8_UNORM ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_B8G8R8A8_UNORM;
+            SceneAssets assets;
+            const auto pixels = TextureGpuReview::capture(instance.handle(), device, *window, assets, target,
+                                                          {0.5f, 0.5f, 0.5f}, swapchain.format());
+            const auto white = (112 * 384 + 240) * 4;
+            const auto gray = (112 * 384 + 176) * 4;
+            for (int channel = 0; channel < 3; ++channel)
+            {
+                EXPECT_NEAR(pixels[white + channel], 188, 1);
+                EXPECT_NEAR(pixels[gray + channel], 92, 1);
+                EXPECT_NEAR(pixels[(64 * 384 + 320) * 4 + channel], 128, 1);
+            }
+            EXPECT_EQ(pixels[white + 3], 255);
+            EXPECT_EQ(pixels[((16 + 2 * 64 + 32) * 384 + 16 + 2 * 64 + 32) * 4 + 3], 255);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture:"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 2u);
+            expectReleased({});
+            WindowCapture::save({384, 256, pixels}, "review/material-format-rebuild-gpu.ppm");
+            std::cout << "CONTROLLED_PIPELINE_FORMAT: ACTUAL_SWAPCHAIN=" << int(swapchain.format())
+                      << " OFFSCREEN_REBUILD=" << int(swapchain.format()) << "->" << int(target)
+                      << " CPU_RELEASED_BEFORE_REBUILD=1 TEXTURE_UPLOADS=1 PIPELINES=2"
+                      << " WHITE=" << int(pixels[white]) << " ALPHA=" << int(pixels[white + 3]) << '\n';
+        }
+        expectCleanValidation();
+    }
+
     TEST_F(VulkanReviewTest, PerItemMaterialsShareResourcesAcrossFramesResizeAndCpuListRelease)
     {
         Log::Registry::get("render").setLevel(Log::Level::DEBUG);

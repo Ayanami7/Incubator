@@ -1,7 +1,7 @@
 # 多物体纹理 Demo
 
 `examples/demo` 演示通过 ResourceManager 加载外部 SPIR-V 和 PNG，将资源传给 Renderer，
-上传应用生成的立方体和平面，提交独立模型变换与共享相机，并叠加 ImGui 控件。
+上传应用生成的立方体和平面，为每项提交独立的 Mesh、Material 和模型矩阵，共享相机并叠加 ImGui 控件。
 应用负责事件轮询、场景状态、矩阵、绘制列表、界面构建和主循环。
 
 ## 构建与启动
@@ -72,7 +72,7 @@ UI 可修改清屏颜色；两个物体默认同时显示，姿态固定，直�
 未知选项会明确报告启动错误，退出码为 1。两种网格均在初始化时创建一次，显示开关不触发上传。
 `examples/demo/scene_mesh.h` 生成立方体的
 24 顶点/36 索引和平面的 4 顶点/6 索引。平面位于 XY、面向 +Z，边长 1，UV 原点在左上。
-两个样本共用 `MeshVertex` position+UV、uint16 索引、同一纹理和 Pipeline。
+两个样本共用 `MeshVertex` position+UV、uint16 索引、同一纹理和 Pipeline，分别使用白色与线性 tint 材质。
 
 Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁生成的 CPU 数组；
 绘制时提交返回的 `Mesh`。Renderer 持有 GPU 网格至关闭，复制网格引用不会重新上传，
@@ -98,7 +98,7 @@ Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁
 
 可按下列步骤观察行为：
 
-1. 默认启动，立方体位于左侧、平面位于右侧；调整 Cube 的位置、旋转和缩放，Plane 保持原姿态。
+1. 默认启动，立方体位于左侧、平面位于右侧；立方体显示纹理原色，平面减少红/蓝线性分量。调整 Cube 的位置、旋转和缩放，Plane 保持原姿态和材质。
 2. 调整 Plane 的同名控件，Cube 保持原姿态；两者共用当前纹理。
 3. 修改 Camera 的 Yaw、Distance 或 FOV，两个物体共同受相机影响；缩放窗口后投影使用新绘制尺寸。
 4. 依次关闭 Cube 和 Plane 的 Visible，物体数由 2 变为 1、0；背景和面板保留。重新开启后恢复各自编辑过的姿态。
@@ -122,7 +122,7 @@ Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁
 
 `FrameInput.draws` 借用 `DrawItem {mesh, material, model}` 列表，当前 Demo 根据两个开关提交 0、1 或 2 项。
 不同绘制项可共享 Mesh 或 Material，各自独立设置 model，共用相机。提交返回后可修改或销毁原始列表；
-GPU 网格仍由 Renderer 持有至关闭。空列表只清屏并显示本帧 UI。
+GPU 网格、材质及材质依赖的纹理仍由 Renderer 持有至关闭。空列表只清屏并显示本帧 UI。
 
 ## 资产生成与部署
 

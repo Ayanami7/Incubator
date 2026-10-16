@@ -120,6 +120,9 @@ desc.color = {0.0f, 0.0f, 0.0f}; // Does not change tinted.
 DrawItem item{mesh, tinted, model};
 ```
 
+颜色按线性空间相乘，因此白色 texel 乘 `{0.5, 0.5, 0.5}` 后，sRGB 编码结果约为
+188/255；默认白色参数保持原纹理的中灰 128/255。材质参数不作用于清屏或 ImGui。
+
 `createMaterial` 要求先准备共享 Shader，并在分配 GPU 资源前检查颜色和 Texture 从属关系。
 空、过期、跨 Renderer 纹理，NaN、无穷或越界颜色均明确失败，不替换白图或钳制非法输入。
 创建时将 RGB 复制进 16 字节 std140 `vec4` Uniform，第四分量固定为 1；之后不改写该 Buffer

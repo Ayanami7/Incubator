@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include <glm/glm.hpp>
+#include <memory>
 #include <vector>
 
 #include "examples/demo/scene_assets.h"
@@ -99,7 +100,8 @@ namespace TextureGpuReview
     // The test attachment permits readback without adding a screenshot API to Renderer.
     inline std::vector<uint8_t> capture(VkInstance instance, const VulkanDevice& device, Window::Window& window,
                                         Demo::SceneAssets& assets, VkFormat format,
-                                        const std::array<float, 3>& tint = {1.0f, 1.0f, 1.0f})
+                                        const std::array<float, 3>& tint = {1.0f, 1.0f, 1.0f},
+                                        VkFormat previousPipelineFormat = VK_FORMAT_UNDEFINED)
     {
         constexpr VkExtent2D EXTENT{384, 256};
         auto texture =
@@ -121,8 +123,11 @@ namespace TextureGpuReview
         VulkanBindingSet bindings(device, uniforms);
         VulkanMaterialBinding material(device, bindings.materialLayout(), *texture, sampler, tint);
         const auto depthFormat = device.findDepthFormat();
-        VulkanPipeline pipeline(device, format, depthFormat, bindings.layout(), bindings.materialLayout(),
-                                assets.vertex->words(), assets.fragment->words());
+        const auto vertexWords = assets.vertex->words();
+        const auto fragmentWords = assets.fragment->words();
+        auto pipeline = std::make_unique<VulkanPipeline>(
+            device, previousPipelineFormat == VK_FORMAT_UNDEFINED ? format : previousPipelineFormat, depthFormat,
+            bindings.layout(), bindings.materialLayout(), vertexWords, fragmentWords);
         const auto mesh = Demo::makePlaneMesh();
         auto vertices = VulkanBuffer::uploadStatic(
             device, std::as_bytes(std::span(mesh.vertices)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
@@ -142,6 +147,13 @@ namespace TextureGpuReview
         assets.releaseCpuResources();
         if (Resource::ResourceRegistry::instance().getObject(textureId))
             throw Error::Exception(Error::Code::RENDER, "CPU texture remains mounted before GPU readback drawing");
+        if (previousPipelineFormat != VK_FORMAT_UNDEFINED)
+        {
+            // Controlled attachment-format change, reusing the same texture, material and frame bindings.
+            // This is not an observed swapchain format change; CPU assets/Loader are already released.
+            pipeline = std::make_unique<VulkanPipeline>(device, format, depthFormat, bindings.layout(),
+                                                        bindings.materialLayout(), vertexWords, fragmentWords);
+        }
         window.pollEvents();
         ui.beginFrame();
         auto* uiDraw = ImGui::GetBackgroundDrawList();
@@ -204,7 +216,7 @@ namespace TextureGpuReview
             const std::array draws = {VulkanDrawItem{vertices->handle(), indices->handle(),
                                                      static_cast<uint32_t>(mesh.indices.size()),
                                                      material.descriptorSet(), glm::mat4(1.0f)}};
-            VulkanCommandList::drawIndexed(commands, pipeline, bindings.descriptorSet(0), draws);
+            VulkanCommandList::drawIndexed(commands, *pipeline, bindings.descriptorSet(0), draws);
             ui.recordDrawData(ui.drawData(), commands);
             vkCmdEndRendering(commands);
 
