@@ -92,32 +92,37 @@ namespace Incubator
             std::shared_ptr<Vulkan::VulkanBuffer> indexBuffer;
         };
 
+        struct Texture::Impl
+        {
+            Impl(const Vulkan::VulkanDevice& device, const Resource::TextureResource& texture) : owner(&device)
+            {
+                image = Vulkan::VulkanImage::uploadRgba8(device, {texture.width(), texture.height()},
+                                                         VK_FORMAT_R8G8B8A8_SRGB, texture.pixels(),
+                                                         VK_IMAGE_USAGE_SAMPLED_BIT);
+                sampler = std::make_shared<Vulkan::VulkanSampler>(device);
+            }
+
+            const Vulkan::VulkanDevice* owner;
+            std::shared_ptr<Vulkan::VulkanImage> image;
+            std::shared_ptr<Vulkan::VulkanSampler> sampler;
+        };
+
         class Renderer::Impl
         {
         public:
-            Impl(Window::Window& window, const Resource::ShaderResource& vertexShader,
-                 const Resource::ShaderResource& fragmentShader, const Resource::TextureResource& texture,
-                 RendererValidationMode validationMode)
+            Impl(Window::Window& window, RendererValidationMode validationMode)
                 : window_(window),
                   instance_(requiredRendererInstanceExtensions(), toVulkanValidationMode(validationMode)),
                   surface_(instance_, window_),
-                  device_(instance_, surface_),
-                  vertexShader_(vertexShader.words()),
-                  fragmentShader_(fragmentShader.words())
+                  device_(instance_, surface_)
             {
                 depthFormat_ = device_.findDepthFormat();
-                texture_ = Vulkan::VulkanImage::uploadRgba8(device_, {texture.width(), texture.height()},
-                                                            VK_FORMAT_R8G8B8A8_SRGB, texture.pixels(),
-                                                            VK_IMAGE_USAGE_SAMPLED_BIT);
-                sampler_ = std::make_shared<Vulkan::VulkanSampler>(device_);
                 for (auto& uniformBuffer : uniformBuffers_)
                 {
                     uniformBuffer = std::make_shared<Vulkan::VulkanBuffer>(
                         device_, sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 }
-                bindingSet_ =
-                    std::make_unique<Vulkan::VulkanBindingSet>(device_, uniformBuffers_, *texture_, *sampler_);
                 scheduler_ = std::make_unique<Vulkan::VulkanFrameScheduler>(device_);
                 imguiRenderer_ = std::make_unique<Integration::ImGuiRenderer>(window_);
                 int width = 0;
@@ -156,9 +161,43 @@ namespace Incubator
                 auto mesh = std::make_shared<Mesh::Impl>(device_, vertices, indices);
                 meshes_.push_back(mesh);
                 Log::Registry::get("render").debug("Uploaded mesh: {} vertices ({} bytes), {} indices ({} bytes)",
-                                                     vertices.size(), vertices.size_bytes(), indices.size(),
-                                                     indices.size_bytes());
+                                                   vertices.size(), vertices.size_bytes(), indices.size(),
+                                                   indices.size_bytes());
                 return Mesh(mesh);
+            }
+
+            Texture createTexture(const Resource::TextureResource& texture)
+            {
+                auto gpuTexture = std::make_shared<Texture::Impl>(device_, texture);
+                textures_.push_back(gpuTexture);
+                return Texture(gpuTexture);
+            }
+
+            void prepareSceneResources(const Resource::ShaderResource& vertexShader,
+                                       const Resource::ShaderResource& fragmentShader, const Texture& texture)
+            {
+                if (bindingSet_)
+                    throw Error::Exception(Error::Code::RENDER, "Scene resources are already prepared");
+                auto gpuTexture = texture.impl_.lock();
+                if (!gpuTexture || gpuTexture->owner != &device_)
+                    throw Error::Exception(Error::Code::RENDER, "Texture is invalid or belongs to another Renderer");
+                if (vertexShader.words().empty() || fragmentShader.words().empty())
+                    throw Error::Exception(Error::Code::RENDER, "Scene shaders must contain SPIR-V words");
+
+                auto vertexWords = vertexShader.words();
+                auto fragmentWords = fragmentShader.words();
+                auto bindingSet = std::make_unique<Vulkan::VulkanBindingSet>(device_, uniformBuffers_,
+                                                                             *gpuTexture->image, *gpuTexture->sampler);
+                std::unique_ptr<Vulkan::VulkanPipeline> pipeline;
+                if (swapchain_ && swapchain_->handle() != VK_NULL_HANDLE)
+                    pipeline = std::make_unique<Vulkan::VulkanPipeline>(
+                        device_, swapchain_->format(), depthFormat_, bindingSet->layout(), vertexWords, fragmentWords);
+
+                vertexShader_ = std::move(vertexWords);
+                fragmentShader_ = std::move(fragmentWords);
+                sceneTexture_ = std::move(gpuTexture);
+                bindingSet_ = std::move(bindingSet);
+                pipeline_ = std::move(pipeline);
             }
 
             std::optional<FrameExtent> beginUiFrame()
@@ -173,10 +212,12 @@ namespace Incubator
             void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
                            const std::function<void(void*)>& recordUi)
             {
+                if (!input.draws.empty() && !bindingSet_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare scene resources before submitting meshes");
                 std::vector<Vulkan::VulkanDrawItem> draws;
                 std::vector<std::shared_ptr<void>> inFlightResources;
                 draws.reserve(input.draws.size());
-                inFlightResources.reserve(input.draws.size() + 3);
+                inFlightResources.reserve(input.draws.size() + 2);
                 for (const auto& draw : input.draws)
                 {
                     auto gpuMesh = draw.mesh.impl_.lock();
@@ -203,13 +244,14 @@ namespace Incubator
                 color.float32[2] = clearColor[2];
                 color.float32[3] = clearColor[3];
                 inFlightResources.push_back(uniformBuffers_[frameIndex]);
-                inFlightResources.push_back(texture_);
-                inFlightResources.push_back(sampler_);
+                if (!draws.empty())
+                    inFlightResources.push_back(sceneTexture_);
                 if (!scheduler_->renderAndPresent(
                         *swapchain_, color,
                         [&](VkCommandBuffer commandBuffer) {
-                            Vulkan::VulkanCommandList::drawIndexed(commandBuffer, *pipeline_,
-                                                                   bindingSet_->descriptorSet(frameIndex), draws);
+                            if (!draws.empty())
+                                Vulkan::VulkanCommandList::drawIndexed(commandBuffer, *pipeline_,
+                                                                       bindingSet_->descriptorSet(frameIndex), draws);
                             if (recordUi)
                                 recordUi(static_cast<void*>(commandBuffer));
                         },
@@ -247,7 +289,7 @@ namespace Incubator
                 if (swapchain_->handle() != VK_NULL_HANDLE)
                 {
                     scheduler_->initializeSwapchainImages(swapchain_->imageCount(), swapchain_->extent(), depthFormat_);
-                    if (!pipeline_ || previousFormat != swapchain_->format())
+                    if (bindingSet_ && (!pipeline_ || previousFormat != swapchain_->format()))
                     {
                         pipeline_ = std::make_unique<Vulkan::VulkanPipeline>(device_, swapchain_->format(),
                                                                              depthFormat_, bindingSet_->layout(),
@@ -274,10 +316,10 @@ namespace Incubator
             std::vector<uint32_t> vertexShader_;
             std::vector<uint32_t> fragmentShader_;
             std::vector<std::shared_ptr<Mesh::Impl>> meshes_;
+            std::vector<std::shared_ptr<Texture::Impl>> textures_;
             std::array<std::shared_ptr<Vulkan::VulkanBuffer>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
                 uniformBuffers_{};
-            std::shared_ptr<Vulkan::VulkanImage> texture_;
-            std::shared_ptr<Vulkan::VulkanSampler> sampler_;
+            std::shared_ptr<Texture::Impl> sceneTexture_;
             std::unique_ptr<Vulkan::VulkanBindingSet> bindingSet_;
             std::unique_ptr<Vulkan::VulkanSwapchain> swapchain_;
             std::unique_ptr<Vulkan::VulkanPipeline> pipeline_;
@@ -289,10 +331,8 @@ namespace Incubator
             bool needsRebuild_ = false;
         };
 
-        Renderer::Renderer(Window::Window& window, const Resource::ShaderResource& vertexShader,
-                           const Resource::ShaderResource& fragmentShader, const Resource::TextureResource& texture,
-                           RendererValidationMode validationMode)
-            : impl_(std::make_unique<Impl>(window, vertexShader, fragmentShader, texture, validationMode))
+        Renderer::Renderer(Window::Window& window, RendererValidationMode validationMode)
+            : impl_(std::make_unique<Impl>(window, validationMode))
         {}
 
         Renderer::~Renderer() = default;
@@ -306,6 +346,21 @@ namespace Incubator
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
             return impl_->createMesh(vertices, indices);
+        }
+
+        Texture Renderer::createTexture(const Resource::TextureResource& texture)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            return impl_->createTexture(texture);
+        }
+
+        void Renderer::prepareSceneResources(const Resource::ShaderResource& vertexShader,
+                                             const Resource::ShaderResource& fragmentShader, const Texture& texture)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            impl_->prepareSceneResources(vertexShader, fragmentShader, texture);
         }
 
         std::optional<FrameExtent> Renderer::beginUiFrame()

@@ -24,6 +24,7 @@
 #include "examples/demo/validation_mode.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
+#include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
 #include "runtime/render/integration/imgui_renderer.h"
@@ -527,6 +528,175 @@ namespace
         expectCleanValidation();
     }
 
+    TEST_F(VulkanReviewTest, RendererPresentsEmptyUiBeforeExplicitScenePreparation)
+    {
+        Log::Registry::get("render.vulkan").setLevel(Log::Level::DEBUG);
+        auto window = createWindow(true, 640, 480);
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::SHADER));
+            EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::TEXTURE));
+            for (int frame = 0; frame < 6; ++frame)
+            {
+                submitControlledScene(*window, renderer, {}, true);
+                glfwWaitEventsTimeout(0.025);
+            }
+            const auto empty = WindowCapture::capture(*window);
+            const auto pixel = [&](int x, int y, int channel) {
+                return empty.rgba[(static_cast<size_t>(y) * empty.width + x) * 4 + channel];
+            };
+            for (int channel = 0; channel < 3; ++channel)
+                EXPECT_EQ(pixel(320, 240, channel), pixel(8, 8, channel));
+            EXPECT_GT(pixel(24, 24, 0), 220);
+            EXPECT_LT(pixel(24, 24, 1), 30);
+            EXPECT_GT(pixel(24, 24, 2), 220);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture"), 0u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 0u);
+            WindowCapture::save(empty, "review/resource-entry-empty-ui.ppm");
+
+            SceneAssets assets;
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            const auto data = Demo::makePlaneMesh();
+            const auto mesh = renderer.createMesh(data.vertices, data.indices);
+            releaseCpuAssets(assets);
+            const std::array draws = {DrawItem{mesh, glm::mat4(1.0f)}};
+            for (int frame = 0; frame < 6; ++frame)
+            {
+                submitControlledScene(*window, renderer, draws);
+                glfwWaitEventsTimeout(0.025);
+            }
+            const auto scene = WindowCapture::capture(*window);
+            const auto bounds = WindowCapture::bounds(scene);
+            EXPECT_GT(bounds[2] - bounds[0], 100);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 1u);
+            WindowCapture::save(scene, "review/resource-entry-prepared.ppm");
+        }
+        expectReleased({});
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, IndependentTexturesShareUploadsAndExpireAfterRendererMoveAndClose)
+    {
+        Log::Registry::get("render.vulkan").setLevel(Log::Level::DEBUG);
+        auto window = createWindow(true, 640, 480);
+        Texture reference;
+        Texture direction;
+        const std::string texturePath = "textures/资源入口 方向 🧪.png";
+        struct TemporaryTexture
+        {
+            std::filesystem::path path;
+            ~TemporaryTexture()
+            {
+                std::error_code ignored;
+                std::filesystem::remove(path, ignored);
+            }
+        } temporary{Utils::Utf8::toFsPath("assets/" + texturePath)};
+        std::filesystem::copy_file("assets/textures/direction_rgba.png", temporary.path,
+                                   std::filesystem::copy_options::overwrite_existing);
+        FileAudit firstAudit;
+        FileAudit secondAudit;
+        secondAudit.paths.texture = texturePath;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            {
+                SceneAssets assets({}, std::make_unique<AuditedFileIO>(firstAudit));
+                auto texture = renderer.createTexture(*assets.texture);
+                reference = texture;
+                texture = {};
+                releaseCpuAssets(assets);
+            }
+            EXPECT_TRUE(firstAudit.cpuReleasedBeforeDestroy);
+            EXPECT_TRUE(reference.valid());
+            {
+                SceneAssets assets(secondAudit.paths, std::make_unique<AuditedFileIO>(secondAudit));
+                direction = renderer.createTexture(*assets.texture);
+                const auto shared = direction;
+                renderer.prepareSceneResources(*assets.vertex, *assets.fragment, shared);
+                direction = {};
+                direction = shared;
+                releaseCpuAssets(assets);
+            }
+            EXPECT_TRUE(secondAudit.cpuReleasedBeforeDestroy);
+            EXPECT_TRUE(reference.valid());
+            EXPECT_TRUE(direction.valid());
+            EXPECT_FALSE(Texture{}.valid());
+            Renderer moved(std::move(renderer));
+            Resource::TextureResource cpuTexture({}, 1, 1, {255, 255, 255, 255});
+            EXPECT_THROW(renderer.createTexture(cpuTexture), Error::Exception);
+            const auto data = Demo::makePlaneMesh();
+            const auto mesh = moved.createMesh(data.vertices, data.indices);
+            const std::array draws = {DrawItem{mesh, glm::mat4(1.0f)}};
+            for (int frame = 0; frame < 6; ++frame)
+            {
+                submitControlledScene(*window, moved, draws);
+                glfwWaitEventsTimeout(0.025);
+            }
+            const auto image = WindowCapture::capture(*window);
+            const auto bounds = WindowCapture::bounds(image);
+            ASSERT_GT(bounds[2] - bounds[0], 100);
+            const int x = bounds[0] + (bounds[2] - bounds[0]) / 6;
+            const int y = bounds[1] + (bounds[3] - bounds[1]) / 8;
+            const size_t offset = (static_cast<size_t>(y) * image.width + x) * 4;
+            for (int channel = 0; channel < 3; ++channel)
+                EXPECT_GT(image.rgba[offset + channel], 220);  // Direction texture starts with white.
+            WindowCapture::save(image, "review/resource-entry-independent-textures.ppm");
+            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture"), 2u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 1u);
+            EXPECT_EQ(firstAudit.textureOpens, 1u);
+            EXPECT_EQ(secondAudit.textureOpens, 1u);
+            // No explicit wait: closing protects the final submission and releases both textures.
+        }
+        EXPECT_FALSE(reference.valid());
+        EXPECT_FALSE(direction.valid());
+        expectReleased({});
+        expectReleased(secondAudit.paths);
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, ScenePreparationRejectsInvalidReferencesAndCanRetry)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        Texture expired;
+        {
+            Renderer previous(*window, RendererValidationMode::Required);
+            expired = previous.createTexture(*assets.texture);
+        }
+        EXPECT_FALSE(expired.valid());
+        Texture observer;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            auto texture = renderer.createTexture(*assets.texture);
+            observer = texture;
+            Resource::ShaderResource emptyShader({}, {});
+            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, *assets.fragment, {}), Error::Exception);
+            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, *assets.fragment, expired), Error::Exception);
+            EXPECT_THROW(renderer.prepareSceneResources(emptyShader, *assets.fragment, texture), Error::Exception);
+            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, emptyShader, texture), Error::Exception);
+            const auto mesh = createCubeMesh(renderer);
+            auto extent = renderer.beginUiFrame();
+            ASSERT_TRUE(extent);
+            renderer.imgui().endFrame();
+            const std::array draws = {DrawItem{mesh, glm::mat4(1.0f)}};
+            int recorded = 0;
+            EXPECT_THROW(renderer.drawFrame(controlledFrame(*extent, draws), {0.2f, 0.24f, 0.28f, 1.0f},
+                                            [&](void*) { ++recorded; }),
+                         Error::Exception);
+            EXPECT_EQ(recorded, 0);
+            renderer.drawFrame(controlledFrame(*extent, {}), {0.2f, 0.24f, 0.28f, 1.0f});
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, texture);
+            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, *assets.fragment, texture), Error::Exception);
+            texture = {};
+            releaseCpuAssets(assets);
+            EXPECT_TRUE(observer.valid());
+            EXPECT_GT(drawUiFrame(*window, renderer, mesh), 0);
+        }
+        EXPECT_FALSE(observer.valid());
+        expectReleased({});
+        expectCleanValidation();
+    }
+
     TEST_F(VulkanReviewTest, RequiredValidationDrawResizeAndShutdown)
     {
         auto window = createWindow();
@@ -536,8 +706,9 @@ namespace
             audit.paths.texture = texture;
             {
                 SceneAssets assets(audit.paths, std::make_unique<AuditedFileIO>(audit));
-                Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                                  RendererValidationMode::Required);
+                Renderer renderer(*window, RendererValidationMode::Required);
+                renderer.prepareSceneResources(*assets.vertex, *assets.fragment,
+                                               renderer.createTexture(*assets.texture));
                 const auto mesh = createCubeMesh(renderer);
                 releaseCpuAssets(assets);
                 for (int cycle = 0; cycle < 4; ++cycle)
@@ -642,11 +813,11 @@ namespace
         EXPECT_TRUE(audit.destroyed);
         EXPECT_TRUE(audit.routesClearedBeforeDestroy);
         EXPECT_TRUE(audit.cpuReleasedBeforeDestroy);
-        // Restart with the other asset through the same public Renderer constructor as Demo.
+        // Restart with the other asset through the same explicit preparation as Demo.
         {
             SceneAssets assets(paths);
-            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             EXPECT_GT(drawUiFrame(*window, renderer, mesh), 0);
@@ -655,7 +826,7 @@ namespace
         expectCleanValidation();
     }
 
-    TEST_F(VulkanReviewTest, RendererConstructionFailureReleasesUploadedGpuAndCpuAssets)
+    TEST_F(VulkanReviewTest, RendererInitializationFailureReleasesBeforeFixtureCleanup)
     {
         auto native = createWindow();
         DeferredFramebufferWindow window(*native);
@@ -663,8 +834,7 @@ namespace
         FileAudit audit;
         EXPECT_THROW(([&] {
                          SceneAssets assets({}, std::make_unique<AuditedFileIO>(audit));
-                         Renderer renderer(window, *assets.vertex, *assets.fragment, *assets.texture,
-                                           RendererValidationMode::Required);
+                         Renderer renderer(window, RendererValidationMode::Required);
                      }()),
                      Error::Exception);
         EXPECT_TRUE(audit.destroyed);
@@ -784,8 +954,8 @@ namespace
         SceneAssets assets;
         Mesh observer;
         {
-            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             releaseCpuAssets(assets);
             auto data = Demo::makePlaneMesh();
             EXPECT_THROW(renderer.createMesh({}, data.indices), Error::Exception);
@@ -833,8 +1003,9 @@ namespace
         auto secondWindow = createWindow();
         SceneAssets assets;
         {
-            Renderer first(*firstWindow, *assets.vertex, *assets.fragment, *assets.texture,
-                           RendererValidationMode::Required);
+            Renderer first(*firstWindow, RendererValidationMode::Required);
+            const auto firstTexture = first.createTexture(*assets.texture);
+            first.prepareSceneResources(*assets.vertex, *assets.fragment, firstTexture);
             const auto mesh = createCubeMesh(first);
             {
                 struct RestoreContext
@@ -847,8 +1018,10 @@ namespace
                 } restore{ImGui::GetCurrentContext()};
                 // CreateContext preserves an existing current context; this test needs a separate one.
                 ImGui::SetCurrentContext(nullptr);
-                Renderer second(*secondWindow, *assets.vertex, *assets.fragment, *assets.texture,
-                                RendererValidationMode::Required);
+                Renderer second(*secondWindow, RendererValidationMode::Required);
+                EXPECT_THROW(second.prepareSceneResources(*assets.vertex, *assets.fragment, firstTexture),
+                             Error::Exception);
+                second.prepareSceneResources(*assets.vertex, *assets.fragment, second.createTexture(*assets.texture));
                 const auto ownMesh = createCubeMesh(second);
                 const auto extent = second.beginUiFrame();
                 ASSERT_TRUE(extent);
@@ -871,13 +1044,19 @@ namespace
     TEST_F(VulkanReviewTest, FirstZeroFramebufferRestoresUiWithoutExtraResize)
     {
         auto native = createWindow();
-        DeferredFramebufferWindow window(*native);
-        SceneAssets assets;
+        for (const bool prepareScene : {false, true})
         {
-            Renderer renderer(window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
-            const auto mesh = createCubeMesh(renderer);
-            releaseCpuAssets(assets);
+            DeferredFramebufferWindow window(*native);
+            Renderer renderer(window, RendererValidationMode::Required);
+            Mesh mesh;
+            if (prepareScene)
+            {
+                SceneAssets assets;
+                renderer.prepareSceneResources(*assets.vertex, *assets.fragment,
+                                               renderer.createTexture(*assets.texture));
+                mesh = createCubeMesh(renderer);
+                releaseCpuAssets(assets);
+            }
             EXPECT_EQ(ImGui::GetIO().BackendRendererUserData, nullptr);
             for (int frame = 0; frame < 5; ++frame)
                 EXPECT_FALSE(renderer.beginUiFrame());
@@ -885,7 +1064,15 @@ namespace
             window.drawable = true;
             int recorded = 0;
             for (int frame = 0; frame < 10; ++frame)
-                recorded += drawUiFrame(window, renderer, mesh);
+            {
+                if (prepareScene)
+                    recorded += drawUiFrame(window, renderer, mesh);
+                else
+                {
+                    submitControlledScene(window, renderer, {}, true);
+                    ++recorded;
+                }
+            }
             EXPECT_GT(recorded, 0);
             EXPECT_NE(ImGui::GetIO().BackendRendererUserData, nullptr);
             EXPECT_TRUE(ImGui::GetIO().Fonts->IsBuilt());
@@ -899,8 +1086,8 @@ namespace
         FileAudit audit;
         SceneAssets assets({}, std::make_unique<AuditedFileIO>(audit));
         {
-            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             auto* native = static_cast<GLFWwindow*>(window->getNativeHandle());
@@ -940,8 +1127,8 @@ namespace
         for (int cycle = 0; cycle < 12; ++cycle)
         {
             SceneAssets assets;
-            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             int recorded = 0;
@@ -958,8 +1145,8 @@ namespace
         DeferredFramebufferWindow window(*native);
         SceneAssets assets;
         {
-            Renderer renderer(window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
+            Renderer renderer(window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             for (int frame = 0; frame < 10; ++frame)
@@ -992,8 +1179,8 @@ namespace
         auto window = createWindow();
         SceneAssets assets;
         {
-            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             const auto extent = renderer.beginUiFrame();
@@ -1022,8 +1209,8 @@ namespace
         auto window = createWindow();
         SceneAssets assets;
         {
-            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             const auto extent = renderer.beginUiFrame();
@@ -1058,8 +1245,8 @@ namespace
         auto window = createWindow(true, 640, 480);
         SceneAssets assets;
         {
-            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             auto present = [&](const Mesh& selectedMesh, float modelX, float cameraX) {
@@ -1164,8 +1351,8 @@ namespace
         Mesh planeObserver;
         Mesh cubeObserver;
         {
-            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             auto cube = createCubeMesh(renderer);
             auto plane = [&] {
                 const auto data = Demo::makePlaneMesh();
@@ -1230,8 +1417,8 @@ namespace
         window.drawable = true;
         SceneAssets assets;
         {
-            Renderer renderer(window, *assets.vertex, *assets.fragment, *assets.texture,
-                              RendererValidationMode::Required);
+            Renderer renderer(window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             const auto plane = [&] {
                 const auto data = Demo::makePlaneMesh();
                 return renderer.createMesh(data.vertices, data.indices);
@@ -1325,8 +1512,9 @@ namespace
             audit.paths.texture = texture;
             {
                 SceneAssets assets(audit.paths, std::make_unique<AuditedFileIO>(audit));
-                Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture,
-                                  RendererValidationMode::Required);
+                Renderer renderer(*window, RendererValidationMode::Required);
+                renderer.prepareSceneResources(*assets.vertex, *assets.fragment,
+                                               renderer.createTexture(*assets.texture));
                 const auto cube = createCubeMesh(renderer);
                 const auto plane = [&] {
                     const auto data = Demo::makePlaneMesh();
@@ -1527,7 +1715,8 @@ namespace
         EXPECT_EQ(Demo::VALIDATION_MODE, RendererValidationMode::Disabled);
 #endif
         {
-            Renderer renderer(*window, *assets.vertex, *assets.fragment, *assets.texture, Demo::VALIDATION_MODE);
+            Renderer renderer(*window, Demo::VALIDATION_MODE);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             for (int frame = 0; frame < 5; ++frame)

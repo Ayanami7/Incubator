@@ -57,10 +57,10 @@ src/runtime/resource/
     └── texture_resource.h/.cpp
 ```
 
-ShaderLoader 复用共享的 `Loader::readSpirv` 二进制入口，不引入 Vulkan 依赖。ResourceManager 管理 ShaderResource 的 CPU 载荷；Renderer 在构造时复制字载荷，用于首次创建及交换链兼容 Pipeline 重建。ResourceManager 释放 CPU 对象不触发 Vulkan 资源销毁。
+ShaderLoader 复用共享的 `Loader::readSpirv` 二进制入口，不引入 Vulkan 依赖。ResourceManager 管理 ShaderResource 的 CPU 载荷；Renderer 在 `prepareSceneResources` 中复制字载荷，用于首次创建及交换链兼容 Pipeline 重建。ResourceManager 释放 CPU 对象不触发 Vulkan 资源销毁。
 
 TextureLoader 经 FileIO 完整读取并在内存解码 PNG，TextureResource 拥有固定 sRGB RGBA8 像素。
-应用将其借给 Renderer 同步上传，构造成功后可 release 到零；GPU Image 与在途资源由 Render
+应用将其借给 `Renderer::createTexture` 同步上传，调用成功后可 release 到零；GPU Texture 与在途资源由 Render
 独立持有。资源根为启动 CWD 下的 `assets/`，资源持有期间保持工作目录稳定。
 
 ## 演进路线（未实现项触发条件）

@@ -68,6 +68,7 @@ set(RENDER_HEADERS
     render/renderer.h
     render/frame_input.h
     render/mesh.h
+    render/texture.h
     render/integration/imgui_renderer.h
     render/vulkan/vulkan_swapchain.h
     render/vulkan/vulkan_frame_scheduler.h

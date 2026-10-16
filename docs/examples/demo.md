@@ -161,11 +161,14 @@ Set-Location 'E:/Project/VScode/Incubator/build/task05-clean'
 依次取得两个 Shader 和所选纹理。清理成员在 Loader 注册前构造，覆盖后续加载以及
 外层构造失败；已有登记条目显式 acquire，仅释放本次实际取得的持有。
 
-Demo 在创建窗口前加载资源，随后借给 Renderer 构造。Renderer 返回后立即释放 CPU
-资源并检查纹理已卸载，再进入绘制循环。Renderer 保留重建 Pipeline 所需的 Shader
-字数组副本，并拥有已同步上传的 GPU 纹理；交换链重建不重新读取图片。
+Demo 在创建窗口前加载资源，随后以 `Renderer(window, validationMode)` 初始化运行环境，
+通过 `createTexture(*assets.texture)` 显式上传，并调用
+`prepareSceneResources(*assets.vertex, *assets.fragment, texture)` 准备共享 Shader 和单纹理绑定。
+创建两种网格后立即释放 CPU 资源并检查纹理已卸载，再进入绘制循环。
+Renderer 保留重建 Pipeline 所需的 Shader 字数组副本，并持有已上传的 GPU Texture；
+复制应用引用共享同一次上传，交换链重建不重新读取图片。
 
-加载或 Renderer 构造失败时，SceneAssets 释放已取得的 CPU 引用、卸载归零对象，
+加载、Renderer 初始化或显式资源准备失败时，SceneAssets 释放已取得的 CPU 引用、卸载归零对象，
 移除 Loader，最后销毁 FileIO。正常关闭时 Renderer 先于窗口销毁。
 
 ## 验证模式与错误输入

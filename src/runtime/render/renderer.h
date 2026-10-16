@@ -8,6 +8,7 @@
 
 #include "runtime/render/frame_input.h"
 #include "runtime/render/mesh.h"
+#include "runtime/render/texture.h"
 
 namespace Incubator
 {
@@ -39,9 +40,8 @@ namespace Incubator
         class Renderer
         {
         public:
-            Renderer(Window::Window& window, const Resource::ShaderResource& vertexShader,
-                     const Resource::ShaderResource& fragmentShader, const Resource::TextureResource& texture,
-                     RendererValidationMode validationMode = RendererValidationMode::Disabled);
+            explicit Renderer(Window::Window& window,
+                              RendererValidationMode validationMode = RendererValidationMode::Disabled);
             ~Renderer();
 
             Renderer(const Renderer&) = delete;
@@ -53,6 +53,16 @@ namespace Incubator
             // Synchronously copies nonempty triangle-list data. CPU spans are borrowed only here.
             // Mesh references share this upload and are usable only with this Renderer.
             Mesh createMesh(std::span<const MeshVertex> vertices, std::span<const uint16_t> indices);
+
+            // Synchronously uploads RGBA8 sRGB pixels, borrowed only for this call.
+            // Texture references share this upload and are usable only with this Renderer.
+            Texture createTexture(const Resource::TextureResource& texture);
+
+            // Prepares the shared scene shaders and the current single-texture binding once.
+            // Copies shader words for compatible Pipeline rebuilds; no CPU resource is retained.
+            // Empty frames/UI do not require this call. Texture must belong to this Renderer.
+            void prepareSceneResources(const Resource::ShaderResource& vertexShader,
+                                       const Resource::ShaderResource& fragmentShader, const Texture& texture);
 
             // Prepares the swapchain/backend and starts UI. No extent means skip the frame.
             // The returned nonzero extent is the actual rendering extent for application projection.

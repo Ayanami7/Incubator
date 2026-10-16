@@ -28,6 +28,7 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 |---|---|
 | `Renderer` | 由应用创建和持有；借用 `Window`；组合并拥有本次渲染所需内部对象；提供初始化、完整帧绘制和关闭入口。 |
 | `Mesh` | 应用可复制的网格引用；其 GPU 顶点/索引由创建它的 Renderer 持有至关闭，引用本身不延长设备寿命。 |
+| `Texture` | 应用可复制的不透明纹理引用；Image 与 Sampler 由创建它的 Renderer 持有至关闭，引用不保留 CPU 资源或延长设备寿命。 |
 | `VulkanInstance` | 创建并拥有 Vulkan Instance 和可选 debug messenger；查询并启用 GLFW 所需实例扩展；销毁晚于 Surface。 |
 | Surface | `GlfwSurface` 由 Render 通过 GLFW 从借用的 Window 创建和销毁；依赖 Instance，Window 必须活到 Surface 销毁之后。 |
 | `VulkanDevice` | 选择支持图形、呈现、Swapchain、Dynamic Rendering 和 Synchronization2 的首个物理设备；创建逻辑设备和队列，查询内存类型并执行有 Fence 的一次性上传提交；销毁前先清理设备子对象。 |
@@ -44,22 +45,22 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 
 `VulkanFrameScheduler` 每帧槽可持有本帧命令引用的共享 GPU 资源。帧槽 Fence 确认提交完成后才清除这些引用；重建和关闭时等待在途帧完成后释放。CPU 可写 Buffer 本身不允许与 GPU 并发读写，调用方需按帧槽隔离区域或等待对应 Fence 后再写。
 
-`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新相机前等待对应帧槽 Fence，Camera Uniform Buffer 与深度附件按帧槽隔离。帧调度器仅管理获取、提交、呈现和资源持有；场景回调通过 `VulkanCommandList::drawIndexed` 消费网格列表，随后录制 UI。model 通过逐物体 push constant 写入，不覆盖其他物体或帧槽的数据。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。外部纹理在初始化时同步上传，通过 Combined Image Sampler 采样；窗口重建复用静态网格和纹理。
+`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新相机前等待对应帧槽 Fence，Camera Uniform Buffer 与深度附件按帧槽隔离。帧调度器仅管理获取、提交、呈现和资源持有；场景回调通过 `VulkanCommandList::drawIndexed` 消费网格列表，随后录制 UI。model 通过逐物体 push constant 写入，不覆盖其他物体或帧槽的数据。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。外部纹理由 `createTexture` 同步上传，通过 Combined Image Sampler 采样；窗口重建复用静态网格和纹理。
 
 `Integration::ImGuiRenderer` 将仓库内 ImGui 1.91.9b 的 GLFW 与 Vulkan 后端接入 Runtime。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色和深度格式。交换链图像数量或附件格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭或重配置时适配器先调用 `vkDeviceWaitIdle`，再释放 ImGui Vulkan 资源。后端要求交换链至少有两个图像，数量不足时明确报渲染错误。
 
 应用每轮先轮询事件，再调用 `renderer.beginUiFrame()`。Renderer 在此入口准备交换链、ImGui Vulkan 后端与字体图集，成功才开始 UI 帧并返回 `std::optional<FrameExtent>` 中的实际绘制尺寸；首次零尺寸、最小化或暂不可创建时返回 `std::nullopt`，应用跳过投影计算、UI 构建及绘制。成功后应用使用 ImGui API 构建界面并通过适配器调用 `endFrame()`。`drawData()` 返回仅供本次 `Renderer::drawFrame` 使用的数据；Renderer 在场景 indexed draw 后、结束同一动态渲染作用域前执行 UI 录制回调。UI 数据不跨帧保留；acquire 结果要求跳帧时不提交本轮数据，下一轮在准备后端后重新生成 UI。颜色附件使用 CLEAR 加载和 STORE 保存，因此 UI 叠加时保留场景颜色。
 
-`ShaderResource` 拥有 CPU 字载荷；应用将资源借给 Renderer 构造，Renderer 复制载荷后应用即可释放 CPU Resource。Vulkan Pipeline 创建 ShaderModule 时借用 Renderer 的字数组，Pipeline 创建完成后临时 ShaderModule 即销毁；Renderer 保留自己的 CPU 副本以支持交换链格式变化后的 Pipeline 重建。CPU Resource 的 release 不决定 GPU Pipeline 的销毁时机。
+`ShaderResource` 拥有 CPU 字载荷；应用将资源借给 `prepareSceneResources`，Renderer 复制载荷后应用即可释放 CPU Resource。Vulkan Pipeline 创建 ShaderModule 时借用 Renderer 的字数组，Pipeline 创建完成后临时 ShaderModule 即销毁；Renderer 保留自己的 CPU 副本以支持交换链格式变化后的 Pipeline 重建。CPU Resource 的 release 不决定 GPU Pipeline 的销毁时机。首次窗口零尺寸时延后创建 Pipeline，恢复后使用已复制的字数组。
 
 交换链按 Surface 能力选取格式和 extent，present mode 使用 FIFO；图形与呈现队列族不同则使用 concurrent sharing。帧缓冲尺寸或 Surface extent 为零时跳过绘制并保留重建请求，恢复有效尺寸后重新尝试。成功重建会记录尺寸、格式、图像数和原因；`OUT_OF_DATE` 与 `SUBOPTIMAL` 会记录状态并安排重建。重建前等待所有帧提交 Fence 及呈现 Fence，再创建新交换链并回收旧 image view、交换链图像同步对象。关闭时也等待呈现 Fence 后再销毁同步对象和交换链。Render 设备要求 `VK_EXT_swapchain_maintenance1`，以获得明确的呈现完成回收依据。
 
 ## 外部纹理与颜色约定
 
-Renderer 构造时必须借用顶点 ShaderResource、片段 ShaderResource 和应用选择的
-TextureResource。纹理在构造期间同步上传为 `VK_FORMAT_R8G8B8A8_SRGB`，构造成功后
-不保留 TextureResource 指针或 CPU 像素副本，应用可在下一次绘制前 release 到零。
-GPU Image、Sampler、Descriptor 由 Render 持有，在途帧另持有 Image 和 Sampler 至 Fence 完成；
+Renderer 通过 `createTexture(const TextureResource&)` 独立上传纹理，返回 `texture.h` 中的
+`Texture` 引用。每次调用同步上传为 `VK_FORMAT_R8G8B8A8_SRGB`，返回后不保留
+TextureResource 指针或 CPU 像素副本，应用可在下一次绘制前 release 到零。
+GPU Image、Sampler、Descriptor 由 Render 持有，在途帧另持有所用 Texture 至 Fence 完成；
 交换链重建复用这些纹理，不重新读取、解码或上传。立方体 +Z 面顶部 UV 指向 PNG 首行，
 Loader、上传和 Shader 均不再翻转；采样仍为 nearest/repeat/LOD=0。
 
@@ -80,9 +81,29 @@ Swapchain 保存并暴露 colorSpace，Renderer 在初始化和重建日志中�
 
 ## 调用与错误约定
 
-构造入口为 `Renderer(window, vertexShader, fragmentShader, texture, validationMode)`，
-Shader 和 Texture 均由调用方选择并在构造期间保持有效；Window 必须活到 Renderer 销毁之后。
-成功构造后可释放 CPU Resource，Renderer 不通过 FileIO 或 Loader 重新加载纹理。
+构造入口为 `Renderer(window, validationMode)`，Window 必须活到 Renderer 销毁之后。
+初始化不需要 Shader、纹理或材质，空列表可直接清屏并显示 UI，不创建场景 Pipeline。
+非空列表绘制前，应用显式上传纹理并准备共享场景资源：
+
+```cpp
+Renderer renderer(window, RendererValidationMode::Optional);
+auto texture = renderer.createTexture(cpuTexture);
+auto sharedTexture = texture; // Shares the same upload.
+renderer.prepareSceneResources(vertexShader, fragmentShader, sharedTexture);
+// CPU Shader/Texture resources may now be released through ResourceManager.
+```
+
+`prepareSceneResources(vertexShader, fragmentShader, texture)` 当前一次性准备共享 Shader 和
+单纹理绑定，所有物体共用该绑定。Shader 由 Resource 层读取并验证 SPIR-V，准备入口拒绝空
+字数组，复制字载荷以支持兼容 Pipeline 重建；Texture 必须是同一 Renderer 创建的有效引用。
+重复准备、空/过期/跨 Renderer 纹理，以及未准备资源时提交非空列表均抛出 RENDER 错误。
+准备过程先在局部创建副本、Descriptor 和可用 extent 下的 Pipeline，全部成功后才安装；
+失败不留下部分准备状态，Renderer 仍可提交空帧或重新准备。Render 不通过 FileIO 或 Loader 读取资产。
+
+Renderer 持有所有已创建纹理至关闭。复制/丢弃 Texture 引用不重复上传或提前回收；再次显式
+调用 `createTexture` 则独立上传，不自动按路径或内容去重。`Texture::valid()` 表示所属
+Renderer 仍持有资源，空引用及关闭后的引用无效；移动 Renderer 后引用随其内部设备保持有效。
+Texture 仅标识 GPU 上传结果，与 CPU ResourceId 分别管理，也不使 Renderer 或设备延迟销毁。
 
 `frame_input.h` 定义本帧共享相机与绘制列表：
 

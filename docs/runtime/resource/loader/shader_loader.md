@@ -14,7 +14,7 @@
 ## CPU 与 GPU 所有权
 
 - ShaderResource 拥有 `readSpirv` 返回的 `std::vector<uint32_t>`，仅包含 CPU 侧代码。
-- 调用方通过 ResourceManager 获取资源并传给 Renderer。Renderer 在构造时复制载荷，成功返回后调用方可释放 ResourceId 的引用；Renderer 的副本用于后续 Pipeline 重建。
+- 调用方通过 ResourceManager 获取资源，借给 `Renderer::prepareSceneResources`。Renderer 在该调用中复制载荷，成功返回后调用方可释放 ResourceId 的引用；Renderer 的副本用于后续 Pipeline 重建，Renderer 初始化不依赖 Shader。
 - VulkanPipeline 在创建阶段借用 CPU 字数组填写 `VkShaderModuleCreateInfo`。创建 Pipeline 后立即销毁临时 ShaderModule；Vulkan Pipeline 不引用 CPU 字数组。
 - Renderer 持有 CPU 字数组直到 Renderer 销毁。GPU Pipeline 与其他 GPU 资源按 Renderer/帧调度器的 Vulkan 生命周期销毁，ResourceManager 的 CPU 引用计数不控制 GPU 退役。
 

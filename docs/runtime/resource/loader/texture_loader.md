@@ -44,7 +44,7 @@ Loader 不记录同一异常；经 Manager 调用时，Manager 记录一次并�
 保持有效持有时，修正文件后可重试。挂载对象重复加载会复用；release 到零卸载像素，
 登记保留，重新 acquire 后才能重新持有并加载。覆盖 Loader 或 reset 不使旧缓存失效。
 
-Renderer 构造时借用 TextureResource 并同步上传为 SRGB GPU Image，成功返回后不保留
-CPU 像素或资源指针；调用方可在下一次绘制前 release 到零以卸载 CPU 对象。交换链重建只复用
+`Renderer::createTexture` 借用 TextureResource 并同步上传为 SRGB GPU Image，返回类型化
+Texture 引用，不保留 CPU 像素或资源指针；调用方可在下一次绘制前 release 到零以卸载 CPU 对象。交换链重建只复用
 GPU 纹理。设备尺寸和用途限制由上传边界检查，具体颜色与 GPU 生命周期见
 [Render 模块](../../render.md)。
