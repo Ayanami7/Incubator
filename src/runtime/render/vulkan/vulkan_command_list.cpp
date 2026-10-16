@@ -121,17 +121,17 @@ namespace Incubator
             }
 
             void VulkanCommandList::drawIndexed(VkCommandBuffer commandBuffer, const VulkanPipeline& pipeline,
-                                                VkDescriptorSet frameSet, VkDescriptorSet materialSet,
-                                                std::span<const VulkanDrawItem> draws)
+                                                VkDescriptorSet frameSet, std::span<const VulkanDrawItem> draws)
             {
                 static_assert(sizeof(glm::mat4) == 64);
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-                const std::array sets{frameSet, materialSet};
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0,
-                                        static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, 1,
+                                        &frameSet, 0, nullptr);
                 const VkDeviceSize vertexOffset = 0;
                 for (const auto& draw : draws)
                 {
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 1, 1,
+                                            &draw.materialSet, 0, nullptr);
                     vkCmdPushConstants(commandBuffer, pipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
                                        sizeof(draw.model), &draw.model);
                     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &draw.vertexBuffer, &vertexOffset);

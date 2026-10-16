@@ -47,7 +47,7 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 
 `VulkanFrameScheduler` 每帧槽可持有本帧命令引用的共享 GPU 资源。帧槽 Fence 确认提交完成后才清除这些引用；重建和关闭时等待在途帧完成后释放。CPU 可写 Buffer 本身不允许与 GPU 并发读写，调用方需按帧槽隔离区域或等待对应 Fence 后再写。
 
-`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新相机前等待对应帧槽 Fence，Camera Uniform Buffer 与深度附件按帧槽隔离。帧调度器仅管理获取、提交、呈现和资源持有；场景回调通过 `VulkanCommandList::drawIndexed` 消费网格列表，随后录制 UI。model 通过逐物体 push constant 写入，不覆盖其他物体或帧槽的数据。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。外部纹理由 `createTexture` 同步上传，通过 Combined Image Sampler 采样；窗口重建复用静态网格和纹理。
+`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新相机前等待对应帧槽 Fence，Camera Uniform Buffer 与深度附件按帧槽隔离。帧调度器仅管理获取、提交、呈现和资源持有；场景回调通过 `VulkanCommandList::drawIndexed` 消费网格/材质列表，随后录制 UI。相机 set 0 和共享 Pipeline 每次场景录制绑定一次，材质 set 1 与 model push constant 逐物体录制，不覆盖其他物体或帧槽的数据。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。外部纹理由 `createTexture` 同步上传，通过 Combined Image Sampler 采样；窗口重建复用网格、材质和纹理。
 
 `Integration::ImGuiRenderer` 将仓库内 ImGui 1.91.9b 的 GLFW 与 Vulkan 后端接入 Runtime。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色和深度格式。交换链图像数量或附件格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭或重配置时适配器先调用 `vkDeviceWaitIdle`，再释放 ImGui Vulkan 资源。后端要求交换链至少有两个图像，数量不足时明确报渲染错误。
 
@@ -93,7 +93,7 @@ auto texture = renderer.createTexture(cpuTexture);
 auto sharedTexture = texture; // Shares the same upload.
 renderer.prepareSceneResources(vertexShader, fragmentShader);
 auto material = renderer.createMaterial({sharedTexture}); // Default linear RGB is white.
-renderer.setSceneMaterial(material);
+auto otherMaterial = renderer.createMaterial({sharedTexture, {0.5f, 1.0f, 0.5f}});
 // CPU Shader/Texture resources may now be released through ResourceManager.
 ```
 
@@ -117,7 +117,7 @@ Texture 仅标识 GPU 上传结果，与 CPU ResourceId 分别管理，也不使
 MaterialDesc desc{texture, {0.25f, 0.5f, 1.0f}};
 auto tinted = renderer.createMaterial(desc);
 desc.color = {0.0f, 0.0f, 0.0f}; // Does not change tinted.
-renderer.setSceneMaterial(tinted);
+DrawItem item{mesh, tinted, model};
 ```
 
 `createMaterial` 要求先准备共享 Shader，并在分配 GPU 资源前检查颜色和 Texture 从属关系。
@@ -142,9 +142,9 @@ Renderer 持有 Material 至关闭，Material 内部强持有 Texture；在途�
 提前销毁 GPU 资源；`valid()`、移动及关闭后失效语义与 Mesh/Texture 一致。
 关闭先等待提交和呈现，再销毁 Pipeline、材质绑定、共享布局和纹理，最后销毁设备。
 
-当前 `setSceneMaterial(material)` 为现有共享材质绘制链路选择一份本 Renderer 的有效 Material，
-所有 DrawItem 共用该选择；未选择时提交非空列表失败。空/过期/跨 Renderer Material 在选择
-入口失败，原选择不变。选择另一份已创建材质只改变 CPU 引用，不改写已提交帧使用的绑定。
+每个 DrawItem 显式携带一份 Material；同一 Mesh 可搭配不同材质，不同 Mesh 可共享材质，
+多个材质可共享 Texture。切换材质只需在下一帧的绘制项中选择另一份已创建引用，不改写
+已有参数或 Descriptor。没有场景级默认材质，也不从上一帧保留材质选择。
 空列表不要求 Shader 或 Material，继续清屏并绘制可选 UI。
 
 ## 帧提交
@@ -155,7 +155,7 @@ Renderer 持有 Material 至关闭，Material 内部强持有 Texture；在途�
 |---|---|
 | `FrameExtent { width, height }` | 使用 `beginUiFrame()` 返回的非零实际交换链 extent，不用窗口逻辑尺寸代替 |
 | `CameraMatrices { view, projection }` | 提供最终 GLM 列主序矩阵；右手坐标，深度 0–1，应用对投影 Y 方向适配一次 |
-| `DrawItem { mesh, model }` | 每项独立指定同一 Renderer 创建的网格和最终模型矩阵，可共享同一网格上传结果 |
+| `DrawItem { mesh, material, model }` | 每项独立指定同一 Renderer 创建的网格、材质和最终模型矩阵，网格和材质均可共享 |
 | `FrameInput { extent, camera, draws }` | 相机由同帧所有项共享，draws 是 `span<const DrawItem>`，允许为空；动画时间由应用决定 |
 
 提交签名为 `drawFrame(input, clearColor, recordUi)`，变换顺序为
@@ -166,8 +166,9 @@ view/projection 两个矩阵，共 128 字节，在等待当前帧槽 Fence 后�
 Renderer 不额外翻转 Y，不保留输入引用，正常跳帧也不缓存上一帧输入。
 
 绘制列表按提交顺序完整录制，不排序或截断；没有固定物体数量上限，实际受可用内存约束。
-Renderer 在录制前解析并检查所有 Mesh，从属错误使本次调用失败，不提交部分场景。
-所有物体共享当前选择的 Material、Shader 和 Pipeline，遮挡由现有深度测试决定。空列表仍清屏并执行
+Renderer 在获取图像和录制前解析并检查整个列表的 Mesh/Material。空、过期或跨 Renderer
+引用使本次调用失败，不提交前面已检查的部分场景，不替换默认资源；之后仍可提交有效新列表。
+所有物体共享 Shader、相机和 Pipeline，各自绑定材质，遮挡由现有深度测试决定。空列表仍清屏并执行
 可选 UI 回调；列表数量变化不复用上一帧的物体。
 
 提交前 Renderer 会复查可绘制状态。若交换链 extent 已与 `input.extent` 不同，跳过本次
@@ -192,7 +193,7 @@ auto mesh = renderer.createMesh(vertices, indices);
 vertices.clear();
 indices.clear();
 auto sharedMesh = mesh; // Refers to the same upload.
-std::array draws = {DrawItem{mesh, firstModel}, DrawItem{sharedMesh, secondModel}};
+std::array draws = {DrawItem{mesh, material, firstModel}, DrawItem{sharedMesh, otherMaterial, secondModel}};
 FrameInput frameInput{extent, camera, draws};
 // After beginUiFrame and application matrix/UI preparation:
 renderer.drawFrame(frameInput, clearColor, recordUi);
@@ -204,7 +205,8 @@ RENDER 错误，不创建默认网格。位置和 UV 的具体内容由应用提
 
 上传复用 VulkanBuffer 的同步 staging 路径；成功后不保留 CPU 数组或指针。Renderer
 持有所有已创建网格至关闭，复制/丢弃应用的 `Mesh` 引用不重新上传或提前回收 GPU Buffer。
-提交帧另持有本次 GPU 网格及其他资源至 Fence 完成；关闭时先等待提交和呈现，再释放网格，
+提交帧另持有本次各绘制项的 GPU 网格、材质及材质的纹理/参数/Descriptor 依赖至 Fence 完成；
+提交调用内复制原生绑定和模型矩阵，返回后可修改或释放原 CPU 列表及材质描述。关闭时先等待提交和呈现，再释放网格，
 最后销毁设备。变换更新和交换链重建只复用上传结果。
 
 `Mesh::valid()` 表示创建它的 Renderer 仍持有该网格；空引用、已关闭 Renderer 的引用无效。
@@ -216,4 +218,4 @@ Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `examp
 
 ## 功能边界
 
-当前支持共享相机、所选不可变 Material 和固定 Pipeline 的不透明多网格列表，应用控制模型与动画；可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供逐物体材质、材质文件/Loader、模型文件解析、光照/PBR、异步资产加载、热重载、显存池、多后端或多视口。
+当前支持共享相机与固定 Pipeline、逐物体 Mesh/Material/model 的不透明列表，应用控制模型与动画；可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供材质文件/Loader、模型文件解析、光照/PBR、异步资产加载、热重载、显存池、多后端或多视口。

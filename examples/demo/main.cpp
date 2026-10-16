@@ -72,7 +72,8 @@ int main(int argc, char* argv[])
         Incubator::Render::Renderer renderer(*window, Incubator::Demo::VALIDATION_MODE);
         const auto texture = renderer.createTexture(*assets.texture);
         renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
-        renderer.setSceneMaterial(renderer.createMaterial({texture}));
+        const auto cubeMaterial = renderer.createMaterial({texture});
+        const auto planeMaterial = renderer.createMaterial({texture, {0.5f, 1.0f, 0.5f}});
         const auto cube = [&] {
             const auto data = Incubator::Demo::makeCubeMesh();
             return renderer.createMesh(data.vertices, data.indices);
@@ -99,7 +100,7 @@ int main(int argc, char* argv[])
                 continue;
             }
             Incubator::Demo::drawSceneControls(scene, paths.texture);
-            const auto draws = Incubator::Demo::makeSceneDraws(scene, cube, plane);
+            const auto draws = Incubator::Demo::makeSceneDraws(scene, cube, plane, cubeMaterial, planeMaterial);
             const auto frame = Incubator::Demo::makeSceneFrame(*extent, draws, scene.camera);
             renderer.imgui().endFrame();
 

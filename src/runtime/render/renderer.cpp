@@ -231,14 +231,6 @@ namespace Incubator
                 return Material(material);
             }
 
-            void setSceneMaterial(const Material& material)
-            {
-                auto gpuMaterial = material.impl_.lock();
-                if (!gpuMaterial || gpuMaterial->owner != &device_)
-                    throw Error::Exception(Error::Code::RENDER, "Material is invalid or belongs to another Renderer");
-                sceneMaterial_ = std::move(gpuMaterial);
-            }
-
             std::optional<FrameExtent> beginUiFrame()
             {
                 if (!prepareFrame())
@@ -251,20 +243,23 @@ namespace Incubator
             void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
                            const std::function<void(void*)>& recordUi)
             {
-                if (!input.draws.empty() && !sceneMaterial_)
-                    throw Error::Exception(Error::Code::RENDER, "Select a scene material before submitting meshes");
                 std::vector<Vulkan::VulkanDrawItem> draws;
                 std::vector<std::shared_ptr<void>> inFlightResources;
                 draws.reserve(input.draws.size());
-                inFlightResources.reserve(input.draws.size() + 2);
+                inFlightResources.reserve(input.draws.size() * 2 + 1);
                 for (const auto& draw : input.draws)
                 {
                     auto gpuMesh = draw.mesh.impl_.lock();
                     if (!gpuMesh || gpuMesh->owner != &device_)
                         throw Error::Exception(Error::Code::RENDER, "Mesh is invalid or belongs to another Renderer");
+                    auto gpuMaterial = draw.material.impl_.lock();
+                    if (!gpuMaterial || gpuMaterial->owner != &device_)
+                        throw Error::Exception(Error::Code::RENDER,
+                                               "Material is invalid or belongs to another Renderer");
                     draws.push_back({gpuMesh->vertexBuffer->handle(), gpuMesh->indexBuffer->handle(),
-                                     gpuMesh->indexCount, draw.model});
+                                     gpuMesh->indexCount, gpuMaterial->binding.descriptorSet(), draw.model});
                     inFlightResources.push_back(std::move(gpuMesh));
+                    inFlightResources.push_back(std::move(gpuMaterial));
                 }
                 if (!prepareFrame())
                     return;
@@ -283,15 +278,12 @@ namespace Incubator
                 color.float32[2] = clearColor[2];
                 color.float32[3] = clearColor[3];
                 inFlightResources.push_back(uniformBuffers_[frameIndex]);
-                if (!draws.empty())
-                    inFlightResources.push_back(sceneMaterial_);
                 if (!scheduler_->renderAndPresent(
                         *swapchain_, color,
                         [&](VkCommandBuffer commandBuffer) {
                             if (!draws.empty())
                                 Vulkan::VulkanCommandList::drawIndexed(commandBuffer, *pipeline_,
-                                                                       bindingSet_->descriptorSet(frameIndex),
-                                                                       sceneMaterial_->binding.descriptorSet(), draws);
+                                                                       bindingSet_->descriptorSet(frameIndex), draws);
                             if (recordUi)
                                 recordUi(static_cast<void*>(commandBuffer));
                         },
@@ -361,7 +353,6 @@ namespace Incubator
                 uniformBuffers_{};
             std::unique_ptr<Vulkan::VulkanBindingSet> bindingSet_;
             std::vector<std::shared_ptr<Material::Impl>> materials_;
-            std::shared_ptr<Material::Impl> sceneMaterial_;
             std::unique_ptr<Vulkan::VulkanSwapchain> swapchain_;
             std::unique_ptr<Vulkan::VulkanPipeline> pipeline_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
@@ -409,13 +400,6 @@ namespace Incubator
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
             return impl_->createMaterial(desc);
-        }
-
-        void Renderer::setSceneMaterial(const Material& material)
-        {
-            if (!impl_)
-                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
-            impl_->setSceneMaterial(material);
         }
 
         std::optional<FrameExtent> Renderer::beginUiFrame()

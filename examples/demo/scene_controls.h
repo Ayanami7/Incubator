@@ -25,14 +25,15 @@ namespace Incubator::Demo
     };
 
     inline std::vector<Render::DrawItem> makeSceneDraws(const SceneControls& scene, const Render::Mesh& cube,
-                                                        const Render::Mesh& plane)
+                                                        const Render::Mesh& plane, const Render::Material& cubeMaterial,
+                                                        const Render::Material& planeMaterial)
     {
         std::vector<Render::DrawItem> draws;
         draws.reserve(2);
         if (scene.cube.visible)
-            draws.push_back({cube, makeSceneModel(scene.cube.transform)});
+            draws.push_back({cube, cubeMaterial, makeSceneModel(scene.cube.transform)});
         if (scene.plane.visible)
-            draws.push_back({plane, makeSceneModel(scene.plane.transform)});
+            draws.push_back({plane, planeMaterial, makeSceneModel(scene.plane.transform)});
         return draws;
     }
 

@@ -69,10 +69,6 @@ namespace Incubator
             // Copies parameters and creates immutable bindings; borrows desc only for this call.
             Material createMaterial(const MaterialDesc& desc);
 
-            // Selects one existing material for the current shared-material draw path.
-            // Does not modify descriptors or resources used by earlier frames.
-            void setSceneMaterial(const Material& material);
-
             // Prepares the swapchain/backend and starts UI. No extent means skip the frame.
             // The returned nonzero extent is the actual rendering extent for application projection.
             std::optional<FrameExtent> beginUiFrame();

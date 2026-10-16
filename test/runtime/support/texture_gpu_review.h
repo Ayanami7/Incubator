@@ -98,7 +98,8 @@ namespace TextureGpuReview
     // Render the application's plane and production shader into the selected UNORM format.
     // The test attachment permits readback without adding a screenshot API to Renderer.
     inline std::vector<uint8_t> capture(VkInstance instance, const VulkanDevice& device, Window::Window& window,
-                                        Demo::SceneAssets& assets, VkFormat format)
+                                        Demo::SceneAssets& assets, VkFormat format,
+                                        const std::array<float, 3>& tint = {1.0f, 1.0f, 1.0f})
     {
         constexpr VkExtent2D EXTENT{384, 256};
         auto texture =
@@ -118,7 +119,7 @@ namespace TextureGpuReview
                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
         uniforms[0]->write(0, std::as_bytes(std::span(&transforms, 1)));
         VulkanBindingSet bindings(device, uniforms);
-        VulkanMaterialBinding material(device, bindings.materialLayout(), *texture, sampler, {1.0f, 1.0f, 1.0f});
+        VulkanMaterialBinding material(device, bindings.materialLayout(), *texture, sampler, tint);
         const auto depthFormat = device.findDepthFormat();
         VulkanPipeline pipeline(device, format, depthFormat, bindings.layout(), bindings.materialLayout(),
                                 assets.vertex->words(), assets.fragment->words());
@@ -201,9 +202,9 @@ namespace TextureGpuReview
             vkCmdSetViewport(commands, 0, 1, &viewport);
             vkCmdSetScissor(commands, 0, 1, &scissor);
             const std::array draws = {VulkanDrawItem{vertices->handle(), indices->handle(),
-                                                     static_cast<uint32_t>(mesh.indices.size()), glm::mat4(1.0f)}};
-            VulkanCommandList::drawIndexed(commands, pipeline, bindings.descriptorSet(0), material.descriptorSet(),
-                                           draws);
+                                                     static_cast<uint32_t>(mesh.indices.size()),
+                                                     material.descriptorSet(), glm::mat4(1.0f)}};
+            VulkanCommandList::drawIndexed(commands, pipeline, bindings.descriptorSet(0), draws);
             ui.recordDrawData(ui.drawData(), commands);
             vkCmdEndRendering(commands);
 

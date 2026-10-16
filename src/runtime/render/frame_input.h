@@ -4,6 +4,7 @@
 #include <glm/mat4x4.hpp>
 #include <span>
 
+#include "runtime/render/material.h"
 #include "runtime/render/mesh.h"
 
 namespace Incubator
@@ -28,6 +29,7 @@ namespace Incubator
         struct DrawItem
         {
             Mesh mesh;
+            Material material;
             glm::mat4 model;
         };
 
