@@ -7,6 +7,7 @@
 #include <span>
 
 #include "runtime/render/frame_input.h"
+#include "runtime/render/material.h"
 #include "runtime/render/mesh.h"
 #include "runtime/render/texture.h"
 
@@ -58,11 +59,19 @@ namespace Incubator
             // Texture references share this upload and are usable only with this Renderer.
             Texture createTexture(const Resource::TextureResource& texture);
 
-            // Prepares the shared scene shaders and the current single-texture binding once.
+            // Prepares the shared scene shaders and frame/material layouts once.
             // Copies shader words for compatible Pipeline rebuilds; no CPU resource is retained.
-            // Empty frames/UI do not require this call. Texture must belong to this Renderer.
+            // Empty frames/UI do not require this call.
             void prepareSceneResources(const Resource::ShaderResource& vertexShader,
-                                       const Resource::ShaderResource& fragmentShader, const Texture& texture);
+                                       const Resource::ShaderResource& fragmentShader);
+
+            // Requires prepared scene shaders and a valid Texture from this Renderer.
+            // Copies parameters and creates immutable bindings; borrows desc only for this call.
+            Material createMaterial(const MaterialDesc& desc);
+
+            // Selects one existing material for the current shared-material draw path.
+            // Does not modify descriptors or resources used by earlier frames.
+            void setSceneMaterial(const Material& material);
 
             // Prepares the swapchain/backend and starts UI. No extent means skip the frame.
             // The returned nonzero extent is the actual rendering extent for application projection.

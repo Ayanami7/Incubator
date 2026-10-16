@@ -29,7 +29,7 @@ namespace Incubator
             }  // namespace
 
             VulkanPipeline::VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
-                                           VkDescriptorSetLayout descriptorLayout,
+                                           VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout materialLayout,
                                            const std::vector<uint32_t>& vertexShader,
                                            const std::vector<uint32_t>& fragmentShader)
                 : device_(device), colorFormat_(colorFormat), depthFormat_(depthFormat)
@@ -51,8 +51,9 @@ namespace Incubator
 
                     VkPipelineLayoutCreateInfo layoutInfo{};
                     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-                    layoutInfo.setLayoutCount = 1;
-                    layoutInfo.pSetLayouts = &descriptorLayout;
+                    const std::array layouts{frameLayout, materialLayout};
+                    layoutInfo.setLayoutCount = static_cast<uint32_t>(layouts.size());
+                    layoutInfo.pSetLayouts = layouts.data();
                     const VkPushConstantRange modelRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
                     layoutInfo.pushConstantRangeCount = 1;
                     layoutInfo.pPushConstantRanges = &modelRange;
@@ -139,11 +140,12 @@ namespace Incubator
                     checkVk(vkCreateGraphicsPipelines(device_.handle(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
                                                       &pipeline_),
                             "vkCreateGraphicsPipelines");
-                    Log::Registry::get("render.vulkan").debug(
-                        "Created graphics pipeline: color format {}, depth format {}, "
-                        "vertex SPIR-V {} bytes, fragment SPIR-V {} bytes",
-                        static_cast<int>(colorFormat_), static_cast<int>(depthFormat_),
-                        vertexShader.size() * sizeof(uint32_t), fragmentShader.size() * sizeof(uint32_t));
+                    Log::Registry::get("render.vulkan")
+                        .debug(
+                            "Created graphics pipeline: color format {}, depth format {}, "
+                            "vertex SPIR-V {} bytes, fragment SPIR-V {} bytes",
+                            static_cast<int>(colorFormat_), static_cast<int>(depthFormat_),
+                            vertexShader.size() * sizeof(uint32_t), fragmentShader.size() * sizeof(uint32_t));
                 }
                 catch (...)
                 {

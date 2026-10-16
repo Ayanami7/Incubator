@@ -71,7 +71,8 @@ int main(int argc, char* argv[])
         const auto textureId = assets.texture->id();
         Incubator::Render::Renderer renderer(*window, Incubator::Demo::VALIDATION_MODE);
         const auto texture = renderer.createTexture(*assets.texture);
-        renderer.prepareSceneResources(*assets.vertex, *assets.fragment, texture);
+        renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+        renderer.setSceneMaterial(renderer.createMaterial({texture}));
         const auto cube = [&] {
             const auto data = Incubator::Demo::makeCubeMesh();
             return renderer.createMesh(data.vertices, data.indices);

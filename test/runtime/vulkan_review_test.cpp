@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string_view>
@@ -555,7 +556,8 @@ namespace
             WindowCapture::save(empty, "review/resource-entry-empty-ui.ppm");
 
             SceneAssets assets;
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             const auto data = Demo::makePlaneMesh();
             const auto mesh = renderer.createMesh(data.vertices, data.indices);
             releaseCpuAssets(assets);
@@ -612,7 +614,8 @@ namespace
                 SceneAssets assets(secondAudit.paths, std::make_unique<AuditedFileIO>(secondAudit));
                 direction = renderer.createTexture(*assets.texture);
                 const auto shared = direction;
-                renderer.prepareSceneResources(*assets.vertex, *assets.fragment, shared);
+                renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+                renderer.setSceneMaterial(renderer.createMaterial({shared}));
                 direction = {};
                 direction = shared;
                 releaseCpuAssets(assets);
@@ -670,10 +673,9 @@ namespace
             auto texture = renderer.createTexture(*assets.texture);
             observer = texture;
             Resource::ShaderResource emptyShader({}, {});
-            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, *assets.fragment, {}), Error::Exception);
-            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, *assets.fragment, expired), Error::Exception);
-            EXPECT_THROW(renderer.prepareSceneResources(emptyShader, *assets.fragment, texture), Error::Exception);
-            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, emptyShader, texture), Error::Exception);
+            EXPECT_THROW(renderer.createMaterial({texture}), Error::Exception);
+            EXPECT_THROW(renderer.prepareSceneResources(emptyShader, *assets.fragment), Error::Exception);
+            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, emptyShader), Error::Exception);
             const auto mesh = createCubeMesh(renderer);
             auto extent = renderer.beginUiFrame();
             ASSERT_TRUE(extent);
@@ -685,12 +687,141 @@ namespace
                          Error::Exception);
             EXPECT_EQ(recorded, 0);
             renderer.drawFrame(controlledFrame(*extent, {}), {0.2f, 0.24f, 0.28f, 1.0f});
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, texture);
-            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, *assets.fragment, texture), Error::Exception);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            EXPECT_THROW(renderer.createMaterial({}), Error::Exception);
+            EXPECT_THROW(renderer.createMaterial({expired}), Error::Exception);
+            renderer.setSceneMaterial(renderer.createMaterial({texture}));
+            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, *assets.fragment), Error::Exception);
             texture = {};
             releaseCpuAssets(assets);
             EXPECT_TRUE(observer.valid());
             EXPECT_GT(drawUiFrame(*window, renderer, mesh), 0);
+        }
+        EXPECT_FALSE(observer.valid());
+        expectReleased({});
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, MaterialsCopyParametersShareTexturesAndReusePipeline)
+    {
+        Log::Registry::get("render").setLevel(Log::Level::DEBUG);
+        Log::Registry::get("render.vulkan").setLevel(Log::Level::DEBUG);
+        auto window = createWindow(true, 640, 480);
+        SceneAssets assets;
+        Texture textureObserver;
+        std::array<Material, 3> observers;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            auto texture = renderer.createTexture(*assets.texture);
+            textureObserver = texture;
+            Resource::TextureResource whiteCpu({}, 1, 1, {255, 255, 255, 0});
+            auto otherTexture = renderer.createTexture(whiteCpu);
+            MaterialDesc desc{texture};
+            EXPECT_EQ(desc.color, (std::array{1.0f, 1.0f, 1.0f}));
+            auto white = renderer.createMaterial(desc);
+            desc.color = {0.25f, 0.5f, 1.0f};
+            auto tinted = renderer.createMaterial(desc);
+            observers[0] = white;
+            observers[1] = tinted;
+            EXPECT_FALSE(Material{}.valid());
+            for (int channel = 0; channel < 3; ++channel)
+            {
+                for (const float value :
+                     {-0.1f, 1.1f, std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(),
+                      std::numeric_limits<float>::quiet_NaN()})
+                {
+                    auto invalid = desc;
+                    invalid.color[channel] = value;
+                    EXPECT_THROW(renderer.createMaterial(invalid), Error::Exception);
+                }
+            }
+            const auto data = Demo::makePlaneMesh();
+            const auto mesh = renderer.createMesh(data.vertices, data.indices);
+            const std::array draws{DrawItem{mesh, glm::mat4(1.0f)}};
+            releaseCpuAssets(assets);
+            auto present = [&](const Material& selected) {
+                renderer.setSceneMaterial(selected);
+                for (int frame = 0; frame < 6; ++frame)
+                {
+                    submitControlledScene(*window, renderer, draws);
+                    glfwWaitEventsTimeout(0.025);
+                }
+                return WindowCapture::capture(*window);
+            };
+            const auto original = present(white);
+            // A third material with another texture does not replace shaders, camera sets or Pipeline.
+            observers[2] = renderer.createMaterial({otherTexture, {0.0f, 1.0f, 0.0f}});
+            desc.texture = {};
+            desc.color = {0.0f, 0.0f, 0.0f};
+            texture = {};
+            otherTexture = {};
+            white = {};
+            tinted = {};
+            const auto unchanged = present(observers[0]);
+            size_t changed = 0;
+            for (int y = 8; y < original.height - 8; ++y)
+                for (int x = 8; x < original.width - 8; ++x)
+                {
+                    const size_t offset = (static_cast<size_t>(y) * original.width + x) * 4;
+                    for (int channel = 0; channel < 3; ++channel)
+                        changed += original.rgba[offset + channel] != unchanged.rgba[offset + channel];
+                }
+            EXPECT_EQ(changed, 0u);
+            const auto image = present(observers[1]);
+            const auto bounds = WindowCapture::bounds(image);
+            ASSERT_GT(bounds[2] - bounds[0], 100);
+            // The reference's white texel shows the copied nonzero RGB tint after desc was cleared.
+            const int x = bounds[0] + 7 * (bounds[2] - bounds[0]) / 8;
+            const int y = bounds[1] + (bounds[3] - bounds[1]) / 2;
+            const auto offset = (static_cast<size_t>(y) * image.width + x) * 4;
+            EXPECT_GT(image.rgba[offset], 50);
+            EXPECT_GT(int(image.rgba[offset + 1]), int(image.rgba[offset]) + 20);
+            EXPECT_GT(int(image.rgba[offset + 2]), int(image.rgba[offset + 1]) + 20);
+            WindowCapture::save(image, "review/material-immutable-tint.ppm");
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture"), 2u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 3u);
+            EXPECT_TRUE(textureObserver.valid());
+            for (const auto& material : observers)
+                EXPECT_TRUE(material.valid());
+        }
+        EXPECT_FALSE(textureObserver.valid());
+        for (const auto& material : observers)
+            EXPECT_FALSE(material.valid());
+        expectReleased({});
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, MaterialSelectionRejectsEmptyExpiredAndMovedFromReferences)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        Material expired;
+        {
+            Renderer previous(*window, RendererValidationMode::Required);
+            previous.prepareSceneResources(*assets.vertex, *assets.fragment);
+            expired = previous.createMaterial({previous.createTexture(*assets.texture)});
+        }
+        EXPECT_FALSE(expired.valid());
+        Material observer;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            MaterialDesc desc{renderer.createTexture(*assets.texture)};
+            observer = renderer.createMaterial(desc);
+            EXPECT_THROW(renderer.setSceneMaterial({}), Error::Exception);
+            EXPECT_THROW(renderer.setSceneMaterial(expired), Error::Exception);
+            renderer.setSceneMaterial(observer);
+            Renderer moved(std::move(renderer));
+            EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
+            EXPECT_THROW(renderer.setSceneMaterial(observer), Error::Exception);
+            EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, *assets.fragment), Error::Exception);
+            EXPECT_TRUE(moved.createMaterial(desc).valid());
+            moved.setSceneMaterial(observer);
+            const auto mesh = createCubeMesh(moved);
+            releaseCpuAssets(assets);
+            EXPECT_GT(drawUiFrame(*window, moved, mesh), 0);
         }
         EXPECT_FALSE(observer.valid());
         expectReleased({});
@@ -707,8 +838,8 @@ namespace
             {
                 SceneAssets assets(audit.paths, std::make_unique<AuditedFileIO>(audit));
                 Renderer renderer(*window, RendererValidationMode::Required);
-                renderer.prepareSceneResources(*assets.vertex, *assets.fragment,
-                                               renderer.createTexture(*assets.texture));
+                renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+                renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
                 const auto mesh = createCubeMesh(renderer);
                 releaseCpuAssets(assets);
                 for (int cycle = 0; cycle < 4; ++cycle)
@@ -817,7 +948,8 @@ namespace
         {
             SceneAssets assets(paths);
             Renderer renderer(*window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             EXPECT_GT(drawUiFrame(*window, renderer, mesh), 0);
@@ -955,7 +1087,8 @@ namespace
         Mesh observer;
         {
             Renderer renderer(*window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             releaseCpuAssets(assets);
             auto data = Demo::makePlaneMesh();
             EXPECT_THROW(renderer.createMesh({}, data.indices), Error::Exception);
@@ -1005,7 +1138,9 @@ namespace
         {
             Renderer first(*firstWindow, RendererValidationMode::Required);
             const auto firstTexture = first.createTexture(*assets.texture);
-            first.prepareSceneResources(*assets.vertex, *assets.fragment, firstTexture);
+            first.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const auto firstMaterial = first.createMaterial({firstTexture});
+            first.setSceneMaterial(firstMaterial);
             const auto mesh = createCubeMesh(first);
             {
                 struct RestoreContext
@@ -1019,9 +1154,10 @@ namespace
                 // CreateContext preserves an existing current context; this test needs a separate one.
                 ImGui::SetCurrentContext(nullptr);
                 Renderer second(*secondWindow, RendererValidationMode::Required);
-                EXPECT_THROW(second.prepareSceneResources(*assets.vertex, *assets.fragment, firstTexture),
-                             Error::Exception);
-                second.prepareSceneResources(*assets.vertex, *assets.fragment, second.createTexture(*assets.texture));
+                second.prepareSceneResources(*assets.vertex, *assets.fragment);
+                EXPECT_THROW(second.createMaterial({firstTexture}), Error::Exception);
+                EXPECT_THROW(second.setSceneMaterial(firstMaterial), Error::Exception);
+                second.setSceneMaterial(second.createMaterial({second.createTexture(*assets.texture)}));
                 const auto ownMesh = createCubeMesh(second);
                 const auto extent = second.beginUiFrame();
                 ASSERT_TRUE(extent);
@@ -1052,8 +1188,8 @@ namespace
             if (prepareScene)
             {
                 SceneAssets assets;
-                renderer.prepareSceneResources(*assets.vertex, *assets.fragment,
-                                               renderer.createTexture(*assets.texture));
+                renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+                renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
                 mesh = createCubeMesh(renderer);
                 releaseCpuAssets(assets);
             }
@@ -1087,7 +1223,8 @@ namespace
         SceneAssets assets({}, std::make_unique<AuditedFileIO>(audit));
         {
             Renderer renderer(*window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             auto* native = static_cast<GLFWwindow*>(window->getNativeHandle());
@@ -1128,7 +1265,8 @@ namespace
         {
             SceneAssets assets;
             Renderer renderer(*window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             int recorded = 0;
@@ -1146,7 +1284,8 @@ namespace
         SceneAssets assets;
         {
             Renderer renderer(window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             for (int frame = 0; frame < 10; ++frame)
@@ -1180,7 +1319,8 @@ namespace
         SceneAssets assets;
         {
             Renderer renderer(*window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             const auto extent = renderer.beginUiFrame();
@@ -1210,7 +1350,8 @@ namespace
         SceneAssets assets;
         {
             Renderer renderer(*window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             const auto extent = renderer.beginUiFrame();
@@ -1246,7 +1387,8 @@ namespace
         SceneAssets assets;
         {
             Renderer renderer(*window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             auto present = [&](const Mesh& selectedMesh, float modelX, float cameraX) {
@@ -1352,7 +1494,8 @@ namespace
         Mesh cubeObserver;
         {
             Renderer renderer(*window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             auto cube = createCubeMesh(renderer);
             auto plane = [&] {
                 const auto data = Demo::makePlaneMesh();
@@ -1418,7 +1561,8 @@ namespace
         SceneAssets assets;
         {
             Renderer renderer(window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             const auto plane = [&] {
                 const auto data = Demo::makePlaneMesh();
                 return renderer.createMesh(data.vertices, data.indices);
@@ -1513,8 +1657,8 @@ namespace
             {
                 SceneAssets assets(audit.paths, std::make_unique<AuditedFileIO>(audit));
                 Renderer renderer(*window, RendererValidationMode::Required);
-                renderer.prepareSceneResources(*assets.vertex, *assets.fragment,
-                                               renderer.createTexture(*assets.texture));
+                renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+                renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
                 const auto cube = createCubeMesh(renderer);
                 const auto plane = [&] {
                     const auto data = Demo::makePlaneMesh();
@@ -1716,7 +1860,8 @@ namespace
 #endif
         {
             Renderer renderer(*window, Demo::VALIDATION_MODE);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment, renderer.createTexture(*assets.texture));
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.setSceneMaterial(renderer.createMaterial({renderer.createTexture(*assets.texture)}));
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             for (int frame = 0; frame < 5; ++frame)

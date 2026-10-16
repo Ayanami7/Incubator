@@ -1,5 +1,7 @@
 #include "runtime/render/vulkan/vulkan_command_list.h"
 
+#include <array>
+
 #include "runtime/core/error/error.h"
 #include "runtime/render/vulkan/vulkan_pipeline.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
@@ -119,12 +121,14 @@ namespace Incubator
             }
 
             void VulkanCommandList::drawIndexed(VkCommandBuffer commandBuffer, const VulkanPipeline& pipeline,
-                                                VkDescriptorSet descriptorSet, std::span<const VulkanDrawItem> draws)
+                                                VkDescriptorSet frameSet, VkDescriptorSet materialSet,
+                                                std::span<const VulkanDrawItem> draws)
             {
                 static_assert(sizeof(glm::mat4) == 64);
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, 1,
-                                        &descriptorSet, 0, nullptr);
+                const std::array sets{frameSet, materialSet};
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0,
+                                        static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
                 const VkDeviceSize vertexOffset = 0;
                 for (const auto& draw : draws)
                 {

@@ -20,6 +20,7 @@ namespace Incubator
 
         private:
             friend class Renderer;
+            friend class Material;
             struct Impl;
             explicit Texture(const std::shared_ptr<Impl>& impl) : impl_(impl) {}
             std::weak_ptr<Impl> impl_;

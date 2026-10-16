@@ -5,8 +5,6 @@
 #include "runtime/core/error/error.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
 #include "runtime/render/vulkan/vulkan_device.h"
-#include "runtime/render/vulkan/vulkan_image.h"
-#include "runtime/render/vulkan/vulkan_sampler.h"
 
 namespace Incubator
 {
@@ -20,40 +18,43 @@ namespace Incubator
                 {
                     if (result != VK_SUCCESS)
                     {
-                        throw Error::Exception(Error::Code::RENDER,
-                                               fmt::format("{} failed with VkResult {}", operation,
-                                                           static_cast<int>(result)));
+                        throw Error::Exception(Error::Code::RENDER, fmt::format("{} failed with VkResult {}", operation,
+                                                                                static_cast<int>(result)));
                     }
                 }
             }  // namespace
 
             VulkanBindingSet::VulkanBindingSet(const VulkanDevice& device,
-                                               std::span<const std::shared_ptr<VulkanBuffer>> uniformBuffers,
-                                               const VulkanImage& texture, const VulkanSampler& sampler)
+                                               std::span<const std::shared_ptr<VulkanBuffer>> uniformBuffers)
                 : device_(device)
             {
                 try
                 {
-                    constexpr std::array<VkDescriptorSetLayoutBinding, 2> bindings = {{
-                        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr},
-                        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-                    }};
+                    constexpr VkDescriptorSetLayoutBinding cameraBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                                                                         VK_SHADER_STAGE_VERTEX_BIT, nullptr};
                     VkDescriptorSetLayoutCreateInfo layoutInfo{};
                     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-                    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-                    layoutInfo.pBindings = bindings.data();
+                    layoutInfo.bindingCount = 1;
+                    layoutInfo.pBindings = &cameraBinding;
                     checkVk(vkCreateDescriptorSetLayout(device_.handle(), &layoutInfo, nullptr, &layout_),
                             "vkCreateDescriptorSetLayout");
 
-                    const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
-                        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(uniformBuffers.size())},
-                        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(uniformBuffers.size())},
+                    constexpr std::array<VkDescriptorSetLayoutBinding, 2> materialBindings = {{
+                        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                        {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
                     }};
+                    layoutInfo.bindingCount = static_cast<uint32_t>(materialBindings.size());
+                    layoutInfo.pBindings = materialBindings.data();
+                    checkVk(vkCreateDescriptorSetLayout(device_.handle(), &layoutInfo, nullptr, &materialLayout_),
+                            "vkCreateDescriptorSetLayout(material)");
+
+                    const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                                        static_cast<uint32_t>(uniformBuffers.size())};
                     VkDescriptorPoolCreateInfo poolInfo{};
                     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
                     poolInfo.maxSets = static_cast<uint32_t>(uniformBuffers.size());
-                    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-                    poolInfo.pPoolSizes = poolSizes.data();
+                    poolInfo.poolSizeCount = 1;
+                    poolInfo.pPoolSizes = &poolSize;
                     checkVk(vkCreateDescriptorPool(device_.handle(), &poolInfo, nullptr, &pool_),
                             "vkCreateDescriptorPool");
 
@@ -72,18 +73,17 @@ namespace Incubator
                         VkDescriptorBufferInfo bufferInfo{};
                         bufferInfo.buffer = uniformBuffers[index]->handle();
                         bufferInfo.range = uniformBuffers[index]->size();
-                        VkDescriptorImageInfo imageInfo{};
-                        imageInfo.sampler = sampler.handle();
-                        imageInfo.imageView = texture.view();
-                        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                        const std::array<VkWriteDescriptorSet, 2> writes = {{
-                            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptorSets_[index], 0, 0, 1,
-                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &bufferInfo, nullptr},
-                            {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptorSets_[index], 1, 0, 1,
-                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &imageInfo, nullptr, nullptr},
-                        }};
-                        vkUpdateDescriptorSets(device_.handle(), static_cast<uint32_t>(writes.size()), writes.data(),
-                                               0, nullptr);
+                        const VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                                         nullptr,
+                                                         descriptorSets_[index],
+                                                         0,
+                                                         0,
+                                                         1,
+                                                         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                                         nullptr,
+                                                         &bufferInfo,
+                                                         nullptr};
+                        vkUpdateDescriptorSets(device_.handle(), 1, &write, 0, nullptr);
                     }
                 }
                 catch (...)
@@ -92,6 +92,8 @@ namespace Incubator
                         vkDestroyDescriptorPool(device_.handle(), pool_, nullptr);
                     if (layout_ != VK_NULL_HANDLE)
                         vkDestroyDescriptorSetLayout(device_.handle(), layout_, nullptr);
+                    if (materialLayout_ != VK_NULL_HANDLE)
+                        vkDestroyDescriptorSetLayout(device_.handle(), materialLayout_, nullptr);
                     throw;
                 }
             }
@@ -102,11 +104,18 @@ namespace Incubator
                     vkDestroyDescriptorPool(device_.handle(), pool_, nullptr);
                 if (layout_ != VK_NULL_HANDLE)
                     vkDestroyDescriptorSetLayout(device_.handle(), layout_, nullptr);
+                if (materialLayout_ != VK_NULL_HANDLE)
+                    vkDestroyDescriptorSetLayout(device_.handle(), materialLayout_, nullptr);
             }
 
             VkDescriptorSetLayout VulkanBindingSet::layout() const noexcept
             {
                 return layout_;
+            }
+
+            VkDescriptorSetLayout VulkanBindingSet::materialLayout() const noexcept
+            {
+                return materialLayout_;
             }
 
             VkDescriptorSet VulkanBindingSet::descriptorSet(uint32_t frameIndex) const noexcept

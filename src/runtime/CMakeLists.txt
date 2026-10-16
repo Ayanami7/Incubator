@@ -69,6 +69,7 @@ set(RENDER_HEADERS
     render/frame_input.h
     render/mesh.h
     render/texture.h
+    render/material.h
     render/integration/imgui_renderer.h
     render/vulkan/vulkan_swapchain.h
     render/vulkan/vulkan_frame_scheduler.h
@@ -77,6 +78,7 @@ set(RENDER_HEADERS
     render/vulkan/vulkan_buffer.h
     render/vulkan/vulkan_image.h
     render/vulkan/vulkan_binding_set.h
+    render/vulkan/vulkan_material_binding.h
     render/vulkan/vulkan_sampler.h
     render/vulkan/vulkan_instance.h
     render/vulkan/glfw_surface.h
@@ -92,6 +94,7 @@ set(RENDER_SOURCES
     render/vulkan/vulkan_buffer.cpp
     render/vulkan/vulkan_image.cpp
     render/vulkan/vulkan_binding_set.cpp
+    render/vulkan/vulkan_material_binding.cpp
     render/vulkan/vulkan_sampler.cpp
     render/vulkan/vulkan_instance.cpp
     render/vulkan/glfw_surface.cpp

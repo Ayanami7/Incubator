@@ -121,7 +121,7 @@ Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁
 缩放后使用新 extent，Renderer 不再翻转。准备与提交之间若尺寸改变，本轮旧输入会被跳过。
 
 `FrameInput.draws` 借用 `DrawItem {mesh, model}` 列表，当前 Demo 根据两个开关提交 0、1 或 2 项。
-不同绘制项可共享 Mesh，各自独立设置 model，相机和纹理共用。提交返回后可修改或销毁原始列表；
+不同绘制项可共享 Mesh，各自独立设置 model，相机和所选 Material 共用。提交返回后可修改或销毁原始列表；
 GPU 网格仍由 Renderer 持有至关闭。空列表只清屏并显示本帧 UI。
 
 ## 资产生成与部署
@@ -163,10 +163,12 @@ Set-Location 'E:/Project/VScode/Incubator/build/task05-clean'
 
 Demo 在创建窗口前加载资源，随后以 `Renderer(window, validationMode)` 初始化运行环境，
 通过 `createTexture(*assets.texture)` 显式上传，并调用
-`prepareSceneResources(*assets.vertex, *assets.fragment, texture)` 准备共享 Shader 和单纹理绑定。
+`prepareSceneResources(*assets.vertex, *assets.fragment)` 准备共享 Shader 与帧/材质布局。
+随后 `createMaterial({texture})` 创建默认白色材质，通过 `setSceneMaterial` 为两个物体选择该材质。
 创建两种网格后立即释放 CPU 资源并检查纹理已卸载，再进入绘制循环。
-Renderer 保留重建 Pipeline 所需的 Shader 字数组副本，并持有已上传的 GPU Texture；
-复制应用引用共享同一次上传，交换链重建不重新读取图片。
+Renderer 保留重建 Pipeline 所需的 Shader 字数组副本，并持有 GPU Texture 与不可变 Material；
+材质颜色在 sRGB 采样后按线性 RGB 相乘，默认白色保留原色与方向，输出保持不透明。
+复制应用引用共享同一次上传和材质绑定，交换链重建不重新读取图片。
 
 加载、Renderer 初始化或显式资源准备失败时，SceneAssets 释放已取得的 CPU 引用、卸载归零对象，
 移除 Loader，最后销毁 FileIO。正常关闭时 Renderer 先于窗口销毁。

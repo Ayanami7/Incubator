@@ -17,9 +17,8 @@ namespace Incubator
             {
             public:
                 VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
-                               VkDescriptorSetLayout descriptorLayout,
-                               const std::vector<uint32_t>& vertexShader,
-                               const std::vector<uint32_t>& fragmentShader);
+                               VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout materialLayout,
+                               const std::vector<uint32_t>& vertexShader, const std::vector<uint32_t>& fragmentShader);
                 ~VulkanPipeline();
 
                 VulkanPipeline(const VulkanPipeline&) = delete;

@@ -15,6 +15,7 @@
 #include "runtime/render/vulkan/vulkan_command_list.h"
 #include "runtime/render/vulkan/vulkan_device.h"
 #include "runtime/render/vulkan/vulkan_image.h"
+#include "runtime/render/vulkan/vulkan_material_binding.h"
 #include "runtime/render/vulkan/vulkan_pipeline.h"
 #include "runtime/render/vulkan/vulkan_sampler.h"
 
@@ -116,10 +117,11 @@ namespace TextureGpuReview
             std::make_shared<VulkanBuffer>(device, sizeof(transforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
         uniforms[0]->write(0, std::as_bytes(std::span(&transforms, 1)));
-        VulkanBindingSet bindings(device, uniforms, *texture, sampler);
+        VulkanBindingSet bindings(device, uniforms);
+        VulkanMaterialBinding material(device, bindings.materialLayout(), *texture, sampler, {1.0f, 1.0f, 1.0f});
         const auto depthFormat = device.findDepthFormat();
-        VulkanPipeline pipeline(device, format, depthFormat, bindings.layout(), assets.vertex->words(),
-                                assets.fragment->words());
+        VulkanPipeline pipeline(device, format, depthFormat, bindings.layout(), bindings.materialLayout(),
+                                assets.vertex->words(), assets.fragment->words());
         const auto mesh = Demo::makePlaneMesh();
         auto vertices = VulkanBuffer::uploadStatic(
             device, std::as_bytes(std::span(mesh.vertices)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
@@ -200,7 +202,8 @@ namespace TextureGpuReview
             vkCmdSetScissor(commands, 0, 1, &scissor);
             const std::array draws = {VulkanDrawItem{vertices->handle(), indices->handle(),
                                                      static_cast<uint32_t>(mesh.indices.size()), glm::mat4(1.0f)}};
-            VulkanCommandList::drawIndexed(commands, pipeline, bindings.descriptorSet(0), draws);
+            VulkanCommandList::drawIndexed(commands, pipeline, bindings.descriptorSet(0), material.descriptorSet(),
+                                           draws);
             ui.recordDrawData(ui.drawData(), commands);
             vkCmdEndRendering(commands);
 

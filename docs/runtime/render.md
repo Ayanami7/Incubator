@@ -29,6 +29,7 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 | `Renderer` | 由应用创建和持有；借用 `Window`；组合并拥有本次渲染所需内部对象；提供初始化、完整帧绘制和关闭入口。 |
 | `Mesh` | 应用可复制的网格引用；其 GPU 顶点/索引由创建它的 Renderer 持有至关闭，引用本身不延长设备寿命。 |
 | `Texture` | 应用可复制的不透明纹理引用；Image 与 Sampler 由创建它的 Renderer 持有至关闭，引用不保留 CPU 资源或延长设备寿命。 |
+| `Material` | 应用可复制的不透明材质引用；创建时复制颜色并保持 Texture 依赖，材质参数与 Descriptor 不可变，由 Renderer 持有至关闭。 |
 | `VulkanInstance` | 创建并拥有 Vulkan Instance 和可选 debug messenger；查询并启用 GLFW 所需实例扩展；销毁晚于 Surface。 |
 | Surface | `GlfwSurface` 由 Render 通过 GLFW 从借用的 Window 创建和销毁；依赖 Instance，Window 必须活到 Surface 销毁之后。 |
 | `VulkanDevice` | 选择支持图形、呈现、Swapchain、Dynamic Rendering 和 Synchronization2 的首个物理设备；创建逻辑设备和队列，查询内存类型并执行有 Fence 的一次性上传提交；销毁前先清理设备子对象。 |
@@ -38,7 +39,8 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 | `VulkanCommandList` | 录制交换链图像布局转换、动态渲染清屏和绘制命令。 |
 | `VulkanBuffer` | 每个 Buffer 独立申请 Vulkan 内存；支持 Host Visible 写入及带 staging 的设备本地静态上传。 |
 | `VulkanImage` | 仅拥有自行创建的 Image、内存和 ImageView；交换链借用图像仍归 Swapchain 管理。 |
-| `VulkanBindingSet` | Render 内部创建固定的 Uniform Buffer 与 Combined Image Sampler 布局、池和每帧 DescriptorSet。 |
+| `VulkanBindingSet` | 拥有共享帧/材质布局，以及相机专用的池与每帧槽 DescriptorSet。 |
+| `VulkanMaterialBinding` | 每份材质拥有一组纹理/颜色 Descriptor、对应池和只写一次的 16 字节颜色 Uniform Buffer。 |
 | `VulkanSampler` | 拥有纹理采样器；DescriptorSet 引用它和 ImageView。 |
 
 GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自建显存池。`VulkanDevice` 集中选择满足 required、尽量满足 preferred 的内存类型，并提供 Fence 等待的一次性图形队列提交。静态 Buffer 和 RGBA8 Image 通过 staging 上传；Buffer 写入后按非 coherent 属性执行 flush，Image 显式从 Undefined 转为 Transfer Destination，再转为 Shader Read Only。该方案适合当前低数量基础资源，之后如资源数量和分配开销增长，再单独评估 VMA。
@@ -60,7 +62,7 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 Renderer 通过 `createTexture(const TextureResource&)` 独立上传纹理，返回 `texture.h` 中的
 `Texture` 引用。每次调用同步上传为 `VK_FORMAT_R8G8B8A8_SRGB`，返回后不保留
 TextureResource 指针或 CPU 像素副本，应用可在下一次绘制前 release 到零。
-GPU Image、Sampler、Descriptor 由 Render 持有，在途帧另持有所用 Texture 至 Fence 完成；
+GPU Image、Sampler、Descriptor 由 Render 持有，在途帧另持有所用 Material 及其 Texture 依赖至 Fence 完成；
 交换链重建复用这些纹理，不重新读取、解码或上传。立方体 +Z 面顶部 UV 指向 PNG 首行，
 Loader、上传和 Shader 均不再翻转；采样仍为 nearest/repeat/LOD=0。
 
@@ -69,7 +71,7 @@ Loader、上传和 Shader 均不再翻转；采样仍为 nearest/repeat/LOD=0。
 单 sample 与实际用途组合的 image format limits。不支持时抛出 RENDER 错误；
 同时保留 extent/像素长度检查，Resource 不包含设备限制。
 
-场景 RGB 由 sRGB 纹理采样得到 linear 值，fragment Shader 使用精确 sRGB transfer function
+场景 RGB 由 sRGB 纹理采样得到 linear 值，与材质线性 RGB 相乘后，fragment Shader 使用精确 sRGB transfer function
 编码后写入 UNORM，输出 alpha=1，不启用场景 blending。clearColor 与 ImGui RGB 均为
 sRGB 编码值，直接写 UNORM；ImGui 沿用现有编码空间 alpha blending，不修改第三方 Shader。
 交换链仅支持 `SRGB_NONLINEAR` colorSpace，按 BGRA8_UNORM、RGBA8_UNORM 顺序选择，
@@ -89,14 +91,15 @@ Swapchain 保存并暴露 colorSpace，Renderer 在初始化和重建日志中�
 Renderer renderer(window, RendererValidationMode::Optional);
 auto texture = renderer.createTexture(cpuTexture);
 auto sharedTexture = texture; // Shares the same upload.
-renderer.prepareSceneResources(vertexShader, fragmentShader, sharedTexture);
+renderer.prepareSceneResources(vertexShader, fragmentShader);
+auto material = renderer.createMaterial({sharedTexture}); // Default linear RGB is white.
+renderer.setSceneMaterial(material);
 // CPU Shader/Texture resources may now be released through ResourceManager.
 ```
 
-`prepareSceneResources(vertexShader, fragmentShader, texture)` 当前一次性准备共享 Shader 和
-单纹理绑定，所有物体共用该绑定。Shader 由 Resource 层读取并验证 SPIR-V，准备入口拒绝空
-字数组，复制字载荷以支持兼容 Pipeline 重建；Texture 必须是同一 Renderer 创建的有效引用。
-重复准备、空/过期/跨 Renderer 纹理，以及未准备资源时提交非空列表均抛出 RENDER 错误。
+`prepareSceneResources(vertexShader, fragmentShader)` 一次性准备共享 Shader、帧/材质布局与
+相机绑定。Shader 由 Resource 层读取并验证 SPIR-V，准备入口拒绝空字数组，复制字载荷以
+支持兼容 Pipeline 重建；不接收 Texture 或 Material。重复准备抛出 RENDER 错误。
 准备过程先在局部创建副本、Descriptor 和可用 extent 下的 Pipeline，全部成功后才安装；
 失败不留下部分准备状态，Renderer 仍可提交空帧或重新准备。Render 不通过 FileIO 或 Loader 读取资产。
 
@@ -104,6 +107,47 @@ Renderer 持有所有已创建纹理至关闭。复制/丢弃 Texture 引用不�
 调用 `createTexture` 则独立上传，不自动按路径或内容去重。`Texture::valid()` 表示所属
 Renderer 仍持有资源，空引用及关闭后的引用无效；移动 Renderer 后引用随其内部设备保持有效。
 Texture 仅标识 GPU 上传结果，与 CPU ResourceId 分别管理，也不使 Renderer 或设备延迟销毁。
+
+## 最小材质与绑定
+
+`material.h` 定义 `MaterialDesc { Texture texture; std::array<float, 3> color; }` 与 `Material` 引用。
+纹理是必需输入，color 是有限的 0–1 线性 RGB，默认 `{1, 1, 1}`。例如：
+
+```cpp
+MaterialDesc desc{texture, {0.25f, 0.5f, 1.0f}};
+auto tinted = renderer.createMaterial(desc);
+desc.color = {0.0f, 0.0f, 0.0f}; // Does not change tinted.
+renderer.setSceneMaterial(tinted);
+```
+
+`createMaterial` 要求先准备共享 Shader，并在分配 GPU 资源前检查颜色和 Texture 从属关系。
+空、过期、跨 Renderer 纹理，NaN、无穷或越界颜色均明确失败，不替换白图或钳制非法输入。
+创建时将 RGB 复制进 16 字节 std140 `vec4` Uniform，第四分量固定为 1；之后不改写该 Buffer
+或 Descriptor。无论 PNG alpha 或颜色参数如何，场景输出 alpha 始终为 1，不启用透明混合。
+
+| 数据 | 绑定与更新 |
+|---|---|
+| 帧相机 | set 0 / binding 0，128 字节 view/projection；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
+| 材质纹理 | set 1 / binding 0，Combined Image Sampler；共享已有 Texture，不重复上传 |
+| 材质颜色 | set 1 / binding 1，16 字节 fragment Uniform；仅创建时写入 |
+| 物体 model | 64 字节 vertex push constant；逐物体录制 |
+
+帧与材质布局由 Renderer 各创建一份；同一 Shader、附件格式和固定状态下，所有材质共用一份
+Pipeline。新增材质只分配自己的参数 Buffer、DescriptorPool/Set，不复制相机数据、纹理或
+Pipeline；材质不绑定某个帧槽，可以被多帧同时读取。交换链格式变化仅重建兼容 Pipeline，
+不会重建材质或重新上传资源。
+
+Renderer 持有 Material 至关闭，Material 内部强持有 Texture；在途帧保留所用 Material，
+连带保持参数、Descriptor、Image/Sampler 有效。复制/放下应用 Material 引用不重新创建或
+提前销毁 GPU 资源；`valid()`、移动及关闭后失效语义与 Mesh/Texture 一致。
+关闭先等待提交和呈现，再销毁 Pipeline、材质绑定、共享布局和纹理，最后销毁设备。
+
+当前 `setSceneMaterial(material)` 为现有共享材质绘制链路选择一份本 Renderer 的有效 Material，
+所有 DrawItem 共用该选择；未选择时提交非空列表失败。空/过期/跨 Renderer Material 在选择
+入口失败，原选择不变。选择另一份已创建材质只改变 CPU 引用，不改写已提交帧使用的绑定。
+空列表不要求 Shader 或 Material，继续清屏并绘制可选 UI。
+
+## 帧提交
 
 `frame_input.h` 定义本帧共享相机与绘制列表：
 
@@ -123,7 +167,7 @@ Renderer 不额外翻转 Y，不保留输入引用，正常跳帧也不缓存上
 
 绘制列表按提交顺序完整录制，不排序或截断；没有固定物体数量上限，实际受可用内存约束。
 Renderer 在录制前解析并检查所有 Mesh，从属错误使本次调用失败，不提交部分场景。
-所有物体共享当前 Shader、纹理和 Pipeline，遮挡由现有深度测试决定。空列表仍清屏并执行
+所有物体共享当前选择的 Material、Shader 和 Pipeline，遮挡由现有深度测试决定。空列表仍清屏并执行
 可选 UI 回调；列表数量变化不复用上一帧的物体。
 
 提交前 Renderer 会复查可绘制状态。若交换链 extent 已与 `input.extent` 不同，跳过本次
@@ -172,4 +216,4 @@ Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `examp
 
 ## 功能边界
 
-当前支持共享相机、纹理和固定 Pipeline 的不透明多网格列表，应用控制模型与动画；不提供运行中换图。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供模型文件解析、逐物体纹理/通用材质、异步资产加载、热重载、显存池、多后端或多视口。
+当前支持共享相机、所选不可变 Material 和固定 Pipeline 的不透明多网格列表，应用控制模型与动画；可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供逐物体材质、材质文件/Loader、模型文件解析、光照/PBR、异步资产加载、热重载、显存池、多后端或多视口。

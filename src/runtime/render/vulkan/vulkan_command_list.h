@@ -31,7 +31,8 @@ namespace Incubator
                                    const std::function<void(VkCommandBuffer)>& recordScene);
 
                 static void drawIndexed(VkCommandBuffer commandBuffer, const VulkanPipeline& pipeline,
-                                        VkDescriptorSet descriptorSet, std::span<const VulkanDrawItem> draws);
+                                        VkDescriptorSet frameSet, VkDescriptorSet materialSet,
+                                        std::span<const VulkanDrawItem> draws);
             };
         }  // namespace Vulkan
     }  // namespace Render
