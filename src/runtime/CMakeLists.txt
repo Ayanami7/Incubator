@@ -40,6 +40,8 @@ set(RESOURCE_HEADERS
     resource/asset_info.h
     resource/resource_object.h
     resource/resource_manager.h
+    resource/mesh_data.h
+    resource/loader/model_resource.h
     resource/loader/loader_base.h
     resource/loader/text_loader.h
     resource/loader/text_resource.h
@@ -54,6 +56,7 @@ set(RESOURCE_SOURCES
     resource/resource_registry.cpp
     resource/resource_object.cpp
     resource/resource_manager.cpp
+    resource/loader/model_resource.cpp
     resource/loader/text_loader.cpp
     resource/loader/text_resource.cpp
     resource/loader/spirv_reader.cpp
