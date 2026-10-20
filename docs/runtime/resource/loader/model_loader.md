@@ -78,4 +78,5 @@ Assimp 矩阵字段 a/b/c/d 表示行，转换时逐元素写入 GLM 列；局�
 恢复引擎 `(0,0)` 指向 PNG 左上；图片解码、上传和 Shader 不再翻转。投影 Y 适配不属于模型导入。
 
 原创模型及单位、节点矩阵、二进制布局和 UV 基准见 [样本说明](../../../../assets/models/SOURCE.md)。
-`demo_models` 将模型和 sidecar 部署到构建资产目录；本接口只交付 CPU 资产，GPU 准备与实例展开另行提供。
+`demo_models` 将模型和 sidecar 部署到构建资产目录；本接口只交付 CPU 资产，GPU 依赖与资源由
+Runtime 的 [模型准备入口](../../model.md) 处理，实例展开由模型消费层组织。

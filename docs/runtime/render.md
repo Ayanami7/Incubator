@@ -221,4 +221,8 @@ Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `examp
 
 ## 功能边界
 
+导入模型可由 Runtime 的 [Model 准备层](./model.md) 调用现有 Mesh/Texture/Material 创建接口，
+在一次准备内共享几何和纹理，并为纯色材质显式提供白纹理。应用预先准备共享 Shader，
+准备层负责释放本次 CPU 持有；Renderer 不读取模型路径、查询 ResourceManager 或解析文件。
+
 当前支持共享相机与固定 Pipeline、逐物体 Mesh/Material/model 的不透明列表，应用控制模型与动画；可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供材质文件/Loader、模型文件解析、光照/PBR、异步资产加载、热重载、显存池、多后端或多视口。

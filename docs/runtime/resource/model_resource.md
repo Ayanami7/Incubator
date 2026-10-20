@@ -94,3 +94,5 @@ ModelLoader 将静态 glTF 2.0（外部 bin/PNG）及 OBJ（外部 mtl/PNG）统
 glTF baseColorFactor/Texture、OBJ Kd/map_Kd 映射为线性颜色和外部纹理路径，采样和输出沿用
 [Render 材质约定](../render.md)。动画、骨骼、Morph、GLB/嵌入图像、透明混合及完整 PBR 不在首批范围。
 具体文件格式和材质拒绝规则见 [ModelLoader](./loader/model_loader.md)；手工 CPU 构造不读取或检查实际文件。
+CPU 资产及 PNG 依赖通过 Runtime 的 [模型准备入口](../model.md) 转换为共享 GPU 引用与独立元数据，
+准备完成后可卸载 CPU 载荷；Resource 层本身不依赖 Render。

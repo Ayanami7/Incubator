@@ -74,6 +74,10 @@ Incubator/
 
 ### Assimp 依赖
 
+Runtime 模型消费层位于 `src/runtime/model/`，`prepared_model.h/.cpp` 显式加入现有 `IncubatorRuntime`。
+`model_preparation_test` 依赖 `demo_models`、`demo_textures` 和 `demo_shaders`，在构建目录运行；
+GPU 用例与既有 Vulkan review 使用相同的串行执行和超时约定。
+
 `3rdparty/assimp/` 内置固定 v6.0.3 源码，由 `3rdparty/CMakeLists.txt` 设置选项并直接 `add_subdirectory(assimp)`，
 配置时无需下载 Assimp。移除测试、文档、工具、示例、未启用格式及无关附带库；保留 GLTF/OBJ、完整公开头、
 公共代码和后处理，以及上游 CMake 无条件编译的依赖与 STEP/FBX 公共代码。沿用上游 CMake，不按当前调用情况

@@ -113,12 +113,14 @@ set(RENDER_SOURCES
 
 # 合并所有头文件和源文件到一个变量
 set(ALL_HEADERS
+    model/prepared_model.h
     ${CORE_HEADERS}
     ${PLATFORM_HEADERS}
     ${RESOURCE_HEADERS}
     ${RENDER_HEADERS}
 )
 set(ALL_SOURCES
+    model/prepared_model.cpp
     ${CORE_SOURCES}
     ${PLATFORM_SOURCES}
     ${RESOURCE_SOURCES}

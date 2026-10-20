@@ -35,7 +35,7 @@ ResourceId ──► ResourceRegistry ──► ResourceManager ──► Loader
 | ShaderResource + ShaderLoader（SPIR-V CPU 载荷） | [loader/shader_loader.md](./loader/shader_loader.md) | ✅ 已实现 |
 | TextureResource + TextureLoader（PNG / RGBA8 CPU 载荷） | [loader/texture_loader.md](./loader/texture_loader.md) | ✅ 已实现 |
 | MeshData + ModelResource（CPU 几何、材质与节点组合） | [model_resource.md](./model_resource.md) | ✅ 已实现 |
-| ModelLoader（Assimp 静态 glTF / OBJ 导入） | [loader/model_loader.md](./loader/model_loader.md) | ✅ CPU 导入已实现；GPU 准备待接入 |
+| ModelLoader（Assimp 静态 glTF / OBJ 导入） | [loader/model_loader.md](./loader/model_loader.md) | ✅ CPU 导入已实现；GPU 消费见 [Model](../model.md) |
 
 ## 文件布局（镜像 src）
 
