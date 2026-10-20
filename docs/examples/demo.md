@@ -4,6 +4,8 @@
 上传应用生成的立方体和平面，为每项提交独立的 Mesh、Material 和模型矩阵，共享相机并叠加 ImGui 控件。
 应用负责事件轮询、场景状态、矩阵、绘制列表、界面构建和主循环。
 也可选择 glTF/OBJ 模型，通过 ModelLoader、prepareModel 和 ModelInstance 展示两个共享实例。
+`scene_frame.h` 将 UI 欧拉角转换为 Runtime Transform 四元数，将轨道控件转换为 Runtime Camera 世界位姿；
+模型矩阵与最终相机矩阵由 [Runtime Transform/Camera](../runtime/scene.md) 生成，控件仍由 Demo 保存。
 
 ## 构建与启动
 

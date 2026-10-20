@@ -193,6 +193,11 @@ namespace
         EXPECT_NEAR(point.y, 4.0f, 0.00001f);
         EXPECT_NEAR(point.z, 3.0f, 0.00001f);
         EXPECT_EQ(Demo::makeSceneModel(transform), model);
+        transform.rotationDegrees = {90, 90, 90};
+        const auto rotated = Demo::makeSceneModel(transform) * glm::vec4(1, 2, 3, 1);
+        EXPECT_NEAR(rotated.x, 13, 0.00001f);
+        EXPECT_NEAR(rotated.y, 8, 0.00001f);
+        EXPECT_NEAR(rotated.z, 1, 0.00001f);
         EXPECT_NEAR(wide.camera.projection[0][0] * 2.0f, square.camera.projection[0][0], 0.00001f);
         EXPECT_EQ(wide.camera.projection[1][1], square.camera.projection[1][1]);
         EXPECT_LT(wide.camera.projection[1][1], 0.0f);

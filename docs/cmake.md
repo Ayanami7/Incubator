@@ -30,6 +30,7 @@ Incubator/
 │       ├── platform/
 │       ├── resource/
 │       ├── model/
+│       ├── scene/
 │       └── render/
 ├── assets/
 │   └── CMakeLists.txt  # 运行资源部署（文件依赖与增量复制）
@@ -48,11 +49,14 @@ Incubator/
 
 ### 运行时库目标（src/runtime/）
 
-- Core、Platform、Resource、Model、Render 是逻辑模块，由 `src/runtime/CMakeLists.txt` 按模块收集头文件与源文件，共同编译为 `IncubatorRuntime` 静态库
+- Core、Platform、Resource、Model、Scene、Render 是逻辑模块，由 `src/runtime/CMakeLists.txt` 按模块收集头文件与源文件，共同编译为 `IncubatorRuntime` 静态库
 - 源码分层的依赖方向由模块边界维护；目录层次不代表独立库目标
 - 使用 `FOLDER "Engine"` 属性在 IDE 中分组显示
 - 依赖关系通过 `add_dependencies` + `target_link_libraries` 声明
 - 平台相关配置（如 MSVC 的 `/utf-8` 编码支持）在库目标处集中设置
+
+`scene/transform.h/.cpp`、`scene/camera.h/.cpp` 及内部共享输入校验头显式收集到 Runtime 的 Scene 文件组；
+`scene_transform_camera_test` 按既有 test/runtime 源文件发现规则创建，为不依赖窗口或 GPU 的 CPU 测试。
 
 ### 测试目标（test/ 下）
 
