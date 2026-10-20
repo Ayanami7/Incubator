@@ -39,7 +39,7 @@ ModelResource(ResourceId id, std::vector<MeshData> geometries,
 ModelResource 为 `final ResourceObject`，类型固定为 `ResourceType::MODEL`。构造参数按值接收，
 可以复制源数组或移动所有权；对象通过 `geometries()`、`materials()`、`parts()`、`nodes()` 返回只读引用，
 通过 `rootNode()` 返回根索引。初始状态沿用 `UNLOADED`，Manager 挂载后置为 `READY`。
-源数组、临时字符串和未来导入器释放后，载荷仍独立有效。当前尚未提供 ModelLoader 或模型 GPU 准备入口。
+源数组、临时字符串和导入器释放后，载荷仍独立有效。文件导入使用 [ModelLoader](./loader/model_loader.md)，模型 GPU 准备另行提供。
 
 ## 组合与共享
 
@@ -87,10 +87,10 @@ instanceTransform * root.localTransform * ... * node.localTransform
 按根→父→子组合后，子原点为 `(10,2,0)`，点 `(1,1,0)` 为 `(7,4,0)`；
 再左乘实例 `T(0,5,0)` 后为 `(7,9,0)`。这里只约定数据关系，不提供每帧展开接口。
 
-## 首批导入目标
+## 文件导入
 
-后续 ModelLoader 的目标是静态 glTF 2.0（外部 bin/PNG）及 OBJ（外部 mtl/PNG），统一生成上述数据。
+ModelLoader 将静态 glTF 2.0（外部 bin/PNG）及 OBJ（外部 mtl/PNG）统一转换为上述数据。
 只消费 position、UV0、uint16 三角形和基色；贴图材质要求 UV0，纯色几何可由导入方补固定 UV。
 glTF baseColorFactor/Texture、OBJ Kd/map_Kd 映射为线性颜色和外部纹理路径，采样和输出沿用
 [Render 材质约定](../render.md)。动画、骨骼、Morph、GLB/嵌入图像、透明混合及完整 PBR 不在首批范围。
-具体文件格式拒绝规则由后续导入边界负责，CPU 数据构造成功不代表已支持文件导入。
+具体文件格式和材质拒绝规则见 [ModelLoader](./loader/model_loader.md)；手工 CPU 构造不读取或检查实际文件。

@@ -1,0 +1,226 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Incubator original minimal model fixture"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "SourceRoot",
+      "matrix": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0.25,
+        0,
+        0,
+        1
+      ],
+      "children": [
+        1
+      ]
+    },
+    {
+      "name": "Parent",
+      "rotation": [
+        0,
+        0,
+        0.3826834323650898,
+        0.9238795325112867
+      ],
+      "children": [
+        2,
+        3
+      ]
+    },
+    {
+      "name": "Leaf",
+      "translation": [
+        0.1,
+        0.2,
+        0
+      ],
+      "scale": [
+        0.75,
+        0.5,
+        1
+      ],
+      "mesh": 0
+    },
+    {
+      "name": "Shared",
+      "translation": [
+        0,
+        -1.5,
+        0
+      ],
+      "mesh": 0
+    }
+  ],
+  "meshes": [
+    {
+      "name": "TwoParts",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "TEXCOORD_0": 1
+          },
+          "indices": 2,
+          "material": 0
+        },
+        {
+          "attributes": {
+            "POSITION": 3
+          },
+          "indices": 4,
+          "material": 1
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Direction",
+      "alphaMode": "OPAQUE",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 0
+        }
+      }
+    },
+    {
+      "name": "Solid",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.5,
+          1,
+          0.5,
+          1
+        ]
+      }
+    }
+  ],
+  "images": [
+    {
+      "uri": "../../textures/direction_rgba.png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "geometry/mesh.bin",
+      "byteLength": 134
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 48,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 48,
+      "byteLength": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 80,
+      "byteLength": 12,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 92,
+      "byteLength": 36,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 128,
+      "byteLength": 6,
+      "target": 34963
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC3",
+      "min": [
+        -1,
+        -0.5,
+        0
+      ],
+      "max": [
+        0,
+        0.5,
+        0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5123,
+      "count": 6,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC3",
+      "min": [
+        0.1,
+        -0.5,
+        0
+      ],
+      "max": [
+        1.1,
+        0.5,
+        0
+      ]
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5123,
+      "count": 3,
+      "type": "SCALAR"
+    }
+  ]
+}

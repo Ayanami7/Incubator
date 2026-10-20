@@ -42,6 +42,9 @@ set(RESOURCE_HEADERS
     resource/resource_manager.h
     resource/mesh_data.h
     resource/loader/model_resource.h
+    resource/loader/model_loader.h
+    resource/loader/detail/assimp_fileio.h
+    resource/loader/detail/model_source.h
     resource/loader/loader_base.h
     resource/loader/text_loader.h
     resource/loader/text_resource.h
@@ -57,6 +60,9 @@ set(RESOURCE_SOURCES
     resource/resource_object.cpp
     resource/resource_manager.cpp
     resource/loader/model_resource.cpp
+    resource/loader/model_loader.cpp
+    resource/loader/detail/assimp_fileio.cpp
+    resource/loader/detail/model_source.cpp
     resource/loader/text_loader.cpp
     resource/loader/text_resource.cpp
     resource/loader/spirv_reader.cpp
@@ -143,6 +149,11 @@ target_link_libraries(${TARGET_NAME} PUBLIC glfw)
 target_link_libraries(${TARGET_NAME} PUBLIC utf8::utf8cpp)
 target_link_libraries(${TARGET_NAME} PRIVATE imgui)
 target_link_libraries(${TARGET_NAME} PRIVATE stb_image)
+target_link_libraries(${TARGET_NAME} PRIVATE assimp::assimp)
+
+# Only the source-input checks use Assimp's bundled JSON parser; no public header exposes it.
+target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
+    "${THIRD_PARTY_DIR}/assimp/contrib/rapidjson/include")
 
 # Render owns the Vulkan integration. Keep it private because public Runtime headers
 # do not expose Vulkan types. The bundled Vulkan target is currently Windows-only.

@@ -8,7 +8,7 @@
 
 | 约定 | 说明 |
 |------|------|
-| CMake 最低版本 | 3.15 |
+| CMake 最低版本 | 3.22（Assimp v6.0.3 的最低要求） |
 | C++ 标准 | C++20（`CMAKE_CXX_STANDARD 20`） |
 | 构建类型 | 静态库为主（`BUILD_SHARED_LIBS OFF`） |
 | 源码目录 | `src/` |
@@ -70,6 +70,17 @@ Incubator/
 - 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
 - 当前 PNG 部署目标 `demo_textures` 定义于 `assets/CMakeLists.txt`，Shader 编译目标 `demo_shaders` 定义于 `examples/demo/CMakeLists.txt`；Demo 和相关 GPU 测试显式依赖这两个目标。
+- 模型部署目标 `demo_models` 定义于 `assets/CMakeLists.txt`，按显式文件依赖复制 glTF/bin、OBJ/MTL；模型 CPU 导入测试依赖该目标及 `demo_textures`。
+
+### Assimp 依赖
+
+`3rdparty/assimp/` 内置固定 v6.0.3 源码，由 `3rdparty/CMakeLists.txt` 设置选项并直接 `add_subdirectory(assimp)`，
+配置时无需下载 Assimp。移除测试、文档、工具、示例、未启用格式及无关附带库；保留 GLTF/OBJ、完整公开头、
+公共代码和后处理，以及上游 CMake 无条件编译的依赖与 STEP/FBX 公共代码。沿用上游 CMake，不按当前调用情况
+额外裁剪后处理。当前启用 GLTF/OBJ 导入、使用自带 zlib，关闭导出、Draco、工具、示例、上游测试、文档和安装；
+Runtime 私有链接，生成文件及库位于 `build/3rdparty/assimp`。
+最低 CMake 为 3.22，MSVC 沿用动态 CRT（Debug `/MDd`、Release `/MD`）；来源、裁剪范围和许可证见
+[Assimp 来源说明](../3rdparty/assimp/SOURCE.md)。
 
 ## 扩展新模块的约定
 

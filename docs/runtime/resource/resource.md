@@ -34,7 +34,8 @@ ResourceId ──► ResourceRegistry ──► ResourceManager ──► Loader
 | TextLoader 首个实现 | [loader/text_loader.md](./loader/text_loader.md) | ✅ 已实现 |
 | ShaderResource + ShaderLoader（SPIR-V CPU 载荷） | [loader/shader_loader.md](./loader/shader_loader.md) | ✅ 已实现 |
 | TextureResource + TextureLoader（PNG / RGBA8 CPU 载荷） | [loader/texture_loader.md](./loader/texture_loader.md) | ✅ 已实现 |
-| MeshData + ModelResource（CPU 几何、材质与节点组合） | [model_resource.md](./model_resource.md) | ✅ CPU 数据已实现；导入与 GPU 准备待接入 |
+| MeshData + ModelResource（CPU 几何、材质与节点组合） | [model_resource.md](./model_resource.md) | ✅ 已实现 |
+| ModelLoader（Assimp 静态 glTF / OBJ 导入） | [loader/model_loader.md](./loader/model_loader.md) | ✅ CPU 导入已实现；GPU 准备待接入 |
 
 ## 文件布局（镜像 src）
 
@@ -57,7 +58,9 @@ src/runtime/resource/
     ├── shader_resource.h/.cpp
     ├── texture_loader.h/.cpp
     ├── texture_resource.h/.cpp
-    └── model_resource.h/.cpp
+    ├── model_resource.h/.cpp
+    ├── model_loader.h/.cpp
+    └── detail/                    # 私有 Assimp IO 与源输入检查
 ```
 
 ShaderLoader 复用共享的 `Loader::readSpirv` 二进制入口，不引入 Vulkan 依赖。ResourceManager 管理 ShaderResource 的 CPU 载荷；Renderer 在 `prepareSceneResources` 中复制字载荷，用于首次创建及交换链兼容 Pipeline 重建。ResourceManager 释放 CPU 对象不触发 Vulkan 资源销毁。
@@ -68,8 +71,9 @@ TextureLoader 经 FileIO 完整读取并在内存解码 PNG，TextureResource �
 
 ModelResource 使用 MODEL 类型，拥有独立的 MeshData、线性基色/外部纹理路径描述、几何与材质关联，
 以及显式源根和节点局部矩阵。构造时校验几何和单根树结构，之后只读访问；多个节点可复用同一几何。
-当前可手工组合 CPU 资产，尚未提供模型文件 Loader 或 GPU 准备；数据及矩阵约定见
-[ModelResource](./model_resource.md)。
+ModelLoader 通过现有 FileIO 和固定 Assimp 导入外部 bin/PNG 的静态 glTF 2.0、外部 mtl/PNG 的 OBJ，
+返回自有 CPU 资产，图片仅保留路径；GPU 准备尚未接入。数据及矩阵约定见
+[ModelResource](./model_resource.md)，格式与材质支持范围见 [ModelLoader](./loader/model_loader.md)。
 
 ## 演进路线（未实现项触发条件）
 

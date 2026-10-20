@@ -1,0 +1,8 @@
+newmtl Direction
+Kd 1 1 1
+d 1
+map_Kd ../../../textures/direction_rgba.png
+
+newmtl Solid
+Kd 0.5 1 0.5
+Tr 0

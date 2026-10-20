@@ -1,0 +1,19 @@
+# Original Incubator model, Y-up / right-handed / one unit = one model unit.
+mtllib materials/model.mtl
+o DirectionQuad
+v -1 0.5 0
+v -1 -0.5 0
+v 0 -0.5 0
+v 0 0.5 0
+v 0.1 -0.5 0
+v 1.1 -0.5 0
+v 0.6 0.5 0
+vt 0 1
+vt 0 0
+vt 1 0
+vt 1 1
+usemtl Direction
+f 1/1 2/2 3/3 4/4
+o SolidTriangle
+usemtl Solid
+f 5 6 7

@@ -34,6 +34,14 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
             PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
     else()
+        if(TEST_NAME STREQUAL "assimp_fileio_test" OR TEST_NAME STREQUAL "model_loader_test")
+            target_link_libraries(${TEST_NAME} PRIVATE assimp::assimp)
+        endif()
+        if(TEST_NAME STREQUAL "model_loader_test")
+            target_include_directories(${TEST_NAME} SYSTEM PRIVATE "${THIRD_PARTY_DIR}/assimp/contrib/rapidjson/include")
+            target_compile_definitions(${TEST_NAME} PRIVATE MODEL_BUILD_ASSET_DIR="${CMAKE_BINARY_DIR}/assets")
+            add_dependencies(${TEST_NAME} demo_models demo_textures)
+        endif()
         if(TEST_NAME STREQUAL "texture_loader_test")
             target_compile_definitions(${TEST_NAME} PRIVATE
                 TEXTURE_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/textures"
