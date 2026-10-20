@@ -15,6 +15,7 @@
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/platform/window/window.h"
+#include "runtime/render/detail/renderer_review.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/vulkan/glfw_surface.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
@@ -240,11 +241,10 @@ namespace Incubator
                 return FrameExtent{extent.width, extent.height};
             }
 
-            void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
-                           const std::function<void(void*)>& recordUi)
+            std::vector<Vulkan::VulkanDrawItem> resolveDraws(const FrameInput& input,
+                                                             std::vector<std::shared_ptr<void>>& inFlightResources)
             {
                 std::vector<Vulkan::VulkanDrawItem> draws;
-                std::vector<std::shared_ptr<void>> inFlightResources;
                 draws.reserve(input.draws.size());
                 inFlightResources.reserve(input.draws.size() * 2 + 1);
                 for (const auto& draw : input.draws)
@@ -261,6 +261,29 @@ namespace Incubator
                     inFlightResources.push_back(std::move(gpuMesh));
                     inFlightResources.push_back(std::move(gpuMaterial));
                 }
+                return draws;
+            }
+
+            void withReviewFrame(const FrameInput& input, const Detail::RendererReviewAccess::Record& record)
+            {
+                std::vector<std::shared_ptr<void>> resources;
+                const auto draws = resolveDraws(input, resources);
+                if (!pipeline_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare scene shaders before GPU review");
+                const CameraUniform camera{input.camera.view, input.camera.projection};
+                const std::array uniforms = {std::make_shared<Vulkan::VulkanBuffer>(
+                    device_, sizeof(camera), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
+                uniforms[0]->write(0, std::as_bytes(std::span(&camera, 1)));
+                Vulkan::VulkanBindingSet bindings(device_, uniforms);
+                record(device_, *pipeline_, bindings.descriptorSet(0), draws);
+            }
+
+            void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
+                           const std::function<void(void*)>& recordUi)
+            {
+                std::vector<std::shared_ptr<void>> inFlightResources;
+                const auto draws = resolveDraws(input, inFlightResources);
                 if (!prepareFrame())
                     return;
                 const auto extent = swapchain_->extent();
@@ -407,6 +430,11 @@ namespace Incubator
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
             return impl_->beginUiFrame();
+        }
+
+        void Detail::RendererReviewAccess::withFrame(Renderer& renderer, const FrameInput& input, const Record& record)
+        {
+            renderer.impl_->withReviewFrame(input, record);
         }
 
         void Renderer::drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,

@@ -239,7 +239,9 @@ namespace Incubator::Resource::Detail
                                 Error::Code::IO,
                                 fmt::format("Model material '{}' has unsupported texture dependency", material));
                         }
-                        if (option == "-o" || option == "-s" || option == "-t" || option == "-type")
+                        const auto normalizedOption = Path::toLowerASCII(option);
+                        if (normalizedOption == "-o" || normalizedOption == "-s" || normalizedOption == "-t" ||
+                            normalizedOption == "-type")
                         {
                             throw Error::Exception(
                                 Error::Code::IO,

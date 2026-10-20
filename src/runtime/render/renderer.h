@@ -26,6 +26,10 @@ namespace Incubator
 
     namespace Render
     {
+        namespace Detail
+        {
+            struct RendererReviewAccess;
+        }
         namespace Integration
         {
             class ImGuiRenderer;
@@ -82,6 +86,7 @@ namespace Incubator
             Integration::ImGuiRenderer& imgui();
 
         private:
+            friend struct Detail::RendererReviewAccess;
             class Impl;
             std::unique_ptr<Impl> impl_;
         };

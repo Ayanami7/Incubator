@@ -75,6 +75,7 @@ set(RESOURCE_SOURCES
 # render 模块头文件、源文件
 set(RENDER_HEADERS
     render/renderer.h
+    render/detail/renderer_review.h
     render/frame_input.h
     render/mesh.h
     render/texture.h

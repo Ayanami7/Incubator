@@ -13,12 +13,16 @@
 #include <iterator>
 #include <sstream>
 
+#include "examples/demo/scene_assets.h"
+#include "examples/demo/scene_controls.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
+#include "runtime/core/utils/utf8.h"
 #include "runtime/model/model_instance.h"
 #include "runtime/model/prepared_model.h"
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
+#include "runtime/render/detail/renderer_review.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
 #include "runtime/resource/loader/model_loader.h"
@@ -28,6 +32,7 @@
 #include "runtime/resource/loader/texture_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
+#include "support/texture_gpu_review.h"
 #include "support/window_capture.h"
 
 namespace
@@ -650,6 +655,148 @@ namespace
             }
             EXPECT_TRUE(submit(*native, next, {}, true));
         }
+        cleanValidation();
+    }
+    TEST_F(ModelInstanceTest, DemoModelsWithUnicodeDependenciesPreserveDirectionAndExactGpuColor)
+    {
+        // Keep real relative dependency chains while renaming every input kind beyond ANSI.
+        const std::string gltfPath = "models/场景😀-gltf/模型.gltf";
+        const std::string objPath = "models/场景😀-obj/模型.obj";
+        const std::string pngPath = "textures/方向😀.png";
+        const auto read = [](std::string_view path) {
+            std::ifstream input(Utils::Utf8::toFsPath(std::string("assets/") + std::string(path)), std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(input), {});
+        };
+        const auto write = [](std::string_view path, const std::string& contents) {
+            const auto native = Utils::Utf8::toFsPath(std::string("assets/") + std::string(path));
+            fs::create_directories(native.parent_path());
+            std::ofstream(native, std::ios::binary).write(contents.data(), contents.size());
+        };
+        const auto replace = [](std::string& text, std::string_view from, std::string_view to) {
+            const auto at = text.find(from);
+            if (at == std::string::npos)
+                throw std::runtime_error("Missing fixture dependency");
+            text.replace(at, from.size(), to);
+        };
+        auto gltf = read(GLTF);
+        replace(gltf, "geometry/mesh.bin", "几何😀/网格.bin");
+        replace(gltf, "../../textures/direction_rgba.png", "../../textures/方向😀.png");
+        write(gltfPath, gltf);
+        write("models/场景😀-gltf/几何😀/网格.bin", read("models/minimal_gltf/geometry/mesh.bin"));
+        auto obj = read(OBJ);
+        replace(obj, "materials/model.mtl", "材质😀/颜色.mtl");
+        write(objPath, obj);
+        auto mtl = read("models/minimal_obj/materials/model.mtl");
+        replace(mtl, "../../../textures/direction_rgba.png", "../../../textures/方向😀.png");
+        write("models/场景😀-obj/材质😀/颜色.mtl", mtl);
+        write(pngPath, read(PNG));
+
+        auto native = window(true);
+        std::array<std::shared_ptr<const Model::PreparedModel>, 2> models;
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            {
+                Demo::SceneAssetPaths paths;
+                paths.model = gltfPath;
+                Demo::SceneAssets assets(paths);
+                EXPECT_EQ(assets.texture, nullptr);
+                renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+                models = {Model::prepareModel(renderer, gltfPath), Model::prepareModel(renderer, objPath)};
+                assets.releaseCpuResources();
+            }
+            released(ResourceType::MODEL, gltfPath);
+            released(ResourceType::MODEL, objPath);
+            released(ResourceType::TEXTURE, pngPath);
+            released(ResourceType::SHADER, "shaders/cube.vert.spv");
+            released(ResourceType::SHADER, "shaders/cube.frag.spv");
+            fileIO_.reset();
+
+            const std::array<std::array<int, 4>, 12> direction = {{{255, 255, 255, 255},
+                                                                   {255, 128, 0, 255},
+                                                                   {0, 0, 0, 255},
+                                                                   {0, 0, 255, 255},
+                                                                   {128, 128, 128, 255},
+                                                                   {255, 0, 0, 255},
+                                                                   {0, 255, 0, 255},
+                                                                   {255, 0, 255, 255},
+                                                                   {0, 255, 255, 255},
+                                                                   {17, 34, 51, 255},
+                                                                   {255, 255, 0, 255},
+                                                                   {128, 0, 255, 255}}};
+            for (size_t format = 0; format < models.size(); ++format)
+            {
+                SCOPED_TRACE(format == 0 ? "glTF" : "OBJ");
+                const auto& model = models[format];
+                // Cancel the first source node only for the color chart view. The complete
+                // cached hierarchy still renders, and separate tests assert its source matrices.
+                const std::array instances{Model::ModelInstance{model, glm::inverse(model->draws()[0].model)}};
+                const auto draws = Model::makeModelDraws(instances);
+                std::vector<uint8_t> pixels;
+                Detail::RendererReviewAccess::withFrame(
+                    renderer, {{384, 256}, camera({384, 256}), draws},
+                    [&](const auto& device, const auto& pipeline, auto frameSet, auto nativeDraws) {
+                        pixels = TextureGpuReview::captureDraws(device, pipeline, frameSet, nativeDraws);
+                    });
+                ASSERT_EQ(pixels.size(), 384u * 256 * 4);
+                const auto gpuColor = [&](float x, float y, const std::array<int, 4>& expected) {
+                    const int px = static_cast<int>((x / 1.5f + 1) * 192);
+                    const int py = static_cast<int>((1 - y) * 128);
+                    for (size_t channel = 0; channel < 4; ++channel)
+                        EXPECT_NEAR(pixels[(py * 384 + px) * 4 + channel], expected[channel], channel == 3 ? 0 : 1)
+                            << "sample=" << x << ',' << y << " channel=" << channel;
+                };
+                for (int row = 0; row < 4; ++row)
+                    for (int col = 0; col < 3; ++col)
+                        gpuColor(-1 + (col + 0.5f) / 3, 0.5f - (row + 0.5f) / 4, direction[row * 3 + col]);
+                gpuColor(0.6f, -1.0f / 6, {188, 255, 188, 255});
+                const auto label = format == 0 ? "gltf" : "obj";
+                WindowCapture::save({384, 256, pixels}, std::string("review/") + label + "-gpu.ppm");
+                std::cout << label << ": GPU direction 12/12, linear 0.5 -> 188 +/- 1, alpha 255\n";
+
+                for (int frame = 0; frame < 4; ++frame)
+                    ASSERT_TRUE(submit(*native, renderer, instances));
+                const auto displayed = WindowCapture::capture(*native);
+                for (int row = 0; row < 4; ++row)
+                    for (int col = 0; col < 3; ++col)
+                    {
+                        const auto& expected = direction[row * 3 + col];
+                        color(displayed, -1 + (col + 0.5f) / 3, 0.5f - (row + 0.5f) / 4,
+                              {expected[0], expected[1], expected[2]});
+                    }
+                color(displayed, 0.6f, -1.0f / 6, {188, 255, 188});
+                WindowCapture::save(displayed, std::string("review/") + label + "-window.ppm");
+
+                // Exercise the same initial controls and two shared instances used by Demo.
+                glfwSetWindowSize(static_cast<GLFWwindow*>(native->getNativeHandle()), 1280, 720);
+                auto scene = Demo::makeModelSceneControls();
+                const std::array shared{Model::ModelInstance{model, Demo::makeSceneModel(scene.cube.transform)},
+                                        Model::ModelInstance{model, Demo::makeSceneModel(scene.plane.transform)}};
+                const auto sharedDraws = Model::makeModelDraws(shared);
+                EXPECT_EQ(sharedDraws.size(), model->draws().size() * 2);
+                for (int frame = 0; frame < 3; ++frame)
+                {
+                    native->pollEvents();
+                    const auto extent = renderer.beginUiFrame();
+                    ASSERT_TRUE(extent);
+                    Demo::drawSceneControls(scene, format == 0 ? gltfPath : objPath, true);
+                    renderer.imgui().endFrame();
+                    auto* ui = renderer.imgui().drawData();
+                    renderer.drawFrame(Demo::makeSceneFrame(*extent, sharedDraws, scene.camera), scene.clearColor,
+                                       [&](void* commands) { renderer.imgui().recordDrawData(ui, commands); });
+                }
+                WindowCapture::save(WindowCapture::capture(*native), std::string("review/") + label + "-demo.ppm");
+            }
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 4u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+        }
+        for (const auto& model : models)
+            for (const auto& draw : model->draws())
+            {
+                EXPECT_FALSE(draw.mesh.valid());
+                EXPECT_FALSE(draw.material.valid());
+            }
         cleanValidation();
     }
 }  // namespace

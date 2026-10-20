@@ -104,3 +104,7 @@ renderer.drawFrame({extent, camera, draws}, clearColor);
 RGB 使用源材质的线性 0–1 参数，白纹理采样后保持该颜色；PNG 沿用 sRGB 采样后乘线性 RGB，输出 alpha=1。
 最近邻、repeat、LOD=0、UV 方向及其他固定显示条件沿用 [ModelLoader](./resource/loader/model_loader.md)
 和 [Render 材质](./render.md) 的约定。
+
+完整应用用法见 [Demo 模型模式](../examples/demo.md#启动时选择模型)：SceneAssets 在 FileIO 生命周期内
+注册 Model/Texture Loader，应用显式准备共享 Shader，准备一次模型后以两个 ModelInstance 共享绘制。
+应用的资源初始化作用域结束后移除自己管理的 Loader；prepareModel 本身不清除全局路由。

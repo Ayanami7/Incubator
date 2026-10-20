@@ -5,10 +5,12 @@
 #include <filesystem>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
+#include "runtime/model/model_instance.h"
 #include "runtime/platform/window/window.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
@@ -30,36 +32,36 @@ int main(int argc, char* argv[])
 
     try
     {
-        if (argc > 3)
+        const auto argument = [&](int index) -> std::string {
+#ifdef _WIN32
+            // Windows resource paths enter the engine as UTF-8, including model dependencies.
+            return Incubator::Utils::Utf8::toUtf8String(std::filesystem::path(argv[index]));
+#else
+            return argv[index];
+#endif
+        };
+        const bool modelMode = argc >= 2 && argument(1) == "--model";
+        if (argc > 3 || (modelMode && argc != 3))
         {
             log.error("Usage: demo.exe [texture virtual path] [both|cube|plane]");
+            log.error("       demo.exe --model <model virtual path (.gltf|.obj)>");
             return 1;
         }
         Incubator::Demo::SceneAssetPaths paths;
-        std::string texturePath;
-        if (argc >= 2)
-        {
-#ifdef _WIN32
-            // Windows narrow argv uses the system code page, while resource paths are UTF-8.
-            texturePath = Incubator::Utils::Utf8::toUtf8String(std::filesystem::path(argv[1]));
-#else
-            texturePath = argv[1];
-#endif
-            paths.texture = texturePath;
-        }
+        const std::string assetPath = modelMode ? argument(2) : argc >= 2 ? argument(1) : std::string(paths.texture);
+        if (modelMode)
+            paths.model = assetPath;
+        else
+            paths.texture = assetPath;
         std::string meshName = "both";
-        if (argc == 3)
+        if (argc == 3 && !modelMode)
         {
-#ifdef _WIN32
-            meshName = Incubator::Utils::Utf8::toUtf8String(std::filesystem::path(argv[2]));
-#else
-            meshName = argv[2];
-#endif
+            meshName = argument(2);
             if (meshName != "both" && meshName != "cube" && meshName != "plane")
                 throw Incubator::Error::Exception(Incubator::Error::Code::CONFIG,
                                                   "Expected initial visibility 'both', 'cube' or 'plane'");
         }
-        log.info("Scene texture: {}", paths.texture);
+        log.info("Scene {}: {}", modelMode ? "model" : "texture", assetPath);
         Incubator::Demo::SceneAssets assets(paths);
 
         Incubator::Window::WindowDesc windowDesc;
@@ -68,26 +70,30 @@ int main(int argc, char* argv[])
         windowDesc.height = 720;
         auto window = Incubator::Window::createPlatformWindow(windowDesc);
 
-        const auto textureId = assets.texture->id();
         Incubator::Render::Renderer renderer(*window, Incubator::Demo::VALIDATION_MODE);
-        const auto texture = renderer.createTexture(*assets.texture);
         renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
-        const auto cubeMaterial = renderer.createMaterial({texture});
-        const auto planeMaterial = renderer.createMaterial({texture, {0.5f, 1.0f, 0.5f}});
-        const auto cube = [&] {
+        std::shared_ptr<const Incubator::Model::PreparedModel> model;
+        Incubator::Render::Mesh cube, plane;
+        Incubator::Render::Material cubeMaterial, planeMaterial;
+        if (modelMode)
+            model = Incubator::Model::prepareModel(renderer, paths.model);
+        else
+        {
+            const auto texture = renderer.createTexture(*assets.texture);
+            cubeMaterial = renderer.createMaterial({texture});
+            planeMaterial = renderer.createMaterial({texture, {0.5f, 1.0f, 0.5f}});
             const auto data = Incubator::Demo::makeCubeMesh();
-            return renderer.createMesh(data.vertices, data.indices);
-        }();
-        const auto plane = [&] {
-            const auto data = Incubator::Demo::makePlaneMesh();
-            return renderer.createMesh(data.vertices, data.indices);
-        }();
-        Incubator::Demo::SceneControls scene;
+            cube = renderer.createMesh(data.vertices, data.indices);
+            const auto planeData = Incubator::Demo::makePlaneMesh();
+            plane = renderer.createMesh(planeData.vertices, planeData.indices);
+        }
+        auto scene = modelMode ? Incubator::Demo::makeModelSceneControls() : Incubator::Demo::SceneControls{};
         scene.cube.visible = meshName != "plane";
         scene.plane.visible = meshName != "cube";
         log.info("Initial scene visibility: {}", meshName);
+        const auto textureId = assets.texture ? assets.texture->id() : Incubator::Resource::ResourceId{};
         assets.releaseCpuResources();
-        if (Incubator::Resource::ResourceRegistry::instance().getObject(textureId))
+        if (textureId.valid() && Incubator::Resource::ResourceRegistry::instance().getObject(textureId))
             throw Incubator::Error::Exception(Incubator::Error::Code::RENDER, "CPU scene texture was not unloaded");
 
         while (!window->shouldClose())
@@ -99,8 +105,18 @@ int main(int argc, char* argv[])
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
             }
-            Incubator::Demo::drawSceneControls(scene, paths.texture);
-            const auto draws = Incubator::Demo::makeSceneDraws(scene, cube, plane, cubeMaterial, planeMaterial);
+            Incubator::Demo::drawSceneControls(scene, assetPath, modelMode);
+            std::vector<Incubator::Render::DrawItem> draws;
+            if (modelMode)
+            {
+                std::vector<Incubator::Model::ModelInstance> instances;
+                for (const auto* object : {&scene.cube, &scene.plane})
+                    if (object->visible)
+                        instances.push_back({model, Incubator::Demo::makeSceneModel(object->transform)});
+                draws = Incubator::Model::makeModelDraws(instances);
+            }
+            else
+                draws = Incubator::Demo::makeSceneDraws(scene, cube, plane, cubeMaterial, planeMaterial);
             const auto frame = Incubator::Demo::makeSceneFrame(*extent, draws, scene.camera);
             renderer.imgui().endFrame();
 

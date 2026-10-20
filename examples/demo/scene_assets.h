@@ -7,6 +7,7 @@
 
 #include "runtime/core/error/error.h"
 #include "runtime/platform/fileio/fileio.h"
+#include "runtime/resource/loader/model_loader.h"
 #include "runtime/resource/loader/shader_loader.h"
 #include "runtime/resource/loader/shader_resource.h"
 #include "runtime/resource/loader/texture_loader.h"
@@ -23,6 +24,7 @@ namespace Incubator
             std::string_view vertex = "shaders/cube.vert.spv";
             std::string_view fragment = "shaders/cube.frag.spv";
             std::string_view texture = "textures/reference_rgba.png";
+            std::string_view model;
         };
 
         // Demo and review tests exclusively own the Manager's loader routes during this scope.
@@ -84,9 +86,13 @@ namespace Incubator
                                        std::make_unique<Resource::ShaderLoader>(*fileIO_));
                 manager.registerLoader(Resource::ResourceType::TEXTURE,
                                        std::make_unique<Resource::TextureLoader>(*fileIO_));
+                if (!paths.model.empty())
+                    manager.registerLoader(Resource::ResourceType::MODEL,
+                                           std::make_unique<Resource::ModelLoader>(*fileIO_));
                 vertex = load<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.vertex);
                 fragment = load<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.fragment);
-                texture = load<Resource::TextureResource>(Resource::ResourceType::TEXTURE, paths.texture);
+                if (paths.model.empty())
+                    texture = load<Resource::TextureResource>(Resource::ResourceType::TEXTURE, paths.texture);
             }
 
             SceneAssets(const SceneAssets&) = delete;

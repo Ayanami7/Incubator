@@ -72,7 +72,8 @@ TextureLoader 经 FileIO 完整读取并在内存解码 PNG，TextureResource �
 ModelResource 使用 MODEL 类型，拥有独立的 MeshData、线性基色/外部纹理路径描述、几何与材质关联，
 以及显式源根和节点局部矩阵。构造时校验几何和单根树结构，之后只读访问；多个节点可复用同一几何。
 ModelLoader 通过现有 FileIO 和固定 Assimp 导入外部 bin/PNG 的静态 glTF 2.0、外部 mtl/PNG 的 OBJ，
-返回自有 CPU 资产，图片仅保留路径；GPU 准备尚未接入。数据及矩阵约定见
+返回自有 CPU 资产，图片仅保留路径。GPU 资源准备和实例绘制由 [Model 消费层](../model.md)
+基于 Resource 与 Render 完成，Resource 本身仍负责 CPU 资源。数据及矩阵约定见
 [ModelResource](./model_resource.md)，格式与材质支持范围见 [ModelLoader](./loader/model_loader.md)。
 
 ## 演进路线（未实现项触发条件）

@@ -29,6 +29,7 @@ Incubator/
 │       ├── core/          # 以下为逻辑模块目录，各自没有 CMakeLists.txt
 │       ├── platform/
 │       ├── resource/
+│       ├── model/
 │       └── render/
 ├── assets/
 │   └── CMakeLists.txt  # 运行资源部署（文件依赖与增量复制）
@@ -47,7 +48,7 @@ Incubator/
 
 ### 运行时库目标（src/runtime/）
 
-- Core、Platform、Resource、Render 是逻辑模块，由 `src/runtime/CMakeLists.txt` 按模块收集头文件与源文件，共同编译为 `IncubatorRuntime` 静态库
+- Core、Platform、Resource、Model、Render 是逻辑模块，由 `src/runtime/CMakeLists.txt` 按模块收集头文件与源文件，共同编译为 `IncubatorRuntime` 静态库
 - 源码分层的依赖方向由模块边界维护；目录层次不代表独立库目标
 - 使用 `FOLDER "Engine"` 属性在 IDE 中分组显示
 - 依赖关系通过 `add_dependencies` + `target_link_libraries` 声明
@@ -70,7 +71,7 @@ Incubator/
 - 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
 - 当前 PNG 部署目标 `demo_textures` 定义于 `assets/CMakeLists.txt`，Shader 编译目标 `demo_shaders` 定义于 `examples/demo/CMakeLists.txt`；Demo 和相关 GPU 测试显式依赖这两个目标。
-- 模型部署目标 `demo_models` 定义于 `assets/CMakeLists.txt`，按显式文件依赖复制 glTF/bin、OBJ/MTL；模型 CPU 导入测试依赖该目标及 `demo_textures`。
+- 模型部署目标 `demo_models` 定义于 `assets/CMakeLists.txt`，按显式文件依赖复制 glTF/bin、OBJ/MTL；Demo、模型准备测试和模型 CPU 导入测试均依赖该目标及 `demo_textures`，前两者还依赖 `demo_shaders`。
 
 ### Assimp 依赖
 

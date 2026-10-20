@@ -45,6 +45,7 @@ Loader 通过构造函数注入 `Incubator::FileIO::FileIO&`（如 `TextLoader(F
 
 - 生产与测试共用同一套真实 FileIO（`createPlatformFileIO()`）
 - FileIO 必须活到所有借用它的 Loader 销毁之后；调用方应覆盖注册、加载与后续初始化的异常路径，释放本次取得的资源持有，再移除 Loader，最后销毁 FileIO。`ResourceManager::reset()` 仅清除 Loader，不替代资源引用的 release。
+- Demo 模型模式在此作用域内完成 ModelLoader 导入及 Model::prepareModel 的 PNG 依赖加载，返回的 PreparedModel 不借用 Loader 或 FileIO；最终用法见 [Demo](../../../examples/demo.md#启动时选择模型)。
 - 文件定位测试用临时目录替换工作目录（虚拟路径 join 后落在临时目录）；短读、提前 EOF、读取异常与输入长度上限测试通过受控 FileIO/FileHandle 注入，不实际分配巨量文件。
 
 ## 新增一个 Loader 的模板

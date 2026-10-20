@@ -24,6 +24,16 @@ namespace Incubator::Demo
         std::array<float, 4> clearColor{0.12f, 0.16f, 0.22f, 1.0f};
     };
 
+    inline SceneControls makeModelSceneControls()
+    {
+        SceneControls scene;
+        scene.cube.transform = {{-1.2f, 0.3f, 0}, {}, {0.65f, 0.65f, 0.65f}};
+        scene.plane.transform = {{1.2f, 0.3f, 0}, {}, {0.65f, 0.65f, 0.65f}};
+        scene.camera.pitchDegrees = 0;
+        scene.camera.distance = 6;
+        return scene;
+    }
+
     inline std::vector<Render::DrawItem> makeSceneDraws(const SceneControls& scene, const Render::Mesh& cube,
                                                         const Render::Mesh& plane, const Render::Material& cubeMaterial,
                                                         const Render::Material& planeMaterial)
@@ -52,15 +62,16 @@ namespace Incubator::Demo
         }
     }
 
-    inline void drawSceneControls(SceneControls& scene, std::string_view texturePath)
+    inline void drawSceneControls(SceneControls& scene, std::string_view assetPath, bool modelMode = false)
     {
         ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(350, 590), ImGuiCond_FirstUseEver);
         ImGui::Begin("Incubator Demo");
-        ImGui::TextWrapped("Texture: %.*s", static_cast<int>(texturePath.size()), texturePath.data());
+        ImGui::TextWrapped("%s: %.*s", modelMode ? "Model" : "Texture", static_cast<int>(assetPath.size()),
+                           assetPath.data());
         ImGui::ColorEdit3("Clear color", scene.clearColor.data());
-        drawObjectControls("Cube", scene.cube);
-        drawObjectControls("Plane", scene.plane);
+        drawObjectControls(modelMode ? "Instance A" : "Cube", scene.cube);
+        drawObjectControls(modelMode ? "Instance B" : "Plane", scene.plane);
         if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
         {
             ImGui::SliderFloat3("Target", &scene.camera.target.x, -2.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -72,7 +83,7 @@ namespace Incubator::Demo
                                ImGuiSliderFlags_AlwaysClamp);
         }
         if (ImGui::Button("Reset scene"))
-            scene = SceneControls{};
+            scene = modelMode ? makeModelSceneControls() : SceneControls{};
         ImGui::SameLine();
         ImGui::Text("Objects: %d", int(scene.cube.visible) + int(scene.plane.visible));
         ImGui::End();

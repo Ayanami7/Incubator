@@ -20,6 +20,10 @@ Render 是 IncubatorRuntime 中的 Function 层模块，负责把应用准备的
 
 Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resource 不依赖 Render。GLFW 与 Vulkan Surface 的连接属于 Render，`Platform::Window` 不添加 Vulkan 创建接口。公共渲染头文件不暴露 Vulkan 类型，Runtime 对 Vulkan 的链接保持私有。
 
+模型文件由 [Model 消费层](./model.md) 准备并展开为同一 FrameInput/DrawItem，Renderer 不解析文件或遍历节点。
+`render/detail/renderer_review.h` 仅供内部数值验证同步借用实际 GPU 网格、材质和 Pipeline；
+测试附件与回读代码位于 test/runtime/support，应用使用既有 drawFrame 提交接口。
+
 源码归入 `src/runtime/render/`，应用入口位于该目录，实现放在 `render/vulkan/`。文件由现有 `IncubatorRuntime` 目标的 `src/runtime/CMakeLists.txt` 收集，不新增渲染库。
 
 ## 对象职责与所有权

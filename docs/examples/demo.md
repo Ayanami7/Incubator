@@ -1,8 +1,9 @@
-# 多物体纹理 Demo
+# 多物体与模型 Demo
 
 `examples/demo` 演示通过 ResourceManager 加载外部 SPIR-V 和 PNG，将资源传给 Renderer，
 上传应用生成的立方体和平面，为每项提交独立的 Mesh、Material 和模型矩阵，共享相机并叠加 ImGui 控件。
 应用负责事件轮询、场景状态、矩阵、绘制列表、界面构建和主循环。
+也可选择 glTF/OBJ 模型，通过 ModelLoader、prepareModel 和 ModelInstance 展示两个共享实例。
 
 ## 构建与启动
 
@@ -27,6 +28,26 @@ Set-Location 'E:/Project/VScode/Incubator/build'
 VS Code 选择 `Debug` 后 F5，使用默认纹理；选择 `Debug (direction texture)` 则使用第二张纹理。
 两份配置的工作目录均为 `${workspaceFolder}/build`。Visual Studio 生成器的 Demo 目标由
 CMake 设置 `VS_DEBUGGER_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}`。启动调试前先完成构建。
+
+## 启动时选择模型
+
+在构建目录中指定模型虚拟路径，保留模型及依赖相对于 `assets/` 的目录结构：
+
+```powershell
+& './examples/demo/demo.exe' '--model' 'models/minimal_gltf/model.gltf'
+& './examples/demo/demo.exe' '--model' 'models/minimal_obj/model.obj'
+```
+
+每次启动准备一次模型，两个实例共用其 Mesh、Texture、Material 和节点元数据。
+面板中的 `Instance A / Instance B` 分别控制实例整体变换及可见性；均隐藏时仍绘制背景和 UI。
+`Reset scene` 恢复模型模式的初始位置、缩放和相机；修改实例、相机或窗口大小不重新上传模型。
+切换文件或格式需重启。原有纹理位置参数和 `both|cube|plane` 模式继续用于程序生成几何。
+
+正式样本采用右手、Y-up，保留原始单位与节点变换；glTF 包含非单位根、父子层级、重复几何和双材质，
+OBJ 包含方向图四边形和纯色三角形。两者共用方向 PNG，纯色线性 RGB 为 `{0.5, 1, 0.5}`。
+方向图原点在左上；PNG alpha 不产生透明，固定 nearest/repeat/LOD=0，无光照和背面剔除。
+来源、CC0-1.0 许可及层级说明见 [模型样本](../../assets/models/SOURCE.md)，完整支持范围见
+[ModelLoader](../runtime/resource/loader/model_loader.md)。
 
 ## 启动时选择纹理
 
@@ -158,7 +179,8 @@ Set-Location 'E:/Project/VScode/Incubator/build/task05-clean'
 ## 资源持有与关闭
 
 `examples/demo/scene_assets.h` 的 `SceneAssets` 创建 FileIO 并注册 ShaderLoader、TextureLoader，
-依次取得两个 Shader 和所选纹理。清理成员在 Loader 注册前构造，覆盖后续加载以及
+依次取得两个 Shader；程序几何模式还取得所选纹理，模型模式则注册 ModelLoader。
+这些路由由 Demo 独占管理。清理成员在 Loader 注册前构造，覆盖后续加载以及
 外层构造失败；已有登记条目显式 acquire，仅释放本次实际取得的持有。
 
 Demo 在创建窗口前加载资源，随后以 `Renderer(window, validationMode)` 初始化运行环境，
@@ -167,6 +189,10 @@ Demo 在创建窗口前加载资源，随后以 `Renderer(window, validationMode
 随后创建两份共享 Texture 的材质：立方体使用默认白色，平面使用线性 RGB `{0.5, 1.0, 0.5}`。
 `makeSceneDraws` 将两份材质分别写入对应 DrawItem，变换、开关和 Reset scene 不重新创建材质。
 创建两种网格后立即释放 CPU 资源并检查纹理已卸载，再进入绘制循环。
+模型模式在共享 Shader 准备后调用 `Model::prepareModel(renderer, paths.model)`，由准备入口加载
+ModelResource 与 PNG、上传唯一几何/纹理并创建材质；不创建程序立方体和平面。
+准备完成后释放 CPU Shader 并移除 Loader；CPU 模型、像素和 Importer 均不被实例借用。
+每帧将可见对象转换为共享同一 PreparedModel 的 ModelInstance，使用 `makeModelDraws` 展开后提交。
 Renderer 保留重建 Pipeline 所需的 Shader 字数组副本，并持有 GPU Texture 与不可变 Material；
 材质颜色在 sRGB 采样后按线性 RGB 相乘，默认白色保留原色与方向，平面减少红/蓝线性分量；输出保持不透明。
 复制应用引用共享同一次上传和材质绑定，交换链重建不重新读取图片。
@@ -180,7 +206,7 @@ Renderer 保留重建 Pipeline 所需的 Shader 字数组副本，并持有 GPU 
 `Disabled`。Optional 缺少 Khronos Validation Layer 或 `VK_EXT_debug_utils` 时会告警并继续；
 需要强制启用验证的 GPU 测试显式使用 `Required`。
 
-必需 Shader 或纹理缺失、读取或解码失败时，应用记录启动错误并返回退出码 1。
+必需 Shader、模型或依赖缺失、读取或解码失败时，应用记录启动错误并返回退出码 1。
 例如，在构建目录执行：
 
 ```powershell
@@ -209,4 +235,6 @@ try {
 - [Loader](../runtime/resource/loader/loader.md)：资源路径、FileIO 借用与错误语义。
 - [ShaderLoader](../runtime/resource/loader/shader_loader.md)：SPIR-V CPU 载荷。
 - [TextureLoader](../runtime/resource/loader/texture_loader.md)：PNG 解码与 CPU 像素约定。
+- [ModelLoader](../runtime/resource/loader/model_loader.md)：静态 glTF/OBJ 支持范围与材质/路径边界。
+- [Model](../runtime/model.md)：GPU 准备、共享实例与矩阵展开。
 - [CMake 构建结构](../cmake.md)：构建层级与通用资源部署约定。

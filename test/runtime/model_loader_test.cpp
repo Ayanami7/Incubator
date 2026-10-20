@@ -628,6 +628,18 @@ namespace
                           MtlCase{"texture_network", "map_Kd https://example.invalid/a.png", false}),
         [](const auto& info) { return info.param.name; });
 
+    TEST_F(ModelLoaderTest, RejectsMtlUvOptionsRegardlessOfCase)
+    {
+        for (const char* option : {"-O 0 0 0", "-S 2 2 1", "-T 1 1 1", "-TyPe sphere"})
+        {
+            SCOPED_TRACE(option);
+            write("models/minimal_obj/materials/model.mtl",
+                  std::string("newmtl Direction\nKd 1 1 1\nmap_Kd ") + option +
+                      " ../../../textures/direction_rgba.png\nnewmtl Solid\nKd 0.5 1 0.5\n");
+            expectFailure(OBJ, "UV transform/mapping");
+        }
+    }
+
     class ModelReadFailureTest : public ModelLoaderTest, public ::testing::WithParamInterface<std::string>
     {};
     TEST_P(ModelReadFailureTest, PropagatesIncompleteReadOrExceptionAndReleasesHandles)
