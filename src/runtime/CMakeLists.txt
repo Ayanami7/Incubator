@@ -114,6 +114,7 @@ set(RENDER_SOURCES
 # 合并所有头文件和源文件到一个变量
 set(ALL_HEADERS
     model/prepared_model.h
+    model/model_instance.h
     ${CORE_HEADERS}
     ${PLATFORM_HEADERS}
     ${RESOURCE_HEADERS}
@@ -121,6 +122,7 @@ set(ALL_HEADERS
 )
 set(ALL_SOURCES
     model/prepared_model.cpp
+    model/model_instance.cpp
     ${CORE_SOURCES}
     ${PLATFORM_SOURCES}
     ${RESOURCE_SOURCES}

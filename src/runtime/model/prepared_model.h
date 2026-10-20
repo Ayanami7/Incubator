@@ -4,8 +4,7 @@
 #include <string_view>
 #include <vector>
 
-#include "runtime/render/material.h"
-#include "runtime/render/mesh.h"
+#include "runtime/render/frame_input.h"
 #include "runtime/resource/loader/model_resource.h"
 
 namespace Incubator
@@ -52,6 +51,11 @@ namespace Incubator
             {
                 return rootNode_;
             }
+            // Depth-first, parent-before-children order; model matrices include the source root.
+            const std::vector<Render::DrawItem>& draws() const noexcept
+            {
+                return draws_;
+            }
 
         private:
             friend std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer&, std::string_view);
@@ -63,6 +67,7 @@ namespace Incubator
             std::vector<Resource::ModelPart> parts_;
             std::vector<Resource::ModelNode> nodes_;
             uint32_t rootNode_ = 0;
+            std::vector<Render::DrawItem> draws_;
         };
     }  // namespace Model
 }  // namespace Incubator

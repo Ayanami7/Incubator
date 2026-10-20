@@ -1,16 +1,21 @@
 #include <GLFW/glfw3.h>
 #include <gtest/gtest.h>
+#include <imgui.h>
 #include <spdlog/sinks/ostream_sink.h>
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <iostream>
+#include <iterator>
 #include <sstream>
 
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
+#include "runtime/model/model_instance.h"
 #include "runtime/model/prepared_model.h"
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
@@ -369,6 +374,281 @@ namespace
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, PNG).valid());
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, "textures/unused.png").valid());
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded"), 0u);
+        }
+        cleanValidation();
+    }
+    TEST(ModelInstanceInputTest, EmptyInputIsEmptyAndNullModelIsRejected)
+    {
+        EXPECT_TRUE(Model::makeModelDraws({}).empty());
+        const std::array<Model::ModelInstance, 1> missing{};
+        try
+        {
+            Model::makeModelDraws(missing);
+            FAIL() << "Accepted null prepared model";
+        }
+        catch (const Error::Exception& error)
+        {
+            EXPECT_EQ(error.code(), Error::Code::CONFIG);
+        }
+    }
+
+    class TransformModelLoader final : public LoaderBase
+    {
+    public:
+        std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view) override
+        {
+            MeshData mesh{{{{0, 0, 0}, {0, 0}}, {{1, 0, 0}, {1, 0}}, {{0, 1, 0}, {0, 1}}}, {0, 1, 2}};
+            const auto root = glm::translate(glm::mat4(1), glm::vec3(10, 0, 0));
+            const auto parent = glm::rotate(glm::mat4(1), glm::radians(90.0f), glm::vec3(0, 0, 1));
+            const auto leaf =
+                glm::translate(glm::mat4(1), glm::vec3(2, 0, 0)) * glm::scale(glm::mat4(1), glm::vec3(2, 3, 1));
+            return std::make_unique<ModelResource>(
+                id, std::vector<MeshData>{mesh},
+                std::vector<ModelMaterial>{{}, {std::nullopt, {0.5f, 1, 0.5f}}, {std::nullopt, {1, 0, 0}}},
+                std::vector<ModelPart>{{0, 0}, {0, 1}, {0, 2}},
+                std::vector<ModelNode>{{"parent", parent, {1}, {0}},
+                                       {"leaf", leaf, {}, {1, 0}},
+                                       {"root", root, {0, 3}, {2}},
+                                       {"sibling", glm::translate(glm::mat4(1), glm::vec3(-1, 0, 0)), {}, {2}}},
+                2);
+        }
+    };
+
+    class ModelInstanceTest : public ModelPreparationTest
+    {
+    protected:
+        void point(const glm::mat4& matrix, float x, float y)
+        {
+            const auto actual = matrix * glm::vec4(1, 1, 0, 1);
+            EXPECT_NEAR(actual.x, x, 0.00001f);
+            EXPECT_NEAR(actual.y, y, 0.00001f);
+            EXPECT_FLOAT_EQ(actual.z, 0.0f);
+            EXPECT_FLOAT_EQ(actual.w, 1.0f);
+        }
+        CameraMatrices camera(FrameExtent extent)
+        {
+            const float aspect = static_cast<float>(extent.width) / extent.height;
+            auto projection = glm::orthoRH_ZO(-aspect, aspect, -1.0f, 1.0f, 0.1f, 10.0f);
+            projection[1][1] *= -1;
+            return {glm::lookAtRH(glm::vec3(0, 0, 3), glm::vec3(0), glm::vec3(0, 1, 0)), projection};
+        }
+        std::optional<FrameExtent> submit(Window::Window& window, Renderer& renderer,
+                                          std::span<const Model::ModelInstance> instances, bool ui = false)
+        {
+            window.pollEvents();
+            const auto extent = renderer.beginUiFrame();
+            if (!extent)
+                return std::nullopt;
+            auto draws = Model::makeModelDraws(instances);
+            if (ui)
+                ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(16, 16), ImVec2(48, 48),
+                                                              IM_COL32(255, 0, 255, 255));
+            renderer.imgui().endFrame();
+            auto* data = renderer.imgui().drawData();
+            renderer.drawFrame({*extent, camera(*extent), draws}, {0.2f, 0.24f, 0.28f, 1}, [&](void* commands) {
+                if (ui)
+                    renderer.imgui().recordDrawData(data, commands);
+            });
+            // Mutate and destroy the submitted CPU storage before the GPU necessarily finishes.
+            for (auto& draw : draws)
+                draw = {};
+            draws.clear();
+            draws.shrink_to_fit();
+            return extent;
+        }
+        void color(const WindowCapture::Image& image, float x, float y, const std::array<int, 3>& expected)
+        {
+            const int px = image.width / 2 + static_cast<int>(x * image.height / 2);
+            const int py = image.height / 2 - static_cast<int>(y * image.height / 2);
+            ASSERT_GE(px, 0);
+            ASSERT_LT(px, image.width);
+            ASSERT_GE(py, 0);
+            ASSERT_LT(py, image.height);
+            for (int channel = 0; channel < 3; ++channel)
+                EXPECT_NEAR(image.rgba[(static_cast<size_t>(py) * image.width + px) * 4 + channel], expected[channel],
+                            12);
+        }
+    };
+
+    TEST_F(ModelInstanceTest, NonzeroRootDepthFirstPartsAndIndependentInstanceMatrices)
+    {
+        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            auto model = Model::prepareModel(renderer, "models/transforms.gltf");
+            released(ResourceType::MODEL, "models/transforms.gltf");
+            EXPECT_EQ(model->rootNode(), 2u);
+            ASSERT_EQ(model->draws().size(), 5u);
+            EXPECT_EQ(model->meshes().size(), 1u);
+            EXPECT_EQ(model->materials().size(), 3u);
+            EXPECT_EQ(model->textures().size(), 1u);
+            const std::array<std::array<float, 2>, 5> expected = {{{11, 1}, {9, 1}, {7, 4}, {7, 4}, {10, 1}}};
+            for (size_t i = 0; i < expected.size(); ++i)
+                point(model->draws()[i].model, expected[i][0], expected[i][1]);
+            std::array instances = {Model::ModelInstance{model, glm::translate(glm::mat4(1), glm::vec3(0, 5, 0))},
+                                    Model::ModelInstance{model, glm::translate(glm::mat4(1), glm::vec3(-2, 1, 0)) *
+                                                                    glm::scale(glm::mat4(1), glm::vec3(0.5f, 2, 1))}};
+            model.reset();
+            EXPECT_EQ(instances[0].model.get(), instances[1].model.get());
+            const auto draws = Model::makeModelDraws(instances);
+            ASSERT_EQ(draws.size(), 10u);
+            for (size_t i = 0; i < expected.size(); ++i)
+            {
+                point(draws[i].model, expected[i][0], expected[i][1] + 5);
+                point(draws[i + 5].model, expected[i][0] * 0.5f - 2, expected[i][1] * 2 + 1);
+            }
+            instances[0].transform = glm::mat4(1);
+            const auto changed = Model::makeModelDraws(instances);
+            EXPECT_NE(changed[2].model, draws[2].model);
+            EXPECT_EQ(changed[7].model, draws[7].model);
+            point(instances[0].model->draws()[2].model, 7, 4);
+            EXPECT_TRUE(Model::makeModelDraws({}).empty());
+            ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<SharedModelLoader>(true));
+            const std::array empty{Model::ModelInstance{Model::prepareModel(renderer, "models/empty.gltf")}};
+            EXPECT_TRUE(Model::makeModelDraws(empty).empty());
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 1u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 3u);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(ModelInstanceTest, ImportedInstancesPresentMaterialsDepthAndSurviveListAndSwapchainChanges)
+    {
+        // A temporary OBJ variant gives the second format a distinct solid color for depth checks.
+        {
+            const fs::path path("assets/models/minimal_obj/materials/model.mtl");
+            std::ifstream input(path);
+            std::string mtl{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+            input.close();
+            const auto at = mtl.find("Kd 0.5 1 0.5");
+            ASSERT_NE(at, std::string::npos);
+            mtl.replace(at, std::string_view("Kd 0.5 1 0.5").size(), "Kd 1 0 0");
+            std::ofstream(path) << mtl;
+        }
+        auto native = window(true);
+        std::vector<Model::ModelInstance> instances;
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            auto gltf = Model::prepareModel(renderer, GLTF);
+            auto obj = Model::prepareModel(renderer, OBJ);
+            ASSERT_EQ(gltf->draws().size(), 4u);
+            ASSERT_EQ(obj->draws().size(), 2u);
+            released(ResourceType::MODEL, GLTF);
+            released(ResourceType::MODEL, OBJ);
+            released(ResourceType::TEXTURE, PNG);
+            const auto placement = [](float x, float y, float size) {
+                return glm::translate(glm::mat4(1), glm::vec3(x, y, 0)) * glm::scale(glm::mat4(1), glm::vec3(size));
+            };
+            instances = {{gltf, placement(-0.65f, 0.45f, 0.25f)},
+                         {gltf, placement(0.65f, 0.45f, 0.25f)},
+                         {obj, placement(-0.65f, -0.55f, 0.35f)},
+                         {obj, placement(0.65f, -0.55f, 0.35f)}};
+            const auto first = Model::makeModelDraws(instances);
+            ASSERT_EQ(first.size(), 12u);
+            const auto k = std::sqrt(0.5f);
+            point(first[0].model, -0.65f + 0.25f * (0.25f + 0.15f * k), 0.45f + 0.25f * 1.55f * k);
+            point(first[4].model, 0.65f + 0.25f * (0.25f + 0.15f * k), 0.45f + 0.25f * 1.55f * k);
+            point(first[2].model, -0.65f + 0.25f * (0.25f + 1.5f * k), 0.45f + 0.125f * k);
+            point(first[8].model, -0.3f, -0.2f);
+            // No CPU asset route or FileIO survives into the instance/frame loop.
+            ResourceManager::instance().reset();
+            fileIO_.reset();
+            auto* handle = static_cast<GLFWwindow*>(native->getNativeHandle());
+            for (int frame = 0; frame < 8; ++frame)
+            {
+                if (frame == 4)
+                    glfwSetWindowSize(handle, 800, 600);
+                instances[0].transform[3][0] = -0.65f + (frame == 7 ? 0 : (frame % 2 == 0 ? -0.03f : 0.03f));
+                ASSERT_TRUE(submit(*native, renderer, instances));
+                glfwWaitEventsTimeout(0.04);
+            }
+            auto image = WindowCapture::capture(*native);
+            EXPECT_EQ(image.width, 800);
+            EXPECT_EQ(image.height, 600);
+            color(image, -0.510897f, 0.567851f, {188, 255, 188});
+            color(image, 0.789103f, 0.567851f, {188, 255, 188});
+            color(image, -0.186806f, 0.261438f, {188, 255, 188});
+            color(image, -0.44f, -0.608333f, {255, 0, 0});
+            color(image, 0.86f, -0.608333f, {255, 0, 0});
+            WindowCapture::save(image, "review/model-instances-materials.ppm");
+
+            // Align the glTF leaf with the original OBJ geometry. The near green surface must
+            // occlude the red surface in both submission orders.
+            const auto leaf = gltf->draws()[0].model;
+            std::array overlap = {
+                Model::ModelInstance{gltf, glm::translate(glm::mat4(1), glm::vec3(0, 0, 0.3f)) * glm::inverse(leaf)},
+                Model::ModelInstance{obj, glm::translate(glm::mat4(1), glm::vec3(0, 0, -0.3f))}};
+            for (int order = 0; order < 2; ++order)
+            {
+                ASSERT_TRUE(submit(*native, renderer, overlap));
+                glfwWaitEventsTimeout(0.06);
+                image = WindowCapture::capture(*native);
+                color(image, 0.6f, -1.0f / 6, {188, 255, 188});
+                std::reverse(overlap.begin(), overlap.end());
+            }
+            WindowCapture::save(image, "review/model-instances-depth.ppm");
+            for (size_t count : {1u, 3u, 4u})
+            {
+                const auto input = std::span<const Model::ModelInstance>(instances).first(count);
+                EXPECT_EQ(Model::makeModelDraws(input).size(), count == 1 ? 4u : count == 3 ? 10u : 12u);
+                ASSERT_TRUE(submit(*native, renderer, input));
+            }
+            for (int frame = 0; frame < 3; ++frame)
+                ASSERT_TRUE(submit(*native, renderer, {}, true));
+            glfwWaitEventsTimeout(0.06);
+            image = WindowCapture::capture(*native);
+            color(image, 0.789103f, 0.567851f, {51, 61, 71});
+            const auto ui = (static_cast<size_t>(24) * image.width + 24) * 4;
+            EXPECT_GT(image.rgba[ui], 240);
+            EXPECT_LT(image.rgba[ui + 1], 15);
+            EXPECT_GT(image.rgba[ui + 2], 240);
+            WindowCapture::save(image, "review/model-instances-empty-ui.ppm");
+            glfwIconifyWindow(handle);
+            for (int attempt = 0; attempt < 100 && !native->isIconified(); ++attempt)
+            {
+                native->pollEvents();
+                glfwWaitEventsTimeout(0.005);
+            }
+            ASSERT_TRUE(native->isIconified());
+            for (int frame = 0; frame < 3; ++frame)
+                EXPECT_FALSE(submit(*native, renderer, instances));
+            glfwRestoreWindow(handle);
+            for (int attempt = 0; attempt < 100 && native->isIconified(); ++attempt)
+            {
+                native->pollEvents();
+                glfwWaitEventsTimeout(0.005);
+            }
+            ASSERT_FALSE(native->isIconified());
+            for (int frame = 0; frame < 3; ++frame)
+                ASSERT_TRUE(submit(*native, renderer, instances));
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 4u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+        }
+        const auto expired = Model::makeModelDraws(instances);
+        ASSERT_EQ(expired.size(), 12u);
+        for (const auto& draw : expired)
+        {
+            EXPECT_FALSE(draw.mesh.valid());
+            EXPECT_FALSE(draw.material.valid());
+        }
+        {
+            Renderer next(*native, RendererValidationMode::Required);
+            try
+            {
+                next.drawFrame({{800, 600}, camera({800, 600}), expired}, {0, 0, 0, 1});
+                FAIL() << "Accepted expired draws";
+            }
+            catch (const Error::Exception& error)
+            {
+                EXPECT_EQ(error.code(), Error::Code::RENDER);
+                EXPECT_NE(error.message().find("Mesh is invalid"), std::string::npos);
+            }
+            EXPECT_TRUE(submit(*native, next, {}, true));
         }
         cleanValidation();
     }

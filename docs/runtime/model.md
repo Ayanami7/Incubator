@@ -1,6 +1,6 @@
-# Model 模型准备
+# Model 模型准备与实例
 
-`runtime/model/prepared_model.h` 提供模型消费层，依赖 Resource 和 Render，归入 `IncubatorRuntime`。
+`runtime/model/prepared_model.h` 与 `model_instance.h` 提供模型消费层，依赖 Resource 和 Render，归入 `IncubatorRuntime`。
 Resource 交付 CPU 数据，Renderer 创建并持有 GPU 对象，模型层负责依赖准备及可共享的只读结果。
 
 ## 准备入口
@@ -24,7 +24,7 @@ GPU 准备在 Renderer 所在线程完成，FileIO 至少覆盖 CPU 导入与依
 2. 通过 Manager 加载所有被使用材质的唯一 PNG 依赖，确认依赖完整后开始 GPU 创建。
 3. 每份被使用几何上传一次，每个被使用的源材质创建一次；不同材质引用相同规范化路径时共享 Texture。
 4. 纯色/默认材质共享本次准备内的一张显式 1×1 RGBA 全白纹理，无此类材质时不创建白纹理。
-5. 返回完整结果，并释放本次 CPU 模型和图片持有。
+5. 从源根按深度优先顺序缓存绘制项及模型内部累计矩阵，返回完整结果，并释放本次 CPU 模型和图片持有。
 
 未被任何节点使用的部分、几何、材质及其纹理不准备；源 ModelResource 已在构造时校验结构，
 准备层不重复校验不可变图。顶点从 `Resource::MeshVertexData` 显式转换为 `Render::MeshVertex`，索引保持 uint16。
@@ -40,10 +40,10 @@ GPU 准备在 Renderer 所在线程完成，FileIO 至少覆盖 CPU 导入与依
 | `parts()` | 自有 ModelPart 描述，geometry/material 分别索引结果的 meshes/materials |
 | `nodes()` | 自有 ModelNode 元数据；保留名称、局部矩阵、子节点顺序，parts 改为结果内部索引 |
 | `rootNode()` | 源根在 nodes 中的索引；保留源根及非单位局部矩阵 |
+| `draws()` | 缓存的只读 DrawItem 数组；每项 model 是从源根到所属节点的局部矩阵乘积，尚未包含实例整体变换 |
 
 节点数组及子节点索引保持源模型的顺序。资源和部分按节点数组中的首次引用组织为紧凑数组，
-结果内部索引不可当作原 CPU 资产索引或 ResourceId。当前入口交付资源和元数据；整体实例变换和生产绘制列表
-由实例消费入口组织。手工消费部分时，关联方式为：
+结果内部索引不可当作原 CPU 资产索引或 ResourceId。手工消费部分时，关联方式为：
 
 ```cpp
 const auto& part = model->parts()[partIndex];
@@ -51,8 +51,42 @@ Incubator::Render::DrawItem draw{
     model->meshes()[part.geometry], model->materials()[part.material], worldMatrix};
 ```
 
-`worldMatrix` 应包含实例与从源根到该节点的变换。最终 FrameInput、相机和 DrawItem 列表仍由应用提交，
-借用期遵循 [Render](./render.md)；模型准备本身不创建实例、Scene Entity 或另一套帧同步。
+`worldMatrix` 应包含实例与从源根到该节点的变换。常规多实例绘制使用下述入口。
+
+## 实例与绘制展开
+
+```cpp
+using Incubator::Model::ModelInstance;
+using Incubator::Model::makeModelDraws;
+
+std::array instances{
+    ModelInstance{model, glm::translate(glm::mat4(1), glm::vec3(-1, 0, 0))},
+    ModelInstance{model, glm::translate(glm::mat4(1), glm::vec3(1, 0, 0))}};
+auto draws = makeModelDraws(instances);
+renderer.drawFrame({extent, camera, draws}, clearColor);
+// drawFrame borrows draws only during this call; storage may now be reused or released.
+```
+
+`ModelInstance` 保存 `std::shared_ptr<const PreparedModel> model` 与默认单位矩阵的 `glm::mat4 transform`。
+多个实例可引用同一模型或不同模型。修改一个实例的 transform 不影响其他实例或模型缓存；实例不复制 CPU
+几何、像素或 GPU 对象，也不分配 Entity ID。
+
+`makeModelDraws(std::span<const ModelInstance>)` 每次返回一份新的 `std::vector<Render::DrawItem>`：
+
+- 外层顺序为输入实例顺序；每个模型从 rootNode 开始，先输出当前节点的全部部分，再按 children 的原顺序
+  深度优先访问子树；部分顺序与 node.parts 一致。重复引用的部分在每个所属节点各生成一个 DrawItem。
+- 准备时以非递归遍历计算 `parent * localTransform`，根矩阵只包含一次。逐帧展开仅计算
+  `instance.transform * cachedDraw.model`，不重新遍历静态树、不读盘、解码、上传或创建材质。
+- 空输入或所有模型均无可绘制部分时返回空列表；实例数量变化不保留上次结果。每个实例必须持有非空 model，
+  空模型指针抛 CONFIG；合法但无可绘制部分的 PreparedModel 可以正常引用。
+- 相机和投影不参与实例展开，UV 与投影 Y 不再次适配。应用继续从 beginUiFrame 取得实际 extent 并生成相机；
+  空列表也可交给 Renderer 清屏和绘制 UI。
+- 输出持有普通的 Mesh/Material 弱引用和矩阵副本，借用期遵循 [Render](./render.md)。返回后修改实例不影响
+  已生成列表；drawFrame 返回后可立即修改或销毁列表，在途 GPU 依赖由 Renderer 持有。
+- 展开不逐帧检查 GPU 引用或重验模型结构。Renderer 关闭后，实例仍可保有元数据并生成列表，但其中 GPU
+  引用已失效，再次提交由 Renderer 明确拒绝；实例不会延长设备寿命。
+
+最终 FrameInput、相机和 DrawItem 列表仍由应用提交；模型消费层不引入另一套帧同步。
 
 ## 持有期及失败
 

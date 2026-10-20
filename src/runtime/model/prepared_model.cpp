@@ -157,6 +157,29 @@ namespace Incubator::Model
         for (size_t i = 0; i < materials.size(); ++i)
             result->materials_.push_back(renderer.createMaterial(
                 {result->textures_[materialTextures[i]], source->materials()[materials[i]].color}));
+
+        // Cache model-relative draws once. The validated tree needs no per-frame traversal or
+        // structure checks. Reverse the push order so children retain their source ordering.
+        struct PendingNode
+        {
+            uint32_t index;
+            glm::mat4 parent;
+        };
+        std::vector<PendingNode> pending{{result->rootNode_, glm::mat4(1.0f)}};
+        while (!pending.empty())
+        {
+            const auto current = pending.back();
+            pending.pop_back();
+            const auto& node = result->nodes_[current.index];
+            const auto world = current.parent * node.localTransform;
+            for (uint32_t index : node.parts)
+            {
+                const auto& part = result->parts_[index];
+                result->draws_.push_back({result->meshes_[part.geometry], result->materials_[part.material], world});
+            }
+            for (auto child = node.children.rbegin(); child != node.children.rend(); ++child)
+                pending.push_back({*child, world});
+        }
         return result;
     }
 }  // namespace Incubator::Model

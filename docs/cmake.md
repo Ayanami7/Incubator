@@ -74,7 +74,7 @@ Incubator/
 
 ### Assimp 依赖
 
-Runtime 模型消费层位于 `src/runtime/model/`，`prepared_model.h/.cpp` 显式加入现有 `IncubatorRuntime`。
+Runtime 模型消费层位于 `src/runtime/model/`，`prepared_model.h/.cpp` 和 `model_instance.h/.cpp` 显式加入现有 `IncubatorRuntime`。
 `model_preparation_test` 依赖 `demo_models`、`demo_textures` 和 `demo_shaders`，在构建目录运行；
 GPU 用例与既有 Vulkan review 使用相同的串行执行和超时约定。
 
