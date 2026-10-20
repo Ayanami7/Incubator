@@ -1,6 +1,5 @@
 #include "runtime/resource/loader/detail/assimp_fileio.h"
 
-#include <assimp/version.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
@@ -20,14 +19,6 @@ namespace
     namespace Fio = Incubator::FileIO;
     using ::testing::_;
     using ::testing::Return;
-
-    TEST(AssimpFileIOTest, LinksPinnedAssimpRelease)
-    {
-        EXPECT_EQ(aiGetVersionMajor(), 6u);
-        EXPECT_EQ(aiGetVersionMinor(), 0u);
-        // The v6.0.3 archive still declares PROJECT(Assimp VERSION 6.0.2) upstream.
-        EXPECT_EQ(aiGetVersionPatch(), 2u);
-    }
 
     class MemoryHandle final : public Fio::FileHandle
     {

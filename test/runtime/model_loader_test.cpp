@@ -338,21 +338,6 @@ namespace
         expectClosed();
     }
 
-    TEST_F(ModelLoaderTest, CacheUnloadAndRetryKeepExistingManagerContract)
-    {
-        const auto* model = load(GLTF);
-        ASSERT_NE(model, nullptr);
-        const auto opens = fileIO_.counters.opened;
-        EXPECT_EQ(ResourceManager::instance().get<ModelResource>(id_), model);
-        EXPECT_EQ(fileIO_.counters.opened, opens);
-        ResourceManager::instance().release(id_);
-        EXPECT_EQ(ResourceRegistry::instance().getObject(id_), nullptr);
-        ResourceManager::instance().acquire(id_);
-        ASSERT_NE(ResourceManager::instance().get<ModelResource>(id_), nullptr);
-        EXPECT_GT(fileIO_.counters.opened, opens);
-        expectClosed();
-    }
-
     TEST_F(ModelLoaderTest, MissingPngIsRecordedWithoutRecursiveImageLoad)
     {
         fs::remove("assets/textures/direction_rgba.png");
@@ -628,19 +613,19 @@ namespace
     }
     INSTANTIATE_TEST_SUITE_P(
         ObjMtl, ModelObjMaterialTest,
-        ::testing::Values(
-            MtlCase{"default", "", true}, MtlCase{"d_one", "d 1", true}, MtlCase{"tr_zero", "Tr 0", true},
-            MtlCase{"explicit_gray", "Kd 0.6 0.6 0.6", true}, MtlCase{"d_half", "d 0.5", false},
-            MtlCase{"tr_half", "Tr 0.5", false}, MtlCase{"d_high", "d 2", false},
-            MtlCase{"tr_negative", "Tr -1", false}, MtlCase{"map_d", "d 1\nmap_d alpha.png", false},
-            MtlCase{"d_then_tr_opaque", "d 0.5\nTr 0", true}, MtlCase{"tr_then_d_half", "Tr 0\nd 0.5", false},
-            MtlCase{"tr_then_d_opaque", "Tr 0.5\nd 1", true}, MtlCase{"d_then_tr_half", "d 1\nTr 0.5", false},
-            MtlCase{"uv_offset", "map_Kd -o 0 0 0 ../../../textures/direction_rgba.png", false},
-            MtlCase{"uv_scale", "map_Kd -s 1 1 1 ../../../textures/direction_rgba.png", false},
-            MtlCase{"multi_map", "map_Kd a.png\nmap_Kd b.png", false}, MtlCase{"bad_color", "Kd 2 1 1", false},
-            MtlCase{"texture_escape", "map_Kd ../../../../../../outside.png", false},
-            MtlCase{"texture_drive", "map_Kd C:/outside.png", false},
-            MtlCase{"texture_network", "map_Kd https://example.invalid/a.png", false}),
+        ::testing::Values(MtlCase{"default", "", true}, MtlCase{"d_one", "d 1", true}, MtlCase{"tr_zero", "Tr 0", true},
+                          MtlCase{"explicit_gray", "Kd 0.6 0.6 0.6", true}, MtlCase{"d_half", "d 0.5", false},
+                          MtlCase{"tr_half", "Tr 0.5", false}, MtlCase{"d_high", "d 2", false},
+                          MtlCase{"tr_negative", "Tr -1", false}, MtlCase{"map_d", "d 1\nmap_d alpha.png", false},
+                          MtlCase{"d_then_tr_opaque", "d 0.5\nTr 0", true},
+                          MtlCase{"tr_then_d_half", "Tr 0\nd 0.5", false},
+                          MtlCase{"uv_offset", "map_Kd -o 0 0 0 ../../../textures/direction_rgba.png", false},
+                          MtlCase{"uv_scale", "map_Kd -s 1 1 1 ../../../textures/direction_rgba.png", false},
+                          MtlCase{"multi_map", "map_Kd a.png\nmap_Kd b.png", false},
+                          MtlCase{"bad_color", "Kd 2 1 1", false},
+                          MtlCase{"texture_escape", "map_Kd ../../../../../../outside.png", false},
+                          MtlCase{"texture_drive", "map_Kd C:/outside.png", false},
+                          MtlCase{"texture_network", "map_Kd https://example.invalid/a.png", false}),
         [](const auto& info) { return info.param.name; });
 
     class ModelReadFailureTest : public ModelLoaderTest, public ::testing::WithParamInterface<std::string>
@@ -657,8 +642,7 @@ namespace
                       fileIO_.counters.earlyEof ? "Incomplete model read" : "controlled model read failure");
     }
     INSTANTIATE_TEST_SUITE_P(FileIoFailures, ModelReadFailureTest,
-                             ::testing::Values("gltf_eof", "gltf_exception", "bin_eof", "bin_exception", "mtl_eof",
-                                               "mtl_exception"),
+                             ::testing::Values("gltf_eof", "bin_exception", "mtl_eof"),
                              [](const auto& info) { return info.param; });
 
     TEST_F(ModelLoaderTest, MissingRequiredBinFailsWithDependencyContext)

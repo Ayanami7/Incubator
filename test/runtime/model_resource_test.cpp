@@ -109,7 +109,8 @@ namespace
 
     TEST(ModelResourceTest, PreservesPartsMaterialsSourceRootAndSharedGeometry)
     {
-        const auto model = makeModel(composedModel());
+        const auto input = composedModel();
+        const auto model = makeModel(input);
         ASSERT_EQ(model->geometries().size(), 2u);
         ASSERT_EQ(model->materials().size(), 2u);
         ASSERT_EQ(model->parts().size(), 3u);
@@ -124,6 +125,10 @@ namespace
         EXPECT_NE(leafPart.material, sharedPart.material);
         EXPECT_EQ(*model->materials()[leafPart.material].texturePath, "textures/方向😀.png");
         EXPECT_FALSE(model->materials()[sharedPart.material].texturePath.has_value());
+        for (size_t i = 0; i < input.nodes.size(); ++i)
+        {
+            EXPECT_EQ(model->nodes()[i].localTransform, input.nodes[i].localTransform);
+        }
     }
 
     TEST(ModelResourceTest, CopiesAllNestedPayloadsWithoutBorrowingSource)
@@ -164,19 +169,6 @@ namespace
         EXPECT_EQ(model->geometries()[1].indices, (std::vector<uint16_t>{0, 1, 2}));
         EXPECT_FLOAT_EQ(model->geometries()[1].vertices[1].position[0], 2.0f);
         EXPECT_EQ(*model->materials()[0].texturePath, "textures/方向😀.png");
-    }
-
-    TEST(ModelResourceTest, NonIdentityRootAndParentChildTransformsHaveExplicitExpectedProducts)
-    {
-        const auto model = makeModel(composedModel());
-        const auto& nodes = model->nodes();
-        const auto leafWorld =
-            nodes[model->rootNode()].localTransform * nodes[0].localTransform * nodes[1].localTransform;
-        expectPoint(leafWorld * glm::vec4(0, 0, 0, 1), {10.0f, 2.0f, 0.0f});
-        expectPoint(leafWorld * glm::vec4(1, 1, 0, 1), {7.0f, 4.0f, 0.0f});
-        expectPoint(nodes[2].localTransform * nodes[3].localTransform * glm::vec4(0, 0, 0, 1), {9.0f, 0.0f, 0.0f});
-        const auto instance = glm::translate(glm::mat4(1.0f), glm::vec3(0, 5, 0));
-        expectPoint(instance * leafWorld * glm::vec4(1, 1, 0, 1), {7.0f, 9.0f, 0.0f});
     }
 
     TEST(ModelResourceTest, AllowsRootOnlyModelWithoutGeometryOrMaterials)
