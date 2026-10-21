@@ -24,6 +24,7 @@ ResourceId ──► ResourceRegistry ──► ResourceManager ──► Loader
 
 [Application Session](../application.md) 沿用这些全局组件，独占 Loader 路由并持有 FileIO 至关闭；
 CPU 资产 release 与路由销毁分别管理，运行期间可再次显式准备模型，不将 Manager 改为私有实例。
+[Scene Runtime 示例](../../examples/scene_demo.md) 在初始化 glTF 后的更新中准备 OBJ，随后复用准备结果操作实体和切换 Scene。
 
 | 组件 | 文档 | 状态 |
 |---|---|---|

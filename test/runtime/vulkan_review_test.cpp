@@ -1911,6 +1911,13 @@ namespace
                                        [&](void* commands) { renderer.imgui().recordDrawData(ui, commands); });
                     return draws.size();
                 };
+                auto& controlledIo = ImGui::GetIO();
+                // Warmup must not retain desktop input before the synthetic stream takes over.
+                controlledIo.ClearEventsQueue();
+                controlledIo.ClearInputKeys();
+                controlledIo.ClearInputMouse();
+                controlledIo.ConfigInputTrickleEventQueue = false;
+                controlledIo.SetAppAcceptingEvents(false);
                 for (int warmup = 0; warmup < 3; ++warmup)
                     EXPECT_EQ(frame(), 2u);
                 std::this_thread::sleep_for(std::chrono::milliseconds(60));
@@ -1925,10 +1932,13 @@ namespace
                     io.AddMousePosEvent(x, y);
                     io.SetAppAcceptingEvents(false);
                     frame();
+                    EXPECT_FLOAT_EQ(io.MousePos.x, x);
+                    EXPECT_FLOAT_EQ(io.MousePos.y, y);
                     io.SetAppAcceptingEvents(true);
                     io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
                     io.SetAppAcceptingEvents(false);
                     frame();
+                    EXPECT_TRUE(io.MouseDown[ImGuiMouseButton_Left]);
                     if (dragX != 0.0f)
                     {
                         io.SetAppAcceptingEvents(true);

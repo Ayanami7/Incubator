@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "examples/scene_demo/scene_demo.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/model/prepared_model.h"
@@ -446,6 +447,167 @@ namespace
         EXPECT_EQ(uiUpdates, (std::vector<int>{0, 5, 6, 7, 8, 9}));
         closed(state);
         EXPECT_EQ(count("Uploaded mesh:"), 2u);
+        EXPECT_EQ(count("Created graphics pipeline:"), 1u);
+        cleanValidation();
+    }
+
+    TEST_F(ApplicationTest, SceneDemoProductionControlsDriveSharedEntitiesAndSceneReplacement)
+    {
+        auto config = options(true);
+        config.window.width = 1280;
+        config.window.height = 720;
+        auto state = std::make_shared<Lifetime>();
+        Application::Session session(config, std::make_unique<TrackedFileIO>(state));
+        auto demo = std::make_shared<SceneDemo::Demo>();
+        const std::weak_ptr<SceneDemo::Demo> demoLifetime = demo;
+        Scene::EntityId first, second, created;
+        Scene::Transform left, right, moved;
+        const glm::vec3 gltfGreen{0.556412f, 0.471404f, 0};
+        const glm::vec3 objGreen{0.6f, -0.15f, 0};
+        constexpr std::array<int, 3> GREEN{188, 255, 188}, CLEAR{51, 61, 71};
+        size_t ordinaryOpens = 0;
+        int updates = 0;
+        const auto point = [&](const WindowCapture::Image& image, Application::Session& app,
+                               const Scene::Transform& transform, glm::vec3 local, std::array<int, 3> rgb) {
+            const auto camera = app.scene().camera().matrices({1280, 720});
+            const auto clip = camera.projection * camera.view * transform.matrix() * glm::vec4(local, 1);
+            color(image, clip.x / clip.w * (1280.0f / 720.0f), -clip.y / clip.w, rgb);
+        };
+        const auto capture = [&](Application::Session& app, const char* name) {
+            glfwWaitEventsTimeout(0.06);
+            auto image = WindowCapture::capture(app.window());
+            WindowCapture::save(image, fs::path("review") / name);
+            return image;
+        };
+        Application::Callbacks callbacks{
+            [&, demo](Application::Session& app) {
+                demo->initialize(app);
+                ASSERT_EQ(app.scene().entities().size(), 2u);
+                first = demo->selected();
+                second = app.scene().entities()[1].id;
+                left = app.scene().find(first)->transform;
+                right = app.scene().find(second)->transform;
+                EXPECT_EQ(app.scene().find(first)->model, app.scene().find(second)->model);
+                track(app, app.scene().find(first)->model, state);
+                unloaded(ResourceType::MODEL, GLTF);
+                unloaded(ResourceType::TEXTURE, PNG);
+                EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, OBJ).valid());
+                ordinaryOpens = state->opens;
+            },
+            [&, demo](Application::Session& app, const Application::FrameTime& time) {
+                const int frame = updates++;
+                demo->update(app, time);
+                if (frame == 0)
+                    EXPECT_EQ(state->opens, ordinaryOpens);
+                if (frame == 1)
+                {
+                    EXPECT_GT(state->opens, ordinaryOpens);
+                    ordinaryOpens = state->opens;
+                    unloaded(ResourceType::MODEL, OBJ);
+                    unloaded(ResourceType::TEXTURE, PNG);
+                }
+                EXPECT_EQ(state->opens, ordinaryOpens);
+                routes();
+                if (frame == 3)
+                {
+                    const auto image = capture(app, "scene-demo-shared.ppm");
+                    point(image, app, left, gltfGreen, GREEN);
+                    point(image, app, right, gltfGreen, GREEN);
+                    EXPECT_EQ(count("Uploaded mesh:"), 4u);
+                    EXPECT_EQ(count("Uploaded RGBA8 texture:"), 4u);
+                    EXPECT_EQ(count("Created material:"), 4u);
+                }
+                if (frame == 6)
+                {
+                    const auto image = capture(app, "scene-demo-hidden.ppm");
+                    point(image, app, left, gltfGreen, CLEAR);
+                    point(image, app, right, gltfGreen, GREEN);
+                    ASSERT_TRUE(app.scene().setVisible(first, true));
+                    moved = Scene::Transform({-0.5f, -0.3f, 0}, glm::quat(glm::vec3(0, 0, 0.3f)), {0.5f, 0.7f, 1});
+                    ASSERT_TRUE(app.scene().setTransform(first, moved));
+                    EXPECT_EQ(app.scene().find(second)->transform.position(), right.position());
+                }
+                if (frame == 9)
+                {
+                    const auto image = capture(app, "scene-demo-transformed.ppm");
+                    point(image, app, left, gltfGreen, CLEAR);
+                    point(image, app, moved, gltfGreen, GREEN);
+                    point(image, app, right, gltfGreen, GREEN);
+                    demo->deleteSelected(app);
+                    EXPECT_EQ(app.scene().find(first), nullptr);
+                    EXPECT_FALSE(app.scene().setVisible(first, true));
+                }
+                if (frame == 12)
+                {
+                    const auto image = capture(app, "scene-demo-deleted.ppm");
+                    point(image, app, moved, gltfGreen, CLEAR);
+                    point(image, app, right, gltfGreen, GREEN);
+                    demo->clear(app);
+                    EXPECT_TRUE(app.scene().entities().empty());
+                    EXPECT_EQ(app.scene().find(second), nullptr);
+                }
+                if (frame == 15)
+                {
+                    const auto image = capture(app, "scene-demo-empty.ppm");
+                    point(image, app, right, gltfGreen, CLEAR);
+                    created = demo->createEntity(app);
+                    EXPECT_NE(created, first);
+                    EXPECT_NE(created, second);
+                    EXPECT_EQ(app.scene().entities().size(), 1u);
+                }
+                if (frame == 18)
+                {
+                    const auto image = capture(app, "scene-demo-created.ppm");
+                    point(image, app, Scene::Transform{}, gltfGreen, GREEN);
+                    demo->replaceCamera(app);
+                    EXPECT_FLOAT_EQ(app.scene().camera().position().z, 8);
+                }
+                if (frame == 21)
+                {
+                    const auto image = capture(app, "scene-demo-camera.ppm");
+                    point(image, app, Scene::Transform{}, gltfGreen, GREEN);
+                    demo->switchScene(app, true);
+                    EXPECT_EQ(app.scene().find(created), nullptr);
+                    EXPECT_FALSE(app.scene().setTransform(created, Scene::Transform{}));
+                    EXPECT_FLOAT_EQ(app.scene().camera().position().z, 6);
+                    ASSERT_EQ(app.scene().entities().size(), 2u);
+                    EXPECT_EQ(app.scene().entities()[0].model, app.scene().entities()[1].model);
+                    track(app, app.scene().entities()[0].model, state);
+                }
+                if (frame == 24)
+                {
+                    const auto image = capture(app, "scene-demo-obj.ppm");
+                    point(image, app, left, objGreen, GREEN);
+                    point(image, app, right, objGreen, GREEN);
+                    point(image, app, left, gltfGreen, CLEAR);
+                    demo->switchScene(app, false);
+                }
+                if (frame == 27)
+                {
+                    const auto image = capture(app, "scene-demo-return-gltf.ppm");
+                    point(image, app, left, gltfGreen, GREEN);
+                    point(image, app, right, gltfGreen, GREEN);
+                    app.requestExit();
+                }
+            },
+            [&, demo](Application::Session& app) {
+                // UI-side entity edits take effect in this frame's production extraction.
+                if (updates == 4)
+                    ASSERT_TRUE(app.scene().setVisible(first, false));
+                demo->ui(app);
+                glfwWaitEventsTimeout(0.04);
+            }};
+        demo.reset();
+        session.run(std::move(callbacks));
+        EXPECT_EQ(updates, 28);
+        EXPECT_TRUE(demoLifetime.expired());
+        closed(state);
+        unloaded(ResourceType::MODEL, GLTF);
+        unloaded(ResourceType::MODEL, OBJ);
+        unloaded(ResourceType::TEXTURE, PNG);
+        EXPECT_EQ(count("Uploaded mesh:"), 4u);
+        EXPECT_EQ(count("Uploaded RGBA8 texture:"), 4u);
+        EXPECT_EQ(count("Created material:"), 4u);
         EXPECT_EQ(count("Created graphics pipeline:"), 1u);
         cleanValidation();
     }

@@ -1,0 +1,164 @@
+#pragma once
+
+#include <imgui.h>
+
+#include <array>
+#include <memory>
+#include <string>
+
+#include "runtime/application/application.h"
+#include "runtime/model/prepared_model.h"
+
+namespace Incubator::SceneDemo
+{
+    // Consumer state only: entity Transform and Camera values live in the Runtime Scene.
+    class Demo
+    {
+    public:
+        void initialize(Application::Session& app)
+        {
+            models_[0] = Model::prepareModel(app.renderer(), "models/minimal_gltf/model.gltf");
+            switchScene(app, false);
+        }
+
+        void update(Application::Session& app, const Application::FrameTime& time)
+        {
+            deltaSeconds_ = time.deltaSeconds();
+            // Prepare OBJ on a later update, after initialization released the glTF CPU holds.
+            if (firstUpdate_)
+                firstUpdate_ = false;
+            else if (!models_[1])
+                models_[1] = Model::prepareModel(app.renderer(), "models/minimal_obj/model.obj");
+        }
+
+        Scene::EntityId createEntity(Application::Session& app)
+        {
+            selected_ = app.scene().createEntity(models_[useObj_ ? 1 : 0]);
+            return selected_;
+        }
+
+        Scene::EntityId selected() const
+        {
+            return selected_;
+        }
+        void select(Scene::EntityId id)
+        {
+            selected_ = id;
+        }
+
+        void deleteSelected(Application::Session& app)
+        {
+            app.scene().destroyEntity(selected_);
+            selected_ = {};
+        }
+
+        void clear(Application::Session& app)
+        {
+            app.scene().clear();
+            selected_ = {};
+        }
+
+        void replaceCamera(Application::Session& app)
+        {
+            alternateCamera_ = !alternateCamera_;
+            app.scene().setCamera(Scene::Camera({0, 0, alternateCamera_ ? 8.0f : 6.0f}));
+        }
+
+        // Only called with a prepared model; UI enables OBJ switching after the later update.
+        void switchScene(Application::Session& app, bool useObj)
+        {
+            auto scene = std::make_unique<Scene::Scene>();
+            scene->setCamera(Scene::Camera({0, 0, 6}));
+            selected_ = scene->createEntity(models_[useObj ? 1 : 0],
+                                            Scene::Transform({-1.2f, 0.3f, 0}, {1, 0, 0, 0}, glm::vec3(0.65f)));
+            scene->createEntity(models_[useObj ? 1 : 0],
+                                Scene::Transform({1.2f, 0.3f, 0}, {1, 0, 0, 0}, glm::vec3(0.65f)));
+            app.setScene(std::move(scene));
+            useObj_ = useObj;
+            alternateCamera_ = false;
+        }
+
+        void ui(Application::Session& app)
+        {
+            ImGui::SetNextWindowPos({12, 12}, ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize({350, 600}, ImGuiCond_FirstUseEver);
+            ImGui::Begin("Incubator Scene Runtime");
+            ImGui::Text("Scene: %s | Update: %.2f ms", useObj_ ? "OBJ" : "glTF", deltaSeconds_ * 1000);
+            ImGui::ColorEdit3("Clear color", app.clearColor().data());
+            if (ImGui::Button("Create entity"))
+                createEntity(app);
+            ImGui::SameLine();
+            if (ImGui::Button("Clear scene"))
+                clear(app);
+            if (ImGui::Button("Reset scene"))
+                switchScene(app, useObj_);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!models_[1]);
+            if (ImGui::Button(useObj_ ? "Switch to glTF" : "Switch to OBJ"))
+                switchScene(app, !useObj_);
+            ImGui::EndDisabled();
+            if (ImGui::Button("Replace camera"))
+                replaceCamera(app);
+            ImGui::TextUnformatted("Camera distance alternates between 6 and 8.");
+            ImGui::Text("Entities: %zu", app.scene().entities().size());
+            if (ImGui::BeginListBox("##entities", {-1, 110}))
+            {
+                for (const auto& entity : app.scene().entities())
+                {
+                    const auto label = std::to_string(entity.id.value());
+                    if (ImGui::Selectable(label.c_str(), selected_ == entity.id))
+                        select(entity.id);
+                }
+                ImGui::EndListBox();
+            }
+            if (const auto* entity = app.scene().find(selected_))
+            {
+                auto transform = entity->transform;
+                auto position = transform.position();
+                auto scale = transform.scale();
+                auto degrees = glm::degrees(glm::eulerAngles(transform.rotation()));
+                bool visible = entity->visible;
+                if (ImGui::Checkbox("Visible", &visible))
+                    app.scene().setVisible(selected_, visible);
+                bool changed = false;
+                if (ImGui::SliderFloat3("Position", &position.x, -3, 3, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+                {
+                    transform.setPosition(position);
+                    changed = true;
+                }
+                if (ImGui::SliderFloat3("Rotation", &degrees.x, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp))
+                {
+                    transform.setRotation(glm::quat(glm::radians(degrees)));
+                    changed = true;
+                }
+                if (ImGui::SliderFloat3("Scale", &scale.x, 0.1f, 3, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+                {
+                    transform.setScale(scale);
+                    changed = true;
+                }
+                if (changed)
+                    app.scene().setTransform(selected_, transform);
+                if (ImGui::Button("Delete selected"))
+                    deleteSelected(app);
+            }
+            if (ImGui::Button("Exit"))
+                app.requestExit();
+            ImGui::End();
+        }
+
+    private:
+        std::array<std::shared_ptr<const Model::PreparedModel>, 2> models_;
+        Scene::EntityId selected_;
+        bool useObj_ = false;
+        bool alternateCamera_ = false;
+        bool firstUpdate_ = true;
+        double deltaSeconds_ = 0;
+    };
+
+    inline Application::Callbacks makeCallbacks()
+    {
+        auto demo = std::make_shared<Demo>();
+        return {[demo](auto& app) { demo->initialize(app); },
+                [demo](auto& app, const auto& time) { demo->update(app, time); }, [demo](auto& app) { demo->ui(app); }};
+    }
+}  // namespace Incubator::SceneDemo

@@ -77,6 +77,11 @@ Incubator/
 - 独立可执行目标，演示引擎模块的实际用法
 - 链接运行时库与所需第三方库
 
+`scene_demo` 与原有 `demo` 为同级独立入口，链接同一 IncubatorRuntime 和 imgui，
+依赖既有 demo_shaders/demo_textures/demo_models，运行工作目录为构建目录。
+Scene 应用交互代码位于 examples/scene_demo/scene_demo.h，application_test 直接复用它，
+在既有串行 GPU 夹具中验证实际 Session 驱动，不重复编译 Runtime 或引入新测试库。
+
 ### 运行资源（assets/）
 
 - 源文件到构建目录使用 `add_custom_command(OUTPUT ... DEPENDS ...)` 与 `copy_if_different`。

@@ -1,5 +1,8 @@
 # Application 应用会话
 
+完整交互示例见 [Scene Runtime 示例](../examples/scene_demo.md)：初始化 glTF，后续更新准备 OBJ，
+UI 直接操作当前 Scene 的实体及 Camera，Session 负责提取、提交与关闭。
+
 `runtime/application/application.h` 提供 `Incubator::Application::Session`、SessionOptions、Callbacks 和 FrameTime，
 归入既有 IncubatorRuntime。Session 拥有单 Window、Renderer、FileIO、当前 Scene 及整个 Loader 路由表的独占持有期，
 通过直接回调驱动 SceneFrame 提取和提交；不提供继承式应用基类、系统调度器或多会话并发。

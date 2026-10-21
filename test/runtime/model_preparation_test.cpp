@@ -1032,6 +1032,10 @@ namespace
         write(pngPath, read(PNG));
 
         auto native = window(true);
+        // This test samples the composed desktop. Raise the window before presenting,
+        // so capture's topmost change is not first applied immediately before BitBlt.
+        ASSERT_TRUE(SetWindowPos(glfwGetWin32Window(static_cast<GLFWwindow*>(native->getNativeHandle())), HWND_TOPMOST,
+                                 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE));
         std::array<std::shared_ptr<const Model::PreparedModel>, 2> models;
         {
             Renderer renderer(*native, RendererValidationMode::Required);
@@ -1094,7 +1098,12 @@ namespace
                 std::cout << label << ": GPU direction 12/12, linear 0.5 -> 188 +/- 1, alpha 255\n";
 
                 for (int frame = 0; frame < 4; ++frame)
+                {
                     ASSERT_TRUE(submit(*native, renderer, instances));
+                    // Allow the composed desktop to catch up after window creation/resize.
+                    glfwWaitEventsTimeout(0.04);
+                }
+                glfwWaitEventsTimeout(0.06);
                 const auto displayed = WindowCapture::capture(*native);
                 for (int row = 0; row < 4; ++row)
                     for (int col = 0; col < 3; ++col)
@@ -1123,7 +1132,9 @@ namespace
                     auto* ui = renderer.imgui().drawData();
                     renderer.drawFrame(Demo::makeSceneFrame(*extent, sharedDraws, scene.camera), scene.clearColor,
                                        [&](void* commands) { renderer.imgui().recordDrawData(ui, commands); });
+                    glfwWaitEventsTimeout(0.04);
                 }
+                glfwWaitEventsTimeout(0.06);
                 WindowCapture::save(WindowCapture::capture(*native), std::string("review/") + label + "-demo.ppm");
             }
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);

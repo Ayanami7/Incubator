@@ -24,6 +24,8 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 Scene 消费者使用 [SceneFrame](./scene.md#场景帧提取) 持有 extent、相机与绘制列表，提交时调用
 `renderer.drawFrame(frame.input(), ...)` 临时借用当前存储；复制/移动结果后重新取得视图。
 Renderer 不依赖 Scene；旧 extent 跳帧、提交内借用及过期/跨 Renderer GPU 引用拒绝边界保持。
+[Scene Runtime 示例](../examples/scene_demo.md) 由 Application::Session 统一调用这些入口；
+既有 Demo 仍可直接提供 FrameInput，GPU 所有权和在途帧同步使用同一实现。
 `render/detail/renderer_review.h` 仅供内部数值验证同步借用实际 GPU 网格、材质和 Pipeline；
 测试附件与回读代码位于 test/runtime/support，应用使用既有 drawFrame 提交接口。
 

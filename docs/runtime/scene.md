@@ -1,5 +1,8 @@
 # Scene：实体、Transform 与 Camera
 
+[Scene Runtime 示例](../examples/scene_demo.md) 展示共享模型实体的创建、独立 TRS、可见性、删除、清空，
+以及 Session 内的 Scene/Camera 替换；所有实体变换直接保存在 Runtime Transform 中。
+
 `runtime/scene/transform.h` 和 `camera.h` 提供自有值类型，归入现有 `IncubatorRuntime`。
 二者使用 GLM，不依赖 Demo、ImGui 或输入控制；Camera 的输出类型复用 Render::CameraMatrices。
 `runtime/scene/scene.h` 和 `entity.h` 提供平铺实体管理及逻辑身份；`scene_frame.h` 提供拥有存储的场景帧提取。

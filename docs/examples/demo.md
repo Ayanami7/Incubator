@@ -1,5 +1,8 @@
 # 多物体与模型 Demo
 
+使用 Runtime Scene 与统一应用会话的交互入口见 [Scene Runtime 示例](./scene_demo.md)，
+支持会话内后续模型准备、实体创建/删除/清空及场景/Camera 替换；本页保留直接 Renderer 用法。
+
 `examples/demo` 演示通过 ResourceManager 加载外部 SPIR-V 和 PNG，将资源传给 Renderer，
 上传应用生成的立方体和平面，为每项提交独立的 Mesh、Material 和模型矩阵，共享相机并叠加 ImGui 控件。
 应用负责事件轮询、场景状态、矩阵、绘制列表、界面构建和主循环。
