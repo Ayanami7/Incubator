@@ -2,7 +2,7 @@
 
 `runtime/scene/transform.h` 和 `camera.h` 提供自有值类型，归入现有 `IncubatorRuntime`。
 二者使用 GLM，不依赖 Demo、ImGui 或输入控制；Camera 的输出类型复用 Render::CameraMatrices。
-`runtime/scene/scene.h` 和 `entity.h` 提供平铺实体管理及逻辑身份；场景帧提取尚未接入。
+`runtime/scene/scene.h` 和 `entity.h` 提供平铺实体管理及逻辑身份；`scene_frame.h` 提供拥有存储的场景帧提取。
 
 ## Scene 与实体
 
@@ -44,6 +44,43 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
 多个实体直接共享同一 PreparedModel，不复制几何、像素或 GPU 对象。模型绑定/实体操作不加载文件、不准备资源；
 删除、解除模型或 clear 只结束对应逻辑持有，其他实体不受影响。即使 PreparedModel 的最后一个逻辑持有结束，
 GPU 仍由 Renderer 持有到关闭；这与 [Model 持有期](./model.md#持有期及失败) 一致。
+
+## 场景帧提取
+
+```cpp
+// Update Scene first; UI edits are also applied before extraction.
+if (const auto extent = renderer.beginUiFrame())
+{
+    // Build UI and apply its changes to scene.
+    auto frame = Incubator::Scene::extractSceneFrame(scene, *extent);
+    renderer.imgui().endFrame();
+    if (frame)
+        renderer.drawFrame(frame->input(), clearColor, recordUi);
+    // frame/draw storage may be modified or destroyed after drawFrame returns.
+}
+```
+
+`extractSceneFrame(const Scene&, Render::FrameExtent)` 返回 `std::optional<SceneFrame>`。
+宽高任一为零时返回 nullopt，不计算投影或遍历实体；通常直接使用 beginUiFrame 给出的有效 extent。
+提取期间不修改同一 Scene，不加载文件、解码、上传、创建材质或重新验证 GPU 引用。
+
+SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera` 和 `vector<Render::DrawItem> draws`：
+
+- 读取当前 Camera，按实际 extent 生成最终相机矩阵；不再次翻转 Y。
+- 按存活实体创建顺序组装临时 ModelInstance，跳过隐藏及无模型实体，调用现有 makeModelDraws。
+  每个模型沿用其缓存的节点/部分顺序；最终矩阵为 `entity.transform.matrix() * cachedDraw.model`，源根只包含一次。
+- 每次返回新列表；空 Scene、全部隐藏、无模型或无可绘制部分时返回有效的空 draws，仍可清屏和显示 UI。
+- 两个结果可并存，默认复制/移动同时处理各自的值和 vector。Scene 更新、clear、下一次提取及 Scene 销毁
+  不回写旧结果；快照不持有 Scene、Entity 或 PreparedModel 指针，绘制项只保存 GPU 引用和矩阵值。
+
+`SceneFrame::input() const &` 在调用时构造 FrameInput，span 指向当前结果的 draws；结果本身不保存 span。
+只能从左值结果取得视图，直接对临时 SceneFrame 调用 input 被禁止。借用后不要移动/修改结果或重新分配 draws，
+保持其存储活到 drawFrame 返回；复制或移动后，从目标对象重新调用 input，不保留旧视图。
+drawFrame 返回后即可释放或改写 CPU 列表，在途 GPU 持有仍由 Renderer 保护。
+
+若提交前窗口 extent 改变，Renderer 跳过旧输入，下一轮使用新 extent 重新提取。
+Renderer 关闭后，Scene/快照仍可保留元数据，提取不会检查或修复过期引用；提交仍由现有 Renderer 边界抛 RENDER。
+应用会话和主循环组织独立于此接口，当前 Demo 的直接 ModelInstance/Renderer 路径继续可用。
 
 ## Transform
 

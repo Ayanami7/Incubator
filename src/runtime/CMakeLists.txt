@@ -116,12 +116,14 @@ set(RENDER_SOURCES
 set(SCENE_HEADERS
     scene/entity.h
     scene/scene.h
+    scene/scene_frame.h
     scene/transform.h
     scene/camera.h
     scene/detail/pose_validation.h
 )
 set(SCENE_SOURCES
     scene/scene.cpp
+    scene/scene_frame.cpp
     scene/transform.cpp
     scene/camera.cpp
 )

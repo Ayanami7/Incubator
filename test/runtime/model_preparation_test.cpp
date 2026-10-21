@@ -33,6 +33,7 @@
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene.h"
+#include "runtime/scene/scene_frame.h"
 #include "support/texture_gpu_review.h"
 #include "support/window_capture.h"
 
@@ -526,20 +527,16 @@ namespace
             ASSERT_TRUE(scene.setModel(logical, {}));
             EXPECT_EQ(weak.use_count(), 2);
 
-            // Task 02 checks composition using existing Model/Render APIs. The reusable owned
-            // scene-frame extraction interface is a separate Task 03 responsibility.
             const auto submitEntities = [&](size_t expectedDraws) {
                 native->pollEvents();
                 const auto extent = renderer.beginUiFrame();
                 ASSERT_TRUE(extent);
-                std::vector<Model::ModelInstance> instances;
-                for (const auto& entity : scene.entities())
-                    if (entity.visible && entity.model)
-                        instances.push_back({entity.model, entity.transform.matrix()});
-                const auto draws = Model::makeModelDraws(instances);
-                EXPECT_EQ(draws.size(), expectedDraws);
+                auto frame = Scene::extractSceneFrame(scene, *extent);
+                ASSERT_TRUE(frame);
+                EXPECT_EQ(frame->draws.size(), expectedDraws);
                 renderer.imgui().endFrame();
-                renderer.drawFrame({*extent, scene.camera().matrices(*extent), draws}, {0.2f, 0.24f, 0.28f, 1});
+                renderer.drawFrame(frame->input(), {0.2f, 0.24f, 0.28f, 1});
+                frame.reset();
                 // Match existing display tests: let presentation/composition advance before GDI capture.
                 glfwWaitEventsTimeout(0.04);
             };
@@ -594,6 +591,227 @@ namespace
         EXPECT_FALSE(mesh.valid());
         EXPECT_FALSE(material.valid());
         EXPECT_FALSE(texture.valid());
+        cleanValidation();
+    }
+
+    class SceneFrameTest : public ModelInstanceTest
+    {};
+
+    TEST_F(SceneFrameTest, OrderedNoncommutingTransformsAndCopiedMovedSnapshotsOwnTheirDraws)
+    {
+        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
+        auto native = window();
+        Scene::SceneFrame retained;
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            auto model = Model::prepareModel(renderer, "models/transforms.gltf");
+            ASSERT_EQ(model->rootNode(), 2u);
+            ASSERT_EQ(model->draws().size(), 5u);
+            const std::weak_ptr<const Model::PreparedModel> weak = model;
+            ResourceManager::instance().reset();
+            fileIO_.reset();
+            const auto resourceLog = resourceMessages_.str();
+            Scene::Scene scene;
+            const Scene::Transform a({1, 2, 0}, {1, 0, 0, 1}, {2, 3, 1});
+            const Scene::Transform b({-2, 1, 0}, {1, 0, 0, 0}, {0.5f, 2, 1});
+            const auto firstId = scene.createEntity(model, a);
+            scene.createEntity();
+            scene.createEntity(model, Scene::Transform{}, false);
+            const auto secondId = scene.createEntity(model, b);
+            auto first = Scene::extractSceneFrame(scene, {800, 400});
+            ASSERT_TRUE(first);
+            ASSERT_EQ(first->draws.size(), 10u);
+            const std::array<std::array<float, 2>, 5> cached = {{{11, 1}, {9, 1}, {7, 4}, {7, 4}, {10, 1}}};
+            for (size_t index = 0; index < cached.size(); ++index)
+            {
+                point(first->draws[index].model, 1 - 3 * cached[index][1], 2 + 2 * cached[index][0]);
+                point(first->draws[index + 5].model, -2 + 0.5f * cached[index][0], 1 + 2 * cached[index][1]);
+            }
+            auto copied = *first;
+            ASSERT_NE(copied.draws.data(), first->draws.data());
+            EXPECT_EQ(copied.input().draws.data(), copied.draws.data());
+            auto moved = std::move(copied);
+            EXPECT_EQ(moved.input().draws.data(), moved.draws.data());
+            retained = moved;
+            EXPECT_NE(retained.draws.data(), moved.draws.data());
+            Scene::SceneFrame moveAssigned;
+            moveAssigned = std::move(moved);
+            EXPECT_EQ(moveAssigned.input().draws.data(), moveAssigned.draws.data());
+
+            ASSERT_TRUE(scene.setTransform(firstId, Scene::Transform({3, 0, 0})));
+            ASSERT_TRUE(scene.setVisible(secondId, false));
+            scene.setCamera(Scene::Camera({0, 0, 5}));
+            const auto next = Scene::extractSceneFrame(scene, {400, 400});
+            ASSERT_TRUE(next);
+            ASSERT_EQ(next->draws.size(), 5u);
+            point(next->draws[0].model, 14, 1);
+            EXPECT_NE(next->camera.view, first->camera.view);
+            EXPECT_NE(next->camera.projection, first->camera.projection);
+            EXPECT_EQ(first->extent, (FrameExtent{800, 400}));
+            point(first->draws[0].model, -2, 24);
+            point(moveAssigned.draws[5].model, 3.5f, 3);
+
+            ASSERT_TRUE(scene.destroyEntity(firstId));
+            ASSERT_TRUE(scene.setVisible(secondId, true));
+            scene.createEntity(model, a);  // New entity follows the surviving second entity.
+            const auto reordered = Scene::extractSceneFrame(scene, {800, 400});
+            ASSERT_TRUE(reordered);
+            ASSERT_EQ(reordered->draws.size(), 10u);
+            point(reordered->draws[0].model, 3.5f, 3);
+            point(reordered->draws[5].model, -2, 24);
+            ASSERT_TRUE(scene.setModel(secondId, {}));
+            EXPECT_EQ(Scene::extractSceneFrame(scene, {800, 400})->draws.size(), 5u);
+            scene.clear();
+            model.reset();
+            EXPECT_TRUE(weak.expired());  // Frames retain values/GPU references, not PreparedModel.
+            EXPECT_TRUE(Scene::extractSceneFrame(scene, {800, 400})->draws.empty());
+            first.reset();
+            point(retained.draws[0].model, -2, 24);
+            EXPECT_EQ(retained.input().draws.data(), retained.draws.data());
+            EXPECT_TRUE(retained.draws[0].mesh.valid());
+            EXPECT_EQ(resourceMessages_.str(), resourceLog);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 1u);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 1u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 3u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+        }
+        EXPECT_FALSE(retained.draws[0].mesh.valid());
+        EXPECT_FALSE(retained.draws[0].material.valid());
+        cleanValidation();
+    }
+
+    TEST_F(SceneFrameTest, ImportedFramesSubmitUiEditsCameraResizeEmptyAndExpiredReferences)
+    {
+        auto native = window(true);
+        Scene::Scene scene;
+        scene.setCamera(Scene::Camera({0, 0, 1}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 10}));
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            const auto gltf = Model::prepareModel(renderer, GLTF);
+            const auto obj = Model::prepareModel(renderer, OBJ);
+            const auto placement = [](float x, float y, float size) {
+                return Scene::Transform({x, y, 0}, {1, 0, 0, 0}, glm::vec3(size));
+            };
+            const auto first = scene.createEntity(gltf, placement(-0.65f, 0.45f, 0.25f));
+            scene.createEntity(gltf, placement(0.65f, 0.45f, 0.25f));
+            scene.createEntity(obj, placement(-0.65f, -0.55f, 0.35f));
+            scene.createEntity(obj, placement(0.65f, -0.55f, 0.35f));
+            scene.createEntity();
+            released(ResourceType::MODEL, GLTF);
+            released(ResourceType::MODEL, OBJ);
+            released(ResourceType::TEXTURE, PNG);
+            ResourceManager::instance().reset();
+            fileIO_.reset();
+            const auto resourceLog = resourceMessages_.str();
+            const auto submitScene = [&](size_t count, bool editInUi = false, bool ui = false) {
+                native->pollEvents();
+                const auto extent = renderer.beginUiFrame();
+                ASSERT_TRUE(extent);
+                if (editInUi)
+                    ASSERT_TRUE(scene.setVisible(first, false));
+                if (ui)
+                    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(16, 16), ImVec2(48, 48),
+                                                                  IM_COL32(255, 0, 255, 255));
+                auto frame = Scene::extractSceneFrame(scene, *extent);
+                ASSERT_TRUE(frame);
+                EXPECT_EQ(frame->extent, *extent);
+                EXPECT_EQ(frame->draws.size(), count);
+                EXPECT_NEAR(frame->camera.projection[0][0], float(extent->height) / extent->width, 0.00001f);
+                renderer.imgui().endFrame();
+                auto* data = renderer.imgui().drawData();
+                renderer.drawFrame(frame->input(), {0.2f, 0.24f, 0.28f, 1}, [&](void* commands) {
+                    if (ui)
+                        renderer.imgui().recordDrawData(data, commands);
+                });
+                frame->draws.clear();
+                frame->draws.shrink_to_fit();
+                frame.reset();
+                glfwWaitEventsTimeout(0.04);
+            };
+            for (int frame = 0; frame < 3; ++frame)
+                ASSERT_NO_FATAL_FAILURE(submitScene(12));
+            auto image = WindowCapture::capture(*native);
+            color(image, -0.510897f, 0.567851f, {188, 255, 188});
+            color(image, 0.789103f, 0.567851f, {188, 255, 188});
+            color(image, -0.44f, -0.608333f, {188, 255, 188});
+            WindowCapture::save(image, "review/scene-frame-models.ppm");
+            for (int frame = 0; frame < 3; ++frame)
+                ASSERT_NO_FATAL_FAILURE(submitScene(8, true));
+            image = WindowCapture::capture(*native);
+            color(image, -0.510897f, 0.567851f, {51, 61, 71});
+            color(image, 0.789103f, 0.567851f, {188, 255, 188});
+            ASSERT_TRUE(scene.setVisible(first, true));
+
+            // An extent changed between extraction and submission must skip the stale input.
+            const auto oldExtent = renderer.beginUiFrame();
+            ASSERT_TRUE(oldExtent);
+            auto stale = Scene::extractSceneFrame(scene, *oldExtent);
+            ASSERT_TRUE(stale);
+            renderer.imgui().endFrame();
+            glfwSetWindowSize(static_cast<GLFWwindow*>(native->getNativeHandle()), 800, 400);
+            native->pollEvents();
+            bool recorded = false;
+            renderer.drawFrame(stale->input(), {0, 0, 0, 1}, [&](void*) { recorded = true; });
+            EXPECT_FALSE(recorded);
+            for (int frame = 0; frame < 4; ++frame)
+            {
+                ASSERT_TRUE(scene.setTransform(first, placement(-0.65f + (frame % 2 ? 0 : 0.03f), 0.45f, 0.25f)));
+                ASSERT_NO_FATAL_FAILURE(submitScene(12));
+            }
+            scene.setCamera(Scene::Camera({0, 0, 2}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 10}));
+            for (int frame = 0; frame < 3; ++frame)
+                ASSERT_NO_FATAL_FAILURE(submitScene(12));
+            image = WindowCapture::capture(*native);
+            EXPECT_EQ(image.width, 800);
+            EXPECT_EQ(image.height, 400);
+            color(image, 0.789103f / 2, 0.567851f / 2, {188, 255, 188});
+            WindowCapture::save(image, "review/scene-frame-camera-resize.ppm");
+
+            auto retained = Scene::extractSceneFrame(scene, {800, 400});
+            ASSERT_TRUE(retained);
+            scene.clear();
+            ASSERT_TRUE(renderer.beginUiFrame());
+            renderer.imgui().endFrame();
+            renderer.drawFrame(retained->input(), {0.2f, 0.24f, 0.28f, 1});
+            retained.reset();
+            glfwWaitEventsTimeout(0.04);
+            color(WindowCapture::capture(*native), 0.789103f / 2, 0.567851f / 2, {188, 255, 188});
+            for (int frame = 0; frame < 3; ++frame)
+                ASSERT_NO_FATAL_FAILURE(submitScene(0, false, true));
+            image = WindowCapture::capture(*native);
+            color(image, 0.789103f / 2, 0.567851f / 2, {51, 61, 71});
+            const size_t uiPixel = (32u * image.width + 32) * 4;
+            EXPECT_EQ(image.rgba[uiPixel], 255);
+            EXPECT_EQ(image.rgba[uiPixel + 1], 0);
+            EXPECT_EQ(image.rgba[uiPixel + 2], 255);
+            WindowCapture::save(image, "review/scene-frame-empty-ui.ppm");
+            scene.createEntity(gltf);
+            ASSERT_NO_FATAL_FAILURE(submitScene(4));
+            EXPECT_EQ(resourceMessages_.str(), resourceLog);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 4u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+        }
+        auto expired = Scene::extractSceneFrame(scene, {800, 400});
+        ASSERT_TRUE(expired);
+        ASSERT_EQ(expired->draws.size(), 4u);
+        EXPECT_FALSE(expired->draws[0].mesh.valid());
+        {
+            Renderer next(*native, RendererValidationMode::Required);
+            try
+            {
+                next.drawFrame(expired->input(), {0, 0, 0, 1});
+                FAIL() << "Accepted expired Scene GPU references";
+            }
+            catch (const Error::Exception& error)
+            {
+                EXPECT_EQ(error.code(), Error::Code::RENDER);
+                EXPECT_NE(error.message().find("Mesh is invalid"), std::string::npos);
+            }
+        }
         cleanValidation();
     }
 

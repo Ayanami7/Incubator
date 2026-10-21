@@ -74,6 +74,8 @@ renderer.drawFrame({extent, camera, draws}, clearColor);
 [Scene](./scene.md#scene-与实体) 实体通过可选 `shared_ptr<const PreparedModel>` 共享准备结果，
 使用独立 EntityId 和唯一 Transform 值。绑定或删除实体仅改变逻辑持有；实体整体矩阵在消费时转换为
 ModelInstance，不改变 PreparedModel 的节点或 Renderer 的 GPU 持有期。
+`Scene::extractSceneFrame` 统一完成可见实体到临时 ModelInstance 的转换，复用 makeModelDraws 并返回自有
+SceneFrame；应用在提交时借用其 input()，用法与快照持有期见 [场景帧提取](./scene.md#场景帧提取)。
 
 `makeModelDraws(std::span<const ModelInstance>)` 每次返回一份新的 `std::vector<Render::DrawItem>`：
 
