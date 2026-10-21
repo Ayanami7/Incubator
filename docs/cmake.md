@@ -55,8 +55,10 @@ Incubator/
 - 依赖关系通过 `add_dependencies` + `target_link_libraries` 声明
 - 平台相关配置（如 MSVC 的 `/utf-8` 编码支持）在库目标处集中设置
 
-`scene/transform.h/.cpp`、`scene/camera.h/.cpp` 及内部共享输入校验头显式收集到 Runtime 的 Scene 文件组；
-`scene_transform_camera_test` 按既有 test/runtime 源文件发现规则创建，为不依赖窗口或 GPU 的 CPU 测试。
+`scene/transform.h/.cpp`、`scene/camera.h/.cpp`、`scene/entity.h`、`scene/scene.h/.cpp` 及内部共享输入校验头
+显式收集到 Runtime 的 Scene 文件组；`scene_transform_camera_test` 和 `scene_test` 按既有 test/runtime
+源文件发现规则创建，为不依赖窗口或 GPU 的 CPU 测试。真实模型的 Scene 组合验证复用 model_preparation_test
+及其现有资源部署、串行 GPU 执行约定。
 
 ### 测试目标（test/ 下）
 

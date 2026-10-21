@@ -71,6 +71,10 @@ renderer.drawFrame({extent, camera, draws}, clearColor);
 多个实例可引用同一模型或不同模型。修改一个实例的 transform 不影响其他实例或模型缓存；实例不复制 CPU
 几何、像素或 GPU 对象，也不分配 Entity ID。
 
+[Scene](./scene.md#scene-与实体) 实体通过可选 `shared_ptr<const PreparedModel>` 共享准备结果，
+使用独立 EntityId 和唯一 Transform 值。绑定或删除实体仅改变逻辑持有；实体整体矩阵在消费时转换为
+ModelInstance，不改变 PreparedModel 的节点或 Renderer 的 GPU 持有期。
+
 `makeModelDraws(std::span<const ModelInstance>)` 每次返回一份新的 `std::vector<Render::DrawItem>`：
 
 - 外层顺序为输入实例顺序；每个模型从 rootNode 开始，先输出当前节点的全部部分，再按 children 的原顺序

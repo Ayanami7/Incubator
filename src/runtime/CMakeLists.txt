@@ -114,11 +114,14 @@ set(RENDER_SOURCES
 
 # 合并所有头文件和源文件到一个变量
 set(SCENE_HEADERS
+    scene/entity.h
+    scene/scene.h
     scene/transform.h
     scene/camera.h
     scene/detail/pose_validation.h
 )
 set(SCENE_SOURCES
+    scene/scene.cpp
     scene/transform.cpp
     scene/camera.cpp
 )

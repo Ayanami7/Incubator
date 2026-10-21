@@ -1,8 +1,49 @@
-# Scene 基础：Transform 与 Camera
+# Scene：实体、Transform 与 Camera
 
 `runtime/scene/transform.h` 和 `camera.h` 提供自有值类型，归入现有 `IncubatorRuntime`。
 二者使用 GLM，不依赖 Demo、ImGui 或输入控制；Camera 的输出类型复用 Render::CameraMatrices。
-当前实现范围为姿态和透视相机，实体管理与场景帧提取尚未接入。
+`runtime/scene/scene.h` 和 `entity.h` 提供平铺实体管理及逻辑身份；场景帧提取尚未接入。
+
+## Scene 与实体
+
+```cpp
+Incubator::Scene::Scene scene;
+scene.setCamera(Incubator::Scene::Camera({0, 0, 3}));
+auto model = Incubator::Model::prepareModel(renderer, "models/minimal_gltf/model.gltf");
+const auto first = scene.createEntity(model, Incubator::Scene::Transform({-1, 0, 0}));
+const auto second = scene.createEntity(model, Incubator::Scene::Transform({1, 0, 0}));
+scene.setVisible(first, false);
+scene.destroyEntity(first);
+// second still owns the same immutable PreparedModel.
+```
+
+Scene 不可复制或移动，使用一个 vector 保存实体，属于单线程 Runtime；当前不提供 ECS、实体父子树或持久化。
+Entity 保存 `id`、`transform`、`visible` 和可空的 `shared_ptr<const PreparedModel> model`。
+Transform 是实体整体变换的唯一真源，实体不另存 ModelInstance 或可修改的整体矩阵。
+模型内部节点仍属于 PreparedModel，不按节点创建实体。
+
+| 接口 | 行为 |
+|---|---|
+| createEntity(model={}, transform=Transform{}, visible=true) | 返回新 EntityId；无模型也可创建合法逻辑实体 |
+| find(EntityId) const | 返回只读 Entity 指针；无效、已删除或其他 Scene 的 ID 返回 nullptr |
+| setTransform/setVisible/setModel | 通过 ID 修改指定实体；未命中返回 false，其他实体不变；setModel 可传空解除绑定 |
+| destroyEntity(EntityId) | 删除指定实体，未命中返回 false；其他存活实体相对顺序保持 |
+| clear() | 清除全部实体和它们的模型持有，保留当前 Camera |
+| entities() const | 返回 span<const Entity>，按存活实体的创建顺序遍历；新实体追加到尾部 |
+| camera() const / setCamera(Camera) | 只读访问或整体替换 Scene 自有 Camera；默认 Camera 有效，设置时复制其值 |
+
+EntityId 是独立的 uint64 包装，默认 0 无效，只有 Scene 分配非零标识；value() 可用于诊断、operator== 用于比较。
+所有 Scene 共用进程内单调序号，删除、clear 或 Scene 销毁后不复用旧值，其他 Scene 的 ID 不会命中本 Scene。
+序号耗尽时创建抛 CONFIG，不回绕分配旧值；不提供跨进程身份或从资源/模型索引构造实体 ID 的接口。
+valid() 只表示曾分配过非零值，实体是否仍存活须由所属 Scene 的 find 判断。
+
+查询、遍历结果仅在当前访问期借用。createEntity/destroyEntity/clear 后重新查询全部实体指针、引用与 span；
+不在遍历期间改变容器结构，持久引用保存 EntityId。transform、可见性、模型和相机修改应在更新/UI 阶段进行。
+Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Transform/Camera 沿用自身的校验契约。
+
+多个实体直接共享同一 PreparedModel，不复制几何、像素或 GPU 对象。模型绑定/实体操作不加载文件、不准备资源；
+删除、解除模型或 clear 只结束对应逻辑持有，其他实体不受影响。即使 PreparedModel 的最后一个逻辑持有结束，
+GPU 仍由 Renderer 持有到关闭；这与 [Model 持有期](./model.md#持有期及失败) 一致。
 
 ## Transform
 
