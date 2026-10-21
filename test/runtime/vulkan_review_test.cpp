@@ -1484,7 +1484,8 @@ namespace
     TEST_F(VulkanReviewTest, RapidUiShutdownAfterLastSubmission)
     {
         auto window = createWindow();
-        for (int cycle = 0; cycle < 12; ++cycle)
+        // One, two, and three submitted frames exercise each distinct shutdown boundary.
+        for (int cycle = 0; cycle < 3; ++cycle)
         {
             SceneAssets assets;
             Renderer renderer(*window, RendererValidationMode::Required);

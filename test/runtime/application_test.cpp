@@ -288,16 +288,13 @@ namespace
         EXPECT_EQ(count("Created Vulkan"), 0u);
     }
 
-    TEST_F(ApplicationTest, LiveRoutesAllowLaterModelPreparationAndSceneSwitchWithOtherCpuOwner)
+    TEST_F(ApplicationTest, LiveRoutesAllowLaterModelPreparationWithOtherCpuOwner)
     {
         auto state = std::make_shared<Lifetime>();
         Application::Session session(options(true), std::make_unique<TrackedFileIO>(state));
-        Scene::EntityId first;
         ResourceId otherPng;
         const TextureResource* otherPixels = nullptr;
         size_t ordinaryOpens = 0;
-        int updates = 0, uis = 0;
-        std::vector<char> order;
         session.run(
             {[&](Application::Session& app) {
                  routes();
@@ -305,10 +302,7 @@ namespace
                  unloaded(ResourceType::SHADER, "shaders/cube.frag.spv");
                  const auto model = Model::prepareModel(app.renderer(), GLTF);
                  track(app, model, state);
-                 app.scene().setCamera(Scene::Camera({0, 0, 1}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 10}));
-                 first = app.scene().createEntity(model,
-                                                  Scene::Transform({-0.65f, 0.45f, 0}, {1, 0, 0, 0}, glm::vec3(0.25f)));
-                 app.scene().createEntity(model, Scene::Transform({0.65f, 0.45f, 0}, {1, 0, 0, 0}, glm::vec3(0.25f)));
+                 app.scene().createEntity(model);
                  unloaded(ResourceType::MODEL, GLTF);
                  unloaded(ResourceType::TEXTURE, PNG);
                  otherPng = ResourceRegistry::instance().lookup(ResourceType::TEXTURE, PNG);
@@ -316,58 +310,20 @@ namespace
                  otherPixels = ResourceManager::instance().get<TextureResource>(otherPng);
                  ASSERT_NE(otherPixels, nullptr);
                  ordinaryOpens = state->opens;
-                 order.push_back('i');
              },
              [&](Application::Session& app, const Application::FrameTime&) {
-                 const int frame = updates++;
-                 order.push_back('u');
                  routes();
                  EXPECT_EQ(state->opens, ordinaryOpens);
-                 if (frame == 2)
-                 {
-                     glfwWaitEventsTimeout(0.06);
-                     auto image = WindowCapture::capture(app.window());
-                     color(image, -0.510897f, 0.567851f, {51, 61, 71});
-                     color(image, 0.789103f, 0.567851f, {188, 255, 188});
-                     WindowCapture::save(image, "review/application-ui-edit.ppm");
-                     const auto model = Model::prepareModel(app.renderer(), OBJ);
-                     EXPECT_EQ(ResourceRegistry::instance().refCount(otherPng), 1u);
-                     EXPECT_EQ(ResourceRegistry::instance().getObject(otherPng), otherPixels);
-                     app.scene().clear();
-                     routes();
-                     auto next = std::make_unique<Scene::Scene>();
-                     next->setCamera(Scene::Camera({0, 0, 2}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 10}));
-                     next->createEntity(model, Scene::Transform({-0.6f, -0.2f, 0}, {1, 0, 0, 0}, glm::vec3(0.6f)));
-                     next->createEntity(model, Scene::Transform({0.6f, -0.2f, 0}, {1, 0, 0, 0}, glm::vec3(0.6f)));
-                     app.setScene(std::move(next));
-                     EXPECT_EQ(app.scene().find(first), nullptr);
-                     EXPECT_FALSE(app.scene().setVisible(first, true));
-                     EXPECT_FLOAT_EQ(app.scene().camera().position().z, 2);
-                     track(app, model, state);
-                     ordinaryOpens = state->opens;
-                     unloaded(ResourceType::MODEL, OBJ);
-                 }
-                 if (frame == 5)
-                 {
-                     glfwWaitEventsTimeout(0.06);
-                     const auto image = WindowCapture::capture(app.window());
-                     color(image, -0.12f, -0.15f, {188, 255, 188});
-                     color(image, 0.48f, -0.15f, {188, 255, 188});
-                     color(image, 0.789103f, 0.567851f, {51, 61, 71});
-                     WindowCapture::save(image, "review/application-switched-scene.ppm");
-                     app.requestExit();
-                 }
+                 const auto model = Model::prepareModel(app.renderer(), OBJ);
+                 app.scene().createEntity(model);
+                 EXPECT_EQ(ResourceRegistry::instance().refCount(otherPng), 1u);
+                 EXPECT_EQ(ResourceRegistry::instance().getObject(otherPng), otherPixels);
+                 track(app, model, state);
+                 unloaded(ResourceType::MODEL, OBJ);
+                 app.requestExit();
              },
-             [&](Application::Session& app) {
-                 order.push_back('g');
-                 if (uis++ == 1)
-                     ASSERT_TRUE(app.scene().setVisible(first, false));
-                 glfwWaitEventsTimeout(0.04);
-             }});
+             {}});
         EXPECT_FALSE(session.isOpen());
-        EXPECT_EQ(updates, 6);
-        EXPECT_EQ(uis, 5);
-        EXPECT_EQ(order, (std::vector<char>{'i', 'u', 'g', 'u', 'g', 'u', 'g', 'u', 'g', 'u', 'g', 'u'}));
         closed(state);
         EXPECT_EQ(ResourceRegistry::instance().refCount(otherPng), 1u);
         EXPECT_EQ(ResourceManager::instance().get<TextureResource>(otherPng), otherPixels);

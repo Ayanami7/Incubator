@@ -2,7 +2,11 @@
 
 #include "runtime/core/path/path.h"
 
-#include <gmock/gmock.h>
+#include <initializer_list>
+#include <string>
+#include <string_view>
+#include <utility>
+
 #include <gtest/gtest.h>
 
 using namespace Incubator::Path;
@@ -10,542 +14,168 @@ using namespace Incubator::Path;
 class PathTest : public ::testing::Test
 {};
 
-// ========== join 测试 ==========
-
-TEST_F(PathTest, JoinSimplePaths)
+template <typename Operation>
+void expectStringResults(std::initializer_list<std::pair<std::string_view, std::string_view>> cases,
+                         Operation operation)
 {
-    std::string result = join("folder", "file.txt");
-    EXPECT_EQ(result, "folder/file.txt");
+    for (const auto& [input, expected] : cases)
+    {
+        SCOPED_TRACE(input);
+        EXPECT_EQ(operation(std::string(input)), std::string(expected));
+    }
 }
 
-TEST_F(PathTest, JoinWithSeparator)
+template <typename Predicate>
+void expectPredicateResults(std::initializer_list<std::pair<std::string_view, bool>> cases, Predicate predicate)
 {
-    std::string result = join("folder/", "file.txt");
-    EXPECT_EQ(result, "folder/file.txt");
+    for (const auto& [input, expected] : cases)
+    {
+        SCOPED_TRACE(input);
+        EXPECT_EQ(predicate(std::string(input)), expected);
+    }
 }
 
-TEST_F(PathTest, JoinWithMultipleParts)
+TEST_F(PathTest, JoinsPaths)
 {
-    std::string result = join("a", "b", "c");
-    EXPECT_EQ(result, "a/b/c");
+    EXPECT_EQ(join("folder", "file.txt"), "folder/file.txt");
+    EXPECT_EQ(join("folder/", "file.txt"), "folder/file.txt");
+    EXPECT_EQ(join("a", "b", "c"), "a/b/c");
+    EXPECT_EQ(join("C:/dir", "sub", "file.txt"), "C:/dir/sub/file.txt");
+    EXPECT_EQ(join("", "file.txt"), "file.txt");
+    EXPECT_EQ(join("folder", ""), "folder");
+    EXPECT_EQ(join("", ""), "");
+    EXPECT_EQ(join("中文文件夹", "文件.txt"), "中文文件夹/文件.txt");
+    EXPECT_EQ(join("资源/纹理", "角色.png"), "资源/纹理/角色.png");
+    EXPECT_EQ(join("assets/素材", "texture.png"), "assets/素材/texture.png");
 }
 
-TEST_F(PathTest, JoinWithAbsoluteFirstPart)
+TEST_F(PathTest, NormalizesPaths)
 {
-    std::string result = join("C:/dir", "sub", "file.txt");
-    EXPECT_EQ(result, "C:/dir/sub/file.txt");
+    expectStringResults({{"a/b/c", "a/b/c"},
+                         {"a/../b", "b"},
+                         {"a/./b", "a/b"},
+                         {"a//b", "a/b"},
+                         {"a\\b/c", "a/b/c"},
+                         {"a\\b\\c", "a/b/c"},
+                         {"a/b/../c/./d", "a/c/d"},
+                         {"", ""},
+                         {"C:/Program Files/App/bin", "C:/Program Files/App/bin"},
+                         {"C:/a/b/../c", "C:/a/c"},
+                         {"//server/share/folder", "//server/share/folder"},
+                         {"//server/share/a/../b", "//server/share/b"},
+                         {"C:/../other", "C:/other"},
+                         {"a/b/", "a/b"},
+                         {"中文/./../其他", "其他"},
+                         {"游戏\\配置\\设置.ini", "游戏/配置/设置.ini"},
+                         {"游戏/./资源/../纹理/./角色.png", "游戏/纹理/角色.png"}},
+                        [](const std::string& path) { return normalize(path); });
 }
 
-TEST_F(PathTest, JoinEmptyFirstPart)
+TEST_F(PathTest, ExtractsFileNames)
 {
-    std::string result = join("", "file.txt");
-    EXPECT_EQ(result, "file.txt");
+    expectStringResults({{"folder/file.txt", "file.txt"},
+                         {"folder/file", "file"},
+                         {"file.txt", "file.txt"},
+                         {"folder/", ""},
+                         {"", ""},
+                         {"folder/file.tar.gz", "file.tar.gz"},
+                         {"folder\\file.txt", "file.txt"},
+                         {"路径/文档.pdf", "文档.pdf"},
+                         {"数据/说明", "说明"}},
+                        [](const std::string& path) { return getFileName(path); });
 }
 
-TEST_F(PathTest, JoinEmptySecondPart)
+TEST_F(PathTest, ExtractsStems)
 {
-    std::string result = join("folder", "");
-    EXPECT_EQ(result, "folder");
+    expectStringResults({{"folder/file.txt", "file"},
+                         {"folder/file", "file"},
+                         {"file.txt", "file"},
+                         {"folder/file.tar.gz", "file.tar"},
+                         {"", ""},
+                         {".hidden", ".hidden"},
+                         {".hidden.txt", ".hidden"},
+                         {"图片/风景.jpg", "风景"},
+                         {"音乐/歌曲", "歌曲"}},
+                        [](const std::string& path) { return getStem(path); });
 }
 
-TEST_F(PathTest, JoinBothEmpty)
+TEST_F(PathTest, ExtractsExtensions)
 {
-    std::string result = join("", "");
-    EXPECT_EQ(result, "");
+    expectStringResults({{"folder/file.txt", "txt"},
+                         {"folder/file", ""},
+                         {"file.txt", "txt"},
+                         {"", ""},
+                         {"folder/file.tar.gz", "gz"},
+                         {".hidden", ""},
+                         {".hidden.txt", "txt"},
+                         {"视频/电影.mp4", "mp4"}},
+                        [](const std::string& path) { return getExtension(path); });
 }
 
-// ========== normalize 测试 ==========
-
-TEST_F(PathTest, NormalizeSimplePath)
+TEST_F(PathTest, ExtractsParentPaths)
 {
-    std::string result = normalize("a/b/c");
-    EXPECT_EQ(result, "a/b/c");
+    expectStringResults({{"folder/file.txt", "folder"},
+                         {"a/b/c/file.txt", "a/b/c"},
+                         {"folder/", ""},
+                         {"file.txt", ""},
+                         {"", ""},
+                         {"folder\\file.txt", "folder"},
+                         {"项目/源码/main.cpp", "项目/源码"}},
+                        [](const std::string& path) { return getParentPath(path); });
 }
 
-TEST_F(PathTest, NormalizeDotDot)
+TEST_F(PathTest, DetectsAbsolutePaths)
 {
-    std::string result = normalize("a/../b");
-    EXPECT_EQ(result, "b");
+    expectPredicateResults({{"folder/file.txt", false},
+                            {"file.txt", false},
+                            {"../file.txt", false},
+                            {"C:/folder/file.txt", true},
+                            {"D:/file.txt", true},
+                            {"c:/windows", true},
+                            {"", false},
+                            {"//server/share/file.txt", true},
+                            {"/usr/local/file.txt", false},
+                            {"/file.txt", false},
+                            {"D:/游戏/存档", true}},
+                           [](const std::string& path) { return isAbsolute(path); });
 }
 
-TEST_F(PathTest, NormalizeDot)
+TEST_F(PathTest, DetectsRootNames)
 {
-    std::string result = normalize("a/./b");
-    EXPECT_EQ(result, "a/b");
+    expectPredicateResults({{"folder/file.txt", false},
+                            {"file.txt", false},
+                            {"", false},
+                            {"C:/folder/file.txt", true},
+                            {"C:foo", true},
+                            {"c:/windows", true},
+                            {"d:", true},
+                            {"//server/share/file.txt", true},
+                            {"\\\\server\\share\\file.txt", true},
+                            {"/usr/local/file.txt", false},
+                            {"/file.txt", false}},
+                           [](const std::string& path) { return hasRootName(path); });
 }
 
-TEST_F(PathTest, NormalizeMultipleSeparators)
-{
-    std::string result = normalize("a//b");
-    EXPECT_EQ(result, "a/b");
-}
-
-TEST_F(PathTest, NormalizeMixedSeparators)
-{
-    std::string result = normalize("a\\b/c");
-    EXPECT_EQ(result, "a/b/c");
-}
-
-TEST_F(PathTest, NormalizeBackslashes)
-{
-    std::string result = normalize("a\\b\\c");
-    EXPECT_EQ(result, "a/b/c");
-}
-
-TEST_F(PathTest, NormalizeComplexPath)
-{
-    std::string result = normalize("a/b/../c/./d");
-    EXPECT_EQ(result, "a/c/d");
-}
-
-TEST_F(PathTest, NormalizeEmptyPath)
-{
-    std::string result = normalize("");
-    EXPECT_EQ(result, "");
-}
-
-TEST_F(PathTest, NormalizeWindowsDrivePath)
-{
-    std::string result = normalize("C:/Program Files/App/bin");
-    EXPECT_EQ(result, "C:/Program Files/App/bin");
-}
-
-TEST_F(PathTest, NormalizeWindowsDrivePathWithDotDot)
-{
-    std::string result = normalize("C:/a/b/../c");
-    EXPECT_EQ(result, "C:/a/c");
-}
-
-TEST_F(PathTest, NormalizeUNCPath)
-{
-    std::string result = normalize("//server/share/folder");
-    EXPECT_EQ(result, "//server/share/folder");
-}
-
-TEST_F(PathTest, NormalizeUNCPathWithDotDot)
-{
-    std::string result = normalize("//server/share/a/../b");
-    EXPECT_EQ(result, "//server/share/b");
-}
-
-TEST_F(PathTest, NormalizeDotDotCannotCrossDriveRoot)
-{
-    // std::filesystem::path::lexically_normal 正确处理盘符根目录语义：
-    // C:/.. = C:/（不能越过盘符根），所以 C:/../other = C:/other
-    std::string result = normalize("C:/../other");
-    EXPECT_EQ(result, "C:/other");
-}
-
-TEST_F(PathTest, NormalizeTrailingSeparator)
-{
-    std::string result = normalize("a/b/");
-    EXPECT_EQ(result, "a/b");
-}
-
-// ========== getFileName 测试 ==========
-
-TEST_F(PathTest, GetFileNameSimple)
-{
-    std::string result = getFileName("folder/file.txt");
-    EXPECT_EQ(result, "file.txt");
-}
-
-TEST_F(PathTest, GetFileNameNoExtension)
-{
-    std::string result = getFileName("folder/file");
-    EXPECT_EQ(result, "file");
-}
-
-TEST_F(PathTest, GetFileNameJustFile)
-{
-    std::string result = getFileName("file.txt");
-    EXPECT_EQ(result, "file.txt");
-}
-
-TEST_F(PathTest, GetFileNameTrailingSeparator)
-{
-    std::string result = getFileName("folder/");
-    EXPECT_EQ(result, "");
-}
-
-TEST_F(PathTest, GetFileNameEmpty)
-{
-    std::string result = getFileName("");
-    EXPECT_EQ(result, "");
-}
-
-TEST_F(PathTest, GetFileNameMultipleExtensions)
-{
-    std::string result = getFileName("folder/file.tar.gz");
-    EXPECT_EQ(result, "file.tar.gz");
-}
-
-TEST_F(PathTest, GetFileNameWithBackslash)
-{
-    std::string result = getFileName("folder\\file.txt");
-    EXPECT_EQ(result, "file.txt");
-}
-
-// ========== getStem 测试 ==========
-
-TEST_F(PathTest, GetStemSimple)
-{
-    std::string result = getStem("folder/file.txt");
-    EXPECT_EQ(result, "file");
-}
-
-TEST_F(PathTest, GetStemNoExtension)
-{
-    std::string result = getStem("folder/file");
-    EXPECT_EQ(result, "file");
-}
-
-TEST_F(PathTest, GetStemJustFile)
-{
-    std::string result = getStem("file.txt");
-    EXPECT_EQ(result, "file");
-}
-
-TEST_F(PathTest, GetStemMultipleExtensions)
-{
-    std::string result = getStem("folder/file.tar.gz");
-    EXPECT_EQ(result, "file.tar");
-}
-
-TEST_F(PathTest, GetStemEmpty)
-{
-    std::string result = getStem("");
-    EXPECT_EQ(result, "");
-}
-
-TEST_F(PathTest, GetStemDotFile)
-{
-    // std::filesystem::path::stem 将 .hidden 视为完整文件名（无扩展名）
-    std::string result = getStem(".hidden");
-    EXPECT_EQ(result, ".hidden");
-}
-
-TEST_F(PathTest, GetStemDotFileWithExtension)
-{
-    std::string result = getStem(".hidden.txt");
-    EXPECT_EQ(result, ".hidden");
-}
-
-// ========== getExtension 测试 ==========
-
-TEST_F(PathTest, GetExtensionSimple)
-{
-    std::string result = getExtension("folder/file.txt");
-    EXPECT_EQ(result, "txt");
-}
-
-TEST_F(PathTest, GetExtensionNoExtension)
-{
-    std::string result = getExtension("folder/file");
-    EXPECT_EQ(result, "");
-}
-
-TEST_F(PathTest, GetExtensionJustFile)
-{
-    std::string result = getExtension("file.txt");
-    EXPECT_EQ(result, "txt");
-}
-
-TEST_F(PathTest, GetExtensionEmpty)
-{
-    std::string result = getExtension("");
-    EXPECT_EQ(result, "");
-}
-
-TEST_F(PathTest, GetExtensionMultipleExtensions)
-{
-    std::string result = getExtension("folder/file.tar.gz");
-    EXPECT_EQ(result, "gz");
-}
-
-TEST_F(PathTest, GetExtensionDotFile)
-{
-    std::string result = getExtension(".hidden");
-    EXPECT_EQ(result, "");
-}
-
-TEST_F(PathTest, GetExtensionDotFileWithExtension)
-{
-    std::string result = getExtension(".hidden.txt");
-    EXPECT_EQ(result, "txt");
-}
-
-// ========== getParentPath 测试 ==========
-
-TEST_F(PathTest, GetParentPathSimple)
-{
-    std::string result = getParentPath("folder/file.txt");
-    EXPECT_EQ(result, "folder");
-}
-
-TEST_F(PathTest, GetParentPathNested)
-{
-    std::string result = getParentPath("a/b/c/file.txt");
-    EXPECT_EQ(result, "a/b/c");
-}
-
-TEST_F(PathTest, GetParentPathTrailingSeparator)
-{
-    std::string result = getParentPath("folder/");
-    EXPECT_EQ(result, "");
-}
-
-TEST_F(PathTest, GetParentPathJustFile)
-{
-    std::string result = getParentPath("file.txt");
-    EXPECT_EQ(result, "");
-}
-
-TEST_F(PathTest, GetParentPathEmpty)
-{
-    std::string result = getParentPath("");
-    EXPECT_EQ(result, "");
-}
-
-TEST_F(PathTest, GetParentPathWithBackslash)
-{
-    std::string result = getParentPath("folder\\file.txt");
-    EXPECT_EQ(result, "folder");
-}
-
-// ========== isAbsolute 测试 ==========
-
-TEST_F(PathTest, IsAbsoluteRelativePath)
-{
-    EXPECT_FALSE(isAbsolute("folder/file.txt"));
-    EXPECT_FALSE(isAbsolute("file.txt"));
-    EXPECT_FALSE(isAbsolute("../file.txt"));
-}
-
-TEST_F(PathTest, IsAbsoluteWindowsDrive)
-{
-    EXPECT_TRUE(isAbsolute("C:/folder/file.txt"));
-    EXPECT_TRUE(isAbsolute("D:/file.txt"));
-    EXPECT_TRUE(isAbsolute("c:/windows"));
-}
-
-TEST_F(PathTest, IsAbsoluteEmpty)
-{
-    EXPECT_FALSE(isAbsolute(""));
-}
-
-TEST_F(PathTest, IsAbsoluteUNCPath)
-{
-    EXPECT_TRUE(isAbsolute("//server/share/file.txt"));
-}
-
-TEST_F(PathTest, IsAbsoluteNotUnixPath)
-{
-    EXPECT_FALSE(isAbsolute("/usr/local/file.txt"));
-    EXPECT_FALSE(isAbsolute("/file.txt"));
-}
-
-// ========== hasRootName 测试 ==========
-
-TEST_F(PathTest, HasRootNameRelativePath)
-{
-    EXPECT_FALSE(hasRootName("folder/file.txt"));
-    EXPECT_FALSE(hasRootName("file.txt"));
-    EXPECT_FALSE(hasRootName(""));
-}
-
-TEST_F(PathTest, HasRootNameWindowsDrive)
-{
-    EXPECT_TRUE(hasRootName("C:/folder/file.txt"));
-    EXPECT_TRUE(hasRootName("C:foo"));
-    EXPECT_TRUE(hasRootName("c:/windows"));
-    EXPECT_TRUE(hasRootName("d:"));
-}
-
-TEST_F(PathTest, HasRootNameUNC)
-{
-    EXPECT_TRUE(hasRootName("//server/share/file.txt"));
-    EXPECT_TRUE(hasRootName("\\\\server\\share\\file.txt"));
-}
-
-TEST_F(PathTest, HasRootNameNotUnixPath)
-{
-    EXPECT_FALSE(hasRootName("/usr/local/file.txt"));
-    EXPECT_FALSE(hasRootName("/file.txt"));
-}
-
-// ========== hasExtension 测试 ==========
-
-TEST_F(PathTest, HasExtensionSimple)
+TEST_F(PathTest, MatchesExtensionsCaseInsensitively)
 {
     EXPECT_TRUE(hasExtension("file.txt", "txt"));
-}
-
-TEST_F(PathTest, HasExtensionWithDot)
-{
     EXPECT_TRUE(hasExtension("file.txt", ".txt"));
-}
-
-TEST_F(PathTest, HasExtensionCaseInsensitive)
-{
     EXPECT_TRUE(hasExtension("file.TXT", "txt"));
     EXPECT_TRUE(hasExtension("file.txt", "TXT"));
-}
-
-TEST_F(PathTest, HasExtensionNoExtension)
-{
     EXPECT_FALSE(hasExtension("file", "txt"));
-}
-
-TEST_F(PathTest, HasExtensionWrongExtension)
-{
     EXPECT_FALSE(hasExtension("file.txt", "png"));
-}
-
-TEST_F(PathTest, HasExtensionEmptyFile)
-{
     EXPECT_FALSE(hasExtension("", "txt"));
-}
-
-TEST_F(PathTest, HasExtensionEmptyExt)
-{
     EXPECT_FALSE(hasExtension("file.txt", ""));
-}
-
-// ========== 组合测试 ==========
-
-TEST_F(PathTest, PathConstructionExample)
-{
-    std::string assetPath = join("assets", "textures", "player.png");
-    EXPECT_EQ(assetPath, "assets/textures/player.png");
-
-    std::string cleanPath = normalize("assets/../textures/./player.png");
-    EXPECT_EQ(cleanPath, "textures/player.png");
-
-    std::string fileName = getFileName(assetPath);
-    EXPECT_EQ(fileName, "player.png");
-
-    std::string stem = getStem(assetPath);
-    EXPECT_EQ(stem, "player");
-
-    std::string ext = getExtension(assetPath);
-    EXPECT_EQ(ext, "png");
-
-    EXPECT_TRUE(hasExtension(assetPath, "png"));
-}
-
-// ========== 中文路径测试 ==========
-
-TEST_F(PathTest, ChineseJoinSimple)
-{
-    std::string result = join("中文文件夹", "文件.txt");
-    EXPECT_EQ(result, "中文文件夹/文件.txt");
-}
-
-TEST_F(PathTest, ChineseJoinNested)
-{
-    std::string result = join("资源/纹理", "角色.png");
-    EXPECT_EQ(result, "资源/纹理/角色.png");
-}
-
-TEST_F(PathTest, ChineseNormalizeDotDot)
-{
-    std::string result = normalize("中文/./../其他");
-    EXPECT_EQ(result, "其他");
-}
-
-TEST_F(PathTest, ChineseNormalizeBackslashes)
-{
-    std::string result = normalize("游戏/配置/设置.ini");
-    EXPECT_EQ(result, "游戏/配置/设置.ini");
-}
-
-TEST_F(PathTest, ChineseGetFileNameSimple)
-{
-    std::string result = getFileName("路径/文档.pdf");
-    EXPECT_EQ(result, "文档.pdf");
-}
-
-TEST_F(PathTest, ChineseGetFileNameNoExtension)
-{
-    std::string result = getFileName("数据/说明");
-    EXPECT_EQ(result, "说明");
-}
-
-TEST_F(PathTest, ChineseGetStemSimple)
-{
-    std::string result = getStem("图片/风景.jpg");
-    EXPECT_EQ(result, "风景");
-}
-
-TEST_F(PathTest, ChineseGetStemNoExtension)
-{
-    std::string result = getStem("音乐/歌曲");
-    EXPECT_EQ(result, "歌曲");
-}
-
-TEST_F(PathTest, ChineseGetExtension)
-{
-    std::string result = getExtension("视频/电影.mp4");
-    EXPECT_EQ(result, "mp4");
-}
-
-TEST_F(PathTest, ChineseGetParentPath)
-{
-    std::string result = getParentPath("项目/源码/main.cpp");
-    EXPECT_EQ(result, "项目/源码");
-}
-
-TEST_F(PathTest, ChineseAbsolutePathWindowsDrive)
-{
-    EXPECT_TRUE(isAbsolute("D:/游戏/存档"));
-}
-
-TEST_F(PathTest, ChineseHasExtensionCaseInsensitive)
-{
     EXPECT_TRUE(hasExtension("文档.PDF", "pdf"));
 }
 
-TEST_F(PathTest, ChineseMixedWithEnglish)
+TEST_F(PathTest, LowercasesASCIIWithoutChangingOtherCharacters)
 {
-    std::string result = join("assets/素材", "texture.png");
-    EXPECT_EQ(result, "assets/素材/texture.png");
-}
-
-TEST_F(PathTest, ChineseComplexPath)
-{
-    std::string path = normalize("游戏/./资源/../纹理/./角色.png");
-    EXPECT_EQ(path, "游戏/纹理/角色.png");
-}
-
-// ========== toLowerASCII 测试 ==========
-
-TEST_F(PathTest, ToLowerASCIIFullRange)
-{
-    EXPECT_EQ(toLowerASCII("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), "abcdefghijklmnopqrstuvwxyz");
-}
-
-TEST_F(PathTest, ToLowerASCIIAlreadyLower)
-{
-    EXPECT_EQ(toLowerASCII("already lower"), "already lower");
-}
-
-TEST_F(PathTest, ToLowerASCIINonAsciiUnchanged)
-{
-    EXPECT_EQ(toLowerASCII("中文/纹理"), "中文/纹理");
-}
-
-TEST_F(PathTest, ToLowerASCIIDigitsAndSymbolsUnchanged)
-{
-    EXPECT_EQ(toLowerASCII("Tex123!_@#"), "tex123!_@#");
-}
-
-TEST_F(PathTest, ToLowerASCIIEmpty)
-{
-    EXPECT_EQ(toLowerASCII(""), "");
-}
-
-TEST_F(PathTest, ToLowerASCIIPathExample)
-{
-    EXPECT_EQ(toLowerASCII("Textures/Player.PNG"), "textures/player.png");
+    expectStringResults({{"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"},
+                         {"already lower", "already lower"},
+                         {"中文/纹理", "中文/纹理"},
+                         {"Tex123!_@#", "tex123!_@#"},
+                         {"", ""},
+                         {"Textures/Player.PNG", "textures/player.png"}},
+                        [](const std::string& value) { return toLowerASCII(value); });
 }

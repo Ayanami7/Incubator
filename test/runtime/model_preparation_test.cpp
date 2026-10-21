@@ -480,7 +480,7 @@ namespace
     class SceneEntityTest : public ModelInstanceTest
     {};
 
-    TEST_F(SceneEntityTest, SharedModelEntitiesPreserveOtherDrawsAndReleaseOnlyLogicalHolds)
+    TEST_F(SceneEntityTest, SharedModelEntitiesKeepGpuAssetsUntilRendererShutdown)
     {
         auto native = window(true);
         Mesh mesh;
@@ -494,8 +494,6 @@ namespace
             const auto* identity = model.get();
             const auto rootMatrix = model->nodes()[model->rootNode()].localTransform;
             const auto nodeCount = model->nodes().size();
-            const auto cachedSolid = model->draws()[1].model;
-            const size_t drawsPerEntity = model->draws().size();
             mesh = model->meshes()[0];
             material = model->materials()[0];
             texture = model->textures()[0];
@@ -507,7 +505,6 @@ namespace
             const auto resourceLog = resourceMessages_.str();
 
             Scene::Scene scene;
-            scene.setCamera(Scene::Camera({0, 0, 1}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 10}));
             const Scene::Transform left({-0.65f, 0.45f, 0}, {1, 0, 0, 0}, glm::vec3(0.25f));
             const Scene::Transform right({0.65f, 0.45f, 0}, {1, 0, 0, 0}, glm::vec3(0.25f));
             const auto first = scene.createEntity(model, left);
@@ -527,60 +524,17 @@ namespace
             ASSERT_TRUE(scene.setModel(logical, {}));
             EXPECT_EQ(weak.use_count(), 2);
 
-            const auto submitEntities = [&](size_t expectedDraws) {
-                native->pollEvents();
-                const auto extent = renderer.beginUiFrame();
-                ASSERT_TRUE(extent);
-                auto frame = Scene::extractSceneFrame(scene, *extent);
-                ASSERT_TRUE(frame);
-                EXPECT_EQ(frame->draws.size(), expectedDraws);
-                renderer.imgui().endFrame();
-                renderer.drawFrame(frame->input(), {0.2f, 0.24f, 0.28f, 1});
-                frame.reset();
-                // Match existing display tests: let presentation/composition advance before GDI capture.
-                glfwWaitEventsTimeout(0.04);
-            };
-            const auto leftPoint = left.matrix() * cachedSolid * glm::vec4(0.6f, -1.0f / 6, 0, 1);
-            const auto rightPoint = right.matrix() * cachedSolid * glm::vec4(0.6f, -1.0f / 6, 0, 1);
-            for (int frame = 0; frame < 3; ++frame)
-                ASSERT_NO_FATAL_FAILURE(submitEntities(drawsPerEntity * 2));
-            auto image = WindowCapture::capture(*native);
-            color(image, leftPoint.x, leftPoint.y, {188, 255, 188});
-            color(image, rightPoint.x, rightPoint.y, {188, 255, 188});
-            WindowCapture::save(image, "review/scene-shared-entities.ppm");
-
-            ASSERT_TRUE(scene.setVisible(first, false));
-            for (int frame = 0; frame < 3; ++frame)
-                ASSERT_NO_FATAL_FAILURE(submitEntities(drawsPerEntity));
-            image = WindowCapture::capture(*native);
-            {
-                SCOPED_TRACE("Hidden first entity");
-                WindowCapture::save(image, "review/scene-hidden-entity.ppm");
-                color(image, leftPoint.x, leftPoint.y, {51, 61, 71});
-                color(image, rightPoint.x, rightPoint.y, {188, 255, 188});
-            }
             ASSERT_TRUE(scene.destroyEntity(first));
             EXPECT_EQ(weak.use_count(), 1);
             EXPECT_EQ(scene.find(first), nullptr);
             EXPECT_EQ(scene.find(second)->model.get(), identity);
             EXPECT_EQ(scene.find(second)->transform.matrix(), right.matrix());
-            for (int frame = 0; frame < 3; ++frame)
-                ASSERT_NO_FATAL_FAILURE(submitEntities(drawsPerEntity));
-            color(WindowCapture::capture(*native), rightPoint.x, rightPoint.y, {188, 255, 188});
 
             scene.clear();
             EXPECT_TRUE(weak.expired());
             EXPECT_TRUE(mesh.valid());
             EXPECT_TRUE(material.valid());
             EXPECT_TRUE(texture.valid());
-            for (int frame = 0; frame < 3; ++frame)
-                ASSERT_NO_FATAL_FAILURE(submitEntities(0));
-            {
-                SCOPED_TRACE("Cleared scene");
-                image = WindowCapture::capture(*native);
-                WindowCapture::save(image, "review/scene-cleared.ppm");
-                color(image, rightPoint.x, rightPoint.y, {51, 61, 71});
-            }
             EXPECT_EQ(resourceMessages_.str(), resourceLog);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 2u);

@@ -2,6 +2,10 @@
 
 #include "runtime/platform/input/input.h"
 
+#include <array>
+#include <cstddef>
+#include <utility>
+
 #include <gtest/gtest.h>
 
 using Incubator::Input::KeyCode;
@@ -14,392 +18,137 @@ using Incubator::Input::fromGlfwAction;
 class InputTest : public ::testing::Test
 {};
 
-// ========== fromGlfwKey — Letter keys ==========
-
-TEST_F(InputTest, FromGlfwKeyLetterA)
+template <std::size_t Size>
+void expectKeyMappings(const std::array<std::pair<int, KeyCode>, Size>& mappings)
 {
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_A), KeyCode::A);
+    for (const auto& [glfwKey, keyCode] : mappings)
+    {
+        SCOPED_TRACE(glfwKey);
+        EXPECT_EQ(fromGlfwKey(glfwKey), keyCode);
+    }
 }
 
-TEST_F(InputTest, FromGlfwKeyLetterM)
+TEST_F(InputTest, MapsRepresentativeLetters)
 {
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_M), KeyCode::M);
+    expectKeyMappings(std::array{std::pair{GLFW_KEY_A, KeyCode::A}, std::pair{GLFW_KEY_M, KeyCode::M},
+                                 std::pair{GLFW_KEY_Z, KeyCode::Z}});
 }
 
-TEST_F(InputTest, FromGlfwKeyLetterZ)
+TEST_F(InputTest, MapsRepresentativeNumberKeys)
 {
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_Z), KeyCode::Z);
+    expectKeyMappings(std::array{std::pair{GLFW_KEY_0, KeyCode::Num0}, std::pair{GLFW_KEY_5, KeyCode::Num5},
+                                 std::pair{GLFW_KEY_9, KeyCode::Num9}});
 }
 
-// ========== fromGlfwKey — Number keys ==========
-
-TEST_F(InputTest, FromGlfwKeyNumber0)
+TEST_F(InputTest, MapsRepresentativeFunctionKeys)
 {
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_0), KeyCode::Num0);
+    expectKeyMappings(std::array{std::pair{GLFW_KEY_F1, KeyCode::F1}, std::pair{GLFW_KEY_F7, KeyCode::F7},
+                                 std::pair{GLFW_KEY_F12, KeyCode::F12}});
 }
 
-TEST_F(InputTest, FromGlfwKeyNumber5)
+TEST_F(InputTest, MapsNavigationKeys)
 {
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_5), KeyCode::Num5);
+    expectKeyMappings(std::array{std::pair{GLFW_KEY_UP, KeyCode::Up}, std::pair{GLFW_KEY_DOWN, KeyCode::Down},
+                                 std::pair{GLFW_KEY_LEFT, KeyCode::Left}, std::pair{GLFW_KEY_RIGHT, KeyCode::Right},
+                                 std::pair{GLFW_KEY_HOME, KeyCode::Home}, std::pair{GLFW_KEY_END, KeyCode::End},
+                                 std::pair{GLFW_KEY_PAGE_UP, KeyCode::PageUp},
+                                 std::pair{GLFW_KEY_PAGE_DOWN, KeyCode::PageDown},
+                                 std::pair{GLFW_KEY_INSERT, KeyCode::Insert},
+                                 std::pair{GLFW_KEY_DELETE, KeyCode::Delete}});
 }
 
-TEST_F(InputTest, FromGlfwKeyNumber9)
+TEST_F(InputTest, MapsActionKeys)
 {
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_9), KeyCode::Num9);
+    expectKeyMappings(std::array{std::pair{GLFW_KEY_SPACE, KeyCode::Space}, std::pair{GLFW_KEY_ENTER, KeyCode::Enter},
+                                 std::pair{GLFW_KEY_ESCAPE, KeyCode::Escape}, std::pair{GLFW_KEY_TAB, KeyCode::Tab},
+                                 std::pair{GLFW_KEY_BACKSPACE, KeyCode::Backspace},
+                                 std::pair{GLFW_KEY_CAPS_LOCK, KeyCode::CapsLock}});
 }
 
-// ========== fromGlfwKey — Function keys ==========
-
-TEST_F(InputTest, FromGlfwKeyF1)
+TEST_F(InputTest, MapsModifierKeys)
 {
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_F1), KeyCode::F1);
+    expectKeyMappings(std::array{std::pair{GLFW_KEY_LEFT_SHIFT, KeyCode::LeftShift},
+                                 std::pair{GLFW_KEY_RIGHT_SHIFT, KeyCode::RightShift},
+                                 std::pair{GLFW_KEY_LEFT_CONTROL, KeyCode::LeftControl},
+                                 std::pair{GLFW_KEY_RIGHT_CONTROL, KeyCode::RightControl},
+                                 std::pair{GLFW_KEY_LEFT_ALT, KeyCode::LeftAlt},
+                                 std::pair{GLFW_KEY_RIGHT_ALT, KeyCode::RightAlt},
+                                 std::pair{GLFW_KEY_LEFT_SUPER, KeyCode::LeftSuper},
+                                 std::pair{GLFW_KEY_RIGHT_SUPER, KeyCode::RightSuper}});
 }
 
-TEST_F(InputTest, FromGlfwKeyF7)
+TEST_F(InputTest, MapsNumpadKeys)
 {
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_F7), KeyCode::F7);
+    expectKeyMappings(std::array{std::pair{GLFW_KEY_KP_0, KeyCode::Kp0}, std::pair{GLFW_KEY_KP_5, KeyCode::Kp5},
+                                 std::pair{GLFW_KEY_KP_9, KeyCode::Kp9},
+                                 std::pair{GLFW_KEY_KP_ADD, KeyCode::KpAdd},
+                                 std::pair{GLFW_KEY_KP_SUBTRACT, KeyCode::KpSubtract},
+                                 std::pair{GLFW_KEY_KP_ENTER, KeyCode::KpEnter},
+                                 std::pair{GLFW_KEY_KP_EQUAL, KeyCode::KpEqual}});
 }
 
-TEST_F(InputTest, FromGlfwKeyF12)
+TEST_F(InputTest, MapsSymbolKeys)
 {
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_F12), KeyCode::F12);
+    expectKeyMappings(std::array{std::pair{GLFW_KEY_MINUS, KeyCode::Minus},
+                                 std::pair{GLFW_KEY_EQUAL, KeyCode::Equal},
+                                 std::pair{GLFW_KEY_LEFT_BRACKET, KeyCode::LeftBracket},
+                                 std::pair{GLFW_KEY_RIGHT_BRACKET, KeyCode::RightBracket},
+                                 std::pair{GLFW_KEY_SEMICOLON, KeyCode::Semicolon},
+                                 std::pair{GLFW_KEY_APOSTROPHE, KeyCode::Apostrophe}});
 }
 
-// ========== fromGlfwKey — Arrow and navigation keys ==========
-
-TEST_F(InputTest, FromGlfwKeyArrowUp)
+TEST_F(InputTest, MapsSystemAndWorldKeys)
 {
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_UP), KeyCode::Up);
+    expectKeyMappings(std::array{std::pair{GLFW_KEY_SCROLL_LOCK, KeyCode::ScrollLock},
+                                 std::pair{GLFW_KEY_NUM_LOCK, KeyCode::NumLock},
+                                 std::pair{GLFW_KEY_PRINT_SCREEN, KeyCode::PrintScreen},
+                                 std::pair{GLFW_KEY_PAUSE, KeyCode::Pause}, std::pair{GLFW_KEY_MENU, KeyCode::Menu},
+                                 std::pair{GLFW_KEY_WORLD_1, KeyCode::World1},
+                                 std::pair{GLFW_KEY_WORLD_2, KeyCode::World2}});
 }
 
-TEST_F(InputTest, FromGlfwKeyArrowDown)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_DOWN), KeyCode::Down);
-}
-
-TEST_F(InputTest, FromGlfwKeyArrowLeft)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_LEFT), KeyCode::Left);
-}
-
-TEST_F(InputTest, FromGlfwKeyArrowRight)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_RIGHT), KeyCode::Right);
-}
-
-TEST_F(InputTest, FromGlfwKeyHome)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_HOME), KeyCode::Home);
-}
-
-TEST_F(InputTest, FromGlfwKeyEnd)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_END), KeyCode::End);
-}
-
-TEST_F(InputTest, FromGlfwKeyPageUp)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_PAGE_UP), KeyCode::PageUp);
-}
-
-TEST_F(InputTest, FromGlfwKeyPageDown)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_PAGE_DOWN), KeyCode::PageDown);
-}
-
-TEST_F(InputTest, FromGlfwKeyInsert)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_INSERT), KeyCode::Insert);
-}
-
-TEST_F(InputTest, FromGlfwKeyDelete)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_DELETE), KeyCode::Delete);
-}
-
-// ========== fromGlfwKey — Action keys ==========
-
-TEST_F(InputTest, FromGlfwKeySpace)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_SPACE), KeyCode::Space);
-}
-
-TEST_F(InputTest, FromGlfwKeyEnter)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_ENTER), KeyCode::Enter);
-}
-
-TEST_F(InputTest, FromGlfwKeyEscape)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_ESCAPE), KeyCode::Escape);
-}
-
-TEST_F(InputTest, FromGlfwKeyTab)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_TAB), KeyCode::Tab);
-}
-
-TEST_F(InputTest, FromGlfwKeyBackspace)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_BACKSPACE), KeyCode::Backspace);
-}
-
-TEST_F(InputTest, FromGlfwKeyCapsLock)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_CAPS_LOCK), KeyCode::CapsLock);
-}
-
-// ========== fromGlfwKey — Modifier keys ==========
-
-TEST_F(InputTest, FromGlfwKeyLeftShift)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_LEFT_SHIFT), KeyCode::LeftShift);
-}
-
-TEST_F(InputTest, FromGlfwKeyRightShift)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_RIGHT_SHIFT), KeyCode::RightShift);
-}
-
-TEST_F(InputTest, FromGlfwKeyLeftControl)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_LEFT_CONTROL), KeyCode::LeftControl);
-}
-
-TEST_F(InputTest, FromGlfwKeyRightControl)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_RIGHT_CONTROL), KeyCode::RightControl);
-}
-
-TEST_F(InputTest, FromGlfwKeyLeftAlt)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_LEFT_ALT), KeyCode::LeftAlt);
-}
-
-TEST_F(InputTest, FromGlfwKeyRightAlt)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_RIGHT_ALT), KeyCode::RightAlt);
-}
-
-TEST_F(InputTest, FromGlfwKeyLeftSuper)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_LEFT_SUPER), KeyCode::LeftSuper);
-}
-
-TEST_F(InputTest, FromGlfwKeyRightSuper)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_RIGHT_SUPER), KeyCode::RightSuper);
-}
-
-// ========== fromGlfwKey — Numpad keys ==========
-
-TEST_F(InputTest, FromGlfwKeyKp0)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_KP_0), KeyCode::Kp0);
-}
-
-TEST_F(InputTest, FromGlfwKeyKp5)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_KP_5), KeyCode::Kp5);
-}
-
-TEST_F(InputTest, FromGlfwKeyKp9)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_KP_9), KeyCode::Kp9);
-}
-
-TEST_F(InputTest, FromGlfwKeyKpAdd)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_KP_ADD), KeyCode::KpAdd);
-}
-
-TEST_F(InputTest, FromGlfwKeyKpSubtract)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_KP_SUBTRACT), KeyCode::KpSubtract);
-}
-
-TEST_F(InputTest, FromGlfwKeyKpEnter)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_KP_ENTER), KeyCode::KpEnter);
-}
-
-TEST_F(InputTest, FromGlfwKeyKpEqual)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_KP_EQUAL), KeyCode::KpEqual);
-}
-
-// ========== fromGlfwKey — Symbol keys ==========
-
-TEST_F(InputTest, FromGlfwKeyMinus)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_MINUS), KeyCode::Minus);
-}
-
-TEST_F(InputTest, FromGlfwKeyEqual)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_EQUAL), KeyCode::Equal);
-}
-
-TEST_F(InputTest, FromGlfwKeyLeftBracket)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_LEFT_BRACKET), KeyCode::LeftBracket);
-}
-
-TEST_F(InputTest, FromGlfwKeyRightBracket)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_RIGHT_BRACKET), KeyCode::RightBracket);
-}
-
-TEST_F(InputTest, FromGlfwKeySemicolon)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_SEMICOLON), KeyCode::Semicolon);
-}
-
-TEST_F(InputTest, FromGlfwKeyApostrophe)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_APOSTROPHE), KeyCode::Apostrophe);
-}
-
-// ========== fromGlfwKey — Lock and system keys ==========
-
-TEST_F(InputTest, FromGlfwKeyScrollLock)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_SCROLL_LOCK), KeyCode::ScrollLock);
-}
-
-TEST_F(InputTest, FromGlfwKeyNumLock)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_NUM_LOCK), KeyCode::NumLock);
-}
-
-TEST_F(InputTest, FromGlfwKeyPrintScreen)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_PRINT_SCREEN), KeyCode::PrintScreen);
-}
-
-TEST_F(InputTest, FromGlfwKeyPause)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_PAUSE), KeyCode::Pause);
-}
-
-TEST_F(InputTest, FromGlfwKeyMenu)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_MENU), KeyCode::Menu);
-}
-
-// ========== fromGlfwKey — Special/World keys ==========
-
-TEST_F(InputTest, FromGlfwKeyWorld1)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_WORLD_1), KeyCode::World1);
-}
-
-TEST_F(InputTest, FromGlfwKeyWorld2)
-{
-    EXPECT_EQ(fromGlfwKey(GLFW_KEY_WORLD_2), KeyCode::World2);
-}
-
-// ========== fromGlfwKey — Unknown/Default ==========
-
-TEST_F(InputTest, FromGlfwKeyUnknownReturnsUnknown)
+TEST_F(InputTest, MapsUnknownAndInvalidKeysToUnknown)
 {
     EXPECT_EQ(fromGlfwKey(GLFW_KEY_UNKNOWN), KeyCode::Unknown);
-}
-
-TEST_F(InputTest, FromGlfwKeyInvalidReturnsUnknown)
-{
-    // A value that has no corresponding GLFW_KEY_* constant
     EXPECT_EQ(fromGlfwKey(999999), KeyCode::Unknown);
-    EXPECT_EQ(fromGlfwKey(-1), KeyCode::Unknown);
 }
 
-// ========== fromGlfwMouseButton tests ==========
-
-TEST_F(InputTest, FromGlfwMouseButtonLeft)
+TEST_F(InputTest, MapsMouseButtons)
 {
-    EXPECT_EQ(fromGlfwMouseButton(GLFW_MOUSE_BUTTON_1), MouseButton::Left);
+    const std::array mappings = {std::pair{GLFW_MOUSE_BUTTON_1, MouseButton::Left},
+                                 std::pair{GLFW_MOUSE_BUTTON_2, MouseButton::Right},
+                                 std::pair{GLFW_MOUSE_BUTTON_3, MouseButton::Middle},
+                                 std::pair{GLFW_MOUSE_BUTTON_4, MouseButton::X1},
+                                 std::pair{GLFW_MOUSE_BUTTON_5, MouseButton::X2}};
+    for (const auto& [glfwButton, mouseButton] : mappings)
+    {
+        SCOPED_TRACE(glfwButton);
+        EXPECT_EQ(fromGlfwMouseButton(glfwButton), mouseButton);
+    }
 }
 
-TEST_F(InputTest, FromGlfwMouseButtonRight)
-{
-    EXPECT_EQ(fromGlfwMouseButton(GLFW_MOUSE_BUTTON_2), MouseButton::Right);
-}
-
-TEST_F(InputTest, FromGlfwMouseButtonMiddle)
-{
-    EXPECT_EQ(fromGlfwMouseButton(GLFW_MOUSE_BUTTON_3), MouseButton::Middle);
-}
-
-TEST_F(InputTest, FromGlfwMouseButtonX1)
-{
-    EXPECT_EQ(fromGlfwMouseButton(GLFW_MOUSE_BUTTON_4), MouseButton::X1);
-}
-
-TEST_F(InputTest, FromGlfwMouseButtonX2)
-{
-    EXPECT_EQ(fromGlfwMouseButton(GLFW_MOUSE_BUTTON_5), MouseButton::X2);
-}
-
-TEST_F(InputTest, FromGlfwMouseButtonLeftAlias)
-{
-    // GLFW_MOUSE_BUTTON_LEFT is an alias for GLFW_MOUSE_BUTTON_1
-    EXPECT_EQ(fromGlfwMouseButton(GLFW_MOUSE_BUTTON_LEFT), MouseButton::Left);
-}
-
-TEST_F(InputTest, FromGlfwMouseButtonRightAlias)
-{
-    // GLFW_MOUSE_BUTTON_RIGHT is an alias for GLFW_MOUSE_BUTTON_2
-    EXPECT_EQ(fromGlfwMouseButton(GLFW_MOUSE_BUTTON_RIGHT), MouseButton::Right);
-}
-
-TEST_F(InputTest, FromGlfwMouseButtonMiddleAlias)
-{
-    // GLFW_MOUSE_BUTTON_MIDDLE is an alias for GLFW_MOUSE_BUTTON_3
-    EXPECT_EQ(fromGlfwMouseButton(GLFW_MOUSE_BUTTON_MIDDLE), MouseButton::Middle);
-}
-
-TEST_F(InputTest, FromGlfwMouseButtonInvalidReturnsUnknown)
+TEST_F(InputTest, MapsInvalidMouseButtonsToUnknown)
 {
     EXPECT_EQ(fromGlfwMouseButton(999), MouseButton::Unknown);
     EXPECT_EQ(fromGlfwMouseButton(-1), MouseButton::Unknown);
 }
 
-// ========== fromGlfwAction tests ==========
-
-TEST_F(InputTest, FromGlfwActionRelease)
+TEST_F(InputTest, MapsActionsToKeyStates)
 {
     EXPECT_EQ(fromGlfwAction(GLFW_RELEASE), KeyState::Release);
-}
-
-TEST_F(InputTest, FromGlfwActionPress)
-{
     EXPECT_EQ(fromGlfwAction(GLFW_PRESS), KeyState::Press);
-}
-
-TEST_F(InputTest, FromGlfwActionRepeat)
-{
     EXPECT_EQ(fromGlfwAction(GLFW_REPEAT), KeyState::Repeat);
 }
 
-TEST_F(InputTest, FromGlfwActionInvalidReturnsRelease)
+TEST_F(InputTest, MapsInvalidActionsToRelease)
 {
     EXPECT_EQ(fromGlfwAction(12345), KeyState::Release);
     EXPECT_EQ(fromGlfwAction(-1), KeyState::Release);
 }
 
-// ========== Sanity checks — enum values are nonzero / distinct ==========
-
-TEST_F(InputTest, KeyCodeUnknownIsZero)
+TEST_F(InputTest, DefaultEnumValuesAreZero)
 {
     EXPECT_EQ(static_cast<int>(KeyCode::Unknown), 0);
-}
-
-TEST_F(InputTest, MouseButtonUnknownIsZero)
-{
     EXPECT_EQ(static_cast<int>(MouseButton::Unknown), 0);
-}
-
-TEST_F(InputTest, KeyStateReleaseIsZero)
-{
     EXPECT_EQ(static_cast<int>(KeyState::Release), 0);
 }
