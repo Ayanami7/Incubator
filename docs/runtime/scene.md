@@ -80,7 +80,9 @@ drawFrame 返回后即可释放或改写 CPU 列表，在途 GPU 持有仍由 Re
 
 若提交前窗口 extent 改变，Renderer 跳过旧输入，下一轮使用新 extent 重新提取。
 Renderer 关闭后，Scene/快照仍可保留元数据，提取不会检查或修复过期引用；提交仍由现有 Renderer 边界抛 RENDER。
-应用会话和主循环组织独立于此接口，当前 Demo 的直接 ModelInstance/Renderer 路径继续可用。
+[Application Session](./application.md) 已提供事件→更新→UI→提取→提交的驱动，持有当前 Scene 并支持
+在下一次提取前 setScene 替换。替换只改变逻辑场景及相机，不清除 Loader 或即时回收 GPU。
+提取接口仍可独立使用，当前 Demo 的直接 ModelInstance/Renderer 路径继续可用。
 
 ## Transform
 

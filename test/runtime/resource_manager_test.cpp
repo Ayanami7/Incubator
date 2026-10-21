@@ -85,11 +85,13 @@ protected:
 TEST_F(ResourceManagerTest, RegisterLoaderAndHasLoader)
 {
     auto& manager = ResourceManager::instance();
+    EXPECT_TRUE(manager.loadersEmpty());
     EXPECT_FALSE(manager.hasLoader(ResourceType::TEXTURE));
 
     manager.registerLoader(ResourceType::TEXTURE, std::make_unique<FakeLoader>(ResourceType::TEXTURE));
 
     EXPECT_TRUE(manager.hasLoader(ResourceType::TEXTURE));
+    EXPECT_FALSE(manager.loadersEmpty());
     EXPECT_FALSE(manager.hasLoader(ResourceType::MODEL));
 }
 
@@ -101,6 +103,7 @@ TEST_F(ResourceManagerTest, ResetClearsLoaders)
 
     manager.reset();
 
+    EXPECT_TRUE(manager.loadersEmpty());
     EXPECT_FALSE(manager.hasLoader(ResourceType::TEXTURE));
 }
 

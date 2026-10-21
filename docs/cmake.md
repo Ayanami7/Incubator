@@ -31,6 +31,7 @@ Incubator/
 │       ├── resource/
 │       ├── model/
 │       ├── scene/
+│       ├── application/
 │       └── render/
 ├── assets/
 │   └── CMakeLists.txt  # 运行资源部署（文件依赖与增量复制）
@@ -49,7 +50,7 @@ Incubator/
 
 ### 运行时库目标（src/runtime/）
 
-- Core、Platform、Resource、Model、Scene、Render 是逻辑模块，由 `src/runtime/CMakeLists.txt` 按模块收集头文件与源文件，共同编译为 `IncubatorRuntime` 静态库
+- Core、Platform、Resource、Model、Scene、Application、Render 是逻辑模块，由 `src/runtime/CMakeLists.txt` 按模块收集头文件与源文件，共同编译为 `IncubatorRuntime` 静态库
 - 源码分层的依赖方向由模块边界维护；目录层次不代表独立库目标
 - 使用 `FOLDER "Engine"` 属性在 IDE 中分组显示
 - 依赖关系通过 `add_dependencies` + `target_link_libraries` 声明
@@ -60,6 +61,10 @@ Incubator/
 `scene_frame_test` 按既有 test/runtime
 源文件发现规则创建，为不依赖窗口或 GPU 的 CPU 测试。真实模型的 Scene 组合验证复用 model_preparation_test
 及其现有资源部署、串行 GPU 执行约定，使用正式 SceneFrame 提取和 Renderer 提交接口。
+
+`application/application.h/.cpp` 显式归入同一 Runtime，直接组织既有 Window、FileIO、资源路由、Scene 和 Renderer。
+`application_test` 依赖 demo_models/demo_textures/demo_shaders，在构建目录串行运行（120 秒超时），
+复用既有 GPU/真实窗口支持；Runtime 库本身不依赖具体资产部署目标。
 
 ### 测试目标（test/ 下）
 

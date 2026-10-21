@@ -129,6 +129,7 @@ set(SCENE_SOURCES
 )
 
 set(ALL_HEADERS
+    application/application.h
     model/prepared_model.h
     model/model_instance.h
     ${CORE_HEADERS}
@@ -138,6 +139,7 @@ set(ALL_HEADERS
     ${SCENE_HEADERS}
 )
 set(ALL_SOURCES
+    application/application.cpp
     model/prepared_model.cpp
     model/model_instance.cpp
     ${CORE_SOURCES}

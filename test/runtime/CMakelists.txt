@@ -26,11 +26,11 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
 
     # 注册测试到 CMake
     include(GoogleTest)
-    if(TEST_NAME STREQUAL "vulkan_review_test" OR TEST_NAME STREQUAL "model_preparation_test")
+    if(TEST_NAME STREQUAL "vulkan_review_test" OR TEST_NAME STREQUAL "model_preparation_test" OR TEST_NAME STREQUAL "application_test")
         target_include_directories(${TEST_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
         target_link_libraries(${TEST_NAME} PRIVATE vulkan imgui)
         add_dependencies(${TEST_NAME} demo_shaders demo_textures)
-        if(TEST_NAME STREQUAL "model_preparation_test")
+        if(TEST_NAME STREQUAL "model_preparation_test" OR TEST_NAME STREQUAL "application_test")
             add_dependencies(${TEST_NAME} demo_models)
         endif()
         gtest_discover_tests(${TEST_NAME}

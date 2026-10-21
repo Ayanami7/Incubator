@@ -22,6 +22,9 @@ ResourceId ──► ResourceRegistry ──► ResourceManager ──► Loader
 
 ## 组件索引
 
+[Application Session](../application.md) 沿用这些全局组件，独占 Loader 路由并持有 FileIO 至关闭；
+CPU 资产 release 与路由销毁分别管理，运行期间可再次显式准备模型，不将 Manager 改为私有实例。
+
 | 组件 | 文档 | 状态 |
 |---|---|---|
 | ResourceType 封闭枚举 | [resource_type.md](./resource_type.md) | ✅ 已实现 |

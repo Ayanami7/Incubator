@@ -40,6 +40,9 @@ namespace Incubator
             /// @brief 是否已注册该类型的 Loader
             bool hasLoader(ResourceType type) const;
 
+            /// @brief 整个 Loader 路由表是否为空（不局限于已知或当前会话使用的类型）
+            bool loadersEmpty() const;
+
             /// @brief 清除全部 Loader（测试隔离 / 引擎关闭）
             void reset();
 

@@ -32,6 +32,11 @@ namespace Incubator
             return loaders_.find(type) != loaders_.end();
         }
 
+        bool ResourceManager::loadersEmpty() const
+        {
+            return loaders_.empty();
+        }
+
         void ResourceManager::reset()
         {
             loaders_.clear();
