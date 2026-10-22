@@ -14,7 +14,7 @@ namespace Incubator
         struct SceneMeshData
         {
             std::vector<Render::MeshVertex> vertices;
-            std::vector<uint16_t> indices;
+            std::vector<uint32_t> indices;
         };
 
         inline SceneMeshData makeCubeMesh()
@@ -35,17 +35,16 @@ namespace Incubator
             SceneMeshData data;
             data.vertices.reserve(24);
             data.indices.reserve(36);
-            for (uint16_t face = 0; face < FACES.size(); ++face)
+            for (uint32_t face = 0; face < FACES.size(); ++face)
             {
                 for (size_t corner = 0; corner < 4; ++corner)
                 {
                     const auto& position = POSITIONS[FACES[face][corner]];
                     data.vertices.push_back({{position[0], position[1], position[2]}, {UV[corner][0], UV[corner][1]}});
                 }
-                const uint16_t vertex = face * 4;
+                const uint32_t vertex = face * 4;
                 data.indices.insert(data.indices.end(),
-                                    {vertex, static_cast<uint16_t>(vertex + 1), static_cast<uint16_t>(vertex + 2),
-                                     vertex, static_cast<uint16_t>(vertex + 2), static_cast<uint16_t>(vertex + 3)});
+                                    {vertex, vertex + 1, vertex + 2, vertex, vertex + 2, vertex + 3});
             }
             return data;
         }

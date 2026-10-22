@@ -57,7 +57,7 @@ namespace Incubator
 
             // Synchronously copies nonempty triangle-list data. CPU spans are borrowed only here.
             // Mesh references share this upload and are usable only with this Renderer.
-            Mesh createMesh(std::span<const MeshVertex> vertices, std::span<const uint16_t> indices);
+            Mesh createMesh(std::span<const MeshVertex> vertices, std::span<const uint32_t> indices);
 
             // Synchronously uploads RGBA8 sRGB pixels, borrowed only for this call.
             // Texture references share this upload and are usable only with this Renderer.

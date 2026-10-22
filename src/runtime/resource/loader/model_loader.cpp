@@ -181,11 +181,10 @@ namespace Incubator::Resource
             for (unsigned i = 0; i < scene->mNumMeshes; ++i)
             {
                 const auto& mesh = *scene->mMeshes[i];
-                if (mesh.mNumVertices > MeshData::MAX_VERTEX_COUNT || mesh.HasBones() || mesh.mNumAnimMeshes != 0)
+                if (mesh.HasBones() || mesh.mNumAnimMeshes != 0)
                 {
                     throw Error::Exception(
-                        Error::Code::IO,
-                        fmt::format("Model geometry {} exceeds uint16 vertex range or uses skin/Morph", i));
+                        Error::Code::IO, fmt::format("Model geometry {} uses skin/Morph", i));
                 }
                 if (mesh.mMaterialIndex >= materials.size())
                 {
@@ -220,12 +219,12 @@ namespace Incubator::Resource
                     for (unsigned corner = 0; corner < 3; ++corner)
                     {
                         const unsigned index = face.mIndices[corner];
-                        if (index > std::numeric_limits<uint16_t>::max() || index >= mesh.mNumVertices)
+                        if (index >= mesh.mNumVertices)
                         {
                             throw Error::Exception(
-                                Error::Code::IO, fmt::format("Model geometry {} index exceeds uint16/vertex range", i));
+                                Error::Code::IO, fmt::format("Model geometry {} index exceeds vertex range", i));
                         }
-                        geometry.indices.push_back(static_cast<uint16_t>(index));
+                        geometry.indices.push_back(static_cast<uint32_t>(index));
                     }
                 }
                 geometries.push_back(std::move(geometry));

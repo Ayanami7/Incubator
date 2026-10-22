@@ -10,6 +10,7 @@
 #include <array>
 #include <assimp/DefaultLogger.hpp>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -261,7 +262,7 @@ namespace
         EXPECT_FALSE(model->materials()[model->parts()[1].material].texturePath.has_value());
         EXPECT_EQ(model->materials()[model->parts()[1].material].color, (std::array<float, 3>{0.5f, 1.0f, 0.5f}));
         EXPECT_FLOAT_EQ(model->geometries()[0].vertices[0].position[0], -1.0f);
-        EXPECT_EQ(model->geometries()[0].indices, (std::vector<uint16_t>{0, 1, 2, 0, 2, 3}));
+        EXPECT_EQ(model->geometries()[0].indices, (std::vector<uint32_t>{0, 1, 2, 0, 2, 3}));
         expectClosed();
         ResourceManager::instance().reset();
         fs::remove_all("assets/models");
@@ -684,28 +685,64 @@ namespace
         write(OBJ, "v bad vertex\nf 99 100 101\n");
         expectFailure(OBJ, "ModelLoader");
     }
-    TEST_F(ModelLoaderTest, RejectsWideSourceIndexBeforeNarrowing)
+    TEST_F(ModelLoaderTest, LoadsGltfGeometryBeyondUint16RangeWithHighIndex)
     {
-        const size_t vertices = 65537;
-        std::string bytes(vertices * 3 * sizeof(float) + 3 * sizeof(uint32_t), '\0');
-        const std::array<uint32_t, 3> indices = {0, 1, 65536};
-        std::memcpy(bytes.data() + vertices * 3 * sizeof(float), indices.data(), sizeof(indices));
+        constexpr uint32_t vertexCount = 65537;
+        constexpr size_t indexCount = 65538;
+        const size_t positionBytes = static_cast<size_t>(vertexCount) * 3 * sizeof(float);
+        const size_t indexBytes = indexCount * sizeof(uint32_t);
+        std::string bytes(positionBytes + indexBytes, '\0');
+        for (uint32_t vertex = 0; vertex < vertexCount; ++vertex)
+        {
+            const std::array<float, 3> position = {static_cast<float>(vertex % 257),
+                                                   static_cast<float>(vertex / 257), 0.0f};
+            std::memcpy(bytes.data() + static_cast<size_t>(vertex) * sizeof(position), position.data(),
+                        sizeof(position));
+        }
+        std::vector<uint32_t> indices;
+        indices.reserve(indexCount);
+        for (uint32_t index = 0; index < vertexCount; ++index)
+            indices.push_back(index);
+        indices.push_back(0);
+        std::memcpy(bytes.data() + positionBytes, indices.data(), indexBytes);
         write("models/minimal_gltf/geometry/wide.bin", bytes);
         editGltf([&](auto& source) {
             auto& a = source.GetAllocator();
             source["buffers"][0]["uri"].SetString("geometry/wide.bin", a);
             source["buffers"][0]["byteLength"].SetUint64(bytes.size());
-            source["bufferViews"][0]["byteLength"].SetUint64(vertices * 3 * sizeof(float));
-            source["bufferViews"][2]["byteOffset"].SetUint64(vertices * 3 * sizeof(float));
-            source["bufferViews"][2]["byteLength"].SetUint(12);
-            source["accessors"][0]["count"].SetUint64(vertices);
+            source["bufferViews"][0]["byteLength"].SetUint(static_cast<uint32_t>(positionBytes));
+            source["bufferViews"][2]["byteOffset"].SetUint(static_cast<uint32_t>(positionBytes));
+            source["bufferViews"][2]["byteLength"].SetUint(static_cast<uint32_t>(indexBytes));
+            source["accessors"][0]["count"].SetUint(vertexCount);
+            rapidjson::Value minimum(rapidjson::kArrayType);
+            minimum.PushBack(0.0, a).PushBack(0.0, a).PushBack(0.0, a);
+            source["accessors"][0]["min"] = std::move(minimum);
+            rapidjson::Value maximum(rapidjson::kArrayType);
+            maximum.PushBack(256.0, a).PushBack(255.0, a).PushBack(0.0, a);
+            source["accessors"][0]["max"] = std::move(maximum);
             source["accessors"][2]["componentType"].SetUint(5125);
-            source["accessors"][2]["count"].SetUint(3);
+            source["accessors"][2]["count"].SetUint(static_cast<uint32_t>(indexCount));
             source["meshes"][0]["primitives"].Erase(source["meshes"][0]["primitives"].Begin() + 1);
             source["meshes"][0]["primitives"][0]["attributes"].RemoveMember("TEXCOORD_0");
             source["materials"][0]["pbrMetallicRoughness"].RemoveMember("baseColorTexture");
         });
-        expectFailure(GLTF, "uint16");
+        const auto* model = load(GLTF);
+        ASSERT_NE(model, nullptr) << messages_.str();
+        ASSERT_EQ(model->geometries().size(), 1u);
+        EXPECT_EQ(model->geometries()[0].vertices.size(), vertexCount);
+        ASSERT_EQ(model->geometries()[0].indices.size(), indexCount);
+        EXPECT_EQ(model->geometries()[0].indices[vertexCount - 1], 65536u);
+        EXPECT_EQ(model->geometries()[0].indices.back(), 0u);
+        expectClosed();
+    }
+
+    TEST_F(ModelLoaderTest, RejectsVertexCountBeyondAssimpRepresentation)
+    {
+        editGltf([](auto& source) {
+            source["accessors"][0]["count"].SetUint64(
+                static_cast<uint64_t>(std::numeric_limits<unsigned>::max()) + 1);
+        });
+        expectFailure(GLTF, "Assimp vertex count range");
     }
 
     TEST_F(ModelLoaderTest, RejectsSourceIndexRepairEvenWhenOtherTrianglesAreValid)
@@ -759,7 +796,7 @@ namespace
         expectClosed();
     }
 
-    TEST_F(ModelLoaderTest, AcceptsUint32SourceComponentsWhenIndicesFitUint16)
+    TEST_F(ModelLoaderTest, ConvertsUint32SourceComponentsToInternalUint32)
     {
         auto bytes = read("models/minimal_gltf/geometry/mesh.bin");
         const std::array<uint32_t, 6> indices = {0, 1, 2, 0, 2, 3};
@@ -774,7 +811,7 @@ namespace
         });
         const auto* model = load(GLTF);
         ASSERT_NE(model, nullptr) << messages_.str();
-        EXPECT_EQ(model->geometries()[0].indices, (std::vector<uint16_t>{0, 1, 2, 0, 2, 3}));
+        EXPECT_EQ(model->geometries()[0].indices, (std::vector<uint32_t>{0, 1, 2, 0, 2, 3}));
         expectClosed();
     }
 

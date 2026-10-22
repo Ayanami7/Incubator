@@ -3,13 +3,13 @@
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
 
+#include <limits>
 #include <sstream>
 #include <unordered_set>
 #include <vector>
 
 #include "runtime/core/error/error.h"
 #include "runtime/core/path/path.h"
-#include "runtime/resource/mesh_data.h"
 #include "runtime/resource/resource_id.h"
 
 namespace Incubator::Resource::Detail
@@ -135,11 +135,12 @@ namespace Incubator::Resource::Detail
                             if (position && position->IsUint() && accessors && position->GetUint() < accessors->Size())
                             {
                                 const auto* count = member((*accessors)[position->GetUint()], "count");
-                                // Assimp compacts used vertices before exposing aiMesh; check the source count first.
-                                if (count && count->IsUint64() && count->GetUint64() > MeshData::MAX_VERTEX_COUNT)
+                                // Assimp stores aiMesh::mNumVertices as unsigned; reject source counts it cannot represent.
+                                if (count && count->IsUint64() &&
+                                    count->GetUint64() > std::numeric_limits<unsigned>::max())
                                 {
-                                    throw Error::Exception(Error::Code::IO,
-                                                           "Model source geometry exceeds uint16 vertex range");
+                                    throw Error::Exception(
+                                        Error::Code::IO, "Model source geometry exceeds Assimp vertex count range");
                                 }
                             }
                             const auto* targets = arrayMember(primitive, "targets");

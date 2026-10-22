@@ -135,7 +135,7 @@ namespace Incubator
                     vkCmdPushConstants(commandBuffer, pipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
                                        sizeof(draw.model), &draw.model);
                     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &draw.vertexBuffer, &vertexOffset);
-                    vkCmdBindIndexBuffer(commandBuffer, draw.indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+                    vkCmdBindIndexBuffer(commandBuffer, draw.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
                     vkCmdDrawIndexed(commandBuffer, draw.indexCount, 1, 0, 0, 0);
                 }
             }

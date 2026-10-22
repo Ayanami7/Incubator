@@ -196,7 +196,7 @@ ImGui 接入后，应用通过 UI 适配层开始 UI 帧、构建界面并结束
 ## 应用网格与持有期
 
 `mesh.h` 的 `MeshVertex` 固定为 `float position[3]`、`float uv[2]`，紧密 20 字节；
-Pipeline 按该类型的大小和字段偏移绑定。索引固定为 `uint16_t`，拓扑为不透明三角形列表。
+Pipeline 按该类型的大小和字段偏移绑定。索引固定为 `uint32_t`，拓扑为不透明三角形列表。
 公共输入不包含 Vulkan 类型。
 
 ```cpp
@@ -211,7 +211,7 @@ FrameInput frameInput{extent, camera, draws};
 renderer.drawFrame(frameInput, clearColor, recordUi);
 ```
 
-`createMesh(span<const MeshVertex>, span<const uint16_t>)` 要求非空顶点与索引、索引数量为 3
+`createMesh(span<const MeshVertex>, span<const uint32_t>)` 要求非空顶点与索引、索引数量为 3
 的倍数且能表示为 uint32 绘制数量，每个索引小于顶点数量。输入在上传前集中校验，失败抛
 RENDER 错误，不创建默认网格。位置和 UV 的具体内容由应用提供。
 

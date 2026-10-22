@@ -18,10 +18,8 @@ namespace Incubator
         // CPU geometry only. ModelResource validates these arrays when taking ownership.
         struct MeshData
         {
-            static constexpr size_t MAX_VERTEX_COUNT = 65536;
-
             std::vector<MeshVertexData> vertices;
-            std::vector<uint16_t> indices;
+            std::vector<uint32_t> indices;
         };
     }  // namespace Resource
 }  // namespace Incubator

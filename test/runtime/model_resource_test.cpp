@@ -103,7 +103,7 @@ namespace
         ASSERT_EQ(model->materials().size(), 1u);
         EXPECT_FALSE(model->materials()[0].texturePath.has_value());
         EXPECT_EQ(model->materials()[0].color, (std::array<float, 3>{1.0f, 1.0f, 1.0f}));
-        EXPECT_EQ(model->geometries()[0].indices, (std::vector<uint16_t>{0, 1, 2}));
+        EXPECT_EQ(model->geometries()[0].indices, (std::vector<uint32_t>{0, 1, 2}));
         expectPoint(model->nodes()[0].localTransform * glm::vec4(1.0f), {1.0f, 1.0f, 1.0f});
     }
 
@@ -166,7 +166,7 @@ namespace
             model = makeModel(std::move(input));
         }
         EXPECT_EQ(model->nodes()[2].children, (std::vector<uint32_t>{0, 3}));
-        EXPECT_EQ(model->geometries()[1].indices, (std::vector<uint16_t>{0, 1, 2}));
+        EXPECT_EQ(model->geometries()[1].indices, (std::vector<uint32_t>{0, 1, 2}));
         EXPECT_FLOAT_EQ(model->geometries()[1].vertices[1].position[0], 2.0f);
         EXPECT_EQ(*model->materials()[0].texturePath, "textures/方向😀.png");
     }
@@ -197,13 +197,11 @@ namespace
         expectInvalid(input, "root node");
     }
 
-    TEST(ModelResourceTest, RejectsEmptyGeometryAndVertexCountAboveUint16Range)
+    TEST(ModelResourceTest, RejectsEmptyGeometry)
     {
         ModelInput input;
         input.geometries[0].vertices.clear();
         expectInvalid(input, "geometry 0");
-        input.geometries[0].vertices.resize(MeshData::MAX_VERTEX_COUNT + 1);
-        expectInvalid(input, "65536");
     }
 
     TEST(ModelResourceTest, RejectsEmptyAndIncompleteTriangleIndexLists)
@@ -219,7 +217,7 @@ namespace
 
     TEST(ModelResourceTest, RejectsIndicesOutsideGeometryVertexRange)
     {
-        for (uint16_t index : {uint16_t{3}, std::numeric_limits<uint16_t>::max()})
+        for (uint32_t index : {uint32_t{3}, std::numeric_limits<uint32_t>::max()})
         {
             ModelInput input;
             input.geometries[0].indices[2] = index;
@@ -227,14 +225,14 @@ namespace
         }
     }
 
-    TEST(ModelResourceTest, AcceptsExactly65536VerticesAndHighestUint16Index)
+    TEST(ModelResourceTest, AcceptsMoreThan65536VerticesAndUint32Index)
     {
         ModelInput input;
-        input.geometries[0].vertices.resize(MeshData::MAX_VERTEX_COUNT);
-        input.geometries[0].indices = {0, 65534, 65535};
+        input.geometries[0].vertices.resize(65537);
+        input.geometries[0].indices = {0, 65535, 65536};
         const auto model = makeModel(std::move(input));
-        EXPECT_EQ(model->geometries()[0].vertices.size(), 65536u);
-        EXPECT_EQ(model->geometries()[0].indices.back(), 65535u);
+        EXPECT_EQ(model->geometries()[0].vertices.size(), 65537u);
+        EXPECT_EQ(model->geometries()[0].indices.back(), 65536u);
     }
 
     TEST(ModelResourceTest, RejectsNonFinitePositionsAndUv)

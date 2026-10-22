@@ -583,6 +583,39 @@ namespace
         expectCleanValidation();
     }
 
+    TEST_F(VulkanReviewTest, UInt32IndexDrawUsesVertexAboveUint16Range)
+    {
+        auto window = createWindow(true, 640, 480);
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const auto material = renderer.createMaterial({renderer.createTexture(*assets.texture)});
+            std::vector<MeshVertex> vertices(65537, MeshVertex{{4.0f, 4.0f, 0.0f}, {0.0f, 0.0f}});
+            vertices[0] = {{-0.65f, -0.55f, 0.0f}, {0.0f, 0.0f}};
+            vertices[1] = {{0.65f, -0.55f, 0.0f}, {1.0f, 0.0f}};
+            vertices[65536] = {{0.0f, 0.65f, 0.0f}, {0.5f, 1.0f}};
+            const std::array<uint32_t, 3> indices = {0, 1, 65536};
+            const auto mesh = renderer.createMesh(vertices, indices);
+            releaseCpuAssets(assets);
+            const std::array draws = {DrawItem{mesh, material, glm::mat4(1.0f)}};
+            for (int frame = 0; frame < 6; ++frame)
+            {
+                submitControlledScene(*window, renderer, draws);
+                glfwWaitEventsTimeout(0.025);
+            }
+            const auto image = WindowCapture::capture(*window);
+            const auto bounds = WindowCapture::bounds(image);
+            EXPECT_GT(bounds[2] - bounds[0], 100);
+            EXPECT_GT(bounds[3] - bounds[1], 100);
+            WindowCapture::save(image, "review/uint32-index-high-vertex.ppm");
+            std::cout << "GPU_UINT32_INDEX: vertices=" << vertices.size() << " high_index=" << indices.back()
+                      << " bounds=" << bounds[0] << ',' << bounds[1] << ',' << bounds[2] << ',' << bounds[3] << '\n';
+        }
+        expectReleased({});
+        expectCleanValidation();
+    }
+
     TEST_F(VulkanReviewTest, IndependentTexturesShareUploadsAndExpireAfterRendererMoveAndClose)
     {
         Log::Registry::get("render.vulkan").setLevel(Log::Level::DEBUG);
@@ -1310,8 +1343,8 @@ namespace
             EXPECT_THROW(renderer.createMesh({}, data.indices), Error::Exception);
             EXPECT_THROW(renderer.createMesh(data.vertices, {}), Error::Exception);
             for (const auto& invalid :
-                 {std::vector<uint16_t>{0}, std::vector<uint16_t>{0, 1}, std::vector<uint16_t>{0, 1, 2, 3},
-                  std::vector<uint16_t>{0, 1, 4}, std::vector<uint16_t>{0, 1, 65535}})
+                 {std::vector<uint32_t>{0}, std::vector<uint32_t>{0, 1}, std::vector<uint32_t>{0, 1, 2, 3},
+                  std::vector<uint32_t>{0, 1, 4}, std::vector<uint32_t>{0, 1, std::numeric_limits<uint32_t>::max()}})
                 EXPECT_THROW(renderer.createMesh(data.vertices, invalid), Error::Exception);
             auto mesh = renderer.createMesh(data.vertices, data.indices);
             observer = mesh;

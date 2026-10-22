@@ -78,7 +78,7 @@ namespace Incubator
         struct Mesh::Impl
         {
             Impl(const Vulkan::VulkanDevice& device, std::span<const MeshVertex> vertices,
-                 std::span<const uint16_t> indices)
+                 std::span<const uint32_t> indices)
                 : owner(&device), indexCount(static_cast<uint32_t>(indices.size()))
             {
                 vertexBuffer = Vulkan::VulkanBuffer::uploadStatic(
@@ -166,7 +166,7 @@ namespace Incubator
                 return swapchain_ && swapchain_->handle() != VK_NULL_HANDLE;
             }
 
-            Mesh createMesh(std::span<const MeshVertex> vertices, std::span<const uint16_t> indices)
+            Mesh createMesh(std::span<const MeshVertex> vertices, std::span<const uint32_t> indices)
             {
                 if (vertices.empty() || indices.empty() || indices.size() % 3 != 0 ||
                     indices.size() > std::numeric_limits<uint32_t>::max())
@@ -396,7 +396,7 @@ namespace Incubator
 
         Renderer& Renderer::operator=(Renderer&&) noexcept = default;
 
-        Mesh Renderer::createMesh(std::span<const MeshVertex> vertices, std::span<const uint16_t> indices)
+        Mesh Renderer::createMesh(std::span<const MeshVertex> vertices, std::span<const uint32_t> indices)
         {
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");

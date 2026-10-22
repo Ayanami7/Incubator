@@ -14,10 +14,10 @@ namespace Incubator
         {
             void validateGeometry(const MeshData& mesh, size_t geometry)
             {
-                if (mesh.vertices.empty() || mesh.vertices.size() > MeshData::MAX_VERTEX_COUNT)
+                if (mesh.vertices.empty())
                 {
                     throw Error::Exception(Error::Code::CONFIG,
-                                           fmt::format("Model geometry {} requires 1..65536 vertices", geometry));
+                                           fmt::format("Model geometry {} requires a nonempty vertex array", geometry));
                 }
                 if (mesh.indices.empty() || mesh.indices.size() % 3 != 0 ||
                     mesh.indices.size() > std::numeric_limits<uint32_t>::max())
@@ -26,7 +26,7 @@ namespace Incubator
                         Error::Code::CONFIG,
                         fmt::format("Model geometry {} requires a uint32-sized triangle index list", geometry));
                 }
-                for (uint16_t index : mesh.indices)
+                for (uint32_t index : mesh.indices)
                 {
                     if (index >= mesh.vertices.size())
                     {

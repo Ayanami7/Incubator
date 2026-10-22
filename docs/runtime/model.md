@@ -27,7 +27,7 @@ GPU 准备在 Renderer 所在线程完成，FileIO 至少覆盖 CPU 导入与依
 5. 从源根按深度优先顺序缓存绘制项及模型内部累计矩阵，返回完整结果，并释放本次 CPU 模型和图片持有。
 
 未被任何节点使用的部分、几何、材质及其纹理不准备；源 ModelResource 已在构造时校验结构，
-准备层不重复校验不可变图。顶点从 `Resource::MeshVertexData` 显式转换为 `Render::MeshVertex`，索引保持 uint16。
+准备层不重复校验不可变图。顶点从 `Resource::MeshVertexData` 显式转换为 `Render::MeshVertex`，索引保持 uint32。
 共享以源几何/材质索引及纹理规范化路径为准，不按内容合并不同的源描述。再次显式调用准备允许产生另一组 GPU 对象。
 
 ## 只读结果
