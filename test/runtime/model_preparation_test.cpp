@@ -218,6 +218,78 @@ namespace
         cleanValidation();
     }
 
+    TEST_F(ModelPreparationTest, FixedShowcaseModelsPrepareReleaseCpuAndDrawSharedInstances)
+    {
+        constexpr const char* TEAPOT = "models/utah_teapot/utah_teapot.obj";
+        constexpr const char* AVOCADO = "models/avocado/glTF/Avocado.gltf";
+        constexpr const char* AVOCADO_BASE_COLOR = "models/avocado/glTF/Avocado_baseColor.png";
+        auto native = window();
+        Scene::Scene scene;
+        scene.setCamera(Scene::Camera({0, 0, 30}, {1, 0, 0, 0}, {glm::radians(45.0f), 0.1f, 100.0f}));
+        std::vector<std::shared_ptr<const Model::PreparedModel>> models;
+        size_t expectedMeshes = 0;
+        size_t expectedTextures = 0;
+        size_t expectedMaterials = 0;
+        size_t expectedDraws = 0;
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            size_t index = 0;
+            for (const char* path : {TEAPOT, AVOCADO})
+            {
+                auto prepared = Model::prepareModel(renderer, path);
+                ASSERT_NE(prepared, nullptr) << path;
+                ASSERT_FALSE(prepared->meshes().empty()) << path;
+                ASSERT_FALSE(prepared->materials().empty()) << path;
+                ASSERT_FALSE(prepared->draws().empty()) << path;
+                expectedMeshes += prepared->meshes().size();
+                expectedTextures += prepared->textures().size();
+                expectedMaterials += prepared->materials().size();
+                expectedDraws += prepared->draws().size() * 2;
+
+                const float scale = index == 0 ? 0.1f : 50.0f;
+                const float y = index == 0 ? 3.0f : -3.0f;
+                auto shared = prepared;
+                scene.createEntity(shared, Scene::Transform({-3.5f, y, 0}, {1, 0, 0, 0}, glm::vec3(scale)));
+                scene.createEntity(shared, Scene::Transform({3.5f, y, 0}, {1, 0, 0, 0}, glm::vec3(scale)));
+                prepared.reset();
+                models.push_back(std::move(shared));
+                released(ResourceType::MODEL, path);
+                ++index;
+            }
+            released(ResourceType::TEXTURE, AVOCADO_BASE_COLOR);
+
+            for (int frameIndex = 0; frameIndex < 3; ++frameIndex)
+            {
+                native->pollEvents();
+                const auto extent = renderer.beginUiFrame();
+                ASSERT_TRUE(extent);
+                auto frame = Scene::extractSceneFrame(scene, *extent);
+                ASSERT_TRUE(frame);
+                EXPECT_EQ(frame->draws.size(), expectedDraws);
+                renderer.imgui().endFrame();
+                renderer.drawFrame(frame->input(), {0.2f, 0.24f, 0.28f, 1});
+                glfwWaitEventsTimeout(0.04);
+            }
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), expectedMeshes);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), expectedTextures);
+            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), expectedMaterials);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+            std::cout << "SHOWCASE_MODELS=2 SHARED_INSTANCES=4 CPU_ASSETS_RELEASED=1 FRAME_DRAWS=" << expectedDraws
+                      << " REQUIRED_VALIDATION=1\n";
+        }
+        for (const auto& model : models)
+        {
+            for (const auto& mesh : model->meshes())
+                EXPECT_FALSE(mesh.valid());
+            for (const auto& material : model->materials())
+                EXPECT_FALSE(material.valid());
+            for (const auto& texture : model->textures())
+                EXPECT_FALSE(texture.valid());
+        }
+        cleanValidation();
+    }
+
     TEST_F(ModelPreparationTest, SharesGeometryTexturesAndWhiteWhilePreservingOtherCpuOwners)
     {
         auto& manager = ResourceManager::instance();

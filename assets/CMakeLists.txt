@@ -21,7 +21,13 @@ foreach(MODEL_FILE IN ITEMS
     minimal_gltf/model.gltf
     minimal_gltf/geometry/mesh.bin
     minimal_obj/model.obj
-    minimal_obj/materials/model.mtl)
+    minimal_obj/materials/model.mtl
+    utah_teapot/utah_teapot.obj
+    avocado/glTF/Avocado.gltf
+    avocado/glTF/Avocado.bin
+    avocado/glTF/Avocado_baseColor.png
+    avocado/glTF/Avocado_roughnessMetallic.png
+    avocado/glTF/Avocado_normal.png)
     set(MODEL_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/models/${MODEL_FILE}")
     set(MODEL_OUTPUT "${CMAKE_BINARY_DIR}/assets/models/${MODEL_FILE}")
     get_filename_component(MODEL_OUTPUT_DIRECTORY "${MODEL_OUTPUT}" DIRECTORY)

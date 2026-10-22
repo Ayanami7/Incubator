@@ -302,6 +302,48 @@ namespace
         expectClosed();
     }
 
+    TEST_F(ModelLoaderTest, ImportsFixedShowcaseModelsThroughResourceManager)
+    {
+        constexpr std::string_view teapotPath = "models/utah_teapot/utah_teapot.obj";
+        constexpr std::string_view avocadoPath = "models/avocado/glTF/Avocado.gltf";
+        const auto verifyGeometry = [](const ModelResource& model) {
+            ASSERT_FALSE(model.geometries().empty());
+            ASSERT_FALSE(model.parts().empty());
+            ASSERT_FALSE(model.nodes().empty());
+            for (const auto& geometry : model.geometries())
+            {
+                EXPECT_FALSE(geometry.vertices.empty());
+                EXPECT_FALSE(geometry.indices.empty());
+                EXPECT_EQ(geometry.indices.size() % 3, 0u);
+                for (const auto index : geometry.indices)
+                    EXPECT_LT(index, geometry.vertices.size());
+            }
+        };
+
+        const auto* teapot = load(teapotPath);
+        ASSERT_NE(teapot, nullptr) << messages_.str();
+        verifyGeometry(*teapot);
+        EXPECT_TRUE(std::none_of(teapot->materials().begin(), teapot->materials().end(),
+                                 [](const auto& material) { return material.texturePath.has_value(); }));
+        expectClosed();
+
+        const auto* avocado = load(avocadoPath);
+        ASSERT_NE(avocado, nullptr) << messages_.str();
+        verifyGeometry(*avocado);
+        ASSERT_TRUE(std::any_of(avocado->materials().begin(), avocado->materials().end(),
+                                [](const auto& material) { return material.texturePath.has_value(); }));
+        const auto baseColor = std::find_if(avocado->materials().begin(), avocado->materials().end(),
+                                            [](const auto& material) { return material.texturePath.has_value(); });
+        EXPECT_EQ(*baseColor->texturePath, "models/avocado/gltf/avocado_basecolor.png");
+        EXPECT_TRUE(fs::exists("assets/models/avocado/glTF/Avocado_roughnessMetallic.png"));
+        EXPECT_TRUE(fs::exists("assets/models/avocado/glTF/Avocado_normal.png"));
+        EXPECT_TRUE(std::any_of(avocado->geometries().begin(), avocado->geometries().end(), [](const auto& geometry) {
+            return std::any_of(geometry.vertices.begin(), geometry.vertices.end(),
+                               [](const auto& vertex) { return vertex.uv[0] != 0 || vertex.uv[1] != 0; });
+        }));
+        expectClosed();
+    }
+
     TEST_F(ModelLoaderTest, BothFormatUvsPointAtSameDirectionalPngRowsWithoutVertexBake)
     {
         const auto* gltf = load(GLTF);

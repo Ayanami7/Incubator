@@ -51,7 +51,7 @@ CMake 设置 `VS_DEBUGGER_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}`。启动调试�
 正式样本采用右手、Y-up，保留原始单位与节点变换；glTF 包含非单位根、父子层级、重复几何和双材质，
 OBJ 包含方向图四边形和纯色三角形。两者共用方向 PNG，纯色线性 RGB 为 `{0.5, 1, 0.5}`。
 方向图原点在左上；PNG alpha 不产生透明，固定 nearest/repeat/LOD=0，无光照和背面剔除。
-来源、CC0-1.0 许可及层级说明见 [模型样本](../../assets/models/SOURCE.md)，完整支持范围见
+层级说明见 [模型样本](../../assets/models/SOURCE.md)，完整支持范围见
 [ModelLoader](../runtime/resource/loader/model_loader.md)。
 
 ## 启动时选择纹理

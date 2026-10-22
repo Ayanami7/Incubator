@@ -1,7 +1,7 @@
-# 原创最小模型样本
+# 旧最小模型样本来源
 
-本目录的 glTF、bin、OBJ、MTL 由本项目编写，按 **CC0-1.0** 提供；不依赖外部模型下载或建模工具。
-两者引用既有 `assets/textures/direction_rgba.png`，图片像素和来源约定见纹理目录说明。
+以下来源说明只适用于 `minimal_gltf/` 与 `minimal_obj/` 两份精确测试样本；它们由本项目编写，按 **CC0-1.0** 提供。
+两份最小样本引用既有 `assets/textures/direction_rgba.png`，图片像素和来源约定见纹理目录说明。
 坐标为右手、Y-up，1 数值单位为 1 模型单位；不自动居中、换轴或缩放归一化。
 
 ## 几何与材质
@@ -35,5 +35,5 @@ Leaf 点 `(1,1,0)` 经根→父→子组合后为 `(.25+.15/√2, 1.55/√2, 0)`
 `minimal_obj/model.obj` 声明 `materials/model.mtl`，MTL 中的贴图相对其所在目录解析。
 四边形由 Assimp 三角化，纯色三角形没有 UV。文件不编码额外节点变换；导入保留 Assimp 给出的源根与物体节点。
 
-`demo_models` 通过显式文件依赖把四份输入复制到构建资产目录。CPU 测试复制这些小样本到临时资源树，
-按需修改材质、路径、源索引和文件读取行为，复用同一真实 ModelLoader/ResourceManager 路径。
+`demo_models` 通过显式文件依赖把最小样本和正式展示模型复制到构建资产目录。Task 03 会将两份最小样本迁入
+`test/runtime/fixtures/models`，让测试只部署所需输入；CPU 测试仍复用真实 ModelLoader/ResourceManager 路径。
