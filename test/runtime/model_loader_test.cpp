@@ -184,7 +184,7 @@ namespace
         {
             const auto source = Utils::Utf8::toFsPath(MODEL_DEMO_ASSET_DIR) / "models" / std::string(directory);
             const auto destination = temporary_ / "assets/models" / std::string(directory);
-            fs::copy(source, destination, fs::copy_options::recursive);
+            fs::copy(source, destination, fs::copy_options::recursive | fs::copy_options::overwrite_existing);
         }
         void TearDown() override
         {

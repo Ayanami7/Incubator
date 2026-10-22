@@ -89,7 +89,7 @@ UI 可修改清屏颜色；两个物体默认同时显示，姿态固定，直�
 未知选项会明确报告启动错误，退出码为 1。两种网格均在初始化时创建一次，显示开关不触发上传。
 `examples/demo/scene_mesh.h` 生成立方体的
 24 顶点/36 索引和平面的 4 顶点/6 索引。平面位于 XY、面向 +Z，边长 1，UV 原点在左上。
-两个样本共用 `MeshVertex` position+UV、uint16 索引、同一纹理和 Pipeline，分别使用白色与线性 tint 材质。
+两个样本共用 `MeshVertex` position+UV、uint32 索引、同一纹理和 Pipeline，分别使用白色与线性 tint 材质。
 
 Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁生成的 CPU 数组；
 绘制时提交返回的 `Mesh`。Renderer 持有 GPU 网格至关闭，复制网格引用不会重新上传，

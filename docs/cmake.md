@@ -72,6 +72,10 @@ Incubator/
 - 链接测试框架与对应的运行时库
 - 使用 `FOLDER "UnitTest/runtime"` 属性分组
 
+CTest 的 `WORKING_DIRECTORY` 只对 CTest 入口生效，TestMate 会直接启动测试可执行文件。
+`VulkanReviewTest` 夹具通过编译时的 `RUNTIME_TEST_ASSET_DIR` 进入独立测试资产根，并在结束时恢复原目录；
+因此从构建目录直接运行或通过编辑器运行时，也使用 `<build>/test-fixtures/assets/` 中的精确样本。
+
 ### 示例目标（examples/ 下）
 
 - 独立可执行目标，演示引擎模块的实际用法
@@ -88,7 +92,7 @@ Scene 应用交互代码位于 examples/scene_demo/scene_demo.h，application_te
 - 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
 - Demo 资产目标 `demo_models` 位于 `assets/CMakeLists.txt`，只显式复制 Avocado glTF/bin/PNG 与 Utah Teapot OBJ。`demo_shaders` 在 `examples/demo/CMakeLists.txt` 编译生产 Shader；两个 Demo 依赖这两个目标。
-- `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。模型导入、模型准备、Application、纹理和 Vulkan 测试只依赖所需 fixture 与所选展示模型，不向 `<build>/assets/` 部署测试输入。
+- `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。Vulkan review 测试另部署 Demo 默认使用的 Avocado 基色 PNG；其他真实模型集成测试按需读取选定模型，不向 `<build>/assets/` 部署测试输入。
 
 ### Assimp 依赖
 

@@ -92,6 +92,13 @@ namespace
 
     using SceneAssets = Demo::SceneAssets;
 
+    Demo::SceneAssetPaths referenceSceneAssetPaths()
+    {
+        Demo::SceneAssetPaths paths;
+        paths.texture = "textures/reference_rgba.png";
+        return paths;
+    }
+
     struct FileAudit
     {
         Demo::SceneAssetPaths paths;
@@ -392,6 +399,8 @@ namespace
     protected:
         void SetUp() override
         {
+            previousPath_ = std::filesystem::current_path();
+            std::filesystem::current_path(Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR).parent_path());
             Log::Registry::reset();
             Resource::ResourceManager::instance().reset();
             Resource::ResourceRegistry::instance().clear();
@@ -406,6 +415,7 @@ namespace
             Log::Registry::reset();
             Resource::ResourceManager::instance().reset();
             Resource::ResourceRegistry::instance().clear();
+            std::filesystem::current_path(previousPath_);
         }
 
         std::unique_ptr<Window::Window> createWindow(bool visible = false, int width = 640, int height = 360)
@@ -484,6 +494,7 @@ namespace
             EXPECT_EQ(messages.find("error|"), std::string::npos) << messages;
         }
 
+        std::filesystem::path previousPath_;
         std::ostringstream messages_;
     };
 
@@ -746,7 +757,7 @@ namespace
         Log::Registry::get("render").setLevel(Log::Level::DEBUG);
         Log::Registry::get("render.vulkan").setLevel(Log::Level::DEBUG);
         auto window = createWindow(true, 640, 480);
-        SceneAssets assets;
+        SceneAssets assets(referenceSceneAssetPaths());
         Texture textureObserver;
         std::array<Material, 3> observers;
         {
@@ -827,7 +838,7 @@ namespace
         EXPECT_FALSE(textureObserver.valid());
         for (const auto& material : observers)
             EXPECT_FALSE(material.valid());
-        expectReleased({});
+        expectReleased(referenceSceneAssetPaths());
         expectCleanValidation();
     }
 
@@ -891,7 +902,7 @@ namespace
             VulkanSwapchain swapchain(device, surface, 384, 256);
             for (const float tint : {1.0f, 0.5f})
             {
-                SceneAssets assets;
+                SceneAssets assets(referenceSceneAssetPaths());
                 const auto pixels = TextureGpuReview::capture(instance.handle(), device, *window, assets,
                                                               swapchain.format(), {tint, tint, tint});
                 const size_t white = (112 * 384 + 240) * 4;
@@ -908,7 +919,7 @@ namespace
                         EXPECT_EQ(pixels[((16 + y * 64 + 32) * 384 + 16 + x * 64 + 32) * 4 + 3], 255);
                 if (tint == 0.5f)
                     WindowCapture::save({384, 256, pixels}, "review/material-half-linear-gpu.ppm");
-                expectReleased({});
+                expectReleased(referenceSceneAssetPaths());
                 std::cout << "GPU_MATERIAL: FORMAT=" << int(swapchain.format())
                           << " COLOR_SPACE=" << int(swapchain.colorSpace()) << " LINEAR_TINT=" << tint
                           << " WHITE=" << int(pixels[white]) << " GRAY=" << int(pixels[gray])
@@ -929,7 +940,7 @@ namespace
             VulkanSwapchain swapchain(device, surface, 384, 256);
             const auto target =
                 swapchain.format() == VK_FORMAT_B8G8R8A8_UNORM ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_B8G8R8A8_UNORM;
-            SceneAssets assets;
+            SceneAssets assets(referenceSceneAssetPaths());
             const auto pixels = TextureGpuReview::capture(instance.handle(), device, *window, assets, target,
                                                           {0.5f, 0.5f, 0.5f}, swapchain.format());
             const auto white = (112 * 384 + 240) * 4;
@@ -944,7 +955,7 @@ namespace
             EXPECT_EQ(pixels[((16 + 2 * 64 + 32) * 384 + 16 + 2 * 64 + 32) * 4 + 3], 255);
             EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture:"), 1u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 2u);
-            expectReleased({});
+            expectReleased(referenceSceneAssetPaths());
             WindowCapture::save({384, 256, pixels}, "review/material-format-rebuild-gpu.ppm");
             std::cout << "CONTROLLED_PIPELINE_FORMAT: ACTUAL_SWAPCHAIN=" << int(swapchain.format())
                       << " OFFSCREEN_REBUILD=" << int(swapchain.format()) << "->" << int(target)
@@ -963,6 +974,7 @@ namespace
         window.drawable = true;
         FileAudit referenceAudit;
         FileAudit directionAudit;
+        referenceAudit.paths = referenceSceneAssetPaths();
         directionAudit.paths.texture = "textures/direction_rgba.png";
         std::array<Material, 3> observers;
         std::array<Texture, 2> textureObservers;
@@ -973,7 +985,7 @@ namespace
             Material half;
             Material direction;
             {
-                SceneAssets assets({}, std::make_unique<AuditedFileIO>(referenceAudit));
+                SceneAssets assets(referenceAudit.paths, std::make_unique<AuditedFileIO>(referenceAudit));
                 renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
                 auto texture = renderer.createTexture(*assets.texture);
                 textureObservers[0] = texture;
@@ -1072,7 +1084,7 @@ namespace
             EXPECT_FALSE(material.valid());
         for (const auto& texture : textureObservers)
             EXPECT_FALSE(texture.valid());
-        expectReleased({});
+        expectReleased(referenceAudit.paths);
         expectReleased(directionAudit.paths);
         expectCleanValidation();
     }
@@ -1232,7 +1244,7 @@ namespace
         auto& manager = Resource::ResourceManager::instance();
         const auto held = manager.registerResource(Resource::ResourceType::TEXTURE, "textures/reference_rgba.png");
         {
-            SceneAssets assets;
+            SceneAssets assets(referenceSceneAssetPaths());
             EXPECT_EQ(registry.refCount(held), 2u);
         }
         EXPECT_EQ(registry.refCount(held), 1u);
@@ -1240,18 +1252,18 @@ namespace
         manager.release(held);
         EXPECT_EQ(registry.getObject(held), nullptr);
         {
-            SceneAssets assets;
+            SceneAssets assets(referenceSceneAssetPaths());
             EXPECT_EQ(registry.refCount(held), 1u);
             releaseCpuAssets(assets);
         }
-        expectReleased({});
+        expectReleased(referenceSceneAssetPaths());
     }
 
     TEST_F(VulkanReviewTest, ActualShaderAndPlaneMatchReferenceAndUiGrayOnGpu)
     {
         auto window = createWindow(false, 384, 256);
         {
-            SceneAssets assets;
+            SceneAssets assets(referenceSceneAssetPaths());
             VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
             GlfwSurface surface(instance, *window);
             VulkanDevice device(instance, surface);
@@ -1294,7 +1306,7 @@ namespace
             const auto blended = (200 * 384 + 320) * 4;
             for (int channel = 0; channel < 3; ++channel)
                 EXPECT_NEAR(pixels[blended + channel], 64, 1);
-            expectReleased({});
+            expectReleased(referenceSceneAssetPaths());
             std::filesystem::create_directories("review");
             std::ofstream output("review/task04-color.ppm", std::ios::binary);
             output << "P6\n384 256\n255\n";
@@ -1641,7 +1653,7 @@ namespace
     TEST_F(VulkanReviewTest, ApplicationMatricesControlPresentedImageAndResizeProjection)
     {
         auto window = createWindow(true, 640, 480);
-        SceneAssets assets;
+        SceneAssets assets(referenceSceneAssetPaths());
         {
             Renderer renderer(*window, RendererValidationMode::Required);
             renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
@@ -1816,7 +1828,7 @@ namespace
         auto native = createWindow(true, 640, 480);
         DeferredFramebufferWindow window(*native);
         window.drawable = true;
-        SceneAssets assets;
+        SceneAssets assets(referenceSceneAssetPaths());
         {
             Renderer renderer(window, RendererValidationMode::Required);
             renderer.prepareSceneResources(*assets.vertex, *assets.fragment);

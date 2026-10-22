@@ -168,7 +168,7 @@ namespace
         {
             for (const char* directory : {"avocado", "utah_teapot"})
                 fs::copy(previous_ / "assets/models" / directory, sandbox_ / "assets/models" / directory,
-                         fs::copy_options::recursive);
+                         fs::copy_options::recursive | fs::copy_options::overwrite_existing);
         }
         Application::SessionOptions options(bool visible = false)
         {

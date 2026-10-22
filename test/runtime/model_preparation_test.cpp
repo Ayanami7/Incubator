@@ -4,6 +4,7 @@
 #include <spdlog/sinks/ostream_sink.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -12,6 +13,7 @@
 #include <iostream>
 #include <iterator>
 #include <sstream>
+#include <thread>
 
 #include "examples/demo/scene_assets.h"
 #include "examples/demo/scene_controls.h"
@@ -148,7 +150,7 @@ namespace
         {
             for (const char* directory : {"utah_teapot", "avocado"})
                 fs::copy(previous_ / "assets/models" / directory, sandbox_ / "assets/models" / directory,
-                         fs::copy_options::recursive);
+                         fs::copy_options::recursive | fs::copy_options::overwrite_existing);
         }
         void released(ResourceType type, std::string_view path)
         {
@@ -977,7 +979,8 @@ namespace
             }
             for (int frame = 0; frame < 3; ++frame)
                 ASSERT_TRUE(submit(*native, renderer, {}, true));
-            glfwWaitEventsTimeout(0.06);
+            // Event waits can return early; allow the empty frame to reach the composed desktop.
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
             image = WindowCapture::capture(*native);
             color(image, 0.789103f, 0.567851f, {51, 61, 71});
             const auto ui = (static_cast<size_t>(24) * image.width + 24) * 4;
