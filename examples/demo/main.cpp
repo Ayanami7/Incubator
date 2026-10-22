@@ -87,7 +87,7 @@ int main(int argc, char* argv[])
             const auto planeData = Incubator::Demo::makePlaneMesh();
             plane = renderer.createMesh(planeData.vertices, planeData.indices);
         }
-        auto scene = modelMode ? Incubator::Demo::makeModelSceneControls() : Incubator::Demo::SceneControls{};
+        auto scene = modelMode ? Incubator::Demo::makeModelSceneControls(assetPath) : Incubator::Demo::SceneControls{};
         scene.cube.visible = meshName != "plane";
         scene.plane.visible = meshName != "cube";
         log.info("Initial scene visibility: {}", meshName);

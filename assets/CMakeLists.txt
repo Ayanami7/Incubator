@@ -1,6 +1,7 @@
 # Demo assets contain only the fixed showcase models. Test fixtures are deployed by test/runtime.
 set(DEMO_MODEL_OUTPUTS)
 foreach(MODEL_FILE IN ITEMS
+    README.md
     utah_teapot/utah_teapot.obj
     avocado/glTF/Avocado.gltf
     avocado/glTF/Avocado.bin

@@ -114,7 +114,7 @@ namespace Incubator::SceneDemo
             {
                 auto transform = entity->transform;
                 auto position = transform.position();
-                auto scale = transform.scale();
+                auto scale = transform.scale() / glm::vec3(initialScale(useObj_));
                 auto degrees = glm::degrees(glm::eulerAngles(transform.rotation()));
                 bool visible = entity->visible;
                 if (ImGui::Checkbox("Visible", &visible))
@@ -130,9 +130,10 @@ namespace Incubator::SceneDemo
                     transform.setRotation(glm::quat(glm::radians(degrees)));
                     changed = true;
                 }
-                if (ImGui::SliderFloat3("Scale", &scale.x, 0.1f, 3, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+                if (ImGui::SliderFloat3("Scale multiplier", &scale.x, 0.1f, 3, "%.2f",
+                                        ImGuiSliderFlags_AlwaysClamp))
                 {
-                    transform.setScale(scale);
+                    transform.setScale(scale * initialScale(useObj_));
                     changed = true;
                 }
                 if (changed)
@@ -146,11 +147,16 @@ namespace Incubator::SceneDemo
         }
 
     private:
+        static float initialScale(bool useObj)
+        {
+            return useObj ? 0.075f : 24.0f;
+        }
+
         static Scene::Transform initialTransform(bool useObj, float x)
         {
             if (useObj)
-                return Scene::Transform({x, 0, 0}, {1, 0, 0, 0}, glm::vec3(0.075f));
-            return Scene::Transform({x, -0.78f, 0}, {1, 0, 0, 0}, glm::vec3(24.0f));
+                return Scene::Transform({x, 0, 0}, {1, 0, 0, 0}, glm::vec3(initialScale(true)));
+            return Scene::Transform({x, -0.78f, 0}, {1, 0, 0, 0}, glm::vec3(initialScale(false)));
         }
 
         std::array<std::shared_ptr<const Model::PreparedModel>, 2> models_;

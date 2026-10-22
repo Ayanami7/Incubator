@@ -45,7 +45,9 @@ CMake 设置 `VS_DEBUGGER_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}`。启动调试�
 
 每次启动准备一次模型，两个实例共用其 Mesh、Texture、Material 和节点元数据。
 面板中的 `Instance A / Instance B` 分别控制实例整体变换及可见性；均隐藏时仍绘制背景和 UI。
-`Reset scene` 恢复模型模式的初始位置、缩放和相机；修改实例、相机或窗口大小不重新上传模型。
+Avocado 使用 24 倍模型缩放，Utah Teapot 使用 0.075 倍缩放，并使用各自的位置；
+`Reset scene` 恢复所选展示模型的初始位置、缩放和相机。
+修改实例、相机或窗口大小不重新上传模型。其他模型继续使用通用初始尺度。
 切换文件或格式需重启。原有纹理位置参数和 `both|cube|plane` 模式继续用于程序生成几何。
 
 展示资产包括带基色 PNG 的 Avocado glTF 和无纹理 Utah Teapot OBJ；导入器保留源坐标和节点变换。
@@ -106,6 +108,7 @@ Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁
 | Cube / Plane | Position | 各轴 −3～3；只平移该物体 |
 | Cube / Plane | Rotation | 各轴 −180°～180°；只旋转该物体 |
 | Cube / Plane | Scale | 各轴 0.1～3；只缩放该物体，保持正尺度 |
+| Instance A / B | Scale multiplier | 各轴 0.1～3；相对于模型展示基准调整实例变换，不修改导入资源 |
 | Camera | Target | 各轴 −2～2；移动相机观察目标 |
 | Camera | Yaw / Pitch | −180°～180° / −80°～80°；绕目标旋转，避开俯仰极点 |
 | Camera | Distance | 2～12；调整与目标的距离 |
@@ -131,6 +134,7 @@ Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁
 按显示开关生成绘制列表。`scene_frame.h` 的 `makeSceneModel(transform)` 按
 `T * Rz * Ry * Rx * S` 生成模型矩阵；`makeSceneFrame(extent, draws, camera)` 生成绕目标的
 右手相机和透视投影，近/远裁面固定为 0.1/50。Renderer 只消费最终矩阵。
+模型模式下，Scale multiplier 从所选模型的展示基准缩放开始编辑；纹理几何模式的 Scale 仍是绝对尺度。
 
 每轮先轮询事件，调用 `beginUiFrame()`；返回实际绘制 extent 后构建 UI，再从本轮编辑后的状态
 生成矩阵和列表，提交 `drawFrame(frameInput, clearColor, recordUi)`。返回空值时跳过该轮，避免零尺寸
@@ -152,6 +156,7 @@ assets/
 │   ├── cube.vert.spv
 │   └── cube.frag.spv
 └── models/
+    ├── README.md
     ├── utah_teapot/utah_teapot.obj
     └── avocado/glTF/
         ├── Avocado.gltf
@@ -159,7 +164,7 @@ assets/
         └── Avocado_*.png
 ```
 
-`assets/CMakeLists.txt` 中的 `demo_models` 显式部署两份展示模型及 Avocado 的 sidecar。
+`assets/CMakeLists.txt` 中的 `demo_models` 显式部署两份展示模型、来源记录及 Avocado 的 sidecar。
 测试夹具由独立的 `runtime_test_fixtures` 目标部署到 `<build>/test-fixtures/assets/`，不会混入 Demo 资产。
 修改任一源文件后重新构建即可更新对应部署，无需手工复制或重新链接可执行文件。
 

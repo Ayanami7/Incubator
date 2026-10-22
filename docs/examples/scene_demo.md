@@ -28,7 +28,7 @@ Visual Studio 的目标调试工作目录也设为 `${CMAKE_BINARY_DIR}`。
 | 实体列表 | 按创建顺序显示 EntityId，点击选中 |
 | Create entity | 在画面中央按当前模型的展示缩放创建共享实体，并选中 |
 | Visible | 显示/隐藏当前实体，保留其变换 |
-| Position / Rotation / Scale | 独立平移、旋转、缩放选中实体；旋转使用角度，转换为四元数写回 Runtime Transform |
+| Position / Rotation / Scale multiplier | 独立平移、旋转、缩放选中实体；缩放倍率乘以当前模型展示基准，旋转使用角度并转换为四元数写回 Runtime Transform |
 | Delete selected | 删除选中实体，旧 ID 失效，其他实体保持 |
 | Clear scene | 清空实体及选中状态，保留 Camera、背景和 UI |
 | Reset scene | 用当前模型重建初始的两个实体和 Camera，旧 ID 失效 |
