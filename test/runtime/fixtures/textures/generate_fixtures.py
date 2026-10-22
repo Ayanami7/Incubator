@@ -6,7 +6,6 @@ import struct
 import zlib
 
 ROOT = Path(__file__).resolve().parent
-PROJECT = ROOT.parents[3]
 SIG = b"\x89PNG\r\n\x1a\n"
 PIXELS = bytes([
     255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
@@ -26,6 +25,7 @@ def png(width, height, depth, color, raw_rows, extra=b"", interlace=0):
 
 rgba = png(4, 3, 8, 6, b"".join(b"\0" + PIXELS[y * 16:(y + 1) * 16] for y in range(3)))
 cases = {
+    "reference_rgba": rgba,
     "gray8": png(2, 1, 8, 0, bytes([0, 0, 128])),
     "gray_alpha8": png(2, 1, 8, 4, bytes([0, 128, 64, 255, 0])),
     "rgb8": png(2, 1, 8, 2, bytes([0, 255, 0, 0, 128, 128, 128])),
@@ -53,9 +53,6 @@ for name, data in cases.items():
     (ROOT / f"{name}.png").write_bytes(data)
     manifest[name] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
 (ROOT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-asset = PROJECT / "assets/textures/reference_rgba.png"
-asset.parent.mkdir(parents=True, exist_ok=True)
-asset.write_bytes(rgba)
 assert len(rgba) == 119
 assert hashlib.sha256(rgba).hexdigest() == "a609d42b2ac0a5fab2e9ffac52387d4c479018e729e46d9536598e213baa10b3"
-print(f"Generated {len(cases)} fixtures and {asset}")
+print(f"Generated {len(cases)} texture fixtures under {ROOT}")

@@ -1,4 +1,8 @@
 {
+  "reference_rgba": {
+    "bytes": 119,
+    "sha256": "a609d42b2ac0a5fab2e9ffac52387d4c479018e729e46d9536598e213baa10b3"
+  },
   "gray8": {
     "bytes": 71,
     "sha256": "100430b7c7e00d624f513d5e05b6c44de351f3ce33ea7d18937f184be4979dc9"

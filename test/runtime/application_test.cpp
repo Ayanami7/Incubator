@@ -4,12 +4,15 @@
 #include <imgui.h>
 #include <spdlog/sinks/ostream_sink.h>
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
 
+#include "runtime/core/utils/utf8.h"
 #include "examples/scene_demo/scene_demo.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
@@ -30,6 +33,9 @@ namespace
     constexpr const char* GLTF = "models/minimal_gltf/model.gltf";
     constexpr const char* OBJ = "models/minimal_obj/model.obj";
     constexpr const char* PNG = "textures/direction_rgba.png";
+    constexpr const char* DEMO_GLTF = "models/avocado/glTF/Avocado.gltf";
+    constexpr const char* DEMO_OBJ = "models/utah_teapot/utah_teapot.obj";
+    constexpr const char* DEMO_PNG = "models/avocado/glTF/Avocado_baseColor.png";
 
     struct Lifetime
     {
@@ -135,8 +141,9 @@ namespace
                 previous_ / "review/application" / ::testing::UnitTest::GetInstance()->current_test_info()->name();
             fs::remove_all(sandbox_);
             fs::create_directories(sandbox_ / "assets");
+            const auto fixtureRoot = Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR);
             for (const char* directory : {"models", "textures", "shaders"})
-                fs::copy(previous_ / "assets" / directory, sandbox_ / "assets" / directory,
+                fs::copy(fixtureRoot / directory, sandbox_ / "assets" / directory,
                          fs::copy_options::recursive);
             fs::current_path(sandbox_);
             ResourceManager::instance().reset();
@@ -156,6 +163,12 @@ namespace
             ResourceRegistry::instance().clear();
             Log::Registry::reset();
             fs::current_path(previous_);
+        }
+        void copyShowcaseModels()
+        {
+            for (const char* directory : {"avocado", "utah_teapot"})
+                fs::copy(previous_ / "assets/models" / directory, sandbox_ / "assets/models" / directory,
+                         fs::copy_options::recursive);
         }
         Application::SessionOptions options(bool visible = false)
         {
@@ -409,6 +422,7 @@ namespace
 
     TEST_F(ApplicationTest, SceneDemoProductionControlsDriveSharedEntitiesAndSceneReplacement)
     {
+        copyShowcaseModels();
         auto config = options(true);
         config.window.width = 1280;
         config.window.height = 720;
@@ -418,16 +432,30 @@ namespace
         const std::weak_ptr<SceneDemo::Demo> demoLifetime = demo;
         Scene::EntityId first, second, created;
         Scene::Transform left, right, moved;
-        const glm::vec3 gltfGreen{0.556412f, 0.471404f, 0};
-        const glm::vec3 objGreen{0.6f, -0.15f, 0};
-        constexpr std::array<int, 3> GREEN{188, 255, 188}, CLEAR{51, 61, 71};
+        constexpr std::array<int, 3> CLEAR{51, 61, 71};
+        size_t preparedMeshUploads = 0, preparedTextureUploads = 0, preparedMaterialUploads = 0;
         size_t ordinaryOpens = 0;
         int updates = 0;
-        const auto point = [&](const WindowCapture::Image& image, Application::Session& app,
-                               const Scene::Transform& transform, glm::vec3 local, std::array<int, 3> rgb) {
+        const auto visiblePixels = [&](const WindowCapture::Image& image, Application::Session& app,
+                                       const Scene::Transform& transform) {
             const auto camera = app.scene().camera().matrices({1280, 720});
-            const auto clip = camera.projection * camera.view * transform.matrix() * glm::vec4(local, 1);
-            color(image, clip.x / clip.w * (1280.0f / 720.0f), -clip.y / clip.w, rgb);
+            const auto clip = camera.projection * camera.view * glm::vec4(transform.position(), 1);
+            if (clip.w <= 0)
+                return size_t{0};
+            const int centerX = static_cast<int>((clip.x / clip.w + 1.0f) * image.width * 0.5f);
+            const int centerY = static_cast<int>((1.0f - clip.y / clip.w) * image.height * 0.5f);
+            const int width = static_cast<int>(image.width), height = static_cast<int>(image.height);
+            size_t count = 0;
+            for (int y = std::max(0, centerY - 36); y < std::min(height, centerY + 36); ++y)
+                for (int x = std::max(0, centerX - 36); x < std::min(width, centerX + 36); ++x)
+                {
+                    const auto pixel = (static_cast<size_t>(y) * image.width + x) * 4;
+                    if (std::abs(static_cast<int>(image.rgba[pixel]) - CLEAR[0]) > 12 ||
+                        std::abs(static_cast<int>(image.rgba[pixel + 1]) - CLEAR[1]) > 12 ||
+                        std::abs(static_cast<int>(image.rgba[pixel + 2]) - CLEAR[2]) > 12)
+                        ++count;
+                }
+            return count;
         };
         const auto capture = [&](Application::Session& app, const char* name) {
             glfwWaitEventsTimeout(0.06);
@@ -445,9 +473,9 @@ namespace
                 right = app.scene().find(second)->transform;
                 EXPECT_EQ(app.scene().find(first)->model, app.scene().find(second)->model);
                 track(app, app.scene().find(first)->model, state);
-                unloaded(ResourceType::MODEL, GLTF);
-                unloaded(ResourceType::TEXTURE, PNG);
-                EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, OBJ).valid());
+                unloaded(ResourceType::MODEL, DEMO_GLTF);
+                unloaded(ResourceType::TEXTURE, DEMO_PNG);
+                EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, DEMO_OBJ).valid());
                 ordinaryOpens = state->opens;
             },
             [&, demo](Application::Session& app, const Application::FrameTime& time) {
@@ -459,36 +487,42 @@ namespace
                 {
                     EXPECT_GT(state->opens, ordinaryOpens);
                     ordinaryOpens = state->opens;
-                    unloaded(ResourceType::MODEL, OBJ);
-                    unloaded(ResourceType::TEXTURE, PNG);
+                    unloaded(ResourceType::MODEL, DEMO_OBJ);
+                    unloaded(ResourceType::TEXTURE, DEMO_PNG);
+                    preparedMeshUploads = count("Uploaded mesh:");
+                    preparedTextureUploads = count("Uploaded RGBA8 texture:");
+                    preparedMaterialUploads = count("Created material:");
+                    EXPECT_GT(preparedMeshUploads, 0u);
+                    EXPECT_GT(preparedTextureUploads, 0u);
+                    EXPECT_GT(preparedMaterialUploads, 0u);
                 }
                 EXPECT_EQ(state->opens, ordinaryOpens);
                 routes();
                 if (frame == 3)
                 {
                     const auto image = capture(app, "scene-demo-shared.ppm");
-                    point(image, app, left, gltfGreen, GREEN);
-                    point(image, app, right, gltfGreen, GREEN);
-                    EXPECT_EQ(count("Uploaded mesh:"), 4u);
-                    EXPECT_EQ(count("Uploaded RGBA8 texture:"), 4u);
-                    EXPECT_EQ(count("Created material:"), 4u);
+                    EXPECT_GT(visiblePixels(image, app, left), 0u);
+                    EXPECT_GT(visiblePixels(image, app, right), 0u);
+                    EXPECT_EQ(count("Uploaded mesh:"), preparedMeshUploads);
+                    EXPECT_EQ(count("Uploaded RGBA8 texture:"), preparedTextureUploads);
+                    EXPECT_EQ(count("Created material:"), preparedMaterialUploads);
                 }
                 if (frame == 6)
                 {
                     const auto image = capture(app, "scene-demo-hidden.ppm");
-                    point(image, app, left, gltfGreen, CLEAR);
-                    point(image, app, right, gltfGreen, GREEN);
+                    EXPECT_EQ(visiblePixels(image, app, left), 0u);
+                    EXPECT_GT(visiblePixels(image, app, right), 0u);
                     ASSERT_TRUE(app.scene().setVisible(first, true));
-                    moved = Scene::Transform({-0.5f, -0.3f, 0}, glm::quat(glm::vec3(0, 0, 0.3f)), {0.5f, 0.7f, 1});
+                    moved = Scene::Transform({-0.5f, -0.3f, 0}, glm::quat(glm::vec3(0, 0, 0.3f)), {12, 16.8f, 24});
                     ASSERT_TRUE(app.scene().setTransform(first, moved));
                     EXPECT_EQ(app.scene().find(second)->transform.position(), right.position());
                 }
                 if (frame == 9)
                 {
                     const auto image = capture(app, "scene-demo-transformed.ppm");
-                    point(image, app, left, gltfGreen, CLEAR);
-                    point(image, app, moved, gltfGreen, GREEN);
-                    point(image, app, right, gltfGreen, GREEN);
+                    EXPECT_EQ(visiblePixels(image, app, left), 0u);
+                    EXPECT_GT(visiblePixels(image, app, moved), 0u);
+                    EXPECT_GT(visiblePixels(image, app, right), 0u);
                     demo->deleteSelected(app);
                     EXPECT_EQ(app.scene().find(first), nullptr);
                     EXPECT_FALSE(app.scene().setVisible(first, true));
@@ -496,8 +530,8 @@ namespace
                 if (frame == 12)
                 {
                     const auto image = capture(app, "scene-demo-deleted.ppm");
-                    point(image, app, moved, gltfGreen, CLEAR);
-                    point(image, app, right, gltfGreen, GREEN);
+                    EXPECT_EQ(visiblePixels(image, app, moved), 0u);
+                    EXPECT_GT(visiblePixels(image, app, right), 0u);
                     demo->clear(app);
                     EXPECT_TRUE(app.scene().entities().empty());
                     EXPECT_EQ(app.scene().find(second), nullptr);
@@ -505,7 +539,7 @@ namespace
                 if (frame == 15)
                 {
                     const auto image = capture(app, "scene-demo-empty.ppm");
-                    point(image, app, right, gltfGreen, CLEAR);
+                    EXPECT_EQ(visiblePixels(image, app, right), 0u);
                     created = demo->createEntity(app);
                     EXPECT_NE(created, first);
                     EXPECT_NE(created, second);
@@ -514,14 +548,14 @@ namespace
                 if (frame == 18)
                 {
                     const auto image = capture(app, "scene-demo-created.ppm");
-                    point(image, app, Scene::Transform{}, gltfGreen, GREEN);
+                    EXPECT_GT(visiblePixels(image, app, app.scene().find(created)->transform), 0u);
                     demo->replaceCamera(app);
                     EXPECT_FLOAT_EQ(app.scene().camera().position().z, 8);
                 }
                 if (frame == 21)
                 {
                     const auto image = capture(app, "scene-demo-camera.ppm");
-                    point(image, app, Scene::Transform{}, gltfGreen, GREEN);
+                    EXPECT_GT(visiblePixels(image, app, app.scene().find(created)->transform), 0u);
                     demo->switchScene(app, true);
                     EXPECT_EQ(app.scene().find(created), nullptr);
                     EXPECT_FALSE(app.scene().setTransform(created, Scene::Transform{}));
@@ -529,20 +563,26 @@ namespace
                     ASSERT_EQ(app.scene().entities().size(), 2u);
                     EXPECT_EQ(app.scene().entities()[0].model, app.scene().entities()[1].model);
                     track(app, app.scene().entities()[0].model, state);
+                    left = app.scene().entities()[0].transform;
+                    right = app.scene().entities()[1].transform;
+                    EXPECT_EQ(count("Uploaded mesh:"), preparedMeshUploads);
+                    EXPECT_EQ(count("Uploaded RGBA8 texture:"), preparedTextureUploads);
+                    EXPECT_EQ(count("Created material:"), preparedMaterialUploads);
                 }
                 if (frame == 24)
                 {
                     const auto image = capture(app, "scene-demo-obj.ppm");
-                    point(image, app, left, objGreen, GREEN);
-                    point(image, app, right, objGreen, GREEN);
-                    point(image, app, left, gltfGreen, CLEAR);
+                    EXPECT_GT(visiblePixels(image, app, left), 0u);
+                    EXPECT_GT(visiblePixels(image, app, right), 0u);
                     demo->switchScene(app, false);
+                    left = app.scene().entities()[0].transform;
+                    right = app.scene().entities()[1].transform;
                 }
                 if (frame == 27)
                 {
                     const auto image = capture(app, "scene-demo-return-gltf.ppm");
-                    point(image, app, left, gltfGreen, GREEN);
-                    point(image, app, right, gltfGreen, GREEN);
+                    EXPECT_GT(visiblePixels(image, app, left), 0u);
+                    EXPECT_GT(visiblePixels(image, app, right), 0u);
                     app.requestExit();
                 }
             },
@@ -558,12 +598,12 @@ namespace
         EXPECT_EQ(updates, 28);
         EXPECT_TRUE(demoLifetime.expired());
         closed(state);
-        unloaded(ResourceType::MODEL, GLTF);
-        unloaded(ResourceType::MODEL, OBJ);
-        unloaded(ResourceType::TEXTURE, PNG);
-        EXPECT_EQ(count("Uploaded mesh:"), 4u);
-        EXPECT_EQ(count("Uploaded RGBA8 texture:"), 4u);
-        EXPECT_EQ(count("Created material:"), 4u);
+        unloaded(ResourceType::MODEL, DEMO_GLTF);
+        unloaded(ResourceType::MODEL, DEMO_OBJ);
+        unloaded(ResourceType::TEXTURE, DEMO_PNG);
+        EXPECT_EQ(count("Uploaded mesh:"), preparedMeshUploads);
+        EXPECT_EQ(count("Uploaded RGBA8 texture:"), preparedTextureUploads);
+        EXPECT_EQ(count("Created material:"), preparedMaterialUploads);
         EXPECT_EQ(count("Created graphics pipeline:"), 1u);
         cleanValidation();
     }

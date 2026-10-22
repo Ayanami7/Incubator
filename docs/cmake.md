@@ -63,8 +63,8 @@ Incubator/
 及其现有资源部署、串行 GPU 执行约定，使用正式 SceneFrame 提取和 Renderer 提交接口。
 
 `application/application.h/.cpp` 显式归入同一 Runtime，直接组织既有 Window、FileIO、资源路由、Scene 和 Renderer。
-`application_test` 依赖 demo_models/demo_textures/demo_shaders，在构建目录串行运行（120 秒超时），
-复用既有 GPU/真实窗口支持；Runtime 库本身不依赖具体资产部署目标。
+`application_test` 依赖 `runtime_test_fixtures`、`runtime_test_shaders`、`demo_models` 和 `demo_shaders`，
+在构建目录串行运行（120 秒超时），复用既有 GPU/真实窗口支持；Runtime 库本身不依赖具体资产部署目标。
 
 ### 测试目标（test/ 下）
 
@@ -78,7 +78,7 @@ Incubator/
 - 链接运行时库与所需第三方库
 
 `scene_demo` 与原有 `demo` 为同级独立入口，链接同一 IncubatorRuntime 和 imgui，
-依赖既有 demo_shaders/demo_textures/demo_models，运行工作目录为构建目录。
+依赖 `demo_shaders` 与 `demo_models`，运行工作目录为构建目录。
 Scene 应用交互代码位于 examples/scene_demo/scene_demo.h，application_test 直接复用它，
 在既有串行 GPU 夹具中验证实际 Session 驱动，不重复编译 Runtime 或引入新测试库。
 
@@ -87,14 +87,14 @@ Scene 应用交互代码位于 examples/scene_demo/scene_demo.h，application_te
 - 源文件到构建目录使用 `add_custom_command(OUTPUT ... DEPENDS ...)` 与 `copy_if_different`。
 - 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
-- 当前 PNG 部署目标 `demo_textures` 定义于 `assets/CMakeLists.txt`，Shader 编译目标 `demo_shaders` 定义于 `examples/demo/CMakeLists.txt`；Demo 和相关 GPU 测试显式依赖这两个目标。
-- 模型部署目标 `demo_models` 定义于 `assets/CMakeLists.txt`，按显式文件依赖复制 glTF/bin、OBJ/MTL；Demo、模型准备测试和模型 CPU 导入测试均依赖该目标及 `demo_textures`，前两者还依赖 `demo_shaders`。
+- Demo 资产目标 `demo_models` 位于 `assets/CMakeLists.txt`，只显式复制 Avocado glTF/bin/PNG 与 Utah Teapot OBJ。`demo_shaders` 在 `examples/demo/CMakeLists.txt` 编译生产 Shader；两个 Demo 依赖这两个目标。
+- `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。模型导入、模型准备、Application、纹理和 Vulkan 测试只依赖所需 fixture 与所选展示模型，不向 `<build>/assets/` 部署测试输入。
 
 ### Assimp 依赖
 
 Runtime 模型消费层位于 `src/runtime/model/`，`prepared_model.h/.cpp` 和 `model_instance.h/.cpp` 显式加入现有 `IncubatorRuntime`。
-`model_preparation_test` 依赖 `demo_models`、`demo_textures` 和 `demo_shaders`，在构建目录运行；
-GPU 用例与既有 Vulkan review 使用相同的串行执行和超时约定。
+`model_preparation_test` 依赖 `runtime_test_fixtures`、`runtime_test_shaders`、`demo_models` 和 `demo_shaders`，
+在构建目录运行；GPU 用例与既有 Vulkan review 使用相同的串行执行和超时约定。
 
 `3rdparty/assimp/` 内置固定 v6.0.3 源码，由 `3rdparty/CMakeLists.txt` 设置选项并直接 `add_subdirectory(assimp)`，
 配置时无需下载 Assimp。移除测试、文档、工具、示例、未启用格式及无关附带库；保留 GLTF/OBJ、完整公开头、

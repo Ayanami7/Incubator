@@ -21,7 +21,7 @@ options.validation = Incubator::Render::RendererValidationMode::Optional;
 Session session(options);
 session.run({
     [](Session& app) {
-        auto model = Incubator::Model::prepareModel(app.renderer(), "models/minimal_gltf/model.gltf");
+        auto model = Incubator::Model::prepareModel(app.renderer(), "models/avocado/glTF/Avocado.gltf");
         app.scene().setCamera(Incubator::Scene::Camera({0, 0, 6}));
         app.scene().createEntity(model, Incubator::Scene::Transform({-1, 0, 0}));
         app.scene().createEntity(model, Incubator::Scene::Transform({1, 0, 0}));

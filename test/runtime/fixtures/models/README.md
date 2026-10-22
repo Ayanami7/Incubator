@@ -1,7 +1,8 @@
-# 旧最小模型样本来源
+# 模型导入精确夹具
 
-以下来源说明只适用于 `minimal_gltf/` 与 `minimal_obj/` 两份精确测试样本；它们由本项目编写，按 **CC0-1.0** 提供。
-两份最小样本引用既有 `assets/textures/direction_rgba.png`，图片像素和来源约定见纹理目录说明。
+`minimal_gltf/` 与 `minimal_obj/` 是本项目编写的精确测试样本，按 **CC0-1.0** 提供。
+两种格式最终都解析到虚拟路径 `textures/direction_rgba.png`：glTF 使用相对 URI，OBJ 由 MTL 相对自身目录引用。
+两张精确纹理及其像素约定见纹理夹具目录说明。
 坐标为右手、Y-up，1 数值单位为 1 模型单位；不自动居中、换轴或缩放归一化。
 
 ## 几何与材质
@@ -35,5 +36,5 @@ Leaf 点 `(1,1,0)` 经根→父→子组合后为 `(.25+.15/√2, 1.55/√2, 0)`
 `minimal_obj/model.obj` 声明 `materials/model.mtl`，MTL 中的贴图相对其所在目录解析。
 四边形由 Assimp 三角化，纯色三角形没有 UV。文件不编码额外节点变换；导入保留 Assimp 给出的源根与物体节点。
 
-`demo_models` 通过显式文件依赖把最小样本和正式展示模型复制到构建资产目录。Task 03 会将两份最小样本迁入
-`test/runtime/fixtures/models`，让测试只部署所需输入；CPU 测试仍复用真实 ModelLoader/ResourceManager 路径。
+这些文件只供测试使用，由 `runtime_test_fixtures` 按显式依赖部署到独立测试资产根；
+它们不进入 Demo 资产。CPU 测试仍复用真实 ModelLoader/ResourceManager 路径。

@@ -17,7 +17,7 @@ namespace Incubator::SceneDemo
     public:
         void initialize(Application::Session& app)
         {
-            models_[0] = Model::prepareModel(app.renderer(), "models/minimal_gltf/model.gltf");
+            models_[0] = Model::prepareModel(app.renderer(), "models/avocado/glTF/Avocado.gltf");
             switchScene(app, false);
         }
 
@@ -28,12 +28,12 @@ namespace Incubator::SceneDemo
             if (firstUpdate_)
                 firstUpdate_ = false;
             else if (!models_[1])
-                models_[1] = Model::prepareModel(app.renderer(), "models/minimal_obj/model.obj");
+                models_[1] = Model::prepareModel(app.renderer(), "models/utah_teapot/utah_teapot.obj");
         }
 
         Scene::EntityId createEntity(Application::Session& app)
         {
-            selected_ = app.scene().createEntity(models_[useObj_ ? 1 : 0]);
+            selected_ = app.scene().createEntity(models_[useObj_ ? 1 : 0], initialTransform(useObj_, 0));
             return selected_;
         }
 
@@ -69,10 +69,9 @@ namespace Incubator::SceneDemo
         {
             auto scene = std::make_unique<Scene::Scene>();
             scene->setCamera(Scene::Camera({0, 0, 6}));
-            selected_ = scene->createEntity(models_[useObj ? 1 : 0],
-                                            Scene::Transform({-1.2f, 0.3f, 0}, {1, 0, 0, 0}, glm::vec3(0.65f)));
-            scene->createEntity(models_[useObj ? 1 : 0],
-                                Scene::Transform({1.2f, 0.3f, 0}, {1, 0, 0, 0}, glm::vec3(0.65f)));
+            const float offset = useObj ? 1.65f : 1.2f;
+            selected_ = scene->createEntity(models_[useObj ? 1 : 0], initialTransform(useObj, -offset));
+            scene->createEntity(models_[useObj ? 1 : 0], initialTransform(useObj, offset));
             app.setScene(std::move(scene));
             useObj_ = useObj;
             alternateCamera_ = false;
@@ -147,6 +146,13 @@ namespace Incubator::SceneDemo
         }
 
     private:
+        static Scene::Transform initialTransform(bool useObj, float x)
+        {
+            if (useObj)
+                return Scene::Transform({x, 0, 0}, {1, 0, 0, 0}, glm::vec3(0.075f));
+            return Scene::Transform({x, -0.78f, 0}, {1, 0, 0, 0}, glm::vec3(24.0f));
+        }
+
         std::array<std::shared_ptr<const Model::PreparedModel>, 2> models_;
         Scene::EntityId selected_;
         bool useObj_ = false;

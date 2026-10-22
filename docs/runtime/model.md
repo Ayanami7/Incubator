@@ -9,7 +9,7 @@ Resource 交付 CPU 数据，Renderer 创建并持有 GPU 对象，模型层负�
 // The application registers MODEL/TEXTURE loaders and keeps their FileIO alive.
 // Shared scene shaders are prepared explicitly once on this Renderer.
 renderer.prepareSceneResources(vertexShader, fragmentShader);
-auto model = Incubator::Model::prepareModel(renderer, "models/minimal_gltf/model.gltf");
+auto model = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Avocado.gltf");
 auto sharedModel = model; // Shares immutable metadata and the same GPU references.
 ```
 

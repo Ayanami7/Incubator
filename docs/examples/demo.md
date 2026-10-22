@@ -30,7 +30,7 @@ Set-Location 'E:/Project/VScode/Incubator/build'
 当前 Ninja 构建的入口是 `build/examples/demo/demo.exe`。源码目录不包含构建生成的 SPIR-V，
 不能从源码根直接启动并期待找到这些文件。
 
-VS Code 选择 `Debug` 后 F5，使用默认纹理；选择 `Debug (direction texture)` 则使用第二张纹理。
+VS Code 选择 `Debug` 后 F5，使用 Avocado 基色纹理；另一个启动配置可选择 Avocado 法线贴图。
 两份配置的工作目录均为 `${workspaceFolder}/build`。Visual Studio 生成器的 Demo 目标由
 CMake 设置 `VS_DEBUGGER_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}`。启动调试前先完成构建。
 
@@ -39,8 +39,8 @@ CMake 设置 `VS_DEBUGGER_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}`。启动调试�
 在构建目录中指定模型虚拟路径，保留模型及依赖相对于 `assets/` 的目录结构：
 
 ```powershell
-& './examples/demo/demo.exe' '--model' 'models/minimal_gltf/model.gltf'
-& './examples/demo/demo.exe' '--model' 'models/minimal_obj/model.obj'
+& './examples/demo/demo.exe' '--model' 'models/avocado/glTF/Avocado.gltf'
+& './examples/demo/demo.exe' '--model' 'models/utah_teapot/utah_teapot.obj'
 ```
 
 每次启动准备一次模型，两个实例共用其 Mesh、Texture、Material 和节点元数据。
@@ -48,10 +48,9 @@ CMake 设置 `VS_DEBUGGER_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}`。启动调试�
 `Reset scene` 恢复模型模式的初始位置、缩放和相机；修改实例、相机或窗口大小不重新上传模型。
 切换文件或格式需重启。原有纹理位置参数和 `both|cube|plane` 模式继续用于程序生成几何。
 
-正式样本采用右手、Y-up，保留原始单位与节点变换；glTF 包含非单位根、父子层级、重复几何和双材质，
-OBJ 包含方向图四边形和纯色三角形。两者共用方向 PNG，纯色线性 RGB 为 `{0.5, 1, 0.5}`。
-方向图原点在左上；PNG alpha 不产生透明，固定 nearest/repeat/LOD=0，无光照和背面剔除。
-层级说明见 [模型样本](../../assets/models/SOURCE.md)，完整支持范围见
+展示资产包括带基色 PNG 的 Avocado glTF 和无纹理 Utah Teapot OBJ；导入器保留源坐标和节点变换。
+当前预览不实现光照或 PBR；PNG 沿用不透明、nearest/repeat/LOD=0 的既有显示语义。
+完整支持范围见
 [ModelLoader](../runtime/resource/loader/model_loader.md)。
 
 ## 启动时选择纹理
@@ -59,10 +58,10 @@ OBJ 包含方向图四边形和纯色三角形。两者共用方向 PNG，纯色
 Demo 的第一个可选位置参数表示纹理虚拟路径，不带 `assets/` 前缀：
 
 ```powershell
-# 不传参数时使用 textures/reference_rgba.png。
+# 不传参数时使用 models/avocado/glTF/Avocado_baseColor.png。
 & './examples/demo/demo.exe'
 # 关闭窗口后，使用另一张图片重新启动。
-& './examples/demo/demo.exe' 'textures/direction_rgba.png'
+& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_normal.png'
 ```
 
 启动日志和 UI 显示所选路径。选择只发生在初始化阶段，换图需要重启程序。
@@ -72,15 +71,7 @@ Demo 当前将引擎日志阈值设为 `DEBUG`，可查看资源加载/卸载、
 这些 DEBUG 日志记录低频操作，使用现有参数，不记录每帧绘制过程。
 Windows 入口使用 Unicode 命令行，再通过 `Utils::Utf8` 转为资源系统的 UTF-8 路径；
 中文、空格及系统 ANSI 代码页之外的字符均可保留。路径包含空格时需像上例一样整体加引号。
-两张正式样本的来源、CC0-1.0 许可、生成方式和完整像素基准见
-[纹理来源说明](../../assets/textures/SOURCE.md)。
-
-| 纹理 | 尺寸 | +Z 面方向标记 |
-|---|---|---|
-| `reference_rgba.png` | 4×3 | 顶行红→绿→蓝→黄，底行橙→紫→暗色→黑 |
-| `direction_rgba.png` | 3×4 | 顶行白→橙→黑，次行蓝→中灰→红，底行暗色→黄→紫 |
-
-两张图都含中灰和已知透明通道。场景材质不透明，半透明和透明格子仍显示自身 RGB。
+方向、颜色和异常输入的精确小 PNG 仅作为测试夹具保存在 `test/runtime/fixtures/textures`，不部署到 Demo 资产根。
 UI 可修改清屏颜色；两个物体默认同时显示，姿态固定，直到用户调整控件。
 
 ## 初始显示与网格上传
@@ -89,10 +80,10 @@ UI 可修改清屏颜色；两个物体默认同时显示，姿态固定，直�
 使用此参数时保留第一个纹理参数：
 
 ```powershell
-& './examples/demo/demo.exe' 'textures/reference_rgba.png' 'both'
-& './examples/demo/demo.exe' 'textures/reference_rgba.png' 'cube'
-& './examples/demo/demo.exe' 'textures/reference_rgba.png' 'plane'
-& './examples/demo/demo.exe' 'textures/direction_rgba.png' 'plane'
+& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_baseColor.png' 'both'
+& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_baseColor.png' 'cube'
+& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_baseColor.png' 'plane'
+& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_normal.png' 'plane'
 ```
 
 未知选项会明确报告启动错误，退出码为 1。两种网格均在初始化时创建一次，显示开关不触发上传。
@@ -160,14 +151,17 @@ assets/
 ├── shaders/
 │   ├── cube.vert.spv
 │   └── cube.frag.spv
-└── textures/
-    ├── reference_rgba.png
-    └── direction_rgba.png
+└── models/
+    ├── utah_teapot/utah_teapot.obj
+    └── avocado/glTF/
+        ├── Avocado.gltf
+        ├── Avocado.bin
+        └── Avocado_*.png
 ```
 
-`assets/CMakeLists.txt` 中的 `demo_textures` 为两张 PNG 声明源文件依赖、输出和
-`copy_if_different` 命令。Demo 和相关 GPU 测试共用这套部署；修改源图片后重新构建即可
-更新运行资产，无需手工复制或重新链接可执行文件。PNG 已入库，普通构建不需要 Python。
+`assets/CMakeLists.txt` 中的 `demo_models` 显式部署两份展示模型及 Avocado 的 sidecar。
+测试夹具由独立的 `runtime_test_fixtures` 目标部署到 `<build>/test-fixtures/assets/`，不会混入 Demo 资产。
+修改任一源文件后重新构建即可更新对应部署，无需手工复制或重新链接可执行文件。
 
 使用全新构建目录时，可执行：
 
@@ -175,7 +169,7 @@ assets/
 Set-Location 'E:/Project/VScode/Incubator'
 cmd.exe /d /s /c '"D:\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && D:\CMake\bin\cmake.EXE -S e:/Project/VScode/Incubator -B e:/Project/VScode/Incubator/build/task05-clean -G Ninja -DCMAKE_MAKE_PROGRAM=D:/ninja/ninja.exe -DCMAKE_BUILD_TYPE=Debug && D:\CMake\bin\cmake.EXE --build e:/Project/VScode/Incubator/build/task05-clean --config Debug --target demo --'
 Set-Location 'E:/Project/VScode/Incubator/build/task05-clean'
-& './examples/demo/demo.exe' 'textures/direction_rgba.png'
+& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_baseColor.png'
 ```
 
 该启动方式的资源根是 `build/task05-clean/assets`。本机工具路径可按安装位置调整，
@@ -223,11 +217,11 @@ $LASTEXITCODE
 应用返回 1。该反例不依赖 CRC 校验：
 
 ```powershell
-$textureBytes = [IO.File]::ReadAllBytes((Join-Path (Get-Location) 'assets/textures/reference_rgba.png'))
-$truncatedPath = Join-Path (Get-Location) 'assets/textures/demo-truncated.png'
+$textureBytes = [IO.File]::ReadAllBytes((Join-Path (Get-Location) 'assets/models/avocado/glTF/Avocado_baseColor.png'))
+$truncatedPath = Join-Path (Get-Location) 'assets/models/avocado/glTF/demo-truncated.png'
 try {
     [IO.File]::WriteAllBytes($truncatedPath, $textureBytes[0..71])
-    & './examples/demo/demo.exe' 'textures/demo-truncated.png'
+    & './examples/demo/demo.exe' 'models/avocado/glTF/demo-truncated.png'
     $LASTEXITCODE
 } finally {
     Remove-Item -LiteralPath $truncatedPath

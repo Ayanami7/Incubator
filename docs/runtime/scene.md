@@ -12,7 +12,7 @@
 ```cpp
 Incubator::Scene::Scene scene;
 scene.setCamera(Incubator::Scene::Camera({0, 0, 3}));
-auto model = Incubator::Model::prepareModel(renderer, "models/minimal_gltf/model.gltf");
+auto model = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Avocado.gltf");
 const auto first = scene.createEntity(model, Incubator::Scene::Transform({-1, 0, 0}));
 const auto second = scene.createEntity(model, Incubator::Scene::Transform({1, 0, 0}));
 scene.setVisible(first, false);

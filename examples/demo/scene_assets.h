@@ -23,7 +23,7 @@ namespace Incubator
         {
             std::string_view vertex = "shaders/cube.vert.spv";
             std::string_view fragment = "shaders/cube.frag.spv";
-            std::string_view texture = "textures/reference_rgba.png";
+                std::string_view texture = "models/avocado/glTF/Avocado_baseColor.png";
             std::string_view model;
         };
 

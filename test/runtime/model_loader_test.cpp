@@ -180,6 +180,12 @@ namespace
             Log::Registry::get("resource").addSink(std::make_shared<spdlog::sinks::ostream_sink_mt>(messages_));
             ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<ModelLoader>(fileIO_));
         }
+        void copyDemoModel(std::string_view directory)
+        {
+            const auto source = Utils::Utf8::toFsPath(MODEL_DEMO_ASSET_DIR) / "models" / std::string(directory);
+            const auto destination = temporary_ / "assets/models" / std::string(directory);
+            fs::copy(source, destination, fs::copy_options::recursive);
+        }
         void TearDown() override
         {
             ResourceManager::instance().reset();
@@ -306,6 +312,8 @@ namespace
     {
         constexpr std::string_view teapotPath = "models/utah_teapot/utah_teapot.obj";
         constexpr std::string_view avocadoPath = "models/avocado/glTF/Avocado.gltf";
+        copyDemoModel("utah_teapot");
+        copyDemoModel("avocado");
         const auto verifyGeometry = [](const ModelResource& model) {
             ASSERT_FALSE(model.geometries().empty());
             ASSERT_FALSE(model.parts().empty());

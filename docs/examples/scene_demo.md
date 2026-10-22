@@ -12,20 +12,21 @@ Set-Location 'E:/Project/VScode/Incubator/build'
 & './examples/scene_demo/scene_demo.exe'
 ```
 
-工作目录必须是对应构建目录。目标依赖既有 `demo_shaders`、`demo_textures` 和 `demo_models`，
-复用 `<build>/assets/` 中的 SPIR-V、PNG、glTF/bin 和 OBJ/MTL，不需要复制额外资产。
+工作目录必须是对应构建目录。目标依赖 `demo_shaders` 和 `demo_models`，
+复用 `<build>/assets/` 中的 SPIR-V、Avocado glTF/bin/PNG 和 Utah Teapot OBJ，不需要复制额外资产。
 Visual Studio 的目标调试工作目录也设为 `${CMAKE_BINARY_DIR}`。
 
-初始显示两个共享 glTF 模型的实体，分别位于 `(-1.2, 0.3, 0)` 和 `(1.2, 0.3, 0)`，
-缩放均为 0.65。相机位于 `(0, 0, 6)`、朝向 −Z，垂直 FOV 45°，近/远裁面 0.1/100。
-模型保留源节点层级、材质颜色及方向纹理。左侧面板用于实体和场景操作，没有自动运动。
+初始显示两个共享 Avocado glTF 模型的实体，分别位于 `(-1.2, -0.78, 0)` 和 `(1.2, -0.78, 0)`，
+缩放均为 24，以适配模型原始单位。相机位于 `(0, 0, 6)`、朝向 −Z，垂直 FOV 45°，近/远裁面 0.1/100。
+模型保留源节点层级、基色纹理和单位。切换到 Teapot OBJ 时使用 0.075 的展示缩放。
+左侧面板用于实体和场景操作，没有自动运动。
 
 ## 操作
 
 | 控件 | 行为 |
 |---|---|
 | 实体列表 | 按创建顺序显示 EntityId，点击选中 |
-| Create entity | 在原点创建当前模型的共享实体，单位 TRS，并选中 |
+| Create entity | 在画面中央按当前模型的展示缩放创建共享实体，并选中 |
 | Visible | 显示/隐藏当前实体，保留其变换 |
 | Position / Rotation / Scale | 独立平移、旋转、缩放选中实体；旋转使用角度，转换为四元数写回 Runtime Transform |
 | Delete selected | 删除选中实体，旧 ID 失效，其他实体保持 |
@@ -36,7 +37,7 @@ Visual Studio 的目标调试工作目录也设为 `${CMAKE_BINARY_DIR}`。
 | Clear color | 修改背景颜色 |
 | Exit | 请求会话退出，也可直接关闭窗口 |
 
-启动时只准备 glTF。首次 update 后的下一轮 update 显式准备 OBJ，此前切换按钮禁用；
+启动时只准备 Avocado glTF。首次 update 后的下一轮 update 显式准备 Utah Teapot OBJ，此前切换按钮禁用；
 初次 CPU 模型和 PNG 持有已释放，Loader/FileIO 继续存活，因此后续准备仍走原有资源服务。
 每种模型在此示例中准备一次；返回已准备的模型、创建实体、调整姿态和可见性都复用现有 GPU 引用。
 这两份示例准备结果由消费者保留到关闭，不是全局资产缓存。

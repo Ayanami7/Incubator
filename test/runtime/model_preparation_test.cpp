@@ -90,8 +90,9 @@ namespace
                        ::testing::UnitTest::GetInstance()->current_test_info()->name();
             fs::remove_all(sandbox_);
             fs::create_directories(sandbox_ / "assets");
+            const auto fixtureRoot = Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR);
             for (const char* directory : {"models", "textures", "shaders"})
-                fs::copy(previous_ / "assets" / directory, sandbox_ / "assets" / directory,
+                fs::copy(fixtureRoot / directory, sandbox_ / "assets" / directory,
                          fs::copy_options::recursive);
             fs::current_path(sandbox_);
             ResourceManager::instance().reset();
@@ -142,6 +143,12 @@ namespace
             manager.release(fragment);
             released(ResourceType::SHADER, "shaders/cube.vert.spv");
             released(ResourceType::SHADER, "shaders/cube.frag.spv");
+        }
+        void copyShowcaseModels()
+        {
+            for (const char* directory : {"utah_teapot", "avocado"})
+                fs::copy(previous_ / "assets/models" / directory, sandbox_ / "assets/models" / directory,
+                         fs::copy_options::recursive);
         }
         void released(ResourceType type, std::string_view path)
         {
@@ -223,6 +230,7 @@ namespace
         constexpr const char* TEAPOT = "models/utah_teapot/utah_teapot.obj";
         constexpr const char* AVOCADO = "models/avocado/glTF/Avocado.gltf";
         constexpr const char* AVOCADO_BASE_COLOR = "models/avocado/glTF/Avocado_baseColor.png";
+        copyShowcaseModels();
         auto native = window();
         Scene::Scene scene;
         scene.setCamera(Scene::Camera({0, 0, 30}, {1, 0, 0, 0}, {glm::radians(45.0f), 0.1f, 100.0f}));
