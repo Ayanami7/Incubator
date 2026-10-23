@@ -15,8 +15,8 @@
 #include <sstream>
 #include <thread>
 
-#include "examples/demo/scene_assets.h"
-#include "examples/demo/scene_controls.h"
+#include "support/render_demo/scene_assets.h"
+#include "support/render_demo/scene_controls.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"

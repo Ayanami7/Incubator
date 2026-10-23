@@ -18,10 +18,10 @@
 #include <thread>
 #include <vector>
 
-#include "examples/demo/scene_assets.h"
-#include "examples/demo/scene_controls.h"
-#include "examples/demo/scene_frame.h"
-#include "examples/demo/scene_mesh.h"
+#include "support/render_demo/scene_assets.h"
+#include "support/render_demo/scene_controls.h"
+#include "support/render_demo/scene_frame.h"
+#include "support/render_demo/scene_mesh.h"
 #include "examples/demo/validation_mode.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"

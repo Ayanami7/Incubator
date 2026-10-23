@@ -31,7 +31,6 @@ Incubator/
 │       ├── resource/
 │       ├── model/
 │       ├── scene/
-│       ├── application/
 │       └── render/
 ├── assets/
 │   └── CMakeLists.txt  # 运行资源部署（文件依赖与增量复制）
@@ -50,7 +49,7 @@ Incubator/
 
 ### 运行时库目标（src/runtime/）
 
-- Core、Platform、Resource、Model、Scene、Application、Render 是逻辑模块，由 `src/runtime/CMakeLists.txt` 按模块收集头文件与源文件，共同编译为 `IncubatorRuntime` 静态库
+- Core、Platform、Resource、Model、Scene、Render 是逻辑模块，由 `src/runtime/CMakeLists.txt` 按模块收集头文件与源文件，共同编译为 `IncubatorRuntime` 静态库
 - 源码分层的依赖方向由模块边界维护；目录层次不代表独立库目标
 - 使用 `FOLDER "Engine"` 属性在 IDE 中分组显示
 - 依赖关系通过 `add_dependencies` + `target_link_libraries` 声明
@@ -62,9 +61,7 @@ Incubator/
 源文件发现规则创建，为不依赖窗口或 GPU 的 CPU 测试。真实模型的 Scene 组合验证复用 model_preparation_test
 及其现有资源部署、串行 GPU 执行约定，使用正式 SceneFrame 提取和 Renderer 提交接口。
 
-`application/application.h/.cpp` 显式归入同一 Runtime，直接组织既有 Window、FileIO、资源路由、Scene 和 Renderer。
-`application_test` 依赖 `runtime_test_fixtures`、`runtime_test_shaders`、`demo_models` 和 `demo_shaders`，
-在构建目录串行运行（120 秒超时），复用既有 GPU/真实窗口支持；Runtime 库本身不依赖具体资产部署目标。
+DemoApp 位于 examples/demo，直接组织 Window、FileIO、资源路由、Scene 和 Renderer；Runtime 不提供 Application 模块，也不依赖示例资产部署。
 
 ### 测试目标（test/ 下）
 
@@ -81,17 +78,14 @@ CTest 的 `WORKING_DIRECTORY` 只对 CTest 入口生效，TestMate 会直接启�
 - 独立可执行目标，演示引擎模块的实际用法
 - 链接运行时库与所需第三方库
 
-`scene_demo` 与原有 `demo` 为同级独立入口，链接同一 IncubatorRuntime 和 imgui，
-依赖 `demo_shaders` 与 `demo_models`，运行工作目录为构建目录。
-Scene 应用交互代码位于 examples/scene_demo/scene_demo.h，application_test 直接复用它，
-在既有串行 GPU 夹具中验证实际 Session 驱动，不重复编译 Runtime 或引入新测试库。
+唯一示例目标 demo 编译 examples/demo/main.cpp、demo_app.cpp 和模型展示代码，链接 IncubatorRuntime 和 imgui，依赖 demo_shaders、demo_models，运行工作目录为构建目录。demo_app_test 编译同一 demo_app.cpp 并复用 model_scene.h 验证生命周期和实体操作；旧几何辅助代码放在 test/runtime/support/render_demo。
 
 ### 运行资源（assets/）
 
 - 源文件到构建目录使用 `add_custom_command(OUTPUT ... DEPENDS ...)` 与 `copy_if_different`。
 - 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
-- Demo 资产目标 `demo_models` 位于 `assets/CMakeLists.txt`，只显式复制 Avocado glTF/bin/PNG 与 Utah Teapot OBJ。`demo_shaders` 在 `examples/demo/CMakeLists.txt` 编译生产 Shader；两个 Demo 依赖这两个目标。
+- Demo 资产目标 `demo_models` 位于 `assets/CMakeLists.txt`，只显式复制 Avocado glTF/bin/PNG 与 Utah Teapot OBJ。`demo_shaders` 在 `examples/demo/CMakeLists.txt` 编译生产 Shader；Demo 依赖这两个目标。
 - `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。Vulkan review 测试另部署 Demo 默认使用的 Avocado 基色 PNG；其他真实模型集成测试按需读取选定模型，不向 `<build>/assets/` 部署测试输入。
 
 ### Assimp 依赖

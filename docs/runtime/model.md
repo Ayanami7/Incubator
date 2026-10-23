@@ -111,9 +111,7 @@ RGB 使用源材质的线性 0–1 参数，白纹理采样后保持该颜色；
 最近邻、repeat、LOD=0、UV 方向及其他固定显示条件沿用 [ModelLoader](./resource/loader/model_loader.md)
 和 [Render 材质](./render.md) 的约定。
 
-完整应用用法见 [Demo 模型模式](../examples/demo.md#启动时选择模型)：SceneAssets 在 FileIO 生命周期内
-注册 Model/Texture Loader，应用显式准备共享 Shader，准备一次模型后以两个 ModelInstance 共享绘制。
-应用的资源初始化作用域结束后移除自己管理的 Loader；prepareModel 本身不清除全局路由。
+完整应用用法见 [模型 Demo](../examples/demo.md)：DemoApp 在 FileIO 生命周期内注册 Model/Texture Loader，准备 Shader 并将模型用于 Scene 实体。prepareModel 本身不清除全局路由。
 
-[Scene Runtime 示例](../examples/scene_demo.md) 通过 Application::Session 持有 FileIO/Loader 到关闭，
+[Scene Runtime 示例](../examples/demo.md) 通过 示例内 DemoApp 持有 FileIO/Loader 到关闭，
 初次 CPU release 后在后续更新显式准备另一格式；两份准备结果供实体复用和 Scene 切换，不在普通帧重新上传。

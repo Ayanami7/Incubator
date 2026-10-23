@@ -8,8 +8,8 @@
 #include <memory>
 #include <vector>
 
-#include "examples/demo/scene_assets.h"
-#include "examples/demo/scene_mesh.h"
+#include "render_demo/scene_assets.h"
+#include "render_demo/scene_mesh.h"
 #include "runtime/platform/window/window.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"

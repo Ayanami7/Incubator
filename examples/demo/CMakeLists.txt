@@ -5,10 +5,9 @@ set(TARGET_NAME demo)
 add_executable(
     ${TARGET_NAME}
     main.cpp
-    scene_mesh.h
-    scene_frame.h
-    scene_controls.h
-    scene_assets.h
+    demo_app.h
+    demo_app.cpp
+    model_scene.h
     validation_mode.h
 )
 
@@ -43,11 +42,6 @@ if(WIN32)
     add_dependencies(${TARGET_NAME} demo_shaders)
     set_target_properties(${TARGET_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
 
-    add_test(NAME DemoUnicodeCommandLine
-        COMMAND "${CMAKE_COMMAND}"
-            "-DDEMO_EXE=$<TARGET_FILE:${TARGET_NAME}>"
-            "-DDEMO_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}"
-            -P "${CMAKE_SOURCE_DIR}/test/examples/demo_unicode_cli.cmake")
 endif()
 
 if(MSVC)

@@ -24,8 +24,8 @@ Render 可使用 Core、Platform、Resource 和 Vulkan；Core、Platform、Resou
 Scene 消费者使用 [SceneFrame](./scene.md#场景帧提取) 持有 extent、相机与绘制列表，提交时调用
 `renderer.drawFrame(frame.input(), ...)` 临时借用当前存储；复制/移动结果后重新取得视图。
 Renderer 不依赖 Scene；旧 extent 跳帧、提交内借用及过期/跨 Renderer GPU 引用拒绝边界保持。
-[Scene Runtime 示例](../examples/scene_demo.md) 由 Application::Session 统一调用这些入口；
-既有 Demo 仍可直接提供 FrameInput，GPU 所有权和在途帧同步使用同一实现。
+[Scene Runtime 示例](../examples/demo.md) 由 示例内 DemoApp 统一调用这些入口；
+应用可独立提供 FrameInput，GPU 所有权和在途帧同步由 Renderer 管理。
 `render/detail/renderer_review.h` 仅供内部数值验证同步借用实际 GPU 网格、材质和 Pipeline；
 测试附件与回读代码位于 test/runtime/support，应用使用既有 drawFrame 提交接口。
 
@@ -224,7 +224,7 @@ RENDER 错误，不创建默认网格。位置和 UV 的具体内容由应用提
 `Mesh::valid()` 表示创建它的 Renderer 仍持有该网格；空引用、已关闭 Renderer 的引用无效。
 网格只能交回创建它的 Renderer，跨 Renderer 提交明确失败；移动 Renderer 后，网格随其内部
 设备继续有效。应用可以保留过期引用，但不能用它绘制，引用不使设备延迟销毁。
-Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `examples/demo/scene_mesh.h`。
+Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `test/runtime/support/render_demo/scene_mesh.h`。
 应用集成示例见 [多物体 Demo](../examples/demo.md)：先创建两种网格，再构建 ImGui 控件，
 根据本轮编辑后的状态生成相机矩阵与 0/1/2 项绘制列表；控件隐藏物体时保留已上传网格。
 

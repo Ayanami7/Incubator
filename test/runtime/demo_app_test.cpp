@@ -1,4 +1,4 @@
-#include "runtime/application/application.h"
+#include "examples/demo/demo_app.h"
 
 #include <gtest/gtest.h>
 #include <imgui.h>
@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "runtime/core/utils/utf8.h"
-#include "examples/scene_demo/scene_demo.h"
+#include "examples/demo/model_scene.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/model/prepared_model.h"
@@ -131,7 +131,7 @@ namespace
         std::shared_ptr<bool> destroyed_;
     };
 
-    class ApplicationTest : public ::testing::Test
+    class DemoAppTest : public ::testing::Test
     {
     protected:
         void SetUp() override
@@ -170,9 +170,9 @@ namespace
                 fs::copy(previous_ / "assets/models" / directory, sandbox_ / "assets/models" / directory,
                          fs::copy_options::recursive | fs::copy_options::overwrite_existing);
         }
-        Application::SessionOptions options(bool visible = false)
+        Demo::DemoOptions options(bool visible = false)
         {
-            Application::SessionOptions result;
+            Demo::DemoOptions result;
             result.window.title = "Incubator application session";
             result.window.width = 640;
             result.window.height = 480;
@@ -181,7 +181,7 @@ namespace
             result.clearColor = {0.2f, 0.24f, 0.28f, 1};
             return result;
         }
-        void track(Application::Session& session, const std::shared_ptr<const Model::PreparedModel>& model,
+        void track(Demo::DemoApp& session, const std::shared_ptr<const Model::PreparedModel>& model,
                    const std::shared_ptr<Lifetime>& state)
         {
             state->window = glfwGetWin32Window(static_cast<GLFWwindow*>(session.window().getNativeHandle()));
@@ -244,7 +244,7 @@ namespace
         std::ostringstream renderLog_;
     };
 
-    TEST_F(ApplicationTest, AnyExistingRouteRejectsTakeoverWithoutChangingOriginalLoader)
+    TEST_F(DemoAppTest, AnyExistingRouteRejectsTakeoverWithoutChangingOriginalLoader)
     {
         for (const auto type : {ResourceType::TEXT, static_cast<ResourceType>(0x12345678)})
         {
@@ -254,7 +254,7 @@ namespace
             auto state = std::make_shared<Lifetime>();
             try
             {
-                Application::Session session(options(), std::make_unique<TrackedFileIO>(state));
+                Demo::DemoApp session(options(), std::make_unique<TrackedFileIO>(state));
                 FAIL() << "Accepted nonempty route table";
             }
             catch (const Error::Exception& error)
@@ -281,14 +281,14 @@ namespace
         EXPECT_EQ(count("Created Vulkan"), 0u);
     }
 
-    TEST_F(ApplicationTest, ShaderInitializationFailureReleasesHoldsAndOwnedRoutesBeforeFileIO)
+    TEST_F(DemoAppTest, ShaderInitializationFailureReleasesHoldsAndOwnedRoutesBeforeFileIO)
     {
         auto state = std::make_shared<Lifetime>();
         auto config = options();
         config.vertexShader = "shaders/missing.vert.spv";
         try
         {
-            Application::Session session(config, std::make_unique<TrackedFileIO>(state));
+            Demo::DemoApp session(config, std::make_unique<TrackedFileIO>(state));
             FAIL() << "Accepted missing Shader";
         }
         catch (const Error::Exception& error)
@@ -301,15 +301,15 @@ namespace
         EXPECT_EQ(count("Created Vulkan"), 0u);
     }
 
-    TEST_F(ApplicationTest, LiveRoutesAllowLaterModelPreparationWithOtherCpuOwner)
+    TEST_F(DemoAppTest, LiveRoutesAllowLaterModelPreparationWithOtherCpuOwner)
     {
         auto state = std::make_shared<Lifetime>();
-        Application::Session session(options(true), std::make_unique<TrackedFileIO>(state));
+        Demo::DemoApp session(options(true), std::make_unique<TrackedFileIO>(state));
         ResourceId otherPng;
         const TextureResource* otherPixels = nullptr;
         size_t ordinaryOpens = 0;
         session.run(
-            {[&](Application::Session& app) {
+            {[&](Demo::DemoApp& app) {
                  routes();
                  unloaded(ResourceType::SHADER, "shaders/cube.vert.spv");
                  unloaded(ResourceType::SHADER, "shaders/cube.frag.spv");
@@ -324,7 +324,7 @@ namespace
                  ASSERT_NE(otherPixels, nullptr);
                  ordinaryOpens = state->opens;
              },
-             [&](Application::Session& app, const Application::FrameTime&) {
+             [&](Demo::DemoApp& app, const Demo::FrameTime&) {
                  routes();
                  EXPECT_EQ(state->opens, ordinaryOpens);
                  const auto model = Model::prepareModel(app.renderer(), OBJ);
@@ -349,22 +349,22 @@ namespace
         cleanValidation();
     }
 
-    TEST_F(ApplicationTest, MinimizedLoopsAdvanceTimeAndUpdateWhileSkippingUiThenRestoreNewExtent)
+    TEST_F(DemoAppTest, MinimizedLoopsAdvanceTimeAndUpdateWhileSkippingUiThenRestoreNewExtent)
     {
         auto state = std::make_shared<Lifetime>();
-        Application::Session session(options(true), std::make_unique<TrackedFileIO>(state));
-        std::vector<Application::FrameTime> times;
+        Demo::DemoApp session(options(true), std::make_unique<TrackedFileIO>(state));
+        std::vector<Demo::FrameTime> times;
         std::vector<int> uiUpdates;
         int updates = 0;
         size_t opens = 0;
-        session.run({[&](Application::Session& app) {
+        session.run({[&](Demo::DemoApp& app) {
                          const auto model = Model::prepareModel(app.renderer(), GLTF);
                          track(app, model, state);
                          app.scene().setCamera(Scene::Camera({0, 0, 1}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 10}));
                          app.scene().createEntity(model, Scene::Transform({0, 0, 0}, {1, 0, 0, 0}, glm::vec3(0.5f)));
                          opens = state->opens;
                      },
-                     [&](Application::Session& app, const Application::FrameTime& time) {
+                     [&](Demo::DemoApp& app, const Demo::FrameTime& time) {
                          const int frame = updates++;
                          times.push_back(time);
                          EXPECT_GE(time.delta, Clock::Duration::zero());
@@ -407,7 +407,7 @@ namespace
                              app.requestExit();
                          }
                      },
-                     [&](Application::Session& app) {
+                     [&](Demo::DemoApp& app) {
                          uiUpdates.push_back(updates - 1);
                          EXPECT_FALSE(app.window().isIconified());
                          glfwWaitEventsTimeout(0.04);
@@ -420,23 +420,23 @@ namespace
         cleanValidation();
     }
 
-    TEST_F(ApplicationTest, SceneDemoProductionControlsDriveSharedEntitiesAndSceneReplacement)
+    TEST_F(DemoAppTest, ModelDemoProductionControlsDriveSharedEntitiesAndSceneReplacement)
     {
         copyShowcaseModels();
         auto config = options(true);
         config.window.width = 1280;
         config.window.height = 720;
         auto state = std::make_shared<Lifetime>();
-        Application::Session session(config, std::make_unique<TrackedFileIO>(state));
-        auto demo = std::make_shared<SceneDemo::Demo>();
-        const std::weak_ptr<SceneDemo::Demo> demoLifetime = demo;
+        Demo::DemoApp session(config, std::make_unique<TrackedFileIO>(state));
+        auto demo = std::make_shared<Demo::ModelScene>();
+        const std::weak_ptr<Demo::ModelScene> demoLifetime = demo;
         Scene::EntityId first, second, created;
         Scene::Transform left, right, moved;
         constexpr std::array<int, 3> CLEAR{51, 61, 71};
         size_t preparedMeshUploads = 0, preparedTextureUploads = 0, preparedMaterialUploads = 0;
         size_t ordinaryOpens = 0;
         int updates = 0;
-        const auto visiblePixels = [&](const WindowCapture::Image& image, Application::Session& app,
+        const auto visiblePixels = [&](const WindowCapture::Image& image, Demo::DemoApp& app,
                                        const Scene::Transform& transform) {
             const auto camera = app.scene().camera().matrices({1280, 720});
             const auto clip = camera.projection * camera.view * glm::vec4(transform.position(), 1);
@@ -457,14 +457,14 @@ namespace
                 }
             return count;
         };
-        const auto capture = [&](Application::Session& app, const char* name) {
+        const auto capture = [&](Demo::DemoApp& app, const char* name) {
             glfwWaitEventsTimeout(0.06);
             auto image = WindowCapture::capture(app.window());
             WindowCapture::save(image, fs::path("review") / name);
             return image;
         };
-        Application::Callbacks callbacks{
-            [&, demo](Application::Session& app) {
+        Demo::Callbacks callbacks{
+            [&, demo](Demo::DemoApp& app) {
                 demo->initialize(app);
                 ASSERT_EQ(app.scene().entities().size(), 2u);
                 first = demo->selected();
@@ -478,7 +478,7 @@ namespace
                 EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, DEMO_OBJ).valid());
                 ordinaryOpens = state->opens;
             },
-            [&, demo](Application::Session& app, const Application::FrameTime& time) {
+            [&, demo](Demo::DemoApp& app, const Demo::FrameTime& time) {
                 const int frame = updates++;
                 demo->update(app, time);
                 if (frame == 0)
@@ -586,7 +586,7 @@ namespace
                     app.requestExit();
                 }
             },
-            [&, demo](Application::Session& app) {
+            [&, demo](Demo::DemoApp& app) {
                 // UI-side entity edits take effect in this frame's production extraction.
                 if (updates == 4)
                     ASSERT_TRUE(app.scene().setVisible(first, false));
@@ -626,17 +626,17 @@ namespace
         ResourceId cpu;
     };
 
-    TEST_F(ApplicationTest, InitializeUpdateAndUiExceptionsReleaseCallbacksAndResourcesBeforeFixtureCleanup)
+    TEST_F(DemoAppTest, InitializeUpdateAndUiExceptionsReleaseCallbacksAndResourcesBeforeFixtureCleanup)
     {
         for (int phase = 0; phase < 3; ++phase)
         {
             SCOPED_TRACE(phase);
             auto state = std::make_shared<Lifetime>();
-            Application::Session session(options(), std::make_unique<TrackedFileIO>(state));
+            Demo::DemoApp session(options(), std::make_unique<TrackedFileIO>(state));
             auto hold = std::make_shared<CallbackHold>(state);
             int updates = 0, uis = 0;
-            Application::Callbacks callbacks{
-                [&, hold](Application::Session& app) {
+            Demo::Callbacks callbacks{
+                [&, hold](Demo::DemoApp& app) {
                     auto model = Model::prepareModel(app.renderer(), GLTF);
                     track(app, model, state);
                     app.scene().createEntity(model);
@@ -646,12 +646,12 @@ namespace
                     if (phase == 0)
                         throw std::runtime_error("initialize failure");
                 },
-                [&, hold](Application::Session&, const Application::FrameTime&) {
+                [&, hold](Demo::DemoApp&, const Demo::FrameTime&) {
                     ++updates;
                     if (phase == 1)
                         throw std::runtime_error("update failure");
                 },
-                [&, hold](Application::Session&) {
+                [&, hold](Demo::DemoApp&) {
                     ++uis;
                     throw std::runtime_error("ui failure");
                 }};
@@ -669,17 +669,17 @@ namespace
         cleanValidation();
     }
 
-    TEST_F(ApplicationTest, MissingModelPngStopsSessionAndReleasesDependencyHolds)
+    TEST_F(DemoAppTest, MissingModelPngStopsDemoAppAndReleasesDependencyHolds)
     {
         fs::remove("assets/textures/direction_rgba.png");
         auto state = std::make_shared<Lifetime>();
-        Application::Session session(options(), std::make_unique<TrackedFileIO>(state));
+        Demo::DemoApp session(options(), std::make_unique<TrackedFileIO>(state));
         int updates = 0;
-        EXPECT_THROW(session.run({[&](Application::Session& app) {
+        EXPECT_THROW(session.run({[&](Demo::DemoApp& app) {
                                       Model::prepareModel(app.renderer(), GLTF);
                                       app.requestExit();
                                   },
-                                  [&](Application::Session&, const Application::FrameTime&) { ++updates; },
+                                  [&](Demo::DemoApp&, const Demo::FrameTime&) { ++updates; },
                                   {}}),
                      Error::Exception);
         EXPECT_EQ(updates, 0);
@@ -691,7 +691,7 @@ namespace
         cleanValidation();
     }
 
-    TEST_F(ApplicationTest, ExitWindowCloseAndDestructionStopFurtherCallbacks)
+    TEST_F(DemoAppTest, ExitWindowCloseAndDestructionStopFurtherCallbacks)
     {
         for (int mode = 0; mode < 4; ++mode)
         {
@@ -699,14 +699,14 @@ namespace
             auto state = std::make_shared<Lifetime>();
             int updates = 0, uis = 0;
             {
-                Application::Session session(options(), std::make_unique<TrackedFileIO>(state));
+                Demo::DemoApp session(options(), std::make_unique<TrackedFileIO>(state));
                 auto model = Model::prepareModel(session.renderer(), GLTF);
                 track(session, model, state);
                 session.scene().createEntity(model);
                 model.reset();
                 if (mode < 3)
                     session.run({{},
-                                 [&](Application::Session& app, const Application::FrameTime&) {
+                                 [&](Demo::DemoApp& app, const Demo::FrameTime&) {
                                      if (++updates == 3 && mode < 2)
                                      {
                                          if (mode == 0)
@@ -715,7 +715,7 @@ namespace
                                              app.window().setShouldClose(true);
                                      }
                                  },
-                                 [&](Application::Session& app) {
+                                 [&](Demo::DemoApp& app) {
                                      ++uis;
                                      if (mode == 2)
                                          app.requestExit();

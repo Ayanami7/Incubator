@@ -11,9 +11,9 @@
 #include "runtime/render/renderer.h"
 #include "runtime/scene/scene.h"
 
-namespace Incubator::Application
+namespace Incubator::Demo
 {
-    struct SessionOptions
+    struct DemoOptions
     {
         Window::WindowDesc window;
         Render::RendererValidationMode validation = Render::RendererValidationMode::Disabled;
@@ -33,30 +33,31 @@ namespace Incubator::Application
         }
     };
 
-    class Session;
+    class DemoApp;
 
     struct Callbacks
     {
-        std::function<void(Session&)> initialize;
-        std::function<void(Session&, const FrameTime&)> update;
-        std::function<void(Session&)> ui;
+        std::function<void(DemoApp&)> initialize;
+        std::function<void(DemoApp&, const FrameTime&)> update;
+        std::function<void(DemoApp&)> ui;
     };
 
     // Single-window/main-thread application session, exclusively owning all Loader routes.
-    class Session
+    class DemoApp
     {
     public:
-        explicit Session(SessionOptions options = {},
+        explicit DemoApp(DemoOptions options = {},
                          std::unique_ptr<FileIO::FileIO> fileIO = FileIO::createPlatformFileIO());
-        ~Session();
-        Session(const Session&) = delete;
-        Session& operator=(const Session&) = delete;
-        Session(Session&&) = delete;
-        Session& operator=(Session&&) = delete;
+        ~DemoApp();
+        DemoApp(const DemoApp&) = delete;
+        DemoApp& operator=(const DemoApp&) = delete;
+        DemoApp(DemoApp&&) = delete;
+        DemoApp& operator=(DemoApp&&) = delete;
 
         // Run once, without reentry. Both return and callback failure close this session;
         // errors propagate to the consumer for logging. Callback values are released first.
-        void run(Callbacks callbacks);
+        void run(); // Runs the model showcase.
+        void run(Callbacks callbacks); // Integration tests may drive the same loop.
         void requestExit();
         bool isOpen() const;
 
@@ -79,4 +80,4 @@ namespace Incubator::Application
         bool ownsRoutes_ = false;
         bool exitRequested_ = false;
     };
-}  // namespace Incubator::Application
+}  // namespace Incubator::Demo

@@ -1,4 +1,5 @@
-#include "runtime/application/application.h"
+#include "demo_app.h"
+#include "model_scene.h"
 
 #include <chrono>
 #include <thread>
@@ -14,7 +15,7 @@
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene_frame.h"
 
-namespace Incubator::Application
+namespace Incubator::Demo
 {
     namespace
     {
@@ -42,15 +43,15 @@ namespace Incubator::Application
         };
     }  // namespace
 
-    Session::Session(SessionOptions options, std::unique_ptr<FileIO::FileIO> fileIO)
+    DemoApp::DemoApp(DemoOptions options, std::unique_ptr<FileIO::FileIO> fileIO)
         : fileIO_(std::move(fileIO)), clearColor_(options.clearColor)
     {
         auto& manager = Resource::ResourceManager::instance();
         // Check the entire table before registering anything or enabling route cleanup.
         if (!manager.loadersEmpty())
-            throw Error::Exception(Error::Code::CONFIG, "Application session requires an empty Loader route table");
+            throw Error::Exception(Error::Code::CONFIG, "DemoApp requires an empty Loader route table");
         if (!fileIO_)
-            throw Error::Exception(Error::Code::CONFIG, "Application session requires FileIO");
+            throw Error::Exception(Error::Code::CONFIG, "DemoApp requires FileIO");
         ownsRoutes_ = true;
         try
         {
@@ -76,60 +77,65 @@ namespace Incubator::Application
         }
     }
 
-    Session::~Session()
+    DemoApp::~DemoApp()
     {
         close();
     }
 
-    bool Session::isOpen() const
+    bool DemoApp::isOpen() const
     {
         return renderer_ != nullptr;
     }
 
-    void Session::requireOpen() const
+    void DemoApp::requireOpen() const
     {
         if (!isOpen())
-            throw Error::Exception(Error::Code::CONFIG, "Application session is closed");
+            throw Error::Exception(Error::Code::CONFIG, "DemoApp is closed");
     }
 
-    Window::Window& Session::window()
+    Window::Window& DemoApp::window()
     {
         requireOpen();
         return *window_;
     }
 
-    Render::Renderer& Session::renderer()
+    Render::Renderer& DemoApp::renderer()
     {
         requireOpen();
         return *renderer_;
     }
 
-    Scene::Scene& Session::scene()
+    Scene::Scene& DemoApp::scene()
     {
         requireOpen();
         return *scene_;
     }
 
-    void Session::setScene(std::unique_ptr<Scene::Scene> scene)
+    void DemoApp::setScene(std::unique_ptr<Scene::Scene> scene)
     {
         requireOpen();
         if (!scene)
-            throw Error::Exception(Error::Code::CONFIG, "Application session requires a Scene");
+            throw Error::Exception(Error::Code::CONFIG, "DemoApp requires a Scene");
         scene_ = std::move(scene);
     }
 
-    std::array<float, 4>& Session::clearColor()
+    std::array<float, 4>& DemoApp::clearColor()
     {
         requireOpen();
         return clearColor_;
     }
 
-    void Session::requestExit()
+    void DemoApp::requestExit()
     {
         exitRequested_ = true;
     }
 
-    void Session::run(Callbacks callbacks)
+    void DemoApp::run()
+    {
+        run(makeCallbacks());
+    }
+
+    void DemoApp::run(Callbacks callbacks)
     {
         requireOpen();
         try
@@ -179,7 +185,7 @@ namespace Incubator::Application
         }
     }
 
-    void Session::close() noexcept
+    void DemoApp::close() noexcept
     {
         scene_.reset();
         if (ownsRoutes_)
@@ -191,4 +197,4 @@ namespace Incubator::Application
         window_.reset();
         fileIO_.reset();
     }
-}  // namespace Incubator::Application
+}  // namespace Incubator::Demo

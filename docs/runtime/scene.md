@@ -1,7 +1,7 @@
 # Scene：实体、Transform 与 Camera
 
-[Scene Runtime 示例](../examples/scene_demo.md) 展示共享模型实体的创建、独立 TRS、可见性、删除、清空，
-以及 Session 内的 Scene/Camera 替换；所有实体变换直接保存在 Runtime Transform 中。
+[Scene Runtime 示例](../examples/demo.md) 展示共享模型实体的创建、独立 TRS、可见性、删除、清空，
+以及 DemoApp 内的 Scene/Camera 替换；所有实体变换直接保存在 Runtime Transform 中。
 
 `runtime/scene/transform.h` 和 `camera.h` 提供自有值类型，归入现有 `IncubatorRuntime`。
 二者使用 GLM，不依赖 Demo、ImGui 或输入控制；Camera 的输出类型复用 Render::CameraMatrices。
@@ -83,9 +83,9 @@ drawFrame 返回后即可释放或改写 CPU 列表，在途 GPU 持有仍由 Re
 
 若提交前窗口 extent 改变，Renderer 跳过旧输入，下一轮使用新 extent 重新提取。
 Renderer 关闭后，Scene/快照仍可保留元数据，提取不会检查或修复过期引用；提交仍由现有 Renderer 边界抛 RENDER。
-[Application Session](./application.md) 已提供事件→更新→UI→提取→提交的驱动，持有当前 Scene 并支持
+[DemoApp 示例](../examples/demo.md) 已提供事件→更新→UI→提取→提交的驱动，持有当前 Scene 并支持
 在下一次提取前 setScene 替换。替换只改变逻辑场景及相机，不清除 Loader 或即时回收 GPU。
-提取接口仍可独立使用，当前 Demo 的直接 ModelInstance/Renderer 路径继续可用。
+提取接口可由应用独立调用。
 
 ## Transform
 

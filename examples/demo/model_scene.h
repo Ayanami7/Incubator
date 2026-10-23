@@ -6,22 +6,22 @@
 #include <memory>
 #include <string>
 
-#include "runtime/application/application.h"
+#include "demo_app.h"
 #include "runtime/model/prepared_model.h"
 
-namespace Incubator::SceneDemo
+namespace Incubator::Demo
 {
     // Consumer state only: entity Transform and Camera values live in the Runtime Scene.
-    class Demo
+    class ModelScene
     {
     public:
-        void initialize(Application::Session& app)
+        void initialize(Demo::DemoApp& app)
         {
             models_[0] = Model::prepareModel(app.renderer(), "models/avocado/glTF/Avocado.gltf");
             switchScene(app, false);
         }
 
-        void update(Application::Session& app, const Application::FrameTime& time)
+        void update(Demo::DemoApp& app, const Demo::FrameTime& time)
         {
             deltaSeconds_ = time.deltaSeconds();
             // Prepare OBJ on a later update, after initialization released the glTF CPU holds.
@@ -31,7 +31,7 @@ namespace Incubator::SceneDemo
                 models_[1] = Model::prepareModel(app.renderer(), "models/utah_teapot/utah_teapot.obj");
         }
 
-        Scene::EntityId createEntity(Application::Session& app)
+        Scene::EntityId createEntity(Demo::DemoApp& app)
         {
             selected_ = app.scene().createEntity(models_[useObj_ ? 1 : 0], initialTransform(useObj_, 0));
             return selected_;
@@ -46,26 +46,26 @@ namespace Incubator::SceneDemo
             selected_ = id;
         }
 
-        void deleteSelected(Application::Session& app)
+        void deleteSelected(Demo::DemoApp& app)
         {
             app.scene().destroyEntity(selected_);
             selected_ = {};
         }
 
-        void clear(Application::Session& app)
+        void clear(Demo::DemoApp& app)
         {
             app.scene().clear();
             selected_ = {};
         }
 
-        void replaceCamera(Application::Session& app)
+        void replaceCamera(Demo::DemoApp& app)
         {
             alternateCamera_ = !alternateCamera_;
             app.scene().setCamera(Scene::Camera({0, 0, alternateCamera_ ? 8.0f : 6.0f}));
         }
 
         // Only called with a prepared model; UI enables OBJ switching after the later update.
-        void switchScene(Application::Session& app, bool useObj)
+        void switchScene(Demo::DemoApp& app, bool useObj)
         {
             auto scene = std::make_unique<Scene::Scene>();
             scene->setCamera(Scene::Camera({0, 0, 6}));
@@ -77,7 +77,7 @@ namespace Incubator::SceneDemo
             alternateCamera_ = false;
         }
 
-        void ui(Application::Session& app)
+        void ui(Demo::DemoApp& app)
         {
             ImGui::SetNextWindowPos({12, 12}, ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize({350, 600}, ImGuiCond_FirstUseEver);
@@ -167,10 +167,10 @@ namespace Incubator::SceneDemo
         double deltaSeconds_ = 0;
     };
 
-    inline Application::Callbacks makeCallbacks()
+    inline Demo::Callbacks makeCallbacks()
     {
-        auto demo = std::make_shared<Demo>();
+        auto demo = std::make_shared<ModelScene>();
         return {[demo](auto& app) { demo->initialize(app); },
                 [demo](auto& app, const auto& time) { demo->update(app, time); }, [demo](auto& app) { demo->ui(app); }};
     }
-}  // namespace Incubator::SceneDemo
+}  // namespace Incubator::Demo

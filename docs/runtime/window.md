@@ -31,7 +31,7 @@ namespace Incubator::Window
 - Vulkan surface 创建或交换链配置
 - ImGui 平台后端初始化
 
-[Application Session](./application.md) 可统一持有 Window 与 Renderer 并驱动事件/更新/UI/场景提交。
+[DemoApp 示例](../examples/demo.md) 可统一持有 Window 与 Renderer 并驱动事件/更新/UI/场景提交。
 正常或异常关闭均先销毁 Renderer，再销毁 Window；最小化时会话继续轮询和逻辑更新，跳过 UI/投影/提交。
 Platform Window 本身不反向依赖应用会话，原有直接创建及使用方式保持。
 

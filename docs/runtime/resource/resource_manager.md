@@ -38,9 +38,9 @@ public:
   调用方须在正常或异常结束时先 release 本次持有，再移除借用 FileIO 的 Loader，最后销毁 FileIO；
   具体资源的 GPU 使用期由 Render 另行管理。
 
-[Application Session](../application.md) 在首次注册前通过 loadersEmpty() 确认整个路由表为空，
+[DemoApp 示例](../../examples/demo.md) 在首次注册前通过 loadersEmpty() 确认整个路由表为空，
 取得独占权后注册 Shader/Texture/Model Loader；已有任意路由即拒绝接管并保留原路由。
-Session 期间路由及 FileIO 保持有效，CPU release、Scene clear/switch 不调用 reset，关闭时才清理已接管路由。
+DemoApp 运行期间路由及 FileIO 保持有效，CPU release、Scene clear/switch 不调用 reset，关闭时才清理已接管路由。
 
 ## 同步加载语义（load）
 

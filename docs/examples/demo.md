@@ -1,244 +1,77 @@
-# 多物体与模型 Demo
+# 引擎模型 Demo
 
-使用 Runtime Scene 与统一应用会话的交互入口见 [Scene Runtime 示例](./scene_demo.md)，
-支持会话内后续模型准备、实体创建/删除/清空及场景/Camera 替换；本页保留直接 Renderer 用法。
-
-`examples/demo` 演示通过 ResourceManager 加载外部 SPIR-V 和 PNG，将资源传给 Renderer，
-上传应用生成的立方体和平面，为每项提交独立的 Mesh、Material 和模型矩阵，共享相机并叠加 ImGui 控件。
-应用负责事件轮询、场景状态、矩阵、绘制列表、界面构建和主循环。
-也可选择 glTF/OBJ 模型，通过 ModelLoader、prepareModel 和 ModelInstance 展示两个共享实例。
-`scene_frame.h` 将 UI 欧拉角转换为 Runtime Transform 四元数，将轨道控件转换为 Runtime Camera 世界位姿；
-模型矩阵与最终相机矩阵由 [Runtime Transform/Camera](../runtime/scene.md) 生成，控件仍由 Demo 保存。
+`examples/demo` 是唯一的引擎展示程序，由示例内的 `DemoApp` 组织 Window、Renderer、FileIO、Loader 和 Scene。
+展示静态模型导入、GPU 资源准备、共享实例、实体操作和场景切换。
 
 ## 构建与启动
 
-按 [开发工作流](../../WORKFLOW.md) 构建项目。本机 PowerShell 命令为：
-
-```powershell
-Set-Location 'E:/Project/VScode/Incubator'
-cmd.exe /d /s /c '"D:\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && D:\CMake\bin\cmake.EXE --build e:/Project/VScode/Incubator/build --config Debug --target all --'
-```
-
-从构建目录启动：
+按 [开发工作流](../../WORKFLOW.md) 执行 Debug/all 构建后，从构建目录运行：
 
 ```powershell
 Set-Location 'E:/Project/VScode/Incubator/build'
 & './examples/demo/demo.exe'
 ```
 
-工作目录必须是所用的构建目录，资源根为该目录下的 `assets/`。
-当前 Ninja 构建的入口是 `build/examples/demo/demo.exe`。源码目录不包含构建生成的 SPIR-V，
-不能从源码根直接启动并期待找到这些文件。
+工作目录必须是对应构建目录。目标依赖 `demo_shaders` 和 `demo_models`，
+复用 `<build>/assets/` 中的 SPIR-V、Avocado glTF/bin/PNG 和 Utah Teapot OBJ，不需要复制额外资产。
+Visual Studio 的目标调试工作目录也设为 `${CMAKE_BINARY_DIR}`。
+VS Code 唯一的 `Debug` 配置指向本示例，完成构建后按 F5 启动。
 
-VS Code 选择 `Debug` 后 F5，使用 Avocado 基色纹理；另一个启动配置可选择 Avocado 法线贴图。
-两份配置的工作目录均为 `${workspaceFolder}/build`。Visual Studio 生成器的 Demo 目标由
-CMake 设置 `VS_DEBUGGER_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}`。启动调试前先完成构建。
+初始显示两个共享 Avocado glTF 模型的实体，分别位于 `(-1.2, -0.78, 0)` 和 `(1.2, -0.78, 0)`，
+缩放均为 24，以适配模型原始单位。相机位于 `(0, 0, 6)`、朝向 −Z，垂直 FOV 45°，近/远裁面 0.1/100。
+模型保留源节点层级、基色纹理和单位。切换到 Teapot OBJ 时使用 0.075 的展示缩放。
+左侧面板用于实体和场景操作，没有自动运动。
 
-## 启动时选择模型
+## 操作
 
-在构建目录中指定模型虚拟路径，保留模型及依赖相对于 `assets/` 的目录结构：
+| 控件 | 行为 |
+|---|---|
+| 实体列表 | 按创建顺序显示 EntityId，点击选中 |
+| Create entity | 在画面中央按当前模型的展示缩放创建共享实体，并选中 |
+| Visible | 显示/隐藏当前实体，保留其变换 |
+| Position / Rotation / Scale multiplier | 独立平移、旋转、缩放选中实体；缩放倍率乘以当前模型展示基准，旋转使用角度并转换为四元数写回 Runtime Transform |
+| Delete selected | 删除选中实体，旧 ID 失效，其他实体保持 |
+| Clear scene | 清空实体及选中状态，保留 Camera、背景和 UI |
+| Reset scene | 用当前模型重建初始的两个实体和 Camera，旧 ID 失效 |
+| Switch to OBJ / glTF | 替换为另一模型的两个实体及初始 Camera，不保留旧 Scene 内容 |
+| Replace camera | 整体替换 Scene Camera，在距离 6 和 8 间切换 |
+| Clear color | 修改背景颜色 |
+| Exit | 请求会话退出，也可直接关闭窗口 |
 
-```powershell
-& './examples/demo/demo.exe' '--model' 'models/avocado/glTF/Avocado.gltf'
-& './examples/demo/demo.exe' '--model' 'models/utah_teapot/utah_teapot.obj'
-```
+启动时只准备 Avocado glTF。首次 update 后的下一轮 update 显式准备 Utah Teapot OBJ，此前切换按钮禁用；
+初次 CPU 模型和 PNG 持有已释放，Loader/FileIO 继续存活，因此后续准备仍走原有资源服务。
+每种模型在此示例中准备一次；返回已准备的模型、创建实体、调整姿态和可见性都复用现有 GPU 引用。
+这两份示例准备结果由消费者保留到关闭，不是全局资产缓存。
 
-每次启动准备一次模型，两个实例共用其 Mesh、Texture、Material 和节点元数据。
-面板中的 `Instance A / Instance B` 分别控制实例整体变换及可见性；均隐藏时仍绘制背景和 UI。
-Avocado 使用 24 倍模型缩放，Utah Teapot 使用 0.075 倍缩放，并使用各自的位置；
-`Reset scene` 恢复所选展示模型的初始位置、缩放和相机。
-修改实例、相机或窗口大小不重新上传模型。其他模型继续使用通用初始尺度。
-切换文件或格式需重启。原有纹理位置参数和 `both|cube|plane` 模式继续用于程序生成几何。
+## 实现与持有期
 
-展示资产包括带基色 PNG 的 Avocado glTF 和无纹理 Utah Teapot OBJ；导入器保留源坐标和节点变换。
-当前预览不实现光照或 PBR；PNG 沿用不透明、nearest/repeat/LOD=0 的既有显示语义。
-完整支持范围见
-[ModelLoader](../runtime/resource/loader/model_loader.md)。
+`main.cpp` 创建 `DemoApp` 并调用 `run()`；`model_scene.h` 保存模型展示和面板操作。
+`ModelScene` 只保存两份共享 PreparedModel、当前选择和少量面板状态；实体唯一 Transform、可见性及 Camera
+由 Scene 保存。角度和 TRS 编辑值在本轮 UI 中临时取得，发生修改才通过 Scene 的 ID 接口写回。
+创建/删除/清空时不跨结构变更保存实体指针；切换 Scene 后重新选中新 Scene 的实体。
 
-## 启动时选择纹理
+DemoApp 使用单调 Clock 每轮传入 FrameTime，面板显示本轮更新时间；没有固定步长调度或自动实体动画。
+事件→更新→UI→SceneFrame 提取→Renderer 提交由 DemoApp 组织，UI 修改参与当次提取。
+最小化时仍处理事件/更新，跳过 UI、投影、提取及提交；恢复使用新的实际 extent。
+应用不手工缓存 FrameInput 或第二份实体 model 矩阵，帧数据持有及借用规则见 [Scene](../runtime/scene.md)。
 
-Demo 的第一个可选位置参数表示纹理虚拟路径，不带 `assets/` 前缀：
+回调共享的 ModelScene 在 run 收尾时释放，随后 DemoApp 清理 Scene、独占 Loader 路由、Renderer、Window 和 FileIO。
+删除实体、清空或切换 Scene 不即时回收显存；GPU 资源由 Renderer 持有到关闭。
+Shader、模型依赖或回调失败时 DemoApp 先清理，再由 main 记录异常并返回 1，不继续提交不完整帧。
 
-```powershell
-# 不传参数时使用 models/avocado/glTF/Avocado_baseColor.png。
-& './examples/demo/demo.exe'
-# 关闭窗口后，使用另一张图片重新启动。
-& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_normal.png'
-```
+Debug 示例沿用 Optional Validation，Release 为 Disabled；需要强制验证的 GPU 测试使用 Required。
+支持的模型、纹理、材质和同步边界分别见 [Model](../runtime/model.md)、[Resource](../runtime/resource/resource.md)
+和 [Render](../runtime/render.md)。
 
-启动日志和 UI 显示所选路径。选择只发生在初始化阶段，换图需要重启程序。
-Demo 当前将引擎日志阈值设为 `DEBUG`，可查看资源加载/卸载、PNG 解码尺寸、SPIR-V 字节序、
-窗口尺寸与缩放、纹理与网格上传、Vulkan 参数、Pipeline 创建和 ImGui 后端初始化。日常运行可将 `main.cpp` 中
-`Log::Registry::init` 的等级改为 `INFO` 并重新构建。
-这些 DEBUG 日志记录低频操作，使用现有参数，不记录每帧绘制过程。
-Windows 入口使用 Unicode 命令行，再通过 `Utils::Utf8` 转为资源系统的 UTF-8 路径；
-中文、空格及系统 ANSI 代码页之外的字符均可保留。路径包含空格时需像上例一样整体加引号。
-方向、颜色和异常输入的精确小 PNG 仅作为测试夹具保存在 `test/runtime/fixtures/textures`，不部署到 Demo 资产根。
-UI 可修改清屏颜色；两个物体默认同时显示，姿态固定，直到用户调整控件。
+## 构建与代码边界
 
-## 初始显示与网格上传
+按 WORKFLOW.md 的 Debug/all 命令构建，唯一示例目标为 demo。该目标编译 main.cpp、
+demo_app.cpp、model_scene.h，链接 IncubatorRuntime 和 imgui，并依赖 demo_shaders、demo_models。
+默认入口固定展示 Avocado，模型在面板内切换，不再提供原纹理位置参数或 --model 命令行模式。
 
-第二个可选位置参数为 `both`、`cube` 或 `plane`，只决定初始显示状态；默认 `both`。
-使用此参数时保留第一个纹理参数：
+DemoApp 属于 examples，不编译进 IncubatorRuntime；它负责本程序的初始化、主循环和清理。
+带回调的 run 重载仅供集成测试驱动相同生命周期。Runtime 保留 Resource、Render、Model、Scene 等能力。
+原程序几何和精确纹理辅助代码位于 test/runtime/support/render_demo，供渲染测试使用。
 
-```powershell
-& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_baseColor.png' 'both'
-& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_baseColor.png' 'cube'
-& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_baseColor.png' 'plane'
-& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_normal.png' 'plane'
-```
-
-未知选项会明确报告启动错误，退出码为 1。两种网格均在初始化时创建一次，显示开关不触发上传。
-`examples/demo/scene_mesh.h` 生成立方体的
-24 顶点/36 索引和平面的 4 顶点/6 索引。平面位于 XY、面向 +Z，边长 1，UV 原点在左上。
-两个样本共用 `MeshVertex` position+UV、uint32 索引、同一纹理和 Pipeline，分别使用白色与线性 tint 材质。
-
-Demo 调用 `renderer.createMesh(vertices, indices)` 同步上传，随后销毁生成的 CPU 数组；
-绘制时提交返回的 `Mesh`。Renderer 持有 GPU 网格至关闭，复制网格引用不会重新上传，
-缩放或相机/变换更新也不重新上传静态网格。该步骤不通过 ResourceManager 或 MODEL Loader。
-
-## ImGui 交互
-
-左侧 `Incubator Demo` 面板提供以下控件。三分量控件从左到右为 X、Y、Z，旋转使用角度。
-拖动滑块修改数值，也可 Ctrl+单击输入；输入同样受范围限制。
-
-| 分组 | 控件 | 范围与效果 |
-|---|---|---|
-| Cube / Plane | Visible | 分别显示或隐藏；均关闭时只清屏并显示 UI |
-| Cube / Plane | Position | 各轴 −3～3；只平移该物体 |
-| Cube / Plane | Rotation | 各轴 −180°～180°；只旋转该物体 |
-| Cube / Plane | Scale | 各轴 0.1～3；只缩放该物体，保持正尺度 |
-| Instance A / B | Scale multiplier | 各轴 0.1～3；相对于模型展示基准调整实例变换，不修改导入资源 |
-| Camera | Target | 各轴 −2～2；移动相机观察目标 |
-| Camera | Yaw / Pitch | −180°～180° / −80°～80°；绕目标旋转，避开俯仰极点 |
-| Camera | Distance | 2～12；调整与目标的距离 |
-| Camera | FOV | 20°～80°；调整垂直视野 |
-| 面板 | Clear color | 调整背景的 sRGB 颜色 |
-| 面板 | Reset scene | 恢复两个物体、相机、显示开关和清屏颜色的默认值 |
-
-可按下列步骤观察行为：
-
-1. 默认启动，立方体位于左侧、平面位于右侧；立方体显示纹理原色，平面减少红/蓝线性分量。调整 Cube 的位置、旋转和缩放，Plane 保持原姿态和材质。
-2. 调整 Plane 的同名控件，Cube 保持原姿态；两者共用当前纹理。
-3. 修改 Camera 的 Yaw、Distance 或 FOV，两个物体共同受相机影响；缩放窗口后投影使用新绘制尺寸。
-4. 依次关闭 Cube 和 Plane 的 Visible，物体数由 2 变为 1、0；背景和面板保留。重新开启后恢复各自编辑过的姿态。
-5. 点击 Reset scene 回到默认场景；重启并选择第二张纹理，可重复相同操作。
-
-默认相机目标为原点，Yaw=0°、Pitch=15°、Distance=5、FOV=45°。立方体位置为
-(-0.8, 0, 0)，旋转为 (20°, 30°, 0°)，尺度为 1；平面位置为 (0.8, 0, 0)，无旋转，尺度为 1.3。
-没有自动旋转；固定状态产生固定矩阵。物体移出视野时可通过 Reset scene 返回。
-
-## 应用帧输入
-
-`examples/demo/scene_controls.h` 保存应用场景状态并构建控件，`makeSceneDraws(scene, cube, plane, cubeMaterial, planeMaterial)`
-按显示开关生成绘制列表。`scene_frame.h` 的 `makeSceneModel(transform)` 按
-`T * Rz * Ry * Rx * S` 生成模型矩阵；`makeSceneFrame(extent, draws, camera)` 生成绕目标的
-右手相机和透视投影，近/远裁面固定为 0.1/50。Renderer 只消费最终矩阵。
-模型模式下，Scale multiplier 从所选模型的展示基准缩放开始编辑；纹理几何模式的 Scale 仍是绝对尺度。
-
-每轮先轮询事件，调用 `beginUiFrame()`；返回实际绘制 extent 后构建 UI，再从本轮编辑后的状态
-生成矩阵和列表，提交 `drawFrame(frameInput, clearColor, recordUi)`。返回空值时跳过该轮，避免零尺寸
-或最小化期间计算无效宽高比。投影采用 `perspectiveRH_ZO`，应用对 Y 方向适配一次；
-缩放后使用新 extent，Renderer 不再翻转。准备与提交之间若尺寸改变，本轮旧输入会被跳过。
-
-`FrameInput.draws` 借用 `DrawItem {mesh, material, model}` 列表，当前 Demo 根据两个开关提交 0、1 或 2 项。
-不同绘制项可共享 Mesh 或 Material，各自独立设置 model，共用相机。提交返回后可修改或销毁原始列表；
-GPU 网格、材质及材质依赖的纹理仍由 Renderer 持有至关闭。空列表只清屏并显示本帧 UI。
-
-## 资产生成与部署
-
-`demo_shaders` 使用仓库内的 `glslangValidator.exe` 编译 `assets/shaders/cube.vert` 和
-`cube.frag`，目标为 GLSL 450、Vulkan 1.3、SPIR-V 1.6；输出到构建目录：
-
-```text
-assets/
-├── shaders/
-│   ├── cube.vert.spv
-│   └── cube.frag.spv
-└── models/
-    ├── README.md
-    ├── utah_teapot/utah_teapot.obj
-    └── avocado/glTF/
-        ├── Avocado.gltf
-        ├── Avocado.bin
-        └── Avocado_*.png
-```
-
-`assets/CMakeLists.txt` 中的 `demo_models` 显式部署两份展示模型、来源记录及 Avocado 的 sidecar。
-测试夹具由独立的 `runtime_test_fixtures` 目标部署到 `<build>/test-fixtures/assets/`，不会混入 Demo 资产。
-修改任一源文件后重新构建即可更新对应部署，无需手工复制或重新链接可执行文件。
-
-使用全新构建目录时，可执行：
-
-```powershell
-Set-Location 'E:/Project/VScode/Incubator'
-cmd.exe /d /s /c '"D:\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && D:\CMake\bin\cmake.EXE -S e:/Project/VScode/Incubator -B e:/Project/VScode/Incubator/build/task05-clean -G Ninja -DCMAKE_MAKE_PROGRAM=D:/ninja/ninja.exe -DCMAKE_BUILD_TYPE=Debug && D:\CMake\bin\cmake.EXE --build e:/Project/VScode/Incubator/build/task05-clean --config Debug --target demo --'
-Set-Location 'E:/Project/VScode/Incubator/build/task05-clean'
-& './examples/demo/demo.exe' 'models/avocado/glTF/Avocado_baseColor.png'
-```
-
-该启动方式的资源根是 `build/task05-clean/assets`。本机工具路径可按安装位置调整，
-工作目录必须与所用构建产物对应。
-
-## 资源持有与关闭
-
-`examples/demo/scene_assets.h` 的 `SceneAssets` 创建 FileIO 并注册 ShaderLoader、TextureLoader，
-依次取得两个 Shader；程序几何模式还取得所选纹理，模型模式则注册 ModelLoader。
-这些路由由 Demo 独占管理。清理成员在 Loader 注册前构造，覆盖后续加载以及
-外层构造失败；已有登记条目显式 acquire，仅释放本次实际取得的持有。
-
-Demo 在创建窗口前加载资源，随后以 `Renderer(window, validationMode)` 初始化运行环境，
-通过 `createTexture(*assets.texture)` 显式上传，并调用
-`prepareSceneResources(*assets.vertex, *assets.fragment)` 准备共享 Shader 与帧/材质布局。
-随后创建两份共享 Texture 的材质：立方体使用默认白色，平面使用线性 RGB `{0.5, 1.0, 0.5}`。
-`makeSceneDraws` 将两份材质分别写入对应 DrawItem，变换、开关和 Reset scene 不重新创建材质。
-创建两种网格后立即释放 CPU 资源并检查纹理已卸载，再进入绘制循环。
-模型模式在共享 Shader 准备后调用 `Model::prepareModel(renderer, paths.model)`，由准备入口加载
-ModelResource 与 PNG、上传唯一几何/纹理并创建材质；不创建程序立方体和平面。
-准备完成后释放 CPU Shader 并移除 Loader；CPU 模型、像素和 Importer 均不被实例借用。
-每帧将可见对象转换为共享同一 PreparedModel 的 ModelInstance，使用 `makeModelDraws` 展开后提交。
-Renderer 保留重建 Pipeline 所需的 Shader 字数组副本，并持有 GPU Texture 与不可变 Material；
-材质颜色在 sRGB 采样后按线性 RGB 相乘，默认白色保留原色与方向，平面减少红/蓝线性分量；输出保持不透明。
-复制应用引用共享同一次上传和材质绑定，交换链重建不重新读取图片。
-
-加载、Renderer 初始化或显式资源准备失败时，SceneAssets 释放已取得的 CPU 引用、卸载归零对象，
-移除 Loader，最后销毁 FileIO。正常关闭时 Renderer 先于窗口销毁。
-
-## 验证模式与错误输入
-
-`examples/demo/validation_mode.h` 将 Debug Demo 配置为 `Optional`，Release 配置为
-`Disabled`。Optional 缺少 Khronos Validation Layer 或 `VK_EXT_debug_utils` 时会告警并继续；
-需要强制启用验证的 GPU 测试显式使用 `Required`。
-
-必需 Shader、模型或依赖缺失、读取或解码失败时，应用记录启动错误并返回退出码 1。
-例如，在构建目录执行：
-
-```powershell
-& './examples/demo/demo.exe' 'textures/missing-demo.png'
-$LASTEXITCODE
-```
-
-下面保留正确 PNG 头并截断 IDAT，固定解码器报 `PNG decode failed (outofdata)`，
-应用返回 1。该反例不依赖 CRC 校验：
-
-```powershell
-$textureBytes = [IO.File]::ReadAllBytes((Join-Path (Get-Location) 'assets/models/avocado/glTF/Avocado_baseColor.png'))
-$truncatedPath = Join-Path (Get-Location) 'assets/models/avocado/glTF/demo-truncated.png'
-try {
-    [IO.File]::WriteAllBytes($truncatedPath, $textureBytes[0..71])
-    & './examples/demo/demo.exe' 'models/avocado/glTF/demo-truncated.png'
-    $LASTEXITCODE
-} finally {
-    Remove-Item -LiteralPath $truncatedPath
-}
-```
-
-## 模块说明
-
-- [Render](../runtime/render.md)：初始化、帧调用、颜色与 GPU 生命周期。
-- [Loader](../runtime/resource/loader/loader.md)：资源路径、FileIO 借用与错误语义。
-- [ShaderLoader](../runtime/resource/loader/shader_loader.md)：SPIR-V CPU 载荷。
-- [TextureLoader](../runtime/resource/loader/texture_loader.md)：PNG 解码与 CPU 像素约定。
-- [ModelLoader](../runtime/resource/loader/model_loader.md)：静态 glTF/OBJ 支持范围与材质/路径边界。
-- [Model](../runtime/model.md)：GPU 准备、共享实例与矩阵展开。
-- [CMake 构建结构](../cmake.md)：构建层级与通用资源部署约定。
+Demo 关闭前保持 Loader 和 FileIO 存活，允许初次准备后继续加载模型。
+正常退出和异常退出均先释放回调/场景持有，再清理路由、Renderer、Window 和 FileIO。
