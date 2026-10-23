@@ -26,10 +26,12 @@ set(PLATFORM_HEADERS
     platform/fileio/fileio.h
     platform/fileio/file_handle.h
     platform/input/input.h
+    platform/input/input_state.h
     platform/window/window.h
 )
 set(PLATFORM_SOURCES
     platform/fileio/fileio.cpp
+    platform/input/input_state.cpp
     platform/window/window.cpp
 )
 

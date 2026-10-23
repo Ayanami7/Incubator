@@ -1,28 +1,46 @@
 # Input 模块设计
 
-## 目标
+## 目标与组织
 
-Input 模块提供 GLFW 输入常量到引擎统一枚举的映射层。它将平台相关的 GLFW 整型常量（`GLFW_KEY_*`、`GLFW_MOUSE_BUTTON_*`、`GLFW_PRESS/RELEASE/REPEAT`）转换为强类型枚举，使上层代码不直接依赖 GLFW，未来切换输入后端时只需修改转换函数。
+Input 提供 GLFW 常量到引擎枚举的转换，以及由窗口适配填充的自有 `InputState`。
+状态算法不调用 GLFW、Render 或 ImGui；本阶段尚未接入 Window 回调与 Demo 消费。
 
-## 设计原则
+- `input.h`：已有 KeyCode、MouseButton、KeyState 和内联 GLFW 转换函数。
+- `input_state.h/.cpp`：按轮次累计原始状态，可按值复制，无全局单例。
+- 命名空间：`Incubator::Input`。
 
-1. **极简性**：仅提供枚举定义和纯转换函数，无状态、无实例
-2. **无状态**：不缓存按键状态、不记录输入历史，纯粹做平台常量到引擎类型的映射
-3. **易扩展**：新增按键只需在 KeyCode 枚举末尾追加项，并在转换函数中添加映射
-4. **零开销**：全内联实现，头文件即可用，无运行时开支
-
-## 命名空间
+## 按轮次状态
 
 ```cpp
-namespace Incubator::Input
+InputState input;
+input.beginFrame(); // Once per input round, before event polling.
+input.onKey(KeyCode::F, KeyState::Press);
+input.onMousePosition(100, 200);
+input.onScroll(0, 1);
+const ButtonState f = input.key(KeyCode::F);
+const auto snapshot = input; // Independent owned copy.
 ```
 
-## 文件结构
+| 接口 | 约定 |
+|---|---|
+| `beginFrame()` | 清理 pressed/released、mouseDelta、scroll 和 focusLost，保留 down、位置及当前焦点 |
+| `onKey` / `onMouseButton` | 接收引擎枚举与 KeyState；Unknown/越界枚举忽略 |
+| `key` / `mouseButton` | 返回 ButtonState 值：down、pressed、released；未知查询返回全 false，不消费状态 |
+| `onMousePosition(x,y)` | 窗口坐标 double；首次定位只建基准，后续差值累计至 mouseDelta |
+| `onScroll(x,y)` | 累加水平/垂直滚轮增量，scroll() 返回本轮总量 |
+| `mousePosition()` / `mouseDelta()` / `scroll()` | 返回 PointerValue{x,y} 副本，位置与增量沿用窗口坐标单位 |
+| `onFocus(bool)` / `focused()` | 初始聚焦为 true；窗口适配创建时应同步实际焦点，失焦时清理按住状态 |
+| `focusLost()` | 本轮曾失焦；即使同轮恢复仍为 true，供消费者取消旧手势 |
 
-```
-src/runtime/platform/input/
-└── input.h        // 枚举定义 + 转换函数（全内联实现）
-```
+Press 仅在从未按住转为按住时设置 pressed；Release 仅在结束按住时设置 released。
+同轮 press/release 两种边沿均保留，最终 down=false；随后再 press 时 down=true，两种边沿仍为 true。
+Repeat 不产生 pressed，也不在缺少首次按下时合成按住。重复 Release 不产生额外边沿。
+这些是汇总查询，不能还原同轮事件顺序、每次按下位置或 ImGui 的消费批次；UI 归属协调属于后续适配任务。
+
+失焦产生所有当前按住键/按钮的 released，清理 pressed、鼠标位移和滚轮，重置定位基准。
+未聚焦期间忽略按键、按钮、位置和滚轮输入；恢复不自动恢复 down，首次定位无历史跳变。
+额外事件累积不清理状态，只有调用方显式 beginFrame 才开始新一轮。Window 接入后应每轮调用一次，
+额外 pollEvents 不得隐式调用 beginFrame。消费者取得 const 视图或值副本；查询不消费输入。
 
 ## 接口设计
 
@@ -233,8 +251,8 @@ void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
 
 ## 注意事项
 
-1. Input 模块**不存储按键状态**。需要记录"当前帧哪些键被按下"属于上层 InputState 系统的职责
-2. Input 模块**不定义动作映射**（如"跳跃 = Space"）。动作映射属于 Core 层，Input 仅提供原始按键枚举
+1. InputState 存储原始输入状态；窗口接入、UI 捕获与相机手势属于各自适配和消费层。
+2. Input 模块**不定义动作映射**（如"跳跃 = Space"）。动作映射属于消费者或后续动作系统，Input 仅提供原始枚举与状态
 3. 转换函数对所有未知输入返回 `Unknown` / `Release`，不会抛出异常或崩溃
 4. 未来切换输入后端（如 SDL）时，只需新增转换函数（如 `fromSdlKey`），KeyCode 枚举无需修改
-5. KeyCode 枚举值通过显式赋值锁定了数据范围（0-120），可安全地用作数组索引
+5. KeyCode 的有效枚举范围为 0–120；InputState 在访问内部数组前检查索引范围。
