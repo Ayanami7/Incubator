@@ -12,7 +12,7 @@ namespace Incubator
     {
         namespace
         {
-            void validateGeometry(const MeshData& mesh, size_t geometry)
+            Math::Aabb validateGeometry(const MeshData& mesh, size_t geometry)
             {
                 if (mesh.vertices.empty())
                 {
@@ -35,6 +35,8 @@ namespace Incubator
                             fmt::format("Model geometry {} index {} exceeds its vertex range", geometry, index));
                     }
                 }
+                const auto& first = mesh.vertices.front().position;
+                Math::Aabb bounds{glm::vec3(first[0], first[1], first[2]), glm::vec3(first[0], first[1], first[2])};
                 for (const auto& vertex : mesh.vertices)
                 {
                     for (float value : vertex.position)
@@ -45,6 +47,7 @@ namespace Incubator
                                                    fmt::format("Model geometry {} has non-finite position", geometry));
                         }
                     }
+                    bounds.include(glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]));
                     for (float value : vertex.uv)
                     {
                         if (!std::isfinite(value))
@@ -54,6 +57,7 @@ namespace Incubator
                         }
                     }
                 }
+                return bounds;
             }
         }  // namespace
 
@@ -67,9 +71,10 @@ namespace Incubator
               nodes_(std::move(nodes)),
               rootNode_(rootNode)
         {
+            geometryBounds_.reserve(geometries_.size());
             for (size_t i = 0; i < geometries_.size(); ++i)
             {
-                validateGeometry(geometries_[i], i);
+                geometryBounds_.push_back(validateGeometry(geometries_[i], i));
             }
             for (size_t i = 0; i < materials_.size(); ++i)
             {

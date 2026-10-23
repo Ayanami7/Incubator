@@ -40,6 +40,31 @@ ModelResource 为 `final ResourceObject`，类型固定为 `ResourceType::MODEL`
 通过 `rootNode()` 返回根索引。初始状态沿用 `UNLOADED`，Manager 挂载后置为 `READY`。
 源数组、临时字符串和导入器释放后，载荷仍独立有效。文件导入使用 [ModelLoader](./loader/model_loader.md)，模型 GPU 准备另行提供。
 
+## 几何局部边界
+
+`geometryBounds()` 返回 `const std::vector<Math::Aabb>&`，与 `geometries()` 的索引一一对应。
+构造时在已有顶点校验循环内计算一次，覆盖全部顶点（含未被索引使用的顶点）；查询只读取保存的元数据。
+边界处于几何局部空间，尚未应用任何节点或实体矩阵；未被节点使用的几何也拥有对应边界。
+空几何集合对应空边界数组；平面、线、点及任一轴零跨度均合法。
+
+共用值类型位于 `runtime/core/math/aabb.h`，命名空间为 `Incubator::Math`，仅依赖 GLM 和标准库：
+
+```cpp
+struct Aabb {
+    glm::vec3 min, max;
+    void include(const glm::vec3& point) noexcept;
+    void merge(const Aabb& other) noexcept;
+    bool contains(const glm::vec3& point) const noexcept;
+    std::optional<Aabb> transformed(const glm::mat4& matrix) const noexcept;
+};
+```
+
+调用方提供有限且各轴 `min <= max` 的端点和有限点；点包含判断含边界。以首个点初始化箱，
+随后 `include`/`merge` 扩展；空聚合用 `std::optional<Aabb>` 表示，零尺寸箱是有效值。
+`transformed` 计算八个角点的仿射变换，支持旋转、非均匀/负/零缩放和剪切。
+矩阵末行为 `(0,0,0,1)` 时按仿射计算，不执行透视除法；非仿射或计算产生非有限值时返回 `nullopt`。
+这不改变 ModelResource 对有限节点矩阵的接受规则；后续使用方在边界不可用时保留绘制。
+
 ## 组合与共享
 
 - `ModelPart::geometry/material` 分别索引本模型的几何和材质数组；每部分绘制一份完整几何，不表示索引区间。

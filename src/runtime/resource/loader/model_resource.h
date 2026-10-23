@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "runtime/core/math/aabb.h"
 #include "runtime/resource/mesh_data.h"
 #include "runtime/resource/resource_object.h"
 
@@ -48,6 +49,12 @@ namespace Incubator
                 return geometries_;
             }
 
+            // Geometry-local bounds, indexed exactly like geometries(). Includes unused vertices.
+            const std::vector<Math::Aabb>& geometryBounds() const noexcept
+            {
+                return geometryBounds_;
+            }
+
             const std::vector<ModelMaterial>& materials() const noexcept
             {
                 return materials_;
@@ -70,6 +77,7 @@ namespace Incubator
 
         private:
             std::vector<MeshData> geometries_;
+            std::vector<Math::Aabb> geometryBounds_;
             std::vector<ModelMaterial> materials_;
             std::vector<ModelPart> parts_;
             std::vector<ModelNode> nodes_;

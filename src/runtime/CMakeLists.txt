@@ -10,6 +10,7 @@ set(CORE_HEADERS
     core/utils/utf8.h
     core/clock/clock.h
     core/path/path.h
+    core/math/aabb.h
 )
 set(CORE_SOURCES
     core/log/logger.cpp
@@ -17,6 +18,7 @@ set(CORE_SOURCES
     core/utils/hash.cpp
     core/utils/utf8.cpp
     core/path/path.cpp
+    core/math/aabb.cpp
 )
 
 # platform 模块头文件/源文件

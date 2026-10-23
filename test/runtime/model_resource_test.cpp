@@ -22,6 +22,8 @@ namespace
     static_assert(std::is_final_v<ModelResource>);
     static_assert(std::is_same_v<decltype(std::declval<ModelResource&>().geometries()), const std::vector<MeshData>&>);
     static_assert(
+        std::is_same_v<decltype(std::declval<ModelResource&>().geometryBounds()), const std::vector<Math::Aabb>&>);
+    static_assert(
         std::is_same_v<decltype(std::declval<ModelResource&>().materials()), const std::vector<ModelMaterial>&>);
     static_assert(std::is_same_v<decltype(std::declval<ModelResource&>().parts()), const std::vector<ModelPart>&>);
     static_assert(std::is_same_v<decltype(std::declval<ModelResource&>().nodes()), const std::vector<ModelNode>&>);
@@ -91,6 +93,47 @@ namespace
             EXPECT_NEAR(actual[i], expected[i], 0.00001f);
         }
         EXPECT_FLOAT_EQ(actual.w, 1.0f);
+    }
+
+    TEST(ModelResourceTest, GeometryBoundsKeepIndicesAndIncludeUnusedVerticesAndGeometry)
+    {
+        ModelInput input;
+        input.geometries[0].vertices.push_back({{-4.0f, 7.0f, -2.0f}, {0.0f, 0.0f}});
+        input.geometries.push_back(triangle());
+        input.geometries[1].vertices[1].position = {8.0f, -3.0f, 2.0f};
+        const auto model = makeModel(input);
+        ASSERT_EQ(model->geometryBounds().size(), model->geometries().size());
+        const auto& bounds = model->geometryBounds();
+        EXPECT_EQ(bounds[0].min, glm::vec3(-4, 0, -2));
+        EXPECT_EQ(bounds[0].max, glm::vec3(1, 7, 0));
+        EXPECT_EQ(bounds[1].min, glm::vec3(0, -3, 0));
+        EXPECT_EQ(bounds[1].max, glm::vec3(8, 1, 2));
+        input.geometries[0].vertices.clear();
+        EXPECT_EQ(&model->geometryBounds(), &bounds);
+        EXPECT_EQ(model->geometryBounds()[0].min, glm::vec3(-4, 0, -2));
+    }
+
+    TEST(ModelResourceTest, PlanarLineAndPointGeometryHaveValidBounds)
+    {
+        ModelInput input;
+        input.geometries.push_back(triangle());
+        input.geometries.push_back(triangle());
+        for (auto& vertex : input.geometries[1].vertices)
+        {
+            vertex.position = {vertex.position[0], 2.0f, 3.0f};
+        }
+        for (auto& vertex : input.geometries[2].vertices)
+        {
+            vertex.position = {4.0f, 5.0f, 6.0f};
+        }
+        const auto model = makeModel(std::move(input));
+        ASSERT_EQ(model->geometryBounds().size(), 3u);
+        EXPECT_EQ(model->geometryBounds()[0].min, glm::vec3(0, 0, 0));
+        EXPECT_EQ(model->geometryBounds()[0].max, glm::vec3(1, 1, 0));
+        EXPECT_EQ(model->geometryBounds()[1].min, glm::vec3(0, 2, 3));
+        EXPECT_EQ(model->geometryBounds()[1].max, glm::vec3(1, 2, 3));
+        EXPECT_EQ(model->geometryBounds()[2].min, glm::vec3(4, 5, 6));
+        EXPECT_EQ(model->geometryBounds()[2].max, glm::vec3(4, 5, 6));
     }
 
     TEST(ModelResourceTest, UsesModelIdentityAndDefaultOpaqueWhiteDescription)
@@ -180,6 +223,7 @@ namespace
         input.nodes[0].parts.clear();
         const auto model = makeModel(input);
         EXPECT_TRUE(model->geometries().empty());
+        EXPECT_TRUE(model->geometryBounds().empty());
         EXPECT_TRUE(model->materials().empty());
         EXPECT_TRUE(model->parts().empty());
         EXPECT_EQ(model->nodes().size(), 1u);
