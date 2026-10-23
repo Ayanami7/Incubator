@@ -1,9 +1,11 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <vector>
 
+#include "runtime/core/math/aabb.h"
 #include "runtime/render/frame_input.h"
 #include "runtime/resource/loader/model_resource.h"
 
@@ -57,6 +59,13 @@ namespace Incubator
                 return draws_;
             }
 
+            // Includes source node transforms, excludes the instance transform. Empty or
+            // unbounded drawing content has no usable aggregate; callers must retain its draws.
+            const std::optional<Math::Aabb>& bounds() const noexcept
+            {
+                return bounds_;
+            }
+
         private:
             friend std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer&, std::string_view);
             PreparedModel() = default;
@@ -68,6 +77,7 @@ namespace Incubator
             std::vector<Resource::ModelNode> nodes_;
             uint32_t rootNode_ = 0;
             std::vector<Render::DrawItem> draws_;
+            std::optional<Math::Aabb> bounds_;
         };
     }  // namespace Model
 }  // namespace Incubator

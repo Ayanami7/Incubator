@@ -12,11 +12,12 @@
 #include <glm/ext/matrix_transform.hpp>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <sstream>
 #include <thread>
+#include <type_traits>
+#include <utility>
 
-#include "support/render_demo/scene_assets.h"
-#include "support/render_demo/scene_controls.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
@@ -36,6 +37,8 @@
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene.h"
 #include "runtime/scene/scene_frame.h"
+#include "support/render_demo/scene_assets.h"
+#include "support/render_demo/scene_controls.h"
 #include "support/texture_gpu_review.h"
 #include "support/window_capture.h"
 
@@ -48,6 +51,9 @@ namespace
     constexpr const char* GLTF = "models/minimal_gltf/model.gltf";
     constexpr const char* OBJ = "models/minimal_obj/model.obj";
     constexpr const char* PNG = "textures/direction_rgba.png";
+
+    static_assert(
+        std::is_same_v<decltype(std::declval<Model::PreparedModel&>().bounds()), const std::optional<Math::Aabb>&>);
 
     size_t occurrences(std::string_view text, std::string_view value)
     {
@@ -94,8 +100,7 @@ namespace
             fs::create_directories(sandbox_ / "assets");
             const auto fixtureRoot = Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR);
             for (const char* directory : {"models", "textures", "shaders"})
-                fs::copy(fixtureRoot / directory, sandbox_ / "assets" / directory,
-                         fs::copy_options::recursive);
+                fs::copy(fixtureRoot / directory, sandbox_ / "assets" / directory, fs::copy_options::recursive);
             fs::current_path(sandbox_);
             ResourceManager::instance().reset();
             ResourceRegistry::instance().clear();
@@ -202,8 +207,14 @@ namespace
                 released(ResourceType::MODEL, path);
                 released(ResourceType::TEXTURE, PNG);
                 auto shared = model;
+                ASSERT_TRUE(model->bounds());
+                EXPECT_EQ(&model->bounds(), &shared->bounds());
+                const auto bounds = *model->bounds();
                 model.reset();
                 EXPECT_FALSE(shared->nodes().empty());
+                ASSERT_TRUE(shared->bounds());
+                EXPECT_EQ(shared->bounds()->min, bounds.min);
+                EXPECT_EQ(shared->bounds()->max, bounds.max);
                 for (int frame = 0; frame < 3; ++frame)
                     draw(*native, renderer, *shared, frame % 2);
                 models.push_back(shared);
@@ -334,6 +345,9 @@ namespace
             released(ResourceType::MODEL, "models/shared.gltf");
             released(ResourceType::TEXTURE, PNG);
             manager.reset();
+            ASSERT_TRUE(model->bounds());
+            EXPECT_EQ(model->bounds()->min, glm::vec3(-0.8f, -0.6f, 0));
+            EXPECT_EQ(model->bounds()->max, glm::vec3(0.8f, 0.8f, 0));
             for (int frame = 0; frame < 6; ++frame)
             {
                 draw(*native, renderer, *model, 2);
@@ -458,6 +472,8 @@ namespace
             EXPECT_TRUE(model->materials().empty());
             EXPECT_TRUE(model->textures().empty());
             EXPECT_TRUE(model->parts().empty());
+            EXPECT_TRUE(model->draws().empty());
+            EXPECT_FALSE(model->bounds());
             EXPECT_EQ(model->nodes().size(), 2u);
             released(ResourceType::MODEL, "models/empty.gltf");
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, PNG).valid());
@@ -484,24 +500,67 @@ namespace
     class TransformModelLoader final : public LoaderBase
     {
     public:
+        explicit TransformModelLoader(std::optional<glm::mat4> leafTransform = std::nullopt)
+            : leafTransform_(leafTransform)
+        {}
+
         std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view) override
         {
             MeshData mesh{{{{0, 0, 0}, {0, 0}}, {{1, 0, 0}, {1, 0}}, {{0, 1, 0}, {0, 1}}}, {0, 1, 2}};
             const auto root = glm::translate(glm::mat4(1), glm::vec3(10, 0, 0));
             const auto parent = glm::rotate(glm::mat4(1), glm::radians(90.0f), glm::vec3(0, 0, 1));
-            const auto leaf =
-                glm::translate(glm::mat4(1), glm::vec3(2, 0, 0)) * glm::scale(glm::mat4(1), glm::vec3(2, 3, 1));
+            const auto leaf = leafTransform_.value_or(glm::translate(glm::mat4(1), glm::vec3(2, 0, 0)) *
+                                                      glm::scale(glm::mat4(1), glm::vec3(2, 3, 1)));
+            auto unused = mesh;
+            for (auto& vertex : unused.vertices)
+                vertex.position = {1000, 2000, 3000};
             return std::make_unique<ModelResource>(
-                id, std::vector<MeshData>{mesh},
+                id, std::vector<MeshData>{unused, mesh},
                 std::vector<ModelMaterial>{{}, {std::nullopt, {0.5f, 1, 0.5f}}, {std::nullopt, {1, 0, 0}}},
-                std::vector<ModelPart>{{0, 0}, {0, 1}, {0, 2}},
+                std::vector<ModelPart>{{1, 0}, {1, 1}, {1, 2}, {0, 0}},
                 std::vector<ModelNode>{{"parent", parent, {1}, {0}},
                                        {"leaf", leaf, {}, {1, 0}},
                                        {"root", root, {0, 3}, {2}},
                                        {"sibling", glm::translate(glm::mat4(1), glm::vec3(-1, 0, 0)), {}, {2}}},
                 2);
         }
+
+    private:
+        std::optional<glm::mat4> leafTransform_;
     };
+
+    TEST_F(ModelPreparationTest, UnavailablePartBoundsInvalidateWholeModelWithoutDiscardingDraws)
+    {
+        glm::mat4 projective(1.0f);
+        projective[0][3] = 0.5f;
+        glm::mat4 overflow(1.0f);
+        overflow[0][0] = std::numeric_limits<float>::max();
+        overflow[3][0] = std::numeric_limits<float>::max();
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            for (const auto& matrix : {projective, overflow})
+            {
+                ResourceManager::instance().registerLoader(ResourceType::MODEL,
+                                                           std::make_unique<TransformModelLoader>(matrix));
+                const auto model = Model::prepareModel(renderer, "models/unavailable-bounds.gltf");
+                released(ResourceType::MODEL, "models/unavailable-bounds.gltf");
+                EXPECT_FALSE(model->bounds());
+                ASSERT_EQ(model->draws().size(), 5u);
+                EXPECT_EQ(model->meshes().size(), 1u);
+                EXPECT_EQ(model->materials().size(), 3u);
+                for (const auto& item : model->draws())
+                {
+                    EXPECT_TRUE(item.mesh.valid());
+                    EXPECT_TRUE(item.material.valid());
+                }
+                // Valid root/parent draws precede the invalid leaf; a valid sibling follows it.
+                EXPECT_EQ(model->draws().back().model, glm::translate(glm::mat4(1), glm::vec3(9, 0, 0)));
+            }
+        }
+        cleanValidation();
+    }
 
     class ModelInstanceTest : public ModelPreparationTest
     {
@@ -865,6 +924,12 @@ namespace
             EXPECT_EQ(model->meshes().size(), 1u);
             EXPECT_EQ(model->materials().size(), 3u);
             EXPECT_EQ(model->textures().size(), 1u);
+            ASSERT_TRUE(model->bounds());
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                EXPECT_NEAR(model->bounds()->min[axis], glm::vec3(7, 0, 0)[axis], 0.00001f);
+                EXPECT_NEAR(model->bounds()->max[axis], glm::vec3(11, 4, 0)[axis], 0.00001f);
+            }
             const std::array<std::array<float, 2>, 5> expected = {{{11, 1}, {9, 1}, {7, 4}, {7, 4}, {10, 1}}};
             for (size_t i = 0; i < expected.size(); ++i)
                 point(model->draws()[i].model, expected[i][0], expected[i][1]);
@@ -873,6 +938,8 @@ namespace
                                                                     glm::scale(glm::mat4(1), glm::vec3(0.5f, 2, 1))}};
             model.reset();
             EXPECT_EQ(instances[0].model.get(), instances[1].model.get());
+            EXPECT_EQ(&instances[0].model->bounds(), &instances[1].model->bounds());
+            const auto bounds = *instances[0].model->bounds();
             const auto draws = Model::makeModelDraws(instances);
             ASSERT_EQ(draws.size(), 10u);
             for (size_t i = 0; i < expected.size(); ++i)
@@ -884,6 +951,8 @@ namespace
             const auto changed = Model::makeModelDraws(instances);
             EXPECT_NE(changed[2].model, draws[2].model);
             EXPECT_EQ(changed[7].model, draws[7].model);
+            EXPECT_EQ(instances[0].model->bounds()->min, bounds.min);
+            EXPECT_EQ(instances[1].model->bounds()->max, bounds.max);
             point(instances[0].model->draws()[2].model, 7, 4);
             EXPECT_TRUE(Model::makeModelDraws({}).empty());
             ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<SharedModelLoader>(true));
