@@ -276,6 +276,43 @@ namespace
                 prepared.reset();
                 models.push_back(std::move(shared));
                 released(ResourceType::MODEL, path);
+                Scene::Scene comparison;
+                comparison.setCamera(Scene::Camera({0, 0, 6}));
+                const float displayScale = index == 0 ? 0.075f : 24.0f;
+                const float displayY = index == 0 ? 0.0f : -0.78f;
+                comparison.createEntity(models.back(),
+                                        Scene::Transform({0, displayY, 0}, {1, 0, 0, 0}, glm::vec3(displayScale)));
+                comparison.createEntity(models.back(),
+                                        Scene::Transform({1000, displayY, 0}, {1, 0, 0, 0}, glm::vec3(displayScale)));
+                const auto enabled = Scene::extractSceneFrame(comparison, {384, 256});
+                const auto disabled = Scene::extractSceneFrame(comparison, {384, 256}, false);
+                ASSERT_TRUE(enabled);
+                ASSERT_TRUE(disabled);
+                EXPECT_EQ(enabled->draws.size(), models.back()->draws().size());
+                EXPECT_EQ(disabled->draws.size(), models.back()->draws().size() * 2);
+                const auto capture = [&](const Scene::SceneFrame& frame) {
+                    std::vector<uint8_t> pixels;
+                    Detail::RendererReviewAccess::withFrame(
+                        renderer, frame.input(),
+                        [&](const auto& device, const auto& pipeline, auto frameSet, auto draws) {
+                            pixels = TextureGpuReview::captureDraws(device, pipeline, frameSet, draws);
+                        });
+                    return pixels;
+                };
+                const auto enabledPixels = capture(*enabled);
+                const auto disabledPixels = capture(*disabled);
+                ASSERT_EQ(enabledPixels.size(), 384u * 256 * 4);
+                EXPECT_TRUE(enabledPixels == disabledPixels);
+                auto blank = *enabled;
+                blank.draws.clear();
+                EXPECT_TRUE(enabledPixels != capture(blank));
+                const auto label = index == 0 ? "teapot" : "avocado";
+                WindowCapture::save({384, 256, enabledPixels},
+                                    fs::path("review") / (std::string(label) + "-culled.ppm"));
+                WindowCapture::save({384, 256, disabledPixels},
+                                    fs::path("review") / (std::string(label) + "-unculled.ppm"));
+                std::cout << label << ": culled=" << enabled->draws.size() << " unculled=" << disabled->draws.size()
+                          << " identical nonempty GPU image\n";
                 ++index;
             }
             released(ResourceType::TEXTURE, AVOCADO_BASE_COLOR);

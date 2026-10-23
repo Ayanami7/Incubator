@@ -52,6 +52,11 @@ VS Code 唯一的 `Debug` 配置指向本示例，完成构建后按 F5 启动�
 
 DemoApp 使用单调 Clock 每轮传入 FrameTime，面板显示本轮更新时间；没有固定步长调度或自动实体动画。
 事件→更新→UI→SceneFrame 提取→Renderer 提交由 DemoApp 组织，UI 修改参与当次提取。
+提取默认启用实体级视锥裁剪：完全离屏的实体保留在 Scene 和实体列表中，但不展开绘制项；
+移回当前相机视锥后重新显示，实体变换、Camera 和场景切换在下一次提取生效。
+裁剪使用模型准备时保存的整体边界，不改变模型原有展示缩放、材质或共享 GPU 资源。
+全部实体离屏时仍清屏和显示 UI；需要对照完整绘制列表的调用方可直接使用
+`Scene::extractSceneFrame(scene, extent, false)`，示例主循环沿用默认开启路径。
 最小化时仍处理事件/更新，跳过 UI、投影、提取及提交；恢复使用新的实际 extent。
 应用不手工缓存 FrameInput 或第二份实体 model 矩阵，帧数据持有及借用规则见 [Scene](../runtime/scene.md)。
 

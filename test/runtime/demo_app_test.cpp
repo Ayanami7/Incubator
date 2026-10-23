@@ -463,6 +463,42 @@ namespace
             WindowCapture::save(image, fs::path("review") / name);
             return image;
         };
+        const auto checkCulling = [&](Demo::DemoApp& app, size_t visible) {
+            int width, height;
+            app.window().getFramebufferSize(width, height);
+            const Render::FrameExtent extent{static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
+            const auto frame = Scene::extractSceneFrame(app.scene(), extent);
+            const auto all = Scene::extractSceneFrame(app.scene(), extent, false);
+            ASSERT_TRUE(frame);
+            ASSERT_TRUE(all);
+            const auto* entity = app.scene().find(first);
+            ASSERT_NE(entity, nullptr);
+            const auto& model = *entity->model;
+            EXPECT_EQ(frame->draws.size(), model.draws().size() * visible);
+            EXPECT_EQ(all->draws.size(), model.draws().size() * 2);
+            if (visible == 1)
+                for (size_t i = 0; i < model.draws().size(); ++i)
+                    EXPECT_EQ(frame->draws[i].model, right.matrix() * model.draws()[i].model);
+            EXPECT_TRUE(entity->visible);
+            EXPECT_EQ(app.scene().entities().size(), 2u);
+            EXPECT_EQ(entity->model, app.scene().find(second)->model);
+            EXPECT_EQ(entity->transform.scale(), left.scale());
+            std::cout << "DEFAULT_CULLING visible=" << visible << " draws=" << frame->draws.size()
+                      << " unculled=" << all->draws.size() << '\n';
+        };
+        const auto moveOffscreen = [&](Demo::DemoApp& app, Scene::EntityId id, Scene::Transform transform) {
+            transform.setPosition(transform.position() + glm::vec3(1000, 0, 0));
+            EXPECT_TRUE(app.scene().setTransform(id, transform));
+        };
+        const auto checkEmptyImage = [&](Demo::DemoApp& app, const char* name) {
+            const auto image = capture(app, name);
+            EXPECT_EQ(visiblePixels(image, app, left), 0u);
+            EXPECT_EQ(visiblePixels(image, app, right), 0u);
+            const size_t pixel = (32u * image.width + 1200) * 4;
+            EXPECT_EQ(image.rgba[pixel], 255);
+            EXPECT_EQ(image.rgba[pixel + 1], 0);
+            EXPECT_EQ(image.rgba[pixel + 2], 255);
+        };
         Demo::Callbacks callbacks{
             [&, demo](Demo::DemoApp& app) {
                 demo->initialize(app);
@@ -583,7 +619,43 @@ namespace
                     const auto image = capture(app, "scene-demo-return-gltf.ppm");
                     EXPECT_GT(visiblePixels(image, app, left), 0u);
                     EXPECT_GT(visiblePixels(image, app, right), 0u);
-                    app.requestExit();
+                    first = app.scene().entities()[0].id;
+                    second = app.scene().entities()[1].id;
+                    moveOffscreen(app, first, left);
+                    checkCulling(app, 1);
+                }
+                if (frame == 30 || frame == 39)
+                {
+                    const auto image = capture(app, frame == 30 ? "gltf-culled.ppm" : "obj-culled.ppm");
+                    EXPECT_EQ(visiblePixels(image, app, left), 0u);
+                    EXPECT_GT(visiblePixels(image, app, right), 0u);
+                    moveOffscreen(app, second, right);
+                    checkCulling(app, 0);
+                }
+                if (frame == 33 || frame == 42)
+                {
+                    checkEmptyImage(app, frame == 33 ? "gltf-all-culled-ui.ppm" : "obj-all-culled-ui.ppm");
+                    ASSERT_TRUE(app.scene().setTransform(first, left));
+                    ASSERT_TRUE(app.scene().setTransform(second, right));
+                    checkCulling(app, 2);
+                }
+                if (frame == 36 || frame == 45)
+                {
+                    const auto image = capture(app, frame == 36 ? "gltf-returned.ppm" : "obj-returned.ppm");
+                    EXPECT_GT(visiblePixels(image, app, left), 0u);
+                    EXPECT_GT(visiblePixels(image, app, right), 0u);
+                    if (frame == 45)
+                        app.requestExit();
+                    else
+                    {
+                        demo->switchScene(app, true);
+                        first = app.scene().entities()[0].id;
+                        second = app.scene().entities()[1].id;
+                        left = app.scene().find(first)->transform;
+                        right = app.scene().find(second)->transform;
+                        moveOffscreen(app, first, left);
+                        checkCulling(app, 1);
+                    }
                 }
             },
             [&, demo](Demo::DemoApp& app) {
@@ -591,11 +663,14 @@ namespace
                 if (updates == 4)
                     ASSERT_TRUE(app.scene().setVisible(first, false));
                 demo->ui(app);
+                if (updates >= 28)
+                    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(1180, 16), ImVec2(1220, 48),
+                                                                  IM_COL32(255, 0, 255, 255));
                 glfwWaitEventsTimeout(0.04);
             }};
         demo.reset();
         session.run(std::move(callbacks));
-        EXPECT_EQ(updates, 28);
+        EXPECT_EQ(updates, 46);
         EXPECT_TRUE(demoLifetime.expired());
         closed(state);
         unloaded(ResourceType::MODEL, DEMO_GLTF);

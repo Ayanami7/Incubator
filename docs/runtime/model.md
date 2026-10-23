@@ -67,6 +67,8 @@ Incubator::Render::DrawItem draw{
 
 边界只保存端点副本，不保留 CPU 顶点、像素或 ModelResource 借用；CPU 资源释放后仍可读取。
 多个消费者通过同一 PreparedModel 共享只读结果；实例 Transform 改变不会改写模型边界。
+Scene 帧提取在实体展开前使用此边界进行视锥裁剪；直接 `makeModelDraws` 和 Renderer 提交路径
+保持调用方给定的绘制内容，不自动执行裁剪。
 
 ## 实例与绘制展开
 
