@@ -121,6 +121,7 @@ set(SCENE_HEADERS
     scene/scene_frame.h
     scene/transform.h
     scene/camera.h
+    scene/frustum.h
     scene/detail/pose_validation.h
 )
 set(SCENE_SOURCES
@@ -128,6 +129,7 @@ set(SCENE_SOURCES
     scene/scene_frame.cpp
     scene/transform.cpp
     scene/camera.cpp
+    scene/frustum.cpp
 )
 
 set(ALL_HEADERS

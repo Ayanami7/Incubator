@@ -141,3 +141,35 @@ near 映射为 0、far 映射为 1；最终 projection 的 Y 只在此处适配�
 
 Demo 的 target/yaw/pitch/distance 仍为轨道控件状态，转换为相机世界位置及 quaternion 后交给此类型。
 当前不提供相机控制器、输入状态、正交投影或多视口。
+
+## 视锥与 AABB 判断
+
+`runtime/scene/frustum.h` 提供纯 CPU 的 `Incubator::Scene::Frustum`，消费既有最终相机矩阵，
+不复制 Camera 位姿或投影设置，不依赖窗口、Vulkan 或 ImGui 的运行环境。
+
+```cpp
+const auto matrices = scene.camera().matrices(extent);
+const Incubator::Scene::Frustum frustum(matrices);
+const bool possiblyVisible = frustum.intersects(worldBounds); // Math::Aabb in world space.
+```
+
+构造函数为 `explicit Frustum(const Render::CameraMatrices&) noexcept`；
+`bool intersects(const Math::Aabb&) const noexcept` 表示可能相交，不保证精确可见。
+调用方应先将模型边界变换到世界空间；模型或世界边界不可用时保留候选。
+本接口尚未接入 Scene 帧提取，实体级裁剪由后续提取逻辑使用。
+
+视锥从最终 `projection * view` 提取六个朝内平面，不再次翻转 Y。
+GLM 按列存储，以下 `r0`–`r3` 表示乘积矩阵的行：
+
+| 平面 | 系数 |
+|---|---|
+| 左 / 右 | `r3 + r0` / `r3 - r0` |
+| 两个 Y 侧面 | `r3 + r1` / `r3 - r1` |
+| 近 / 远 | `r2` / `r3 - r2` |
+
+这对应 `-w <= x,y <= w`、`0 <= z <= w`，近面使用零到一深度约定。
+平面归一化后，用沿朝内法向最远的箱角点判断；只有该角点仍在平面外才排除整个箱。
+跨面、贴面、相机位于箱内或大箱包含视锥均保留，不要求某个角点位于视锥内。
+固定容差 `1e-5` 集中定义，单位为世界坐标单位；容差内的小幅越界保留。
+平面系数和距离以 double 计算；任一平面退化或系数非有限时，整个视锥保留全部候选。
+输入边界端点非有限时也保留候选；不抛异常、不输出逐帧日志，不提供容差调参接口。
