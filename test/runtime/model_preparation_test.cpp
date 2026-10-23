@@ -475,6 +475,9 @@ namespace
             EXPECT_TRUE(model->draws().empty());
             EXPECT_FALSE(model->bounds());
             EXPECT_EQ(model->nodes().size(), 2u);
+            Scene::Scene scene;
+            scene.createEntity(model);
+            EXPECT_TRUE(Scene::extractSceneFrame(scene, {400, 400})->draws.empty());
             released(ResourceType::MODEL, "models/empty.gltf");
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, PNG).valid());
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, "textures/unused.png").valid());
@@ -548,6 +551,9 @@ namespace
                 released(ResourceType::MODEL, "models/unavailable-bounds.gltf");
                 EXPECT_FALSE(model->bounds());
                 ASSERT_EQ(model->draws().size(), 5u);
+                Scene::Scene scene;
+                scene.createEntity(model, Scene::Transform({1000, 0, -10}));
+                EXPECT_EQ(Scene::extractSceneFrame(scene, {400, 400})->draws.size(), 5u);
                 EXPECT_EQ(model->meshes().size(), 1u);
                 EXPECT_EQ(model->materials().size(), 3u);
                 for (const auto& item : model->draws())
@@ -692,6 +698,163 @@ namespace
     class SceneFrameTest : public ModelInstanceTest
     {};
 
+    TEST_F(SceneFrameTest, CullingKeepsEntityOrderAndUsesCurrentWorldTransformBeforeExpansion)
+    {
+        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            const auto model = Model::prepareModel(renderer, "models/culling.gltf");
+            ASSERT_EQ(model->draws().size(), 5u);
+            released(ResourceType::MODEL, "models/culling.gltf");
+            ResourceManager::instance().reset();
+            fileIO_.reset();
+            const auto resourceLog = resourceMessages_.str();
+            const auto renderLog = messages_.str();
+            Scene::Scene scene;
+            scene.setCamera(Scene::Camera({}, {1, 0, 0, 0}, {glm::radians(90.0f), 1, 100}));
+            const Scene::Transform a({-9, -2, -10});
+            const Scene::Transform outside({1000, 0, -10});
+            const Scene::Transform b({-9, -2, -12});
+            const auto first = scene.createEntity(model, a);
+            const auto middle = scene.createEntity(model, outside);
+            const auto last = scene.createEntity(model, b);
+            scene.createEntity(model, a, false);
+            scene.createEntity();
+            const auto snapshot = Scene::extractSceneFrame(scene, {400, 400});
+            ASSERT_TRUE(snapshot);
+            ASSERT_EQ(snapshot->draws.size(), 10u);
+            for (size_t i = 0; i < model->draws().size(); ++i)
+            {
+                EXPECT_EQ(snapshot->draws[i].model, a.matrix() * model->draws()[i].model);
+                EXPECT_EQ(snapshot->draws[i + 5].model, b.matrix() * model->draws()[i].model);
+            }
+            const std::array all{Model::ModelInstance{model, a.matrix()}, Model::ModelInstance{model, outside.matrix()},
+                                 Model::ModelInstance{model, b.matrix()}};
+            const auto direct = Model::makeModelDraws(all);
+            const auto disabled = Scene::extractSceneFrame(scene, {400, 400}, false);
+            ASSERT_TRUE(disabled);
+            ASSERT_EQ(disabled->draws.size(), direct.size());
+            EXPECT_EQ(direct.size(), 15u);
+            for (size_t i = 0; i < direct.size(); ++i)
+                EXPECT_EQ(disabled->draws[i].model, direct[i].model);
+            ASSERT_TRUE(scene.setTransform(middle, a));
+            EXPECT_EQ(Scene::extractSceneFrame(scene, {400, 400})->draws.size(), 15u);
+            for (const auto id : {first, middle, last})
+                ASSERT_TRUE(scene.setTransform(id, outside));
+            const auto empty = Scene::extractSceneFrame(scene, {400, 400});
+            ASSERT_TRUE(empty);
+            EXPECT_TRUE(empty->input().draws.empty());
+            EXPECT_TRUE(scene.find(first)->visible);
+            EXPECT_EQ(scene.entities().size(), 5u);
+            EXPECT_EQ(snapshot->draws.size(), 10u);
+
+            scene.destroyEntity(middle);
+            scene.destroyEntity(last);
+            struct Example
+            {
+                Scene::Transform transform;
+                size_t draws;
+            };
+            const std::array<Example, 7> examples{{
+                {a, 5},
+                {outside, 0},
+                {Scene::Transform({2, -9, -10}, {1, 0, 0, 1}), 5},
+                {Scene::Transform({18, -6, -10}, {1, 0, 0, 0}, {-2, 3, 1}), 5},
+                {Scene::Transform({0, 0, -10}, {1, 0, 0, 0}, glm::vec3(0)), 5},
+                {Scene::Transform({20, 0, -10}, {1, 0, 0, 0}, glm::vec3(0)), 0},
+                {Scene::Transform({0, 0, -10}, {1, 0, 0, 0}, {std::numeric_limits<float>::max(), 1, 1}), 5},
+            }};
+            for (size_t i = 0; i < examples.size(); ++i)
+            {
+                SCOPED_TRACE(i);
+                ASSERT_TRUE(scene.setTransform(first, examples[i].transform));
+                const auto frame = Scene::extractSceneFrame(scene, {400, 400});
+                ASSERT_TRUE(frame);
+                EXPECT_EQ(frame->draws.size(), examples[i].draws);
+            }
+            EXPECT_FALSE(Scene::extractSceneFrame(scene, {0, 400}));
+            EXPECT_EQ(resourceMessages_.str(), resourceLog);
+            EXPECT_EQ(messages_.str(), renderLog);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(SceneFrameTest, CullingReflectsCameraExtentVisibilityModelAndSceneChanges)
+    {
+        auto& manager = ResourceManager::instance();
+        manager.registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            const auto model = Model::prepareModel(renderer, "models/transforms.gltf");
+            manager.registerLoader(ResourceType::MODEL, std::make_unique<SharedModelLoader>());
+            const auto centered = Model::prepareModel(renderer, "models/centered.gltf");
+            released(ResourceType::MODEL, "models/transforms.gltf");
+            released(ResourceType::MODEL, "models/centered.gltf");
+            released(ResourceType::TEXTURE, PNG);
+            manager.reset();
+            fileIO_.reset();
+            const auto resourceLog = resourceMessages_.str();
+            const auto renderLog = messages_.str();
+            Scene::Scene scene;
+            const Scene::Camera wide({}, {1, 0, 0, 0}, {glm::radians(90.0f), 1, 100});
+            scene.setCamera(wide);
+            const auto id = scene.createEntity(model, Scene::Transform({-2, -2, -10}));
+            const auto count = [&](FrameExtent extent = {400, 400}) {
+                const auto frame = Scene::extractSceneFrame(scene, extent);
+                EXPECT_TRUE(frame);
+                if (!frame)
+                    return size_t{0};
+                const auto expected = scene.camera().matrices(extent);
+                EXPECT_EQ(frame->camera.view, expected.view);
+                EXPECT_EQ(frame->camera.projection, expected.projection);
+                return frame->draws.size();
+            };
+            EXPECT_EQ(count(), 5u);
+            auto narrow = wide;
+            narrow.setPerspective({glm::radians(45.0f), 1, 100});
+            scene.setCamera(narrow);
+            EXPECT_EQ(count(), 0u);
+            EXPECT_EQ(count({800, 400}), 5u);
+            scene.setCamera(wide);
+            EXPECT_EQ(count({100, 400}), 0u);
+            auto moved = wide;
+            moved.setPosition({30, 0, 0});
+            scene.setCamera(moved);
+            EXPECT_EQ(count(), 0u);
+            moved.setPosition({0, 0, 0});
+            moved.setRotation({0, 0, 1, 0});
+            scene.setCamera(moved);
+            EXPECT_EQ(count(), 0u);
+            moved.setPosition({0, 0, -20});
+            scene.setCamera(moved);
+            EXPECT_EQ(count(), 5u);
+            scene.setCamera(wide);
+            ASSERT_TRUE(scene.setVisible(id, false));
+            EXPECT_EQ(count(), 0u);
+            ASSERT_TRUE(scene.setVisible(id, true));
+            EXPECT_EQ(count(), 5u);
+            ASSERT_TRUE(scene.setTransform(id, Scene::Transform({0, 0, -5})));
+            EXPECT_EQ(count(), 0u);
+            ASSERT_TRUE(scene.setModel(id, centered));
+            EXPECT_EQ(count(), 5u);
+            ASSERT_TRUE(scene.setModel(id, {}));
+            EXPECT_EQ(count(), 0u);
+
+            Scene::Scene replacement;
+            replacement.setCamera(wide);
+            replacement.createEntity(model, Scene::Transform({-9, -2, -10}));
+            EXPECT_EQ(Scene::extractSceneFrame(replacement, {400, 400})->draws.size(), 5u);
+            EXPECT_EQ(count(), 0u);
+            EXPECT_EQ(resourceMessages_.str(), resourceLog);
+            EXPECT_EQ(messages_.str(), renderLog);
+        }
+        cleanValidation();
+    }
+
     TEST_F(SceneFrameTest, OrderedNoncommutingTransformsAndCopiedMovedSnapshotsOwnTheirDraws)
     {
         ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
@@ -708,6 +871,7 @@ namespace
             fileIO_.reset();
             const auto resourceLog = resourceMessages_.str();
             Scene::Scene scene;
+            scene.setCamera(Scene::Camera({0, 0, 80}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 200}));
             const Scene::Transform a({1, 2, 0}, {1, 0, 0, 1}, {2, 3, 1});
             const Scene::Transform b({-2, 1, 0}, {1, 0, 0, 0}, {0.5f, 2, 1});
             const auto firstId = scene.createEntity(model, a);
@@ -736,7 +900,7 @@ namespace
 
             ASSERT_TRUE(scene.setTransform(firstId, Scene::Transform({3, 0, 0})));
             ASSERT_TRUE(scene.setVisible(secondId, false));
-            scene.setCamera(Scene::Camera({0, 0, 5}));
+            scene.setCamera(Scene::Camera({0, 0, 100}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 200}));
             const auto next = Scene::extractSceneFrame(scene, {400, 400});
             ASSERT_TRUE(next);
             ASSERT_EQ(next->draws.size(), 5u);

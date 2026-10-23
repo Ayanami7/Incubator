@@ -63,18 +63,27 @@ if (const auto extent = renderer.beginUiFrame())
 }
 ```
 
-`extractSceneFrame(const Scene&, Render::FrameExtent)` 返回 `std::optional<SceneFrame>`。
+`extractSceneFrame(const Scene&, Render::FrameExtent, bool frustumCulling = true)` 返回 `std::optional<SceneFrame>`。
 宽高任一为零时返回 nullopt，不计算投影或遍历实体；通常直接使用 beginUiFrame 给出的有效 extent。
 提取期间不修改同一 Scene，不加载文件、解码、上传、创建材质或重新验证 GPU 引用。
 
 SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera` 和 `vector<Render::DrawItem> draws`：
 
-- 读取当前 Camera，按实际 extent 生成最终相机矩阵；不再次翻转 Y。
-- 按存活实体创建顺序组装临时 ModelInstance，跳过隐藏及无模型实体，调用现有 makeModelDraws。
+- 读取当前 Camera，按实际 extent 生成一次最终相机矩阵，供视锥判断和返回结果共用；不再次翻转 Y。
+- 按存活实体创建顺序遍历，跳过隐藏及无模型实体；默认以当前实体 Transform 变换模型整体边界，
+  只排除世界 AABB 完全位于视锥外的实体，再组装保留实体的临时 ModelInstance，调用现有 makeModelDraws。
   每个模型沿用其缓存的节点/部分顺序；最终矩阵为 `entity.transform.matrix() * cachedDraw.model`，源根只包含一次。
-- 每次返回新列表；空 Scene、全部隐藏、无模型或无可绘制部分时返回有效的空 draws，仍可清屏和显示 UI。
+- 每次返回新列表；空 Scene、全部隐藏、全部被裁剪、无模型或无可绘制部分时返回有效的空 draws，仍可清屏和显示 UI。
 - 两个结果可并存，默认复制/移动同时处理各自的值和 vector。Scene 更新、clear、下一次提取及 Scene 销毁
   不回写旧结果；快照不持有 Scene、Entity 或 PreparedModel 指针，绘制项只保存 GPU 引用和矩阵值。
+
+关闭 `frustumCulling` 时恢复原有可见实体的完整展开语义，隐藏及无模型过滤始终保留。
+裁剪仅发生在本提取入口；直接调用 `makeModelDraws` 或 Renderer 不自动裁剪。
+模型整体边界不可用、世界变换无法产生有限仿射边界或视锥不可用时保留原绘制路径。
+边界接触和相交的判断沿用下述 [视锥约定](#视锥与-aabb-判断)。
+世界边界每次由实体当前 Transform 派生，不缓存、不改写 `Entity.visible`，不删除实体。
+Transform、模型绑定、可见性、Camera 位姿/FOV、extent 或当前 Scene 改变，下一次提取立即生效；
+移出后移回的实体重新出现，最终模型矩阵仍只包含一次源根。
 
 `SceneFrame::input() const &` 在调用时构造 FrameInput，span 指向当前结果的 draws；结果本身不保存 span。
 只能从左值结果取得视图，直接对临时 SceneFrame 调用 input 被禁止。借用后不要移动/修改结果或重新分配 draws，
@@ -156,7 +165,7 @@ const bool possiblyVisible = frustum.intersects(worldBounds); // Math::Aabb in w
 构造函数为 `explicit Frustum(const Render::CameraMatrices&) noexcept`；
 `bool intersects(const Math::Aabb&) const noexcept` 表示可能相交，不保证精确可见。
 调用方应先将模型边界变换到世界空间；模型或世界边界不可用时保留候选。
-本接口尚未接入 Scene 帧提取，实体级裁剪由后续提取逻辑使用。
+Scene 帧提取使用同一份最终矩阵构造视锥，并在实体展开之前进行判断。
 
 视锥从最终 `projection * view` 提取六个朝内平面，不再次翻转 Y。
 GLM 按列存储，以下 `r0`–`r3` 表示乘积矩阵的行：

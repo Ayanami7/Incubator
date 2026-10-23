@@ -22,5 +22,7 @@ namespace Incubator::Scene
     };
 
     // Zero width/height skips projection and extraction. No I/O, upload or GPU validation.
-    std::optional<SceneFrame> extractSceneFrame(const Scene& scene, Render::FrameExtent extent);
+    // Culling excludes only entities with reliable bounds wholly outside the current frustum.
+    std::optional<SceneFrame> extractSceneFrame(const Scene& scene, Render::FrameExtent extent,
+                                                bool frustumCulling = true);
 }  // namespace Incubator::Scene
