@@ -267,7 +267,7 @@ DemoApp 每轮执行 beginInputFrame → pollEvents → update → beginUiFrame�
 `examples/demo/ui_input.h` 的 UiInputAdapter 读取 ImGui 本次已消费的鼠标右/中键边沿、位置/位移、
 滚轮和 F 键首次按下，配合同一次 NewFrame 的捕获标记；不混用原始轮次 pressed 和 UI 捕获。
 保持默认 ConfigInputTrickleEventQueue，延迟边沿随 ImGui 消费批次保留。新手势消费者应以按下位置
-建立基准，忽略开始之前的位移；捕获标记只决定新手势归属，释放不受屏蔽。
+建立基准，忽略开始之前的位移；捕获标记只决定新手势归属，释放不受屏蔽。已有手势的位移与释放同批时先应用末段位移，再结束手势；显式取消则直接丢弃旧操作。
 
 取消后适配器持续丢弃操作，直到 ImGui 待处理队列排空，且原始状态与 ImGui 的右/中键和 F 均释放。
 中性帧本身不产生操作，此后的新合法按下才能开始交互。该恢复边界内的按下也被丢弃，需释放后重按；

@@ -42,9 +42,8 @@ namespace Incubator::Demo
                 cancel();
                 return false;
             }
-            if ((gesture_ == Gesture::Rotate && (input.rotate.released || !input.rotate.down)) ||
-                (gesture_ == Gesture::Pan && (input.pan.released || !input.pan.down)))
-                cancel();
+            const bool ending = (gesture_ == Gesture::Rotate && (input.rotate.released || !input.rotate.down)) ||
+                                (gesture_ == Gesture::Pan && (input.pan.released || !input.pan.down));
             bool started = false;
             if (gesture_ == Gesture::None && !input.captureMouse)
             {
@@ -79,6 +78,10 @@ namespace Incubator::Demo
                     std::clamp(distance_ * static_cast<float>(std::exp(-input.scroll.y * 0.1)), 0.01f, 1000000.0f);
                 moved = true;
             }
+            // NewFrame may deliver the last movement together with release. It still belongs
+            // to the existing gesture; explicit cancellation has already cleared gesture_.
+            if (ending)
+                cancel();
             if (moved)
             {
                 camera = Scene::Camera(target_ + rotation * glm::vec3(0, 0, distance_), rotation, camera.perspective());

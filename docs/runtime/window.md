@@ -247,3 +247,5 @@ DemoApp 每轮在 pollEvents 之前开始输入，额外 pollEvents 只分发和
 GLFW user pointer 由 Window 独占。ImGui GLFW 后端链式调用这些回调，事件进入两个消费者各一次；
 窗口不安装字符回调，保留 ImGui 文本输入。ImGui 关闭时恢复原窗口回调，最终由 Window 销毁窗口。
 输入视图只在当前访问期间借用；需要跨轮次保留时按值复制。窗口不处理 UI 归属或相机手势。
+鼠标位置/增量采用 GLFW 窗口坐标；getWindowSize 返回同一坐标单位，getFramebufferSize 返回渲染像素尺寸。
+消费者平移使用窗口高度归一化，聚焦投影使用实际 framebuffer extent，避免重复应用 content scale。

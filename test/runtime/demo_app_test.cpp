@@ -267,17 +267,23 @@ namespace
         EXPECT_NEAR(camera.position().x, -6 * std::sin(0.1f), 0.00001f);
         EXPECT_NEAR(camera.position().z, 6 * std::cos(0.1f), 0.00001f);
         const auto moved = camera.position();
+        input.rotate = {false, false, true};
+        EXPECT_TRUE(orbit.apply(camera, input, {800, 600}));
+        EXPECT_NE(camera.position(), moved);
+        const auto released = camera.position();
         orbit.cancel();
+        input.rotate = {true, false, false};
         EXPECT_FALSE(orbit.apply(camera, input, {800, 600}));
-        EXPECT_EQ(camera.position(), moved);
+        EXPECT_EQ(camera.position(), released);
         input.captureMouse = false;
         input.rotate = {false, true, true};
         EXPECT_FALSE(orbit.apply(camera, input, {800, 600}));
         input.rotate = {true, true, false};
         EXPECT_FALSE(orbit.apply(camera, input, {800, 600}));
+        input.delta = {};
         input.rotate = {false, false, true};
         EXPECT_FALSE(orbit.apply(camera, input, {800, 600}));
-        EXPECT_EQ(camera.position(), moved);
+        EXPECT_EQ(camera.position(), released);
         camera = Scene::Camera({0, 0, 8});
         EXPECT_FALSE(orbit.apply(camera, {}, {800, 600}));
         EXPECT_EQ(camera.position(), glm::vec3(0, 0, 8));
@@ -438,6 +444,8 @@ namespace
             int characters = 0;
             int focusPresses = 0;
             Input::PointerValue wheel;
+            bool focusText = false;
+            char text[32]{};
             const auto sample = [&] {
                 ImGui::NewFrame();
                 characters += io.InputQueueCharacters.Size;
@@ -449,6 +457,8 @@ namespace
                 ImGui::SetNextWindowSize({200, 200});
                 ImGui::Begin("Panel");
                 ImGui::TextUnformatted("Input panel");
+                if (focusText) ImGui::SetKeyboardFocusHere();
+                ImGui::InputText("Text", text, sizeof(text));
                 ImGui::End();
                 ImGui::EndFrame();
                 return result;
@@ -512,6 +522,20 @@ namespace
             EXPECT_EQ(camera.position(), dragged);
             mouse(handle, 1, GLFW_PRESS, 0);
             EXPECT_TRUE(sample().rotate.pressed);
+            mouse(handle, 1, GLFW_RELEASE, 0);
+            position(handle, 100, 100);
+            sample();
+            sample();
+            scroll(handle, 0, 1);
+            EXPECT_TRUE(sample().captureMouse);
+            focusText = true;
+            sample();
+            focusText = false;
+            sample();
+            key(handle, GLFW_KEY_F, 0, GLFW_PRESS, 0);
+            const auto typing = sample();
+            EXPECT_TRUE(typing.captureKeyboard);
+            EXPECT_TRUE(typing.focusPressed);
         }
         native->beginInputFrame();
         focus(handle, GLFW_TRUE);
@@ -697,6 +721,177 @@ namespace
         closed(state);
         EXPECT_EQ(count("Uploaded mesh:"), 2u);
         EXPECT_EQ(count("Created graphics pipeline:"), 1u);
+        cleanValidation();
+    }
+
+    TEST_F(DemoAppTest, BothShowcaseModelsUseProductionInputFocusAndCancelAcrossMinimize)
+    {
+        copyShowcaseModels();
+        for (bool obj : {false, true})
+        {
+            SCOPED_TRACE(obj ? "Teapot" : "Avocado");
+            auto state = std::make_shared<Lifetime>();
+            auto config = options(true);
+            config.window.width = 800;
+            config.window.height = 600;
+            Demo::DemoApp session(config, std::make_unique<TrackedFileIO>(state));
+            Demo::ModelScene demo;
+            int frame = 0, cancellations = 0;
+            size_t opens = 0, uploads = 0;
+            Scene::EntityId selected;
+            glm::mat4 entityMatrix(1);
+            Scene::Camera focused, rotated, beforeMinimize;
+            GLFWmousebuttonfun button = nullptr;
+            GLFWkeyfun key = nullptr;
+            GLFWscrollfun scroll = nullptr;
+            const auto checkFocus = [&](Demo::DemoApp& app) {
+                int width, height;
+                app.window().getFramebufferSize(width, height);
+                const Render::FrameExtent extent{uint32_t(width), uint32_t(height)};
+                const auto* entity = app.scene().find(selected);
+                ASSERT_NE(entity, nullptr);
+                ASSERT_TRUE(entity->model->bounds());
+                const auto bounds = entity->model->bounds()->transformed(entity->transform.matrix());
+                ASSERT_TRUE(bounds);
+                const auto matrices = app.scene().camera().matrices(extent);
+                for (int i = 0; i < 8; ++i)
+                {
+                    const glm::vec3 p((i & 1) ? bounds->max.x : bounds->min.x,
+                                      (i & 2) ? bounds->max.y : bounds->min.y,
+                                      (i & 4) ? bounds->max.z : bounds->min.z);
+                    const auto clip = matrices.projection * matrices.view * glm::vec4(p, 1);
+                    ASSERT_GT(clip.w, 0);
+                    EXPECT_LE(std::abs(clip.x), clip.w + 0.001f);
+                    EXPECT_LE(std::abs(clip.y), clip.w + 0.001f);
+                    EXPECT_GE(clip.z, -0.001f);
+                    EXPECT_LE(clip.z, clip.w + 0.001f);
+                }
+                const auto extracted = Scene::extractSceneFrame(app.scene(), extent);
+                ASSERT_TRUE(extracted);
+                EXPECT_GE(extracted->draws.size(), entity->model->draws().size());
+                EXPECT_EQ(entity->transform.matrix(), entityMatrix);
+            };
+            session.run({
+                [&](Demo::DemoApp& app) {
+                    demo.initialize(app);
+                    auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                    button = glfwSetMouseButtonCallback(handle, nullptr);
+                    glfwSetMouseButtonCallback(handle, button);
+                    key = glfwSetKeyCallback(handle, nullptr);
+                    glfwSetKeyCallback(handle, key);
+                    scroll = glfwSetScrollCallback(handle, nullptr);
+                    glfwSetScrollCallback(handle, scroll);
+                    glfwFocusWindow(handle);
+                },
+                [&](Demo::DemoApp& app, const Demo::FrameTime& time) {
+                    demo.update(app, time);
+                    const int step = frame++ - 4;
+                    auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                    if (step == -1)
+                        demo.switchScene(app, obj);
+                    if (step == 0)
+                    {
+                        selected = demo.selected();
+                        auto transform = app.scene().find(selected)->transform;
+                        transform.setPosition(transform.position() + glm::vec3(100, 0, 0));
+                        ASSERT_TRUE(app.scene().setTransform(selected, transform));
+                        entityMatrix = transform.matrix();
+                        const auto all = Scene::extractSceneFrame(app.scene(), {800, 600}, false);
+                        const auto culled = Scene::extractSceneFrame(app.scene(), {800, 600});
+                        EXPECT_LT(culled->draws.size(), all->draws.size());
+                        opens = state->opens;
+                        uploads = count("Uploaded mesh:");
+                        glfwSetCursorPos(handle, 700, 500);
+                        button(handle, 0, GLFW_PRESS, 0); // Defocus the panel before the shortcut.
+                    }
+                    if (step == 1) button(handle, 0, GLFW_RELEASE, 0);
+                    if (step == 2 || step == 27) key(handle, GLFW_KEY_F, 0, GLFW_PRESS, 0);
+                    if (step == 3 || step == 28) key(handle, GLFW_KEY_F, 0, GLFW_RELEASE, 0);
+                    if (step == 4)
+                    {
+                        ASSERT_NO_FATAL_FAILURE(checkFocus(app));
+                        focused = app.scene().camera();
+                    }
+                    if (step == 5)
+                    {
+                        const auto image = WindowCapture::capture(app.window());
+                        size_t nonBackground = 0;
+                        for (uint32_t y = 100; y < image.height - 100; ++y)
+                            for (uint32_t x = 370; x < image.width - 100; ++x)
+                            {
+                                const auto at = (size_t(y) * image.width + x) * 4;
+                                if (std::abs(int(image.rgba[at]) - 51) > 12 ||
+                                    std::abs(int(image.rgba[at + 1]) - 61) > 12 ||
+                                    std::abs(int(image.rgba[at + 2]) - 71) > 12)
+                                    ++nonBackground;
+                            }
+                        EXPECT_GT(nonBackground, 0u);
+                        WindowCapture::save(image, obj ? "review/input-teapot-focus.ppm" : "review/input-avocado-focus.ppm");
+                        button(handle, 1, GLFW_PRESS, 0);
+                    }
+                    if (step == 6) glfwSetCursorPos(handle, 740, 500);
+                    if (step == 7) button(handle, 1, GLFW_RELEASE, 0);
+                    if (step == 8)
+                    {
+                        rotated = app.scene().camera();
+                        EXPECT_NE(rotated.rotation(), focused.rotation());
+                        button(handle, 2, GLFW_PRESS, 0);
+                    }
+                    if (step == 9) glfwSetCursorPos(handle, 730, 520);
+                    if (step == 10) button(handle, 2, GLFW_RELEASE, 0);
+                    if (step == 11)
+                    {
+                        EXPECT_NE(app.scene().camera().position(), rotated.position());
+                        scroll(handle, 0, 1);
+                    }
+                    if (step == 13) button(handle, 1, GLFW_PRESS, 0);
+                    if (step == 14) glfwSetCursorPos(handle, 710, 510);
+                    if (step == 15)
+                    {
+                        beforeMinimize = app.scene().camera();
+                        glfwIconifyWindow(handle);
+                        app.window().pollEvents();
+                        ASSERT_TRUE(app.window().isIconified());
+                    }
+                    if (step == 16) button(handle, 1, GLFW_RELEASE, 0);
+                    if (step == 18)
+                    {
+                        glfwRestoreWindow(handle);
+                        glfwFocusWindow(handle);
+                        glfwSetWindowSize(handle, 600, 800);
+                        app.window().pollEvents();
+                        ASSERT_FALSE(app.window().isIconified());
+                    }
+                    if (step == 19) glfwSetCursorPos(handle, 500, 700);
+                    if (step == 22)
+                    {
+                        EXPECT_EQ(app.scene().camera().position(), beforeMinimize.position());
+                        EXPECT_EQ(app.scene().camera().rotation(), beforeMinimize.rotation());
+                        EXPECT_GE(cancellations, 3);
+                    }
+                    if (step == 23) button(handle, 1, GLFW_PRESS, 0);
+                    if (step == 24) glfwSetCursorPos(handle, 520, 700);
+                    if (step == 25) button(handle, 1, GLFW_RELEASE, 0);
+                    if (step == 26) EXPECT_NE(app.scene().camera().rotation(), beforeMinimize.rotation());
+                    if (step == 29) ASSERT_NO_FATAL_FAILURE(checkFocus(app));
+                    if (step >= 0)
+                    {
+                        EXPECT_EQ(state->opens, opens);
+                        EXPECT_EQ(count("Uploaded mesh:"), uploads);
+                    }
+                    if (step == 30)
+                    {
+                        std::cout << (obj ? "Teapot" : "Avocado")
+                                  << ": production input/focus/culling, minimized release, portrait refocus passed\n";
+                        app.requestExit();
+                    }
+                },
+                [&](Demo::DemoApp& app) { demo.ui(app); glfwWaitEventsTimeout(0.04); },
+                [&](Demo::DemoApp&) { ++cancellations; demo.cancelInteraction(); },
+                [&](Demo::DemoApp& app, auto extent, const auto& input) {
+                    demo.input(app, extent, input);
+                }});
+        }
         cleanValidation();
     }
 
