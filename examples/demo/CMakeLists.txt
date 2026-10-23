@@ -9,6 +9,7 @@ add_executable(
     demo_app.cpp
     model_scene.h
     ui_input.h
+    orbit_camera.h
     validation_mode.h
 )
 

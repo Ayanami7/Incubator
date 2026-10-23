@@ -262,7 +262,7 @@ void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
 DemoApp 每轮执行 beginInputFrame → pollEvents → update → beginUiFrame。
 `Callbacks::cancelInteraction` 在无有效 extent、当前失焦或本轮曾失焦时调用，即使 UI 被跳过也执行。
 `Callbacks::input(DemoApp&, FrameExtent, const UiInput&)` 在有效 NewFrame 后、面板和帧提取前调用，
-提供本次实际 extent。相机手势将在后续任务消费此入口。
+提供本次实际 extent。ModelScene 已消费此入口实现轨道旋转、平移、缩放及 F 聚焦；取消通知直接结束旧手势。
 
 `examples/demo/ui_input.h` 的 UiInputAdapter 读取 ImGui 本次已消费的鼠标右/中键边沿、位置/位移、
 滚轮和 F 键首次按下，配合同一次 NewFrame 的捕获标记；不混用原始轮次 pressed 和 UI 捕获。

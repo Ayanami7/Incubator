@@ -7,6 +7,7 @@
 #include <string>
 
 #include "demo_app.h"
+#include "orbit_camera.h"
 #include "runtime/model/prepared_model.h"
 
 namespace Incubator::Demo
@@ -62,6 +63,45 @@ namespace Incubator::Demo
         {
             alternateCamera_ = !alternateCamera_;
             app.scene().setCamera(Scene::Camera({0, 0, alternateCamera_ ? 8.0f : 6.0f}));
+            orbit_.synchronize(app.scene().camera());
+        }
+
+        void cancelInteraction()
+        {
+            orbit_.cancel();
+            extent_ = {0, 0};
+        }
+
+        bool focusSelected(Demo::DemoApp& app, Render::FrameExtent extent)
+        {
+            const auto* entity = app.scene().find(selected_);
+            if (!entity || !entity->model || !entity->model->bounds())
+                return false;
+            const auto bounds = entity->model->bounds()->transformed(entity->transform.matrix());
+            auto camera = app.scene().camera();
+            if (!orbit_.focus(camera, bounds, extent))
+                return false;
+            app.scene().setCamera(camera);
+            return true;
+        }
+
+        void input(Demo::DemoApp& app, Render::FrameExtent extent, const UiInput& input)
+        {
+            extent_ = extent;
+            int width, height;
+            app.window().getWindowSize(width, height);
+            auto camera = app.scene().camera();
+            if (orbit_.apply(camera, input, {double(width), double(height)}))
+                app.scene().setCamera(camera);
+            if (input.focusPressed && !input.captureKeyboard)
+                focusSelected(app, extent);
+        }
+
+        void resetCamera(Demo::DemoApp& app)
+        {
+            app.scene().setCamera(Scene::Camera({0, 0, 6}));
+            orbit_.synchronize(app.scene().camera());
+            alternateCamera_ = false;
         }
 
         // Only called with a prepared model; UI enables OBJ switching after the later update.
@@ -75,6 +115,7 @@ namespace Incubator::Demo
             app.setScene(std::move(scene));
             useObj_ = useObj;
             alternateCamera_ = false;
+            orbit_.synchronize(app.scene().camera());
         }
 
         void ui(Demo::DemoApp& app)
@@ -98,6 +139,13 @@ namespace Incubator::Demo
             ImGui::EndDisabled();
             if (ImGui::Button("Replace camera"))
                 replaceCamera(app);
+            if (ImGui::Button("Reset camera"))
+                resetCamera(app);
+            ImGui::SameLine();
+            if (ImGui::Button("Focus selected"))
+            {
+                focusSelected(app, extent_);
+            }
             ImGui::TextUnformatted("Camera distance alternates between 6 and 8.");
             ImGui::Text("Entities: %zu", app.scene().entities().size());
             if (ImGui::BeginListBox("##entities", {-1, 110}))
@@ -130,8 +178,7 @@ namespace Incubator::Demo
                     transform.setRotation(glm::quat(glm::radians(degrees)));
                     changed = true;
                 }
-                if (ImGui::SliderFloat3("Scale multiplier", &scale.x, 0.1f, 3, "%.2f",
-                                        ImGuiSliderFlags_AlwaysClamp))
+                if (ImGui::SliderFloat3("Scale multiplier", &scale.x, 0.1f, 3, "%.2f", ImGuiSliderFlags_AlwaysClamp))
                 {
                     transform.setScale(scale * initialScale(useObj_));
                     changed = true;
@@ -165,12 +212,16 @@ namespace Incubator::Demo
         bool alternateCamera_ = false;
         bool firstUpdate_ = true;
         double deltaSeconds_ = 0;
+        OrbitCamera orbit_;
+        Render::FrameExtent extent_{0, 0};
     };
 
     inline Demo::Callbacks makeCallbacks()
     {
         auto demo = std::make_shared<ModelScene>();
         return {[demo](auto& app) { demo->initialize(app); },
-                [demo](auto& app, const auto& time) { demo->update(app, time); }, [demo](auto& app) { demo->ui(app); }};
+                [demo](auto& app, const auto& time) { demo->update(app, time); }, [demo](auto& app) { demo->ui(app); },
+                [demo](auto&) { demo->cancelInteraction(); },
+                [demo](auto& app, auto extent, const auto& input) { demo->input(app, extent, input); }};
     }
 }  // namespace Incubator::Demo

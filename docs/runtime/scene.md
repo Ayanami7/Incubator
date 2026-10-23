@@ -149,7 +149,7 @@ near 映射为 0、far 映射为 1；最终 projection 的 Y 只在此处适配�
 没有可绘制 extent 时，上层跳过投影、提取与提交，不用零尺寸求宽高比。
 
 Demo 的 target/yaw/pitch/distance 仍为轨道控件状态，转换为相机世界位置及 quaternion 后交给此类型。
-当前不提供相机控制器、输入状态、正交投影或多视口。
+Runtime Camera 不提供通用控制器、正交投影或多视口；示例层轨道操作和世界包围体聚焦见 [Demo](../examples/demo.md#轨道相机与聚焦)，原始输入由 Platform Input/Window 提供。
 
 ## 视锥与 AABB 判断
 
