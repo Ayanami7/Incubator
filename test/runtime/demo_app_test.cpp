@@ -23,6 +23,7 @@
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene_frame.h"
 #include "support/window_capture.h"
+#include "runtime/render/integration/imgui_renderer.h"
 
 namespace
 {
@@ -244,6 +245,108 @@ namespace
         std::ostringstream renderLog_;
     };
 
+    TEST_F(DemoAppTest, WindowInputChainsWithImGuiAndDelayedBatchesSurviveRawFrameReset)
+    {
+        auto native = Window::createPlatformWindow({"Input integration", 640, 480, true, false});
+        auto* handle = static_cast<GLFWwindow*>(native->getNativeHandle());
+        const auto focus = glfwSetWindowFocusCallback(handle, nullptr);
+        glfwSetWindowFocusCallback(handle, focus);
+        focus(handle, GLFW_TRUE);
+        {
+            Render::Integration::ImGuiRenderer ui(*native);
+            const auto mouse = glfwSetMouseButtonCallback(handle, nullptr);
+            glfwSetMouseButtonCallback(handle, mouse);
+            const auto position = glfwSetCursorPosCallback(handle, nullptr);
+            glfwSetCursorPosCallback(handle, position);
+            const auto key = glfwSetKeyCallback(handle, nullptr);
+            glfwSetKeyCallback(handle, key);
+            const auto scroll = glfwSetScrollCallback(handle, nullptr);
+            glfwSetScrollCallback(handle, scroll);
+            const auto character = glfwSetCharCallback(handle, nullptr);
+            glfwSetCharCallback(handle, character);
+            const auto uiFocus = glfwSetWindowFocusCallback(handle, nullptr);
+            glfwSetWindowFocusCallback(handle, uiFocus);
+            auto& io = ImGui::GetIO();
+            io.DisplaySize = {640, 480};
+            io.DeltaTime = 1.0f / 60;
+            unsigned char* pixels;
+            int width, height;
+            io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+            Demo::UiInputAdapter adapter;
+            int characters = 0;
+            int focusPresses = 0;
+            Input::PointerValue wheel;
+            const auto sample = [&] {
+                ImGui::NewFrame();
+                characters += io.InputQueueCharacters.Size;
+                const auto result = adapter.sample(native->input());
+                focusPresses += result.focusPressed;
+                wheel.x += result.scroll.x;
+                wheel.y += result.scroll.y;
+                ImGui::SetNextWindowPos({0, 0});
+                ImGui::SetNextWindowSize({200, 200});
+                ImGui::Begin("Panel");
+                ImGui::TextUnformatted("Input panel");
+                ImGui::End();
+                ImGui::EndFrame();
+                return result;
+            };
+            EXPECT_TRUE(io.ConfigInputTrickleEventQueue);
+            position(handle, 100, 100);
+            sample();
+            sample();
+            mouse(handle, 0, GLFW_PRESS, 0);
+            sample();
+            native->beginInputFrame();
+            mouse(handle, 0, GLFW_RELEASE, 0);
+            position(handle, 300, 300);
+            mouse(handle, 1, GLFW_PRESS, 0);
+            EXPECT_TRUE(native->input().mouseButton(Input::MouseButton::Right).pressed);
+            EXPECT_FALSE(sample().rotate.pressed);
+            native->beginInputFrame();
+            EXPECT_FALSE(native->input().mouseButton(Input::MouseButton::Right).pressed);
+            const auto delayed = sample();
+            EXPECT_TRUE(delayed.rotate.pressed);
+            EXPECT_FALSE(delayed.captureMouse);
+            mouse(handle, 1, GLFW_RELEASE, 0);
+            mouse(handle, 1, GLFW_PRESS, 0);
+            mouse(handle, 1, GLFW_RELEASE, 0);
+            EXPECT_TRUE(sample().rotate.released);
+            native->beginInputFrame();
+            EXPECT_TRUE(sample().rotate.pressed);
+            EXPECT_TRUE(sample().rotate.released);
+            key(handle, GLFW_KEY_F, 0, GLFW_PRESS, 0);
+            scroll(handle, 1, 2);
+            character(handle, 'x');
+            for (int i = 0; i < 4; ++i) sample();
+            EXPECT_EQ(characters, 1);
+            EXPECT_EQ(focusPresses, 1);
+            EXPECT_EQ(wheel, (Input::PointerValue{1, 2}));
+            EXPECT_TRUE(native->input().key(Input::KeyCode::F).pressed);
+            EXPECT_EQ(native->input().scroll(), (Input::PointerValue{1, 2}));
+            native->pollEvents();
+            native->pollEvents();
+            EXPECT_EQ(native->input().scroll(), (Input::PointerValue{1, 2}));
+            mouse(handle, 1, GLFW_PRESS, 0);
+            mouse(handle, 1, GLFW_RELEASE, 0);
+            key(handle, GLFW_KEY_F, 0, GLFW_RELEASE, 0);
+            adapter.cancel();
+            uiFocus(handle, GLFW_FALSE);
+            uiFocus(handle, GLFW_TRUE);
+            EXPECT_TRUE(native->input().focusLost());
+            for (int i = 0; i < 5; ++i)
+                EXPECT_FALSE(sample().rotate.pressed);
+            mouse(handle, 1, GLFW_PRESS, 0);
+            EXPECT_TRUE(sample().rotate.pressed);
+        }
+        native->beginInputFrame();
+        focus(handle, GLFW_TRUE);
+        const auto key = glfwSetKeyCallback(handle, nullptr);
+        glfwSetKeyCallback(handle, key);
+        key(handle, GLFW_KEY_A, 0, GLFW_PRESS, 0);
+        EXPECT_TRUE(native->input().key(Input::KeyCode::A).pressed);
+    }
+
     TEST_F(DemoAppTest, AnyExistingRouteRejectsTakeoverWithoutChangingOriginalLoader)
     {
         for (const auto type : {ResourceType::TEXT, static_cast<ResourceType>(0x12345678)})
@@ -357,6 +460,7 @@ namespace
         std::vector<int> uiUpdates;
         int updates = 0;
         size_t opens = 0;
+        int cancellations = 0;
         session.run({[&](Demo::DemoApp& app) {
                          const auto model = Model::prepareModel(app.renderer(), GLTF);
                          track(app, model, state);
@@ -411,8 +515,10 @@ namespace
                          uiUpdates.push_back(updates - 1);
                          EXPECT_FALSE(app.window().isIconified());
                          glfwWaitEventsTimeout(0.04);
-                     }});
+                     },
+                     [&](Demo::DemoApp&) { ++cancellations; }});
         EXPECT_EQ(updates, 11);
+        EXPECT_GE(cancellations, 4);
         EXPECT_EQ(uiUpdates, (std::vector<int>{0, 5, 6, 7, 8, 9}));
         closed(state);
         EXPECT_EQ(count("Uploaded mesh:"), 2u);

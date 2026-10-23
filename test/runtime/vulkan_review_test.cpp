@@ -346,6 +346,8 @@ namespace
     {
     public:
         explicit DeferredFramebufferWindow(Incubator::Window::Window& native) : native_(native) {}
+        void beginInputFrame() override { native_.beginInputFrame(); }
+        const Input::InputState& input() const override { return native_.input(); }
         bool shouldClose() const override
         {
             return native_.shouldClose();

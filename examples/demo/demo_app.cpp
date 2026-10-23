@@ -143,8 +143,10 @@ namespace Incubator::Demo
             if (!exitRequested_ && !window_->shouldClose() && callbacks.initialize)
                 callbacks.initialize(*this);
             auto previous = Clock::now();
+            UiInputAdapter inputAdapter;
             while (!exitRequested_ && !window_->shouldClose())
             {
+                window_->beginInputFrame();
                 window_->pollEvents();
                 if (exitRequested_ || window_->shouldClose())
                     break;
@@ -156,11 +158,21 @@ namespace Incubator::Demo
                 if (exitRequested_ || window_->shouldClose())
                     break;
                 const auto extent = renderer_->beginUiFrame();
+                const bool cancelInput = !extent || !window_->input().focused() || window_->input().focusLost();
+                if (cancelInput)
+                {
+                    inputAdapter.cancel();
+                    if (callbacks.cancelInteraction)
+                        callbacks.cancelInteraction(*this);
+                }
                 if (!extent)
                 {
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     continue;
                 }
+                const auto input = inputAdapter.sample(window_->input());
+                if (!cancelInput && callbacks.input)
+                    callbacks.input(*this, *extent, input);
                 if (callbacks.ui)
                     callbacks.ui(*this);
                 if (exitRequested_ || window_->shouldClose())

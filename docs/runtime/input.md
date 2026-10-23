@@ -3,7 +3,7 @@
 ## 目标与组织
 
 Input 提供 GLFW 常量到引擎枚举的转换，以及由窗口适配填充的自有 `InputState`。
-状态算法不调用 GLFW、Render 或 ImGui；本阶段尚未接入 Window 回调与 Demo 消费。
+状态算法不调用 GLFW、Render 或 ImGui；Window 已通过实际回调填充本实例状态；Demo 的批次适配见下方说明。
 
 - `input.h`：已有 KeyCode、MouseButton、KeyState 和内联 GLFW 转换函数。
 - `input_state.h/.cpp`：按轮次累计原始状态，可按值复制，无全局单例。
@@ -256,3 +256,21 @@ void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
 3. 转换函数对所有未知输入返回 `Unknown` / `Release`，不会抛出异常或崩溃
 4. 未来切换输入后端（如 SDL）时，只需新增转换函数（如 `fromSdlKey`），KeyCode 枚举无需修改
 5. KeyCode 的有效枚举范围为 0–120；InputState 在访问内部数组前检查索引范围。
+
+## Demo 与 ImGui 消费批次
+
+DemoApp 每轮执行 beginInputFrame → pollEvents → update → beginUiFrame。
+`Callbacks::cancelInteraction` 在无有效 extent、当前失焦或本轮曾失焦时调用，即使 UI 被跳过也执行。
+`Callbacks::input(DemoApp&, FrameExtent, const UiInput&)` 在有效 NewFrame 后、面板和帧提取前调用，
+提供本次实际 extent。相机手势将在后续任务消费此入口。
+
+`examples/demo/ui_input.h` 的 UiInputAdapter 读取 ImGui 本次已消费的鼠标右/中键边沿、位置/位移、
+滚轮和 F 键首次按下，配合同一次 NewFrame 的捕获标记；不混用原始轮次 pressed 和 UI 捕获。
+保持默认 ConfigInputTrickleEventQueue，延迟边沿随 ImGui 消费批次保留。新手势消费者应以按下位置
+建立基准，忽略开始之前的位移；捕获标记只决定新手势归属，释放不受屏蔽。
+
+取消后适配器持续丢弃操作，直到 ImGui 待处理队列排空，且原始状态与 ImGui 的右/中键和 F 均释放。
+中性帧本身不产生操作，此后的新合法按下才能开始交互。该恢复边界内的按下也被丢弃，需释放后重按；
+不重放最小化/失焦期间的操作，不清空 ImGui 的 UI/文本事件。
+仅为判断队列是否排空，示例适配层读取固定 ImGui 1.91.9b 的内部 InputEventsQueue；升级时须复核此依赖。
+Runtime Input 和 Window 不依赖 ImGui，原始状态仍独立可读且不被 UI 消费改写。

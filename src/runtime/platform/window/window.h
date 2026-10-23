@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include "runtime/platform/input/input_state.h"
+
 namespace Incubator
 {
     namespace Window
@@ -57,6 +59,8 @@ namespace Incubator
             /// 内部调用 glfwPollEvents()，触发已注册的回调。
             /// 应在每帧主循环中调用一次。
             virtual void pollEvents() = 0;
+            virtual void beginInputFrame() = 0;
+            virtual const Input::InputState& input() const = 0;
 
             // ---- 尺寸查询 ----
 

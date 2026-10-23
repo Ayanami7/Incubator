@@ -8,6 +8,7 @@ add_executable(
     demo_app.h
     demo_app.cpp
     model_scene.h
+    ui_input.h
     validation_mode.h
 )
 

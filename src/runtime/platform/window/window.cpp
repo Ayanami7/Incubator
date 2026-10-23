@@ -67,6 +67,27 @@ namespace Incubator
                     }
                 }
 
+                void installInputCallbacks()
+                {
+                    glfwSetWindowUserPointer(window_, this);
+                    input_.onFocus(glfwGetWindowAttrib(window_, GLFW_FOCUSED) != 0);
+                    glfwSetKeyCallback(window_, [](GLFWwindow* w, int key, int, int action, int) {
+                        self(w).input_.onKey(Input::fromGlfwKey(key), Input::fromGlfwAction(action));
+                    });
+                    glfwSetMouseButtonCallback(window_, [](GLFWwindow* w, int button, int action, int) {
+                        self(w).input_.onMouseButton(Input::fromGlfwMouseButton(button), Input::fromGlfwAction(action));
+                    });
+                    glfwSetCursorPosCallback(window_, [](GLFWwindow* w, double x, double y) {
+                        self(w).input_.onMousePosition(x, y);
+                    });
+                    glfwSetScrollCallback(window_, [](GLFWwindow* w, double x, double y) {
+                        self(w).input_.onScroll(x, y);
+                    });
+                    glfwSetWindowFocusCallback(window_, [](GLFWwindow* w, int focused) {
+                        self(w).input_.onFocus(focused != 0);
+                    });
+                }
+
                 ~WindowGlfw() override
                 {
                     if (window_)
@@ -98,6 +119,9 @@ namespace Incubator
                 {
                     glfwPollEvents();
                 }
+
+                void beginInputFrame() override { input_.beginFrame(); }
+                const Input::InputState& input() const override { return input_; }
 
                 // ---- 尺寸查询 ----
 
@@ -139,7 +163,9 @@ namespace Incubator
                 }
 
             private:
+                static WindowGlfw& self(GLFWwindow* w) { return *static_cast<WindowGlfw*>(glfwGetWindowUserPointer(w)); }
                 GLFWwindow* window_ = nullptr;
+                Input::InputState input_;
             };
 
         }  // anonymous namespace
@@ -151,6 +177,7 @@ namespace Incubator
         std::unique_ptr<Window> createPlatformWindow(const WindowDesc& desc)
         {
             auto window = std::make_unique<WindowGlfw>(desc);
+            window->installInputCallbacks();
             int width = 0;
             int height = 0;
             int framebufferWidth = 0;

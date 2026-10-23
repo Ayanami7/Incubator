@@ -10,6 +10,7 @@
 #include "runtime/platform/window/window.h"
 #include "runtime/render/renderer.h"
 #include "runtime/scene/scene.h"
+#include "ui_input.h"
 
 namespace Incubator::Demo
 {
@@ -40,6 +41,8 @@ namespace Incubator::Demo
         std::function<void(DemoApp&)> initialize;
         std::function<void(DemoApp&, const FrameTime&)> update;
         std::function<void(DemoApp&)> ui;
+        std::function<void(DemoApp&)> cancelInteraction;
+        std::function<void(DemoApp&, Render::FrameExtent, const UiInput&)> input;
     };
 
     // Single-window/main-thread application session, exclusively owning all Loader routes.

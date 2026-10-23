@@ -2,7 +2,7 @@
 
 ## 目标
 
-Window 模块封装 GLFW 窗口的创建与生命周期管理，通过抽象类提供可 Mock 的平台无关接口。上层代码通过 `createPlatformWindow()` 工厂函数获取窗口实例。事件对象分发留给后续 Event 模块；Vulkan Surface 和 ImGui 集成由现有 Render 模块负责，应用拥有主循环。
+Window 模块封装 GLFW 窗口的创建与生命周期管理，通过抽象类提供可 Mock 的平台无关接口。上层代码通过 `createPlatformWindow()` 工厂函数获取窗口实例。窗口拥有按轮次原始输入状态；Vulkan Surface 和 ImGui 集成由现有 Render 模块负责，应用拥有主循环。
 
 ## 设计原则
 
@@ -26,8 +26,8 @@ namespace Incubator::Window
 | **Function** | `Render` / `ImGui` | Vulkan Surface 创建、ImGui 后端初始化与 GPU 绘制；主循环由应用拥有 |
 
 本模块**不会**实现：
-- 事件分发与回调注册（`pollEvents()` 仅调用 `glfwPollEvents()`，不构造事件对象）
-- InputState 或按键状态追踪
+- 通用事件订阅或事件总线（pollEvents 不构造事件对象）
+- UI 捕获判定或相机操作规则
 - Vulkan surface 创建或交换链配置
 - ImGui 平台后端初始化
 
@@ -70,7 +70,9 @@ public:
     virtual void setShouldClose(bool value) = 0;    // 设置关闭请求标志
 
     // ---- 事件处理 ----
-    virtual void pollEvents() = 0;                  // 轮询窗口事件（每帧调用）
+    virtual void pollEvents() = 0;                  // 分发事件，不清理输入轮次
+    virtual void beginInputFrame() = 0;
+    virtual const Incubator::Input::InputState& input() const = 0;
 
     // ---- 尺寸查询 ----
     virtual void getFramebufferSize(int& width, int& height) const = 0;  // 帧缓冲像素尺寸
@@ -191,6 +193,7 @@ int main()
         while (!window->shouldClose())
         {
             // 轮询窗口事件（必须在每帧调用）
+            window->beginInputFrame();
             window->pollEvents();
 
             // 获取帧缓冲尺寸（用于 Vulkan 视口）
@@ -214,9 +217,9 @@ int main()
 ```cpp
 GLFWwindow* native = static_cast<GLFWwindow*>(window->getNativeHandle());
 
-// 例如：设置 GLFW 输入回调（未来 Event 模块会封装此操作）
-glfwSetKeyCallback(native, keyCallback);
-glfwSetMouseButtonCallback(native, mouseButtonCallback);
+// 渲染集成可访问原生句柄；输入消费者应使用 window->input()。
+const auto input = window->input(); // Copy a snapshot when it must outlive this round.
+const bool rightPressed = input.mouseButton(Incubator::Input::MouseButton::Right).pressed;
 ```
 
 ## 依赖
@@ -229,9 +232,18 @@ glfwSetMouseButtonCallback(native, mouseButtonCallback);
 
 ## 注意事项
 
-1. `pollEvents()` 仅调用 `glfwPollEvents()`，**不返回任何事件对象**。当前版本不包含事件系统，GLFW 回调需通过 `getNativeHandle()` 自行注册
+1. `pollEvents()` 仅调用 `glfwPollEvents()`，**不返回任何事件对象**。原始输入由窗口安装的 GLFW 回调填充，通过 input() 只读访问；调用方不应覆盖回调或 GLFW user pointer
 2. 构造函数中强制设置 `GLFW_NO_API`，窗口**不创建 OpenGL 上下文**。若需 OpenGL 渲染，需修改此标志或使用单独的上下文创建接口
 3. GLFW 初始化与终止由窗口引用计数管理；最后一个窗口销毁时自动终止，应用在所有借用窗口的 Renderer/Surface 销毁后再释放窗口
 4. Window 创建失败时抛出 `Error::Exception`，错误码为 `Error::Code::IO`，调用方应使用 try-catch 处理
 5. `getFramebufferSize()` 与 `getWindowSize()` 在 HiDPI 显示器上可能返回不同值：帧缓冲尺寸为实际像素，窗口尺寸为逻辑坐标。渲染相关操作应使用帧缓冲尺寸
 6. 工厂函数返回 `unique_ptr`，所有权明确，不可复制，可通过 `std::move` 转移
+
+## 原始输入与回调所有权
+
+`beginInputFrame()` 显式清理本轮瞬时状态；`input() const` 返回 `const Input::InputState&`。
+DemoApp 每轮在 pollEvents 之前开始输入，额外 pollEvents 只分发和累计，不清理输入。
+窗口创建时同步实际焦点，按实例保存状态，并在 ImGui 初始化前安装键盘、鼠标按钮、位置、滚轮及焦点回调。
+GLFW user pointer 由 Window 独占。ImGui GLFW 后端链式调用这些回调，事件进入两个消费者各一次；
+窗口不安装字符回调，保留 ImGui 文本输入。ImGui 关闭时恢复原窗口回调，最终由 Window 销毁窗口。
+输入视图只在当前访问期间借用；需要跨轮次保留时按值复制。窗口不处理 UI 归属或相机手势。
