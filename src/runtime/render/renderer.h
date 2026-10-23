@@ -61,7 +61,9 @@ namespace Incubator
 
             // Synchronously uploads RGBA8 sRGB pixels, borrowed only for this call.
             // Texture references share this upload and are usable only with this Renderer.
-            Texture createTexture(const Resource::TextureResource& texture);
+            // FullChain generates GPU mips before returning; the default uploads only level zero.
+            Texture createTexture(const Resource::TextureResource& texture,
+                                  TextureMipMode mipMode = TextureMipMode::BaseLevel);
 
             // Prepares the shared scene shaders and frame/material layouts once.
             // Copies shader words for compatible Pipeline rebuilds; no CPU resource is retained.

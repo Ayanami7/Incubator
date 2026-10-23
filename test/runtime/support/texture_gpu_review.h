@@ -97,6 +97,59 @@ namespace TextureGpuReview
         VkDeviceMemory memory_ = VK_NULL_HANDLE;
     };
 
+    // Reads one small controlled mip into the existing review buffer, then restores sampling layout.
+    inline std::vector<uint8_t> captureMip(const VulkanDevice& device, const VulkanImage& image,
+                                            uint32_t level, VkExtent2D extent)
+    {
+        Readback readback(device);
+        device.executeImmediate([&](VkCommandBuffer commands) {
+            VkImageMemoryBarrier2 toTransfer{};
+            toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+            toTransfer.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            toTransfer.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+            toTransfer.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+            toTransfer.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+            toTransfer.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            toTransfer.srcQueueFamilyIndex = toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransfer.image = image.handle();
+            toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1};
+            VkDependencyInfo dependency{};
+            dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.imageMemoryBarrierCount = 1;
+            dependency.pImageMemoryBarriers = &toTransfer;
+            vkCmdPipelineBarrier2(commands, &dependency);
+            VkBufferImageCopy copy{};
+            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+            copy.imageExtent = {extent.width, extent.height, 1};
+            vkCmdCopyImageToBuffer(commands, image.handle(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1,
+                                   &copy);
+            auto toShader = toTransfer;
+            toShader.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+            toShader.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+            toShader.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+            toShader.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+            toShader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            toShader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkBufferMemoryBarrier2 toHost{};
+            toHost.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+            toHost.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+            toHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+            toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+            toHost.srcQueueFamilyIndex = toHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toHost.buffer = readback.buffer;
+            toHost.size = VK_WHOLE_SIZE;
+            dependency.pImageMemoryBarriers = &toShader;
+            dependency.bufferMemoryBarrierCount = 1;
+            dependency.pBufferMemoryBarriers = &toHost;
+            vkCmdPipelineBarrier2(commands, &dependency);
+        });
+        auto pixels = readback.pixels();
+        pixels.resize(extent.width * extent.height * 4);
+        return pixels;
+    }
+
     // Shares attachment/barrier/readback code with model review; model callers supply the
     // existing Renderer pipeline, uploaded buffers and immutable material descriptor sets.
     inline std::vector<uint8_t> captureDraws(const VulkanDevice& device, const VulkanPipeline& pipeline,

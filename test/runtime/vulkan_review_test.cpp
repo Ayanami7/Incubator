@@ -329,6 +329,42 @@ namespace
         }
     }
 
+    TEST(RenderColorTest, MipSupportRequiresOnlyUsedFeaturesAndCountsAllLevels)
+    {
+        VkPhysicalDeviceLimits limits{};
+        limits.maxImageDimension2D = 16;
+        VkFormatProperties format{};
+        format.optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
+                                       VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT |
+                                       VK_FORMAT_FEATURE_BLIT_DST_BIT |
+                                       VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        VkImageFormatProperties image{};
+        image.maxExtent = {16, 16, 1};
+        image.maxMipLevels = 5;
+        image.maxArrayLayers = 1;
+        image.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
+        image.maxResourceSize = 84;  // 4x4 + 2x2 + 1x1 RGBA8, not just the 64-byte CPU payload.
+        EXPECT_NO_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image, 3));
+        for (auto feature : {VK_FORMAT_FEATURE_TRANSFER_SRC_BIT, VK_FORMAT_FEATURE_BLIT_SRC_BIT,
+                             VK_FORMAT_FEATURE_BLIT_DST_BIT, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT})
+        {
+            auto unavailable = format;
+            unavailable.optimalTilingFeatures &= ~feature;
+            EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, unavailable, image, 3), Error::Exception);
+            EXPECT_NO_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, unavailable, image));
+            EXPECT_NO_THROW(VulkanImage::validateRgba8Support({1, 1}, limits, unavailable, image, 1));
+        }
+        auto unavailable = image;
+        unavailable.maxMipLevels = 2;
+        EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, unavailable, 3), Error::Exception);
+        EXPECT_NO_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, unavailable));
+        unavailable = image;
+        unavailable.maxResourceSize = 83;
+        EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, unavailable, 3), Error::Exception);
+        EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image, 0), Error::Exception);
+        EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image, 4), Error::Exception);
+    }
+
     void releaseCpuAssets(SceneAssets& assets)
     {
         const std::array ids = {assets.vertex->id(), assets.fragment->id(), assets.texture->id()};
@@ -836,6 +872,127 @@ namespace
         EXPECT_FALSE(observer.valid());
         for (const auto& material : materials)
             EXPECT_FALSE(material.valid());
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, GeneratedMipExtentsAndLinearSrgbAlphaMatchReadback)
+    {
+        auto window = createWindow();
+        {
+            VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
+            GlfwSurface surface(instance, *window);
+            VulkanDevice device(instance, surface);
+            const std::vector<std::vector<VkExtent2D>> chains{{{1, 1}},
+                                                              {{1, 9}, {1, 4}, {1, 2}, {1, 1}},
+                                                              {{9, 1}, {4, 1}, {2, 1}, {1, 1}},
+                                                              {{3, 5}, {1, 2}, {1, 1}},
+                                                              {{4, 4}, {2, 2}, {1, 1}}};
+            for (const auto& chain : chains)
+            {
+                SCOPED_TRACE(std::to_string(chain[0].width) + "x" + std::to_string(chain[0].height));
+                std::shared_ptr<VulkanImage> image;
+                {
+                    std::vector<uint8_t> pixels(chain[0].width * chain[0].height * 4);
+                    for (size_t i = 0; i < pixels.size(); ++i)
+                        pixels[i] = std::array<uint8_t, 4>{64, 128, 192, 85}[i % 4];
+                    image = VulkanImage::uploadRgba8(device, chain[0], VK_FORMAT_R8G8B8A8_SRGB, pixels,
+                                                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                                     TextureMipMode::FullChain);
+                }
+                ASSERT_EQ(image->mipLevels(), chain.size());
+                for (uint32_t level = 0; level < chain.size(); ++level)
+                {
+                    SCOPED_TRACE(level);
+                    const auto pixels = TextureGpuReview::captureMip(device, *image, level, chain[level]);
+                    ASSERT_EQ(pixels.size(), chain[level].width * chain[level].height * 4);
+                    for (size_t i = 0; i < pixels.size(); ++i)
+                        EXPECT_NEAR(pixels[i], (std::array<uint8_t, 4>{64, 128, 192, 85}[i % 4]), 1);
+                }
+            }
+            const std::array<uint8_t, 16> blackWhite{0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255};
+            const auto image = VulkanImage::uploadRgba8(device, {2, 2}, VK_FORMAT_R8G8B8A8_SRGB, blackWhite,
+                                                        VK_IMAGE_USAGE_SAMPLED_BIT, TextureMipMode::FullChain);
+            ASSERT_EQ(image->mipLevels(), 2u);
+            const auto mip = TextureGpuReview::captureMip(device, *image, 1, {1, 1});
+            for (int channel = 0; channel < 3; ++channel)
+                EXPECT_NEAR(mip[channel], 188, 1);
+            EXPECT_NEAR(mip[3], 128, 1);  // Straight alpha is averaged without sRGB conversion or premultiplication.
+            const auto baseOnly = VulkanImage::uploadRgba8(device, {2, 2}, VK_FORMAT_R8G8B8A8_SRGB, blackWhite,
+                                                           VK_IMAGE_USAGE_SAMPLED_BIT);
+            EXPECT_EQ(baseOnly->mipLevels(), 1u);
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, MipMaterialsSelectBaseNearestAndLinearLevelsAfterCpuRelease)
+    {
+        Log::Registry::get("render.vulkan").setLevel(Log::Level::DEBUG);
+        auto window = createWindow(false, 640, 480);
+        SceneAssets assets(referenceSceneAssetPaths());
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            Texture texture;
+            {
+                // Mip 0: BBWW; mip 1: BW; mip 2: linear gray (sRGB 188).
+                std::vector<uint8_t> pixels(4 * 4 * 4);
+                for (size_t i = 0; i < 16; ++i)
+                    for (int channel = 0; channel < 4; ++channel)
+                        pixels[i * 4 + channel] = (i % 4 >= 2) ? 255 : 0;
+                Resource::TextureResource source({}, 4, 4, std::move(pixels));
+                EXPECT_THROW(renderer.createTexture(source, static_cast<TextureMipMode>(99)), Error::Exception);
+                texture = renderer.createTexture(source, TextureMipMode::FullChain);
+            }
+            std::array<Material, 3> materials;
+            const std::array modes{MipFilter::BaseLevel, MipFilter::Nearest, MipFilter::Linear};
+            for (size_t i = 0; i < materials.size(); ++i)
+                materials[i] = renderer.createMaterial(
+                    {texture, {1, 1, 1}, {TextureFilter::Nearest, TextureFilter::Nearest, modes[i]}});
+            releaseCpuAssets(assets);
+            for (float lod : {0.0f, 1.25f, 1.75f, 10.0f})
+            {
+                SCOPED_TRACE(lod);
+                // Four texels / 128 pixels gives the requested implicit LOD. Center u=0.625:
+                // base is white, mip 1 is white, mip 2 is gray. Mip Linear blends in linear RGB.
+                const float step = std::exp2(lod) / 4.0f;
+                const float u0 = 0.625f - 64.5f * step;
+                const float u1 = u0 + 128.0f * step;
+                const std::array<MeshVertex, 4> vertices{{{{-1, -1, 0.5f}, {u0, 0.5f}},
+                                                          {{0, -1, 0.5f}, {u1, 0.5f}},
+                                                          {{0, 1, 0.5f}, {u1, 0.5f}},
+                                                          {{-1, 1, 0.5f}, {u0, 0.5f}}}};
+                const std::array<uint32_t, 6> indices{0, 1, 2, 2, 3, 0};
+                const auto mesh = renderer.createMesh(vertices, indices);
+                for (size_t i = 1; i < materials.size(); ++i)
+                {
+                    SCOPED_TRACE(i);
+                    const std::array draws{
+                        DrawItem{mesh, materials[0], glm::mat4(1)},
+                        DrawItem{mesh, materials[i], glm::translate(glm::mat4(1), glm::vec3(1, 0, 0))}};
+                    const FrameInput input{{256, 256}, {glm::mat4(1), glm::mat4(1)}, draws};
+                    std::vector<uint8_t> pixels;
+                    Detail::RendererReviewAccess::withFrame(
+                        renderer, input,
+                        [&](const auto& device, const auto& pipeline, auto frameSet, auto nativeDraws) {
+                            pixels = TextureGpuReview::captureDraws(device, pipeline, frameSet, nativeDraws,
+                                                                    {0, 0, 256, 256, 0, 1});
+                        });
+                    const float weight = std::clamp(lod - 1.0f, 0.0f, 1.0f);
+                    const float linear = i == 1 ? (lod < 1.5f ? 1.0f : 0.5f) : 1.0f - 0.5f * weight;
+                    const float encoded = 255.0f * (1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f);
+                    for (int channel = 0; channel < 3; ++channel)
+                    {
+                        EXPECT_NEAR(pixels[(128 * 384 + 64) * 4 + channel], 255, 1);
+                        EXPECT_NEAR(pixels[(128 * 384 + 192) * 4 + channel], encoded, 2);
+                    }
+                    EXPECT_EQ(pixels[(128 * 384 + 192) * 4 + 3], 255);
+                    WindowCapture::save({384, 256, pixels}, "review/mip-lod-" + std::to_string(lod) + "-mode-" +
+                                                                std::to_string(i) + ".ppm");
+                }
+            }
+            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture:"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+        }
         expectCleanValidation();
     }
 

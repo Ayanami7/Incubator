@@ -68,17 +68,39 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 
 ## 外部纹理与颜色约定
 
-Renderer 通过 `createTexture(const TextureResource&)` 独立上传纹理，返回 `texture.h` 中的
-`Texture` 引用。每次调用同步上传为 `VK_FORMAT_R8G8B8A8_SRGB`，返回后不保留
+Renderer 通过 `createTexture(const TextureResource&, TextureMipMode = TextureMipMode::BaseLevel)`
+独立上传纹理，返回 `texture.h` 中的 `Texture` 引用。每次调用同步上传为 `VK_FORMAT_R8G8B8A8_SRGB`，返回后不保留
 TextureResource 指针或 CPU 像素副本，应用可在下一次绘制前 release 到零。
 GPU Image、Sampler、Descriptor 由 Render 持有，在途帧另持有所用 Material 及其 Texture 依赖至 Fence 完成；
 交换链重建复用这些纹理，不重新读取、解码或上传。立方体 +Z 面顶部 UV 指向 PNG 首行，
 Loader、上传和 Shader 均不再翻转；默认采样仍为 nearest/repeat/基础层。
 
+`TextureMipMode::BaseLevel` 保持原有单 mip 上传；显式选择 `FullChain` 时，在 GPU 上生成
+完整链。每轴逐级向下除以 2、最小为 1，直到 1×1，例如 3×5 → 1×2 → 1×1，
+1×9 → 1×4 → 1×2 → 1×1。1×1 仍只有一层，不执行 blit。
+
+```cpp
+auto texture = renderer.createTexture(cpuTexture, TextureMipMode::FullChain);
+MaterialDesc desc{texture};
+desc.sampler = {TextureFilter::Linear, TextureFilter::Linear, MipFilter::Linear};
+auto material = renderer.createMaterial(desc);
+```
+
+上传与采样选项彼此独立：FullChain 配默认材质仍只采基础层；单层图像配 mip 采样不会补建层级。
+CPU TextureResource 继续只保存基础层，原有 64 MiB 源像素限制保持。生成使用现有 staging、
+图形队列 `executeImmediate` 和逐级线性 `vkCmdBlitImage`；各级在作为源图像前建立 transfer
+写到读依赖，返回前全部进入 Shader Read Only，ImageView 覆盖实际层数。没有异步生成或 CPU 回退。
+RGB 按 sRGB → 线性过滤 → sRGB 写回，alpha 按线性 straight 通道过滤，不预乘；
+黑白等权缩为 1×1 的 RGB 约为 188、alpha 0/255 的均值约为 128。
+该转换遵循 [Vulkan blit 规则](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdBlitImage.html)。
+
 `VulkanImage::uploadRgba8` 在 staging/Image 分配前检查设备 `maxImageDimension2D`、
-所选格式 optimal tiling 的 SAMPLED_IMAGE/TRANSFER_DST 功能，并查询该 2D、单层、单 mip、
-单 sample 与实际用途组合的 image format limits。不支持时抛出 RENDER 错误；
-同时保留 extent/像素长度检查，Resource 不包含设备限制。
+所选格式 optimal tiling 的 SAMPLED_IMAGE/TRANSFER_DST 功能，并查询该 2D、单 array layer、
+单 sample 与实际 usage 组合的 image format limits。生成多级时才增加 TRANSFER_SRC usage，
+要求 TRANSFER_SRC、BLIT_SRC、BLIT_DST 和线性过滤能力；检查 `maxMipLevels`，并将全部 mip
+像素计入 `maxResourceSize` 限制。单层路径与 FullChain 的 1×1 不要求未使用的 blit 能力。
+不支持时抛出 RENDER 错误，同时保留 extent/像素长度检查；Resource 不包含设备限制。
+直接构造的深度附件、读回图像及后端默认上传仍为单 mip。
 
 场景 RGB 由 sRGB 纹理采样得到 linear 值，与材质线性 RGB 相乘后，fragment Shader 使用精确 sRGB transfer function
 编码后写入 UNORM，输出 alpha=1，不启用场景 blending。clearColor 与 ImGui RGB 均为
@@ -141,12 +163,13 @@ auto smooth = renderer.createMaterial(filtered);
 filtered.sampler = {}; // Does not change smooth.
 ```
 
-当前上传仍只有基础层，所有 mip 选择均只访问第 0 层，不自动生成或重新上传 mip。
-BaseLevel 也只选择第 0 层。为让 min/mag 不同的基础层材质正确区分缩小与放大，后端使用
+BaseLevel 只选择第 0 层，Nearest 选择最近 mip，Linear 在相邻 mip 之间线性过滤；
+多层图像的 sampler 最大 LOD 为实际层数减一。单层图像上的各种选择均只访问第 0 层，
+不自动生成或重新上传 mip。为让 min/mag 不同的基础层材质正确区分缩小与放大，后端使用
 nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相同时保持原有 `maxLod=0`。
 这是 [Vulkan Sampler 规范](https://docs.vulkan.org/spec/latest/chapters/samplers.html)
 规定的基础层过滤方式：直接设零会始终使用 magFilter。
-创建含线性 min/mag 的材质时检查实际图像格式的线性过滤支持，不支持时报 RENDER；
+创建含线性 min/mag 或实际多层线性 mip 采样的材质时检查图像格式的线性过滤支持，不支持时报 RENDER；
 非法过滤枚举同样拒绝。能力查询只发生在创建阶段，不进入逐帧绘制。
 
 颜色按线性空间相乘，因此白色 texel 乘 `{0.5, 0.5, 0.5}` 后，sRGB 编码结果约为

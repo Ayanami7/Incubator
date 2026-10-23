@@ -6,6 +6,12 @@ namespace Incubator
 {
     namespace Render
     {
+        enum class TextureMipMode
+        {
+            BaseLevel,
+            FullChain
+        };
+
         // Copyable reference to one synchronous upload, owned until its Renderer is destroyed.
         // Keeping this reference does not extend the lifetime of the Renderer/device.
         class Texture

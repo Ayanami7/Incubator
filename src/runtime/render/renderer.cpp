@@ -97,11 +97,12 @@ namespace Incubator
 
         struct Texture::Impl
         {
-            Impl(const Vulkan::VulkanDevice& device, const Resource::TextureResource& texture) : owner(&device)
+            Impl(const Vulkan::VulkanDevice& device, const Resource::TextureResource& texture, TextureMipMode mipMode)
+                : owner(&device)
             {
                 image = Vulkan::VulkanImage::uploadRgba8(device, {texture.width(), texture.height()},
                                                          VK_FORMAT_R8G8B8A8_SRGB, texture.pixels(),
-                                                         VK_IMAGE_USAGE_SAMPLED_BIT);
+                                                         VK_IMAGE_USAGE_SAMPLED_BIT, mipMode);
             }
 
             const Vulkan::VulkanDevice* owner;
@@ -115,7 +116,7 @@ namespace Incubator
                 : owner(&device),
                   texture(std::move(source)),
                   samplerDesc(sampling),
-                  sampler(device, sampling),
+                  sampler(device, sampling, texture->image->mipLevels()),
                   binding(device, layout, *texture->image, sampler, color)
             {}
 
@@ -185,9 +186,9 @@ namespace Incubator
                 return Mesh(mesh);
             }
 
-            Texture createTexture(const Resource::TextureResource& texture)
+            Texture createTexture(const Resource::TextureResource& texture, TextureMipMode mipMode)
             {
-                auto gpuTexture = std::make_shared<Texture::Impl>(device_, texture);
+                auto gpuTexture = std::make_shared<Texture::Impl>(device_, texture, mipMode);
                 textures_.push_back(gpuTexture);
                 return Texture(gpuTexture);
             }
@@ -226,15 +227,18 @@ namespace Incubator
                     if (!std::isfinite(value) || value < 0.0f || value > 1.0f)
                         throw Error::Exception(Error::Code::RENDER,
                                                "Material color must be finite linear RGB in [0, 1]");
-                if (desc.sampler.minFilter == TextureFilter::Linear || desc.sampler.magFilter == TextureFilter::Linear)
+                if (desc.sampler.minFilter == TextureFilter::Linear ||
+                    desc.sampler.magFilter == TextureFilter::Linear ||
+                    (desc.sampler.mipFilter == MipFilter::Linear && texture->image->mipLevels() > 1))
                 {
                     VkFormatProperties properties{};
-                    vkGetPhysicalDeviceFormatProperties(device_.physicalDevice(), texture->image->format(), &properties);
+                    vkGetPhysicalDeviceFormatProperties(device_.physicalDevice(), texture->image->format(),
+                                                        &properties);
                     if (!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
                         throw Error::Exception(Error::Code::RENDER, "Texture format does not support linear filtering");
                 }
-                auto material = std::make_shared<Material::Impl>(device_, std::move(texture),
-                                                                 bindingSet_->materialLayout(), desc.color, desc.sampler);
+                auto material = std::make_shared<Material::Impl>(
+                    device_, std::move(texture), bindingSet_->materialLayout(), desc.color, desc.sampler);
                 materials_.push_back(material);
                 Log::Registry::get("render").debug("Created material: linear RGB ({}, {}, {})", desc.color[0],
                                                    desc.color[1], desc.color[2]);
@@ -412,11 +416,11 @@ namespace Incubator
             return impl_->createMesh(vertices, indices);
         }
 
-        Texture Renderer::createTexture(const Resource::TextureResource& texture)
+        Texture Renderer::createTexture(const Resource::TextureResource& texture, TextureMipMode mipMode)
         {
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
-            return impl_->createTexture(texture);
+            return impl_->createTexture(texture, mipMode);
         }
 
         void Renderer::prepareSceneResources(const Resource::ShaderResource& vertexShader,

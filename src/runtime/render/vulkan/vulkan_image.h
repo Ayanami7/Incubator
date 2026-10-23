@@ -6,6 +6,8 @@
 #include <memory>
 #include <span>
 
+#include "runtime/render/texture.h"
+
 namespace Incubator
 {
     namespace Render
@@ -18,7 +20,7 @@ namespace Incubator
             {
             public:
                 VulkanImage(const VulkanDevice& device, VkExtent2D extent, VkFormat format, VkImageUsageFlags usage,
-                            VkImageAspectFlags aspect);
+                            VkImageAspectFlags aspect, uint32_t mipLevels = 1);
                 ~VulkanImage();
 
                 VulkanImage(const VulkanImage&) = delete;
@@ -26,17 +28,20 @@ namespace Incubator
 
                 static std::shared_ptr<VulkanImage> uploadRgba8(const VulkanDevice& device, VkExtent2D extent,
                                                                 VkFormat format, std::span<const uint8_t> pixels,
-                                                                VkImageUsageFlags usage);
+                                                                VkImageUsageFlags usage,
+                                                                TextureMipMode mipMode = TextureMipMode::BaseLevel);
 
                 // Checks queried limits before staging or image allocation; also usable with controlled inputs.
                 static void validateRgba8Support(VkExtent2D extent, const VkPhysicalDeviceLimits& deviceLimits,
                                                  const VkFormatProperties& formatProperties,
-                                                 const VkImageFormatProperties& imageProperties);
+                                                 const VkImageFormatProperties& imageProperties,
+                                                 uint32_t mipLevels = 1);
 
                 VkImage handle() const noexcept;
                 VkImageView view() const noexcept;
                 VkExtent2D extent() const noexcept;
                 VkFormat format() const noexcept;
+                uint32_t mipLevels() const noexcept;
 
             private:
                 const VulkanDevice& device_;
@@ -45,6 +50,7 @@ namespace Incubator
                 VkDeviceMemory memory_ = VK_NULL_HANDLE;
                 VkExtent2D extent_{};
                 VkFormat format_ = VK_FORMAT_UNDEFINED;
+                uint32_t mipLevels_ = 1;
             };
         }  // namespace Vulkan
     }  // namespace Render
