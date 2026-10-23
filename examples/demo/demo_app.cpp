@@ -47,7 +47,7 @@ namespace Incubator::Demo
         : fileIO_(std::move(fileIO)), clearColor_(options.clearColor)
     {
         auto& manager = Resource::ResourceManager::instance();
-        // Check the entire table before registering anything or enabling route cleanup.
+        // 注册任何路由或启用路由清理前，先检查完整路由表。
         if (!manager.loadersEmpty())
             throw Error::Exception(Error::Code::CONFIG, "DemoApp requires an empty Loader route table");
         if (!fileIO_)
@@ -152,7 +152,7 @@ namespace Incubator::Demo
                     break;
                 const auto now = Clock::now();
                 const FrameTime time{now, now - previous};
-                previous = now;  // Advance on every loop, including skipped rendering loops.
+                previous = now;  // 每轮循环都推进时间，包括跳过渲染的循环。
                 if (callbacks.update)
                     callbacks.update(*this, time);
                 if (exitRequested_ || window_->shouldClose())

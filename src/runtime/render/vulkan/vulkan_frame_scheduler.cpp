@@ -248,7 +248,7 @@ namespace Incubator
                 submitInfo.signalSemaphoreInfoCount = 1;
                 submitInfo.pSignalSemaphoreInfos = &signalInfo;
 
-                // Reset only after acquisition and command recording have succeeded.
+                // 仅在图像获取和命令录制都成功后重置。
                 checkVk(vkResetFences(device_.handle(), 1, &frame.completionFence), "vkResetFences(frame)");
                 checkVk(vkQueueSubmit2(device_.graphicsQueue(), 1, &submitInfo, frame.completionFence),
                         "vkQueueSubmit2");
@@ -280,13 +280,13 @@ namespace Incubator
                 {
                     Log::Registry::get("render.vulkan").info(
                         "Swapchain present returned OUT_OF_DATE; scheduling recreation");
-                    // The queue wait and present fence are still submitted for this rejected request.
+                    // 即使本次请求被拒绝，队列等待和呈现栅栏仍会提交。
                     presentPending_[imageIndex] = true;
                     shouldRecreate = true;
                 }
                 else if (presentResult == VK_ERROR_SURFACE_LOST_KHR)
                 {
-                    // The queue wait is still submitted even though the presentation engine rejected the surface.
+                    // 即使呈现引擎拒绝该表面，队列等待仍会提交。
                     presentPending_[imageIndex] = true;
                     checkVk(presentResult, "vkQueuePresentKHR");
                 }

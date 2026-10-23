@@ -25,8 +25,8 @@ namespace Incubator::Resource
 {
     namespace
     {
-        // The fixed importer drops malformed faces and can ignore malformed UV streams.
-        // Observe just those diagnostics so a repaired partial mesh is never published.
+        // 固定配置的导入器会丢弃格式错误的面，并可能忽略格式错误的 UV 流。
+        // 只监视这些诊断，避免将修复后但不完整的网格发布出去。
         class ImportDiagnostics final : public Assimp::LogStream
         {
         public:
@@ -74,7 +74,7 @@ namespace Incubator::Resource
                 {
                     reject("Only glTF alphaMode OPAQUE is supported");
                 }
-                // Assimp maps baseColorFactor.a to OPACITY even for OPAQUE. Do not test it here.
+                // 即使材质为 OPAQUE，Assimp 也会把 baseColorFactor.a 映射到 OPACITY。此处不要检查该值。
             }
             else
             {
@@ -130,7 +130,7 @@ namespace Incubator::Resource
 
         glm::mat4 convertMatrix(const aiMatrix4x4& matrix)
         {
-            // aiMatrix4x4 names rows a..d; GLM constructors take columns.
+            // aiMatrix4x4 按行命名 a..d；GLM 构造函数接收列。
             return glm::mat4(matrix.a1, matrix.b1, matrix.c1, matrix.d1, matrix.a2, matrix.b2, matrix.c2, matrix.d2,
                              matrix.a3, matrix.b3, matrix.c3, matrix.d3, matrix.a4, matrix.b4, matrix.c4, matrix.d4);
         }
@@ -152,7 +152,7 @@ namespace Incubator::Resource
             ImportDiagnostics diagnostics;
             Assimp::Importer importer;
             auto* io = new Detail::AssimpFileIO(fileIO_, path, gltf);
-            importer.SetIOHandler(io);  // Importer owns it; FileIO is borrowed only during this call.
+            importer.SetIOHandler(io);  // Importer 持有该数据；FileIO 仅在本次调用期间借用。
             const auto* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_ValidateDataStructure);
             if (!io->failure().empty())
                 throw Error::Exception(Error::Code::IO, io->failure());
@@ -203,7 +203,7 @@ namespace Incubator::Resource
                     std::array<float, 2> uv{};
                     if (mesh.HasTextureCoords(0))
                     {
-                        // Both importers expose bottom-left Assimp UVs. glTF already inverted its source V.
+                        // 两个导入器都提供 Assimp 的左下原点 UV；glTF 已反转源 V 坐标。
                         uv = {mesh.mTextureCoords[0][v].x, 1.0f - mesh.mTextureCoords[0][v].y};
                     }
                     geometry.vertices.push_back({{position.x, position.y, position.z}, uv});

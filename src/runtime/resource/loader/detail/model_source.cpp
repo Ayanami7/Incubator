@@ -62,7 +62,7 @@ namespace Incubator::Resource::Detail
             }
             if (const auto* nodes = arrayMember(source, "nodes"))
             {
-                // The importer recursively clones nodes, so cycles/multiple parents must fail before it runs.
+                // 导入器会递归复制节点，因此必须在运行前拒绝环和多重父节点。
                 std::vector<bool> hasParent(nodes->Size(), false);
                 for (const auto& node : nodes->GetArray())
                 {
@@ -100,7 +100,7 @@ namespace Incubator::Resource::Detail
                 if (reached != nodes->Size())
                     throw Error::Exception(Error::Code::IO, "Invalid glTF hierarchy cycle");
             }
-            const auto directory = Path::getParentPath(path.substr(7));  // Strip assets/.
+            const auto directory = Path::getParentPath(path.substr(7));  // 去除 assets/ 前缀。
             for (const char* name : {"buffers", "images"})
             {
                 if (const auto* items = arrayMember(source, name))
@@ -135,7 +135,7 @@ namespace Incubator::Resource::Detail
                             if (position && position->IsUint() && accessors && position->GetUint() < accessors->Size())
                             {
                                 const auto* count = member((*accessors)[position->GetUint()], "count");
-                                // Assimp stores aiMesh::mNumVertices as unsigned; reject source counts it cannot represent.
+                                // Assimp 使用 unsigned 保存 aiMesh::mNumVertices；拒绝超出其表示范围的源顶点数。
                                 if (count && count->IsUint64() &&
                                     count->GetUint64() > std::numeric_limits<unsigned>::max())
                                 {
@@ -204,8 +204,8 @@ namespace Incubator::Resource::Detail
 
         void checkMtl(std::string_view text, std::unordered_set<std::string>& diffuseMaterials)
         {
-            // Assimp discards map_Kd UV transforms and repeated base-map declarations.
-            // Inspect only these declarations; colors, opacity and texture filenames stay with Assimp.
+            // Assimp 会丢弃 map_Kd 的 UV 变换和重复的基础纹理声明。
+            // 只检查这些声明；颜色、不透明度和纹理文件名仍交由 Assimp 处理。
             std::istringstream lines{std::string(text)};
             std::string line;
             std::string material = "default";
@@ -253,7 +253,7 @@ namespace Incubator::Resource::Detail
                 }
                 else if (keyword == "kd")
                 {
-                    // Assimp otherwise inserts gray (0.6), losing the absence of source Kd.
+                    // 否则 Assimp 会插入灰色（0.6），导致无法识别源文件未提供 Kd。
                     diffuseMaterials.insert(material);
                 }
             }

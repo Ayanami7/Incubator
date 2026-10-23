@@ -9,7 +9,7 @@ namespace Incubator::Scene
 {
     EntityId Scene::createEntity(std::shared_ptr<const Model::PreparedModel> model, Transform transform, bool visible)
     {
-        // One counter across all Scenes. Scene operations follow the Runtime main-thread contract.
+        // 所有 Scene 共用一个计数器。Scene 操作遵循 Runtime 的主线程约定。
         static uint64_t nextId = 1;
         if (nextId == 0)
             throw Error::Exception(Error::Code::CONFIG, "EntityId space is exhausted");

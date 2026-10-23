@@ -28,6 +28,8 @@ auto filtered = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Av
 
 上传与采样选择独立：完整链可仅采基础层，单层图片也可绑定 mip 采样而不补建层级。
 同次准备内，相同规范化路径仍共享一次上传及其 mip 链；白图在 FullChain 下仍只有 1×1 一层。
+返回后本次 CPU 持有释放，后续相机操作和窗口重建继续使用已有 GPU 图像、mip 与材质，
+不重新读取源文件。绘制项顺序、节点变换和 bounds 与采样策略无关。
 参数在创建时复制，之后修改 options 不影响已有准备结果。它是消费者的预览策略，
 不导入源 glTF/OBJ sampler，也不向 ModelResource 或 Loader 引入 Render 类型。
 

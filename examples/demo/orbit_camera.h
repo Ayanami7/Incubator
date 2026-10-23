@@ -32,7 +32,11 @@ namespace Incubator::Demo
             synchronized_ = true;
         }
 
-        // Mouse deltas are window coordinates; windowSize is not the framebuffer extent.
+        /// @brief 根据 UI 输入更新轨道相机。
+        /// @param camera 待更新的相机。
+        /// @param input 本帧 UI 输入。
+        /// @param windowSize 窗口客户区尺寸，鼠标位移使用此窗口坐标系，而非帧缓冲尺寸。
+        /// @return 相机发生变化时返回 true。
         bool apply(Scene::Camera& camera, const UiInput& input, Input::PointerValue windowSize)
         {
             if (!synchronized_ || changed(camera))
@@ -69,12 +73,12 @@ namespace Incubator::Demo
                     std::clamp(distance_ * static_cast<float>(std::exp(-input.scroll.y * 0.1)), 0.01f, 1000000.0f);
                 moved = true;
             }
-            // NewFrame may deliver the last movement together with release. It still belongs
-            // to the existing gesture; explicit cancellation has already cleared gesture_.
+            // NewFrame 可能会把末段位移和释放事件放在同一批输入中；这段位移仍属于
+            // 当前手势；显式取消操作已清除 gesture_。
             if (ending)
                 cancel();
-            // A press in this batch can start the next gesture after the old one ends.
-            // Its delta has already been handled above and must not move the new gesture.
+            // 旧手势结束后，本批次的按下事件可以启动下一个手势。
+            // 该批位移已在上方处理，不得再次用于移动新手势。
             if (gesture_ == Gesture::None && !input.captureMouse)
             {
                 if (input.rotate.pressed && input.rotate.down)

@@ -21,7 +21,8 @@ namespace Incubator::Input
         bool operator==(const PointerValue&) const = default;
     };
 
-    // Owned raw input snapshot. Event accumulation is independent of GLFW polling and UI consumption.
+    /// @brief 保存一帧内累计的原始输入状态。
+    /// @note 事件累计不依赖 GLFW 轮询，也不受 UI 消费影响。
     class InputState
     {
     public:
@@ -50,7 +51,8 @@ namespace Incubator::Input
         {
             return focused_;
         }
-        // Remains true even if focus returns within this input round.
+        /// @brief 查询本轮输入中是否发生过焦点丢失。
+        /// @return 本轮发生过焦点丢失时返回 true，即使焦点随后恢复也不清除此标记。
         bool focusLost() const noexcept
         {
             return focusLost_;

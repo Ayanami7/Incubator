@@ -27,7 +27,8 @@ namespace Incubator
                 void initializeVulkan(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
                                       uint32_t queueFamily, VkQueue queue, VkFormat colorFormat,
                                       VkFormat depthFormat, uint32_t imageCount);
-                // Requires initializeVulkan; application code uses Renderer::beginUiFrame.
+                /// @brief 开始 ImGui 帧。
+                /// @note 需要先调用 initializeVulkan；应用代码应使用 Renderer::beginUiFrame。
                 void beginFrame();
                 void endFrame();
                 void* drawData() const noexcept;

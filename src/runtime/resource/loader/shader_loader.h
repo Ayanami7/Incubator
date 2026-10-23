@@ -7,7 +7,7 @@ namespace Incubator
 {
     namespace Resource
     {
-        /// @brief Loads compiled SPIR-V assets into CPU-owned ShaderResource objects.
+        /// @brief 将已编译的 SPIR-V 资产加载为由 CPU 持有的 ShaderResource 对象。
         class ShaderLoader final : public LoaderBase
         {
         public:

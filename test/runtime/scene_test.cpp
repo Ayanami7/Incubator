@@ -89,7 +89,7 @@ namespace
         const auto added = scene.createEntity();
         EXPECT_NE(added, middle);
         EXPECT_EQ(ids(scene), (std::vector{first, last, added}));
-        // Reacquire by ID after vector growth, never retain the previous borrowed pointers/views.
+        // vector 扩容后按 ID 重新获取实体，不要保留先前借用的指针或视图。
         for (int count = 0; count < 32; ++count)
             scene.createEntity();
         EXPECT_EQ(scene.find(first)->id, first);

@@ -7,8 +7,8 @@ namespace Incubator
 {
     namespace Resource
     {
-        /// @brief Loads non-interlaced 8-bit Gray/RGB/Gray+Alpha/RGBA PNG into owned RGBA8 pixels.
-        /// Reads through FileIO and throws on failure; ResourceManager logs once and returns nullptr.
+        /// @brief 将非隔行、8 位灰度/RGB/灰度加 Alpha/RGBA PNG 加载为由 CPU 持有的 RGBA8 像素。
+        /// 通过 FileIO 读取；失败时抛出异常，ResourceManager 记录一次日志并返回 nullptr。
         class TextureLoader final : public LoaderBase
         {
         public:

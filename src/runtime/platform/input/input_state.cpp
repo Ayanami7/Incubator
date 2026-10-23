@@ -16,7 +16,7 @@ namespace Incubator::Input
                 button.released |= button.down;
                 button.down = false;
             }
-            // Repeat preserves down without synthesizing a new press.
+            // 重复事件会保持按下状态，但不会合成新的按下事件。
         }
     }  // namespace
 

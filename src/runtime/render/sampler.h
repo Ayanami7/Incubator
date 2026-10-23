@@ -14,7 +14,8 @@ namespace Incubator::Render
         Linear
     };
 
-    // Immutable material sampling policy. U/V addressing remains Repeat.
+    /// @brief 不可变的材质采样配置。
+    /// @note U/V 方向的寻址方式保持为 Repeat。
     struct SamplerDesc
     {
         TextureFilter minFilter = TextureFilter::Nearest;

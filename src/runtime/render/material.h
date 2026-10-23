@@ -13,13 +13,13 @@ namespace Incubator
         struct MaterialDesc
         {
             Texture texture;
-            // Linear RGB in [0, 1]. Scene output remains opaque.
+            /// @brief 线性 RGB 颜色，取值范围为 [0, 1]；场景输出保持不透明。
             std::array<float, 3> color{1.0f, 1.0f, 1.0f};
             SamplerDesc sampler;
         };
 
-        // Immutable material reference. Copies share the same Renderer-owned resource.
-        // Keeping this reference does not extend the lifetime of the Renderer/device.
+        /// @brief 不可变材质引用，副本共享同一份由 Renderer 持有的资源。
+        /// @note 持有此引用不会延长 Renderer 或设备的生命周期。
         class Material
         {
         public:

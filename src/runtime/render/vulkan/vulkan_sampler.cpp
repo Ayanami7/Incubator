@@ -39,8 +39,8 @@ namespace Incubator
                 samplerInfo.maxAnisotropy = 1.0f;
                 samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
                 samplerInfo.minLod = 0.0f;
-                // maxLod=0 always selects magFilter. With nearest mip selection, 0.25 still selects
-                // only level zero while allowing independent min/mag filters (Vulkan sampler spec).
+                // maxLod=0 会始终选择 magFilter。使用最近 mip 选择时，0.25 仍只会选择
+                // 第 0 级，同时允许 min/mag 过滤器独立配置（Vulkan 采样器规范）。
                 samplerInfo.maxLod = baseLevelOnly ? (desc.minFilter == desc.magFilter ? 0.0f : 0.25f)
                                                    : static_cast<float>(mipLevels - 1);
                 samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;

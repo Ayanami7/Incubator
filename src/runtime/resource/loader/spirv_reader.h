@@ -15,7 +15,7 @@ namespace Incubator
     {
         namespace Loader
         {
-            /// @brief Read a SPIR-V module into owned, host-endian 32-bit words.
+            /// @brief 将 SPIR-V 模块读取为由 CPU 持有的本机字节序 32 位字数据。
             std::vector<uint32_t> readSpirv(FileIO::FileIO& fileIO, const std::filesystem::path& path);
         }  // namespace Loader
     }  // namespace Resource

@@ -21,7 +21,7 @@ using Incubator::Window::Window;
 using Incubator::Window::createPlatformWindow;
 
 // ============================================================
-//  WindowDesc Tests
+//  WindowDesc 测试
 // ============================================================
 
 TEST(WindowDescTest, DefaultValues)
@@ -52,7 +52,7 @@ TEST(WindowDescTest, CustomValues)
 }
 
 // ============================================================
-//  WindowTest Fixture
+//  WindowTest 测试夹具
 // ============================================================
 
 class WindowTest : public ::testing::Test
@@ -97,7 +97,7 @@ protected:
 };
 
 // ============================================================
-//  Factory & Lifecycle Tests (via Fixture)
+//  工厂与生命周期测试（通过测试夹具）
 // ============================================================
 
 TEST_F(WindowTest, FactoryReturnsNonNull)
@@ -214,7 +214,7 @@ TEST_F(WindowTest, SetTitlePreservesUtf8Chinese)
 #endif
 
 // ============================================================
-//  Factory Function — Standalone Test
+//  工厂函数独立测试
 // ============================================================
 
 TEST(WindowFactoryTest, CreateWithDefaultDesc)

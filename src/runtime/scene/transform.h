@@ -5,8 +5,8 @@
 
 namespace Incubator::Scene
 {
-    // Owned TRS value. Rotations are normalized on input; zero/negative scales are valid.
-    // Invalid (nonfinite or zero-length rotation) input throws CONFIG without changing the value.
+    /// @brief 由平移、旋转和缩放组成的 TRS 变换值。
+    /// @note 输入旋转会归一化；零缩放和负缩放均有效。旋转非有限或长度为零时抛出 CONFIG，且不修改当前值。
     class Transform
     {
     public:
@@ -20,7 +20,9 @@ namespace Incubator::Scene
         void setRotation(glm::quat rotation);
         void setScale(glm::vec3 scale);
 
-        // Column vectors: T * R * S. Units are the consuming scene/model's units.
+        /// @brief 计算此变换的矩阵。
+        /// @return 使用列向量约定的 T * R * S 矩阵。
+        /// @note 单位由使用该变换的场景或模型决定。
         glm::mat4 matrix() const;
 
     private:

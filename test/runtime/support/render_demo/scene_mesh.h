@@ -29,7 +29,7 @@ namespace Incubator
                                                                         {-0.5f, 0.5f, 0.5f}}};
             constexpr std::array<std::array<uint8_t, 4>, 6> FACES = {
                 {{4, 5, 6, 7}, {1, 0, 3, 2}, {5, 1, 2, 6}, {0, 4, 7, 3}, {7, 6, 2, 3}, {0, 1, 5, 4}}};
-            // Each face starts at its bottom-left; +Z top reads the first PNG row.
+            // 每个面的起点是左下角；朝向 +Z 的顶面从 PNG 第一行读取数据。
             constexpr std::array<std::array<float, 2>, 4> UV = {
                 {{0.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f}}};
             SceneMeshData data;
@@ -49,7 +49,7 @@ namespace Incubator
             return data;
         }
 
-        // Unit XY plane facing +Z, with the same top-left UV convention as the cube.
+        // 朝向 +Z 的单位 XY 平面，UV 原点约定与立方体相同，均位于左上角。
         inline SceneMeshData makePlaneMesh()
         {
             return {{{{-0.5f, -0.5f, 0.0f}, {0.0f, 1.0f}},

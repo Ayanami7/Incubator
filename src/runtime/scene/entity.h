@@ -14,8 +14,8 @@ namespace Incubator::Scene
 {
     class Scene;
 
-    // Process-local logical identity, independent of resources and GPU/model indices.
-    // Nonzero means issued; only the owning Scene can determine whether it is still alive.
+    /// @brief 进程内的逻辑实体标识，与资源及 GPU/模型索引无关。
+    /// @note 非零表示标识已发放；只有所属 Scene 能判断实体是否仍然有效。
     class EntityId
     {
     public:
@@ -39,7 +39,8 @@ namespace Incubator::Scene
         uint64_t value_ = 0;
     };
 
-    // Scene exposes const borrowed entities; mutate stored values through its ID-based APIs.
+    /// @brief Scene 中的实体数据。
+    /// @note Scene 仅公开只读借用的实体；通过基于 ID 的接口修改已存储的值。
     struct Entity
     {
         EntityId id;

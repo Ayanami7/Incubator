@@ -13,7 +13,7 @@ namespace Incubator
         {
             Unknown = 0,
 
-            // Letters A-Z
+            // 字母键 A-Z
             A = 1,
             B = 2,
             C = 3,
@@ -41,7 +41,7 @@ namespace Incubator
             Y = 25,
             Z = 26,
 
-            // Numbers 0-9
+            // 数字键 0-9
             Num0 = 27,
             Num1 = 28,
             Num2 = 29,
@@ -53,7 +53,7 @@ namespace Incubator
             Num8 = 35,
             Num9 = 36,
 
-            // Function keys F1-F25
+            // 功能键 F1-F25
             F1 = 37,
             F2 = 38,
             F3 = 39,
@@ -80,7 +80,7 @@ namespace Incubator
             F24 = 60,
             F25 = 61,
 
-            // Arrow and navigation keys
+            // 方向键与导航键
             Up = 62,
             Down = 63,
             Left = 64,
@@ -92,7 +92,7 @@ namespace Incubator
             Insert = 70,
             Delete = 71,
 
-            // Action keys
+            // 操作键
             Space = 72,
             Enter = 73,
             Escape = 74,
@@ -100,20 +100,20 @@ namespace Incubator
             Backspace = 76,
             CapsLock = 77,
 
-            // Symbol keys
-            Apostrophe = 78,   // '
-            Comma = 79,        // ,
-            Minus = 80,        // -
-            Period = 81,       // .
-            Slash = 82,        // /
-            Semicolon = 83,    // ;
-            Equal = 84,        // =
-            LeftBracket = 85,  // [
-            RightBracket = 86, // ]
-            Backslash = 87,    // backslash
-            GraveAccent = 88,  // grave accent
+            // 符号键
+            Apostrophe = 78,   ///< '
+            Comma = 79,        ///< ,
+            Minus = 80,        ///< -
+            Period = 81,       ///< .
+            Slash = 82,        ///< /
+            Semicolon = 83,    ///< ;
+            Equal = 84,        ///< =
+            LeftBracket = 85,  ///< [
+            RightBracket = 86, ///< ]
+            Backslash = 87,    ///< 反斜杠
+            GraveAccent = 88,  ///< 重音符
 
-            // Modifier keys
+            // 修饰键
             LeftShift = 89,
             RightShift = 90,
             LeftControl = 91,
@@ -123,7 +123,7 @@ namespace Incubator
             LeftSuper = 95,
             RightSuper = 96,
 
-            // Numpad keys
+            // 数字小键盘按键
             Kp0 = 97,
             Kp1 = 98,
             Kp2 = 99,
@@ -142,7 +142,7 @@ namespace Incubator
             KpEnter = 112,
             KpEqual = 113,
 
-            // Lock and system keys
+            // 锁定键与系统键
             ScrollLock = 114,
             NumLock = 115,
             PrintScreen = 116,
@@ -159,8 +159,8 @@ namespace Incubator
             Left = 1,
             Right = 2,
             Middle = 3,
-            X1 = 4,  // side button 1 (back)
-            X2 = 5   // side button 2 (forward)
+            X1 = 4,  ///< 侧键 1（后退）
+            X2 = 5   ///< 侧键 2（前进）
         };
 
         /// @brief 按键状态
@@ -180,7 +180,7 @@ namespace Incubator
             {
                 case GLFW_KEY_UNKNOWN:      return KeyCode::Unknown;
 
-                // Letters
+                // 字母键
                 case GLFW_KEY_A:            return KeyCode::A;
                 case GLFW_KEY_B:            return KeyCode::B;
                 case GLFW_KEY_C:            return KeyCode::C;
@@ -208,7 +208,7 @@ namespace Incubator
                 case GLFW_KEY_Y:            return KeyCode::Y;
                 case GLFW_KEY_Z:            return KeyCode::Z;
 
-                // Numbers
+                // 数字键
                 case GLFW_KEY_0:            return KeyCode::Num0;
                 case GLFW_KEY_1:            return KeyCode::Num1;
                 case GLFW_KEY_2:            return KeyCode::Num2;
@@ -220,7 +220,7 @@ namespace Incubator
                 case GLFW_KEY_8:            return KeyCode::Num8;
                 case GLFW_KEY_9:            return KeyCode::Num9;
 
-                // Function keys
+                // 功能键
                 case GLFW_KEY_F1:           return KeyCode::F1;
                 case GLFW_KEY_F2:           return KeyCode::F2;
                 case GLFW_KEY_F3:           return KeyCode::F3;
@@ -247,7 +247,7 @@ namespace Incubator
                 case GLFW_KEY_F24:          return KeyCode::F24;
                 case GLFW_KEY_F25:          return KeyCode::F25;
 
-                // Arrow and navigation keys
+                // 方向键与导航键
                 case GLFW_KEY_UP:           return KeyCode::Up;
                 case GLFW_KEY_DOWN:         return KeyCode::Down;
                 case GLFW_KEY_LEFT:         return KeyCode::Left;
@@ -259,7 +259,7 @@ namespace Incubator
                 case GLFW_KEY_INSERT:       return KeyCode::Insert;
                 case GLFW_KEY_DELETE:       return KeyCode::Delete;
 
-                // Action keys
+                // 操作键
                 case GLFW_KEY_SPACE:        return KeyCode::Space;
                 case GLFW_KEY_ENTER:        return KeyCode::Enter;
                 case GLFW_KEY_ESCAPE:       return KeyCode::Escape;
@@ -267,7 +267,7 @@ namespace Incubator
                 case GLFW_KEY_BACKSPACE:    return KeyCode::Backspace;
                 case GLFW_KEY_CAPS_LOCK:    return KeyCode::CapsLock;
 
-                // Symbol keys
+                // 符号键
                 case GLFW_KEY_APOSTROPHE:   return KeyCode::Apostrophe;
                 case GLFW_KEY_COMMA:        return KeyCode::Comma;
                 case GLFW_KEY_MINUS:        return KeyCode::Minus;
@@ -280,7 +280,7 @@ namespace Incubator
                 case GLFW_KEY_BACKSLASH:    return KeyCode::Backslash;
                 case GLFW_KEY_GRAVE_ACCENT: return KeyCode::GraveAccent;
 
-                // Modifier keys
+                // 修饰键
                 case GLFW_KEY_LEFT_SHIFT:   return KeyCode::LeftShift;
                 case GLFW_KEY_RIGHT_SHIFT:  return KeyCode::RightShift;
                 case GLFW_KEY_LEFT_CONTROL: return KeyCode::LeftControl;
@@ -290,7 +290,7 @@ namespace Incubator
                 case GLFW_KEY_LEFT_SUPER:   return KeyCode::LeftSuper;
                 case GLFW_KEY_RIGHT_SUPER:  return KeyCode::RightSuper;
 
-                // Numpad keys
+                // 数字小键盘按键
                 case GLFW_KEY_KP_0:         return KeyCode::Kp0;
                 case GLFW_KEY_KP_1:         return KeyCode::Kp1;
                 case GLFW_KEY_KP_2:         return KeyCode::Kp2;
@@ -309,7 +309,7 @@ namespace Incubator
                 case GLFW_KEY_KP_ENTER:     return KeyCode::KpEnter;
                 case GLFW_KEY_KP_EQUAL:     return KeyCode::KpEqual;
 
-                // Lock and system keys
+                // 锁定键与系统键
                 case GLFW_KEY_SCROLL_LOCK:  return KeyCode::ScrollLock;
                 case GLFW_KEY_NUM_LOCK:     return KeyCode::NumLock;
                 case GLFW_KEY_PRINT_SCREEN: return KeyCode::PrintScreen;

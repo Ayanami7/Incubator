@@ -97,7 +97,7 @@ namespace TextureGpuReview
         VkDeviceMemory memory_ = VK_NULL_HANDLE;
     };
 
-    // Reads one small controlled mip into the existing review buffer, then restores sampling layout.
+    // 将一个受控的小型 mip 读取到现有复核缓冲区，再恢复图像采样布局。
     inline std::vector<uint8_t> captureMip(const VulkanDevice& device, const VulkanImage& image,
                                             uint32_t level, VkExtent2D extent)
     {
@@ -150,8 +150,8 @@ namespace TextureGpuReview
         return pixels;
     }
 
-    // Shares attachment/barrier/readback code with model review; model callers supply the
-    // existing Renderer pipeline, uploaded buffers and immutable material descriptor sets.
+    // 与模型复核共用附件、屏障和回读代码；模型调用方提供
+    // 现有 Renderer 管线、已上传缓冲区和不可变材质描述符集。
     inline std::vector<uint8_t> captureDraws(const VulkanDevice& device, const VulkanPipeline& pipeline,
                                              VkDescriptorSet frameSet, std::span<const VulkanDrawItem> draws,
                                              VkViewport viewport = {0, 0, 384, 256, 0, 1},
@@ -256,8 +256,8 @@ namespace TextureGpuReview
         return pixels;
     }
 
-    // Render the application's plane and production shader into the selected UNORM format.
-    // The test attachment permits readback without adding a screenshot API to Renderer.
+    // 使用应用的平面和正式着色器渲染到指定 UNORM 格式。
+    // 测试附件支持回读，无需在 Renderer 中增加截图接口。
     inline std::vector<uint8_t> capture(VkInstance instance, const VulkanDevice& device, Window::Window& window,
                                         Demo::SceneAssets& assets, VkFormat format,
                                         const std::array<float, 3>& tint = {1.0f, 1.0f, 1.0f},
@@ -266,7 +266,7 @@ namespace TextureGpuReview
         auto texture =
             VulkanImage::uploadRgba8(device, {assets.texture->width(), assets.texture->height()},
                                      VK_FORMAT_R8G8B8A8_SRGB, assets.texture->pixels(), VK_IMAGE_USAGE_SAMPLED_BIT);
-        VulkanSampler sampler(device);
+        VulkanSampler sampler(device, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::BaseLevel});
         struct alignas(16) Transforms
         {
             glm::mat4 view{1.0f};
@@ -303,8 +303,8 @@ namespace TextureGpuReview
             throw Error::Exception(Error::Code::RENDER, "CPU texture remains mounted before GPU readback drawing");
         if (previousPipelineFormat != VK_FORMAT_UNDEFINED)
         {
-            // Controlled attachment-format change, reusing the same texture, material and frame bindings.
-            // This is not an observed swapchain format change; CPU assets/Loader are already released.
+            // 受控地更改附件格式，并复用相同的纹理、材质和帧绑定。
+            // 此处并未观察交换链格式变化；CPU 资产和 Loader 已经释放。
             pipeline = std::make_unique<VulkanPipeline>(device, format, depthFormat, bindings.layout(),
                                                         bindings.materialLayout(), vertexWords, fragmentWords);
         }

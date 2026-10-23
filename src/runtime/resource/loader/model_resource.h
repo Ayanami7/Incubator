@@ -17,9 +17,10 @@ namespace Incubator
     {
         struct ModelMaterial
         {
-            // Asset-root-relative path, resolved by the importer. No path means solid color.
+            /// @brief 相对于资产根目录的纹理路径，由导入器解析。
+            /// @note 路径为空时使用纯色。
             std::optional<std::string> texturePath;
-            std::array<float, 3> color{1.0f, 1.0f, 1.0f};  // Linear RGB; opaque output.
+            std::array<float, 3> color{1.0f, 1.0f, 1.0f};  ///< 线性 RGB；输出不透明。
         };
 
         struct ModelPart
@@ -36,8 +37,8 @@ namespace Incubator
             std::vector<uint32_t> parts;
         };
 
-        // Owned CPU model, validated once at construction. All indices are local to this asset.
-        // Nodes form one tree; rootNode need not be zero. No file reads or GPU objects are created.
+        /// @brief 由 CPU 持有并在构造时验证的模型数据。
+        /// @note 所有索引均相对于此资产；节点构成一棵树，rootNode 不必为 0。此处不读取文件，也不创建 GPU 对象。
         class ModelResource final : public ResourceObject
         {
         public:
@@ -49,7 +50,8 @@ namespace Incubator
                 return geometries_;
             }
 
-            // Geometry-local bounds, indexed exactly like geometries(). Includes unused vertices.
+            /// @brief 返回各几何体的局部包围盒，与 geometries() 使用相同索引。
+            /// @note 包围盒包含未使用的顶点。
             const std::vector<Math::Aabb>& geometryBounds() const noexcept
             {
                 return geometryBounds_;

@@ -18,12 +18,14 @@
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/model/prepared_model.h"
+#include "runtime/render/detail/renderer_review.h"
 #include "runtime/resource/loader/text_resource.h"
 #include "runtime/resource/loader/texture_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene_frame.h"
 #include "support/window_capture.h"
+#include "support/texture_gpu_review.h"
 #include "runtime/render/integration/imgui_renderer.h"
 
 namespace
@@ -262,7 +264,7 @@ namespace
         EXPECT_FALSE(orbit.apply(camera, input, {800, 600}));
         input.rotate.pressed = false;
         input.delta = {20, 0};
-        input.captureMouse = true; // Ownership survives crossing the UI.
+        input.captureMouse = true; // 指针越过 UI 区域时，交互所有权仍然保留。
         EXPECT_TRUE(orbit.apply(camera, input, {800, 600}));
         EXPECT_NEAR(camera.position().x, -6 * std::sin(0.1f), 0.00001f);
         EXPECT_NEAR(camera.position().z, 6 * std::cos(0.1f), 0.00001f);
@@ -433,7 +435,7 @@ namespace
         ASSERT_TRUE(orbit.focus(camera, Math::Aabb{{3, 4, 5}, {3, 4, 5}}, {800, 600}));
         EXPECT_GT(camera.perspective().nearPlane, 0);
         EXPECT_GT(camera.perspective().farPlane, camera.perspective().nearPlane);
-        EXPECT_FALSE(orbit.apply(camera, input, {800, 600})); // Focus ended the old gesture.
+        EXPECT_FALSE(orbit.apply(camera, input, {800, 600})); // 焦点丢失结束了旧手势。
     }
 
     TEST_F(DemoAppTest, OrbitFocusCommandsKeepAssetsAndEntitiesAndSynchronizeReplacement)
@@ -739,7 +741,7 @@ namespace
                          EXPECT_GE(time.delta, Clock::Duration::zero());
                          if (times.size() > 1)
                              EXPECT_EQ(time.delta, time.now - times[times.size() - 2].now);
-                         app.scene().createEntity();  // Logic continues even when rendering is skipped.
+                         app.scene().createEntity();  // 跳过渲染时逻辑仍会继续执行。
                          EXPECT_EQ(state->opens, opens);
                          auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
                          if (frame == 1)
@@ -804,7 +806,7 @@ namespace
             Demo::DemoApp session(config, std::make_unique<TrackedFileIO>(state));
             Demo::ModelScene demo;
             int frame = 0, cancellations = 0;
-            size_t opens = 0, uploads = 0;
+            size_t opens = 0, uploads = 0, textureUploads = 0, materialCreations = 0;
             Scene::EntityId selected;
             glm::mat4 entityMatrix(1);
             Scene::Camera focused, rotated, beforeMinimize;
@@ -812,6 +814,32 @@ namespace
             GLFWkeyfun key = nullptr;
             GLFWscrollfun scroll = nullptr;
             GLFWcursorposfun cursor = nullptr;
+            const auto captureSampling = [&](Demo::DemoApp& app, const char* label) {
+                int width, height;
+                app.window().getFramebufferSize(width, height);
+                const Render::FrameExtent extent =
+                    width < height ? Render::FrameExtent{192, 256} : Render::FrameExtent{320, 240};
+                const auto extracted = Scene::extractSceneFrame(app.scene(), extent);
+                ASSERT_TRUE(extracted);
+                ASSERT_FALSE(extracted->draws.empty());
+                std::vector<uint8_t> pixels;
+                Render::Detail::RendererReviewAccess::withFrame(
+                    app.renderer(), extracted->input(),
+                    [&](const auto& device, const auto& pipeline, auto frameSet, auto draws) {
+                        pixels = TextureGpuReview::captureDraws(
+                            device, pipeline, frameSet, draws, {0, 0, float(extent.width), float(extent.height), 0, 1});
+                    });
+                ASSERT_EQ(pixels.size(), 384u * 256 * 4);
+                size_t colored = 0;
+                for (size_t i = 0; i < pixels.size(); i += 4)
+                {
+                    colored += pixels[i] != 128 || pixels[i + 1] != 128 || pixels[i + 2] != 128;
+                    EXPECT_EQ(pixels[i + 3], 255);
+                }
+                EXPECT_GT(colored, 0u);
+                WindowCapture::save({384, 256, pixels},
+                                    std::string("review/sampling-") + (obj ? "teapot-" : "avocado-") + label + ".ppm");
+            };
             const auto checkFocus = [&](Demo::DemoApp& app) {
                 int width, height;
                 app.window().getFramebufferSize(width, height);
@@ -850,8 +878,8 @@ namespace
                     scroll = glfwSetScrollCallback(handle, nullptr);
                     glfwSetScrollCallback(handle, scroll);
                     cursor = glfwSetCursorPosCallback(handle, nullptr);
-                    // Drive the real chained cursor callback with controlled test positions;
-                    // desktop mouse movement/enter events must not mix into the synthetic gestures.
+                    // 使用受控测试坐标驱动真实的串联光标回调；
+                    // 桌面鼠标移动和进入事件不得混入合成手势。
                     const auto enter = glfwSetCursorEnterCallback(handle, nullptr);
                     enter(handle, GLFW_TRUE);
                     glfwFocusWindow(handle);
@@ -874,8 +902,10 @@ namespace
                         EXPECT_LT(culled->draws.size(), all->draws.size());
                         opens = state->opens;
                         uploads = count("Uploaded mesh:");
+                        textureUploads = count("Uploaded RGBA8 texture:");
+                        materialCreations = count("Created material:");
                         cursor(handle, 700, 500);
-                        button(handle, 0, GLFW_PRESS, 0); // Defocus the panel before the shortcut.
+                        button(handle, 0, GLFW_PRESS, 0); // 触发快捷键前先让面板失去焦点。
                     }
                     if (step == 1) button(handle, 0, GLFW_RELEASE, 0);
                     if (step == 2 || step == 27) key(handle, GLFW_KEY_F, 0, GLFW_PRESS, 0);
@@ -884,6 +914,7 @@ namespace
                     {
                         ASSERT_NO_FATAL_FAILURE(checkFocus(app));
                         focused = app.scene().camera();
+                        ASSERT_NO_FATAL_FAILURE(captureSampling(app, "focused"));
                     }
                     if (step == 5)
                     {
@@ -908,6 +939,7 @@ namespace
                     {
                         rotated = app.scene().camera();
                         EXPECT_NE(rotated.rotation(), focused.rotation());
+                        ASSERT_NO_FATAL_FAILURE(captureSampling(app, "oblique"));
                         button(handle, 2, GLFW_PRESS, 0);
                     }
                     if (step == 9) cursor(handle, 730, 520);
@@ -917,7 +949,16 @@ namespace
                         EXPECT_NE(app.scene().camera().position(), rotated.position());
                         scroll(handle, 0, 1);
                     }
-                    if (step == 13) button(handle, 1, GLFW_PRESS, 0);
+                    if (step == 12)
+                    {
+                        ASSERT_NO_FATAL_FAILURE(captureSampling(app, "near"));
+                        scroll(handle, 0, -2);
+                    }
+                    if (step == 13)
+                    {
+                        ASSERT_NO_FATAL_FAILURE(captureSampling(app, "far"));
+                        button(handle, 1, GLFW_PRESS, 0);
+                    }
                     if (step == 14) cursor(handle, 710, 510);
                     if (step == 15)
                     {
@@ -946,11 +987,17 @@ namespace
                     if (step == 24) cursor(handle, 520, 700);
                     if (step == 25) button(handle, 1, GLFW_RELEASE, 0);
                     if (step == 26) EXPECT_NE(app.scene().camera().rotation(), beforeMinimize.rotation());
-                    if (step == 29) ASSERT_NO_FATAL_FAILURE(checkFocus(app));
+                    if (step == 29)
+                    {
+                        ASSERT_NO_FATAL_FAILURE(checkFocus(app));
+                        ASSERT_NO_FATAL_FAILURE(captureSampling(app, "portrait-restored"));
+                    }
                     if (step >= 0)
                     {
                         EXPECT_EQ(state->opens, opens);
                         EXPECT_EQ(count("Uploaded mesh:"), uploads);
+                        EXPECT_EQ(count("Uploaded RGBA8 texture:"), textureUploads);
+                        EXPECT_EQ(count("Created material:"), materialCreations);
                     }
                     if (step == 30)
                     {
@@ -1209,7 +1256,7 @@ namespace
                 }
             },
             [&, demo](Demo::DemoApp& app) {
-                // UI-side entity edits take effect in this frame's production extraction.
+                // UI 对实体所做的修改会在本帧正式提取场景时生效。
                 if (updates == 4)
                     ASSERT_TRUE(app.scene().setVisible(first, false));
                 demo->ui(app);
@@ -1346,7 +1393,7 @@ namespace
                                          app.requestExit();
                                  }});
                 else
-                    session.requestExit();  // Destruction without run is also a normal close path.
+                    session.requestExit();  // 未调用 run 就销毁对象也是正常的关闭路径。
             }
             EXPECT_EQ(updates, mode < 2 ? 3 : mode == 2 ? 1 : 0);
             EXPECT_EQ(uis, mode < 2 ? 2 : mode == 2 ? 1 : 0);

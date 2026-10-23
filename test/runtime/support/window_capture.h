@@ -34,8 +34,8 @@ namespace WindowCapture
         std::vector<uint8_t> rgba;
     };
 
-    // Captures the visible client area after presentation; this is display evidence,
-    // while the offscreen texture review remains responsible for exact color values.
+    // 呈现后捕获可见的客户区；这是显示效果证据，
+    // 精确颜色值仍由离屏纹理复核负责。
     inline Image capture(Incubator::Window::Window& window)
     {
         const auto fail = [](const char* operation) {
@@ -82,8 +82,8 @@ namespace WindowCapture
                                               "Window capture requires a nonempty client area");
         image.rgba.resize(static_cast<size_t>(image.width) * image.height * 4);
 
-        // Flip-model Vulkan presentation may leave a window DC's redirection surface stale.
-        // Read the composed desktop at the unobstructed client's screen coordinates instead.
+        // Vulkan 翻转模型呈现可能导致窗口 DC 的重定向表面未及时更新。
+        // 改为读取无遮挡客户区对应的桌面合成坐标。
         resources.screenDc = GetDC(nullptr);
         if (!resources.screenDc)
             fail("GetDC");
@@ -101,7 +101,7 @@ namespace WindowCapture
                     SRCCOPY | CAPTUREBLT))
             fail("BitBlt");
 
-        // GetDIBits requires the bitmap to be deselected from the memory DC.
+        // 调用 GetDIBits 前必须先从内存 DC 中取消选中该位图。
         const auto selected = SelectObject(resources.memoryDc, resources.previous);
         if (!selected || selected == HGDI_ERROR)
             fail("SelectObject restore");
@@ -124,11 +124,11 @@ namespace WindowCapture
         }
         return image;
     }
-    // Geometry comparisons use the displayed clear color; exact color checks remain offscreen.
+    // 几何比较使用显示出来的清屏颜色；精确颜色检查仍在离屏缓冲区完成。
     inline std::array<int, 4> bounds(const Image& image, int left = 8, int right = -1)
     {
         std::array<int, 4> rect{image.width, image.height, -1, -1};
-        // Exclude desktop pixels in Windows' rounded client corners.
+        // 排除 Windows 圆角客户区之外的桌面像素。
         for (int y = 8; y < image.height - 8; ++y)
         {
             for (int x = left; x < (right < 0 ? image.width - 8 : right); ++x)

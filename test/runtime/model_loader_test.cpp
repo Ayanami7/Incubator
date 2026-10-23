@@ -372,7 +372,7 @@ namespace
         ASSERT_NE(texture, nullptr);
         EXPECT_GT(texture->width(), 1u);
         EXPECT_GT(texture->height(), 1u);
-        // Distinct top and bottom rows, with V=0 at the upper mesh vertices in both formats.
+        // 顶部行和底部行使用不同数据；两种格式中网格上方顶点的 V 坐标均为 0。
         const auto stride = static_cast<size_t>(texture->width()) * 4;
         EXPECT_FALSE(std::equal(texture->pixels().begin(), texture->pixels().begin() + stride,
                                 texture->pixels().begin() + stride * (texture->height() - 1)));
@@ -798,7 +798,7 @@ namespace
     TEST_F(ModelLoaderTest, RejectsSourceIndexRepairEvenWhenOtherTrianglesAreValid)
     {
         auto bytes = read("models/minimal_gltf/geometry/mesh.bin");
-        // Index accessor 2 starts at byte 80; keep one good triangle and one bad triangle.
+        // 索引访问器 2 从字节偏移 80 开始；保留一个有效三角形和一个无效三角形。
         const uint16_t invalid = 65535;
         std::memcpy(bytes.data() + 80 + 5 * sizeof(uint16_t), &invalid, sizeof(invalid));
         write("models/minimal_gltf/geometry/mesh.bin", bytes);

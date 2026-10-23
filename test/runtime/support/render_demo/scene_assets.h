@@ -27,8 +27,8 @@ namespace Incubator
             std::string_view model;
         };
 
-        // Demo and review tests exclusively own the Manager's loader routes during this scope.
-        // The already-constructed cleanup member also covers failure of the outer constructor.
+        // 在此作用域内，Demo 和复核测试独占 Manager 的 Loader 路由。
+        // 已构造的清理成员也能处理外层构造函数失败的情况。
         class SceneAssets
         {
         private:

@@ -55,6 +55,8 @@ Renderer 不依赖 Scene；旧 extent 跳帧、提交内借用及过期/跨 Rend
 GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自建显存池。`VulkanDevice` 集中选择满足 required、尽量满足 preferred 的内存类型，并提供 Fence 等待的一次性图形队列提交。静态 Buffer 和 RGBA8 Image 通过 staging 上传；Buffer 写入后按非 coherent 属性执行 flush，Image 显式从 Undefined 转为 Transfer Destination，再转为 Shader Read Only。该方案适合当前低数量基础资源，之后如资源数量和分配开销增长，再单独评估 VMA。
 
 `VulkanFrameScheduler` 每帧槽可持有本帧命令引用的共享 GPU 资源。帧槽 Fence 确认提交完成后才清除这些引用；重建和关闭时等待在途帧完成后释放。CPU 可写 Buffer 本身不允许与 GPU 并发读写，调用方需按帧槽隔离区域或等待对应 Fence 后再写。
+交换链获取信号量在颜色输出阶段等待；首个图像布局转换以同一阶段作为源，
+将获取、布局转换与颜色写入连成依赖，丢弃旧内容也仍须等待获取完成。
 
 `Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新相机前等待对应帧槽 Fence，Camera Uniform Buffer 与深度附件按帧槽隔离。帧调度器仅管理获取、提交、呈现和资源持有；场景回调通过 `VulkanCommandList::drawIndexed` 消费网格/材质列表，随后录制 UI。相机 set 0 和共享 Pipeline 每次场景录制绑定一次，材质 set 1 与 model push constant 逐物体录制，不覆盖其他物体或帧槽的数据。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。外部纹理由 `createTexture` 同步上传，通过 Combined Image Sampler 采样；窗口重建复用网格、材质和纹理。
 
@@ -74,6 +76,8 @@ TextureResource 指针或 CPU 像素副本，应用可在下一次绘制前 rele
 GPU Image、Sampler、Descriptor 由 Render 持有，在途帧另持有所用 Material 及其 Texture 依赖至 Fence 完成；
 交换链重建复用这些纹理，不重新读取、解码或上传。立方体 +Z 面顶部 UV 指向 PNG 首行，
 Loader、上传和 Shader 均不再翻转；默认采样仍为 nearest/repeat/基础层。
+生成过 mip 的图像同样在窗口重建时复用完整链；相机缩放只影响本帧选取的 mip，
+不触发上传或再次生成。精确 texel/UV 对照应显式使用 BaseLevel 与 nearest min/mag。
 
 `TextureMipMode::BaseLevel` 保持原有单 mip 上传；显式选择 `FullChain` 时，在 GPU 上生成
 完整链。每轴逐级向下除以 2、最小为 1，直到 1×1，例如 3×5 → 1×2 → 1×1，

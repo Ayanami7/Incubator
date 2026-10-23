@@ -17,7 +17,7 @@ namespace Incubator::Scene::Detail
 
     inline glm::quat unitRotation(glm::quat value)
     {
-        // Double precision keeps finite float inputs normalizable at both ends of their range.
+        // 使用双精度可确保有限的 float 输入在数值范围两端都能归一化。
         const auto wide = glm::dquat(value);
         const double length = glm::length(wide);
         if (!std::isfinite(length) || length == 0)

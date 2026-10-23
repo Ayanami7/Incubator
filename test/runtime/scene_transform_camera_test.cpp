@@ -57,7 +57,7 @@ namespace
 
     TEST(SceneTransformTest, NoncommutingTranslationRotationAndScaleUseTrs)
     {
-        // Rz(90): (x,y,z) -> (-y,x,z), after nonuniform scale and before translation.
+        // 非均匀缩放后、平移前应用 Rz(90)：(x,y,z) -> (-y,x,z)。
         Transform transform({1, 2, 3}, {1, 0, 0, 1}, {2, 3, 4});
         expectPoint(transform.matrix(), {1, 2, 3, 1}, {-5, 4, 15, 1});
         expectPoint(transform.matrix(), {1, 2, 3, 0}, {-6, 2, 12, 0});
@@ -161,7 +161,7 @@ namespace
 
     TEST(SceneCameraTest, WorldRigidPoseIsInvertedIncludingRotationAndTranslation)
     {
-        // Ry(90) * Rz(90): world forward -X, world up +Z, world right +Y.
+        // Ry(90) * Rz(90)：世界前方向为 -X，上方向为 +Z，右方向为 +Y。
         Camera camera({3, 4, 5}, {0.5f, 0.5f, 0.5f, 0.5f});
         const auto view = camera.matrices({800, 600}).view;
         expectPoint(view, {3, 4, 5, 1}, {0, 0, 0, 1});

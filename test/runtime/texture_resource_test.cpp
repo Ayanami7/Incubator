@@ -42,8 +42,8 @@ namespace
         const auto id = ResourceId::fromPath(ResourceType::TEXTURE, "textures/pixel.png");
         EXPECT_THROW(TextureResource(id, 1, 1, {0, 0, 0}), Error::Exception);
         EXPECT_THROW(TextureResource(id, 1, 1, {0, 0, 0, 0, 0}), Error::Exception);
-        // Maximum legal dimensions require 64 MiB; use an empty vector to check the
-        // invariant without allocating that payload.
+        // 最大合法尺寸需要 64 MiB；使用空 vector 检查
+        // 该不变量，避免实际分配这段数据。
         EXPECT_THROW(TextureResource(id, 4096, 4096, {}), Error::Exception);
     }
 }  // namespace

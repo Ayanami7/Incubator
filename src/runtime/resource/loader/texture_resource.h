@@ -9,9 +9,9 @@ namespace Incubator
 {
     namespace Resource
     {
-        /// @brief Owned, tightly packed RGBA8 CPU pixels, top-to-bottom from the top-left origin.
-        /// RGB bytes are sRGB encoded; alpha is linear, straight (not premultiplied).
-        /// No color metadata conversion is applied. Transparent RGB is preserved.
+        /// @brief 紧密排列、由 CPU 持有的 RGBA8 像素，按左上原点从上到下存储。
+        /// RGB 字节采用 sRGB 编码；alpha 为线性直通值（未预乘）。
+        /// 不转换颜色元数据。保留透明像素中的 RGB 值。
         class TextureResource final : public ResourceObject
         {
         public:

@@ -12,7 +12,8 @@
 
 namespace Incubator::Demo
 {
-    // Consumer state only: entity Transform and Camera values live in the Runtime Scene.
+    /// @brief 实现 Demo 中的模型场景交互和 UI。
+    /// @note 此类只保存使用方状态；实体 Transform 和 Camera 值由 Runtime Scene 持有。
     class ModelScene
     {
     public:
@@ -25,7 +26,7 @@ namespace Incubator::Demo
         void update(Demo::DemoApp& app, const Demo::FrameTime& time)
         {
             deltaSeconds_ = time.deltaSeconds();
-            // Prepare OBJ on a later update, after initialization released the glTF CPU holds.
+            // 初始化阶段释放 glTF 的 CPU 资源后，再于后续更新中准备 OBJ。
             if (firstUpdate_)
                 firstUpdate_ = false;
             else if (!models_[1])
@@ -104,7 +105,10 @@ namespace Incubator::Demo
             alternateCamera_ = false;
         }
 
-        // Only called with a prepared model; UI enables OBJ switching after the later update.
+        /// @brief 替换当前模型展示场景。
+        /// @param app 当前 Demo 应用。
+        /// @param useObj 是否使用 OBJ 模型。
+        /// @note 仅在目标模型准备完成后调用；后续更新完成后，UI 才会启用 OBJ 切换。
         void switchScene(Demo::DemoApp& app, bool useObj)
         {
             auto scene = std::make_unique<Scene::Scene>();

@@ -64,7 +64,7 @@ namespace
     TEST(FrustumTest, NearAndFarPlanesFollowZeroToOneDepth)
     {
         const Frustum clip({glm::mat4(1), glm::mat4(1)});
-        // A negative-one-to-one near plane would incorrectly keep this box.
+        // 若近平面使用负一到一深度范围，此包围盒会被错误地保留。
         EXPECT_FALSE(clip.intersects({{-0.1f, -0.1f, -0.5f}, {0.1f, 0.1f, -0.25f}}));
         EXPECT_TRUE(clip.intersects({{0, 0, 0}, {0, 0, 0}}));
         EXPECT_TRUE(clip.intersects({{0, 0, 1}, {0, 0, 1}}));
@@ -107,7 +107,7 @@ namespace
         camera.setPosition({0, 0, 3});
         EXPECT_TRUE(Frustum(camera.matrices({400, 400})).intersects(translatedFront));
         camera.setPosition({3, 4, 5});
-        camera.setRotation({0.5f, 0.5f, 0.5f, 0.5f});  // Forward -X, up +Z.
+        camera.setRotation({0.5f, 0.5f, 0.5f, 0.5f});  // 前方向为 -X，上方向为 +Z。
         const Frustum rotated(camera.matrices({400, 400}));
         EXPECT_TRUE(rotated.intersects({{1, 4, 5}, {1, 4, 5}}));
         EXPECT_FALSE(rotated.intersects({{5, 4, 5}, {5, 4, 5}}));

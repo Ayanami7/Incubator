@@ -31,6 +31,7 @@ Incubator/
 
 无明确要求的前提下不要读写archived目录下的文件   
 构建命令需遵循workflow.md中描述的规范
+项目自有 C++ 代码的注释统一使用简体中文，接口说明采用 Doxygen 格式；新增或修改注释时遵循[注释规范](./.agents/rules/code_style.md#注释规范)。
 
 ## 快速导航
 

@@ -29,7 +29,7 @@ namespace Incubator
                                                          const std::array<float, 3>& color)
                 : device_(device)
             {
-                // std140 vec4: RGB is linear tint; the unused fourth component is fixed to one.
+                // std140 vec4：RGB 是线性颜色调制值；未使用的第 4 个分量固定为 1。
                 const std::array<float, 4> parameters{color[0], color[1], color[2], 1.0f};
                 uniform_ = std::make_unique<VulkanBuffer>(
                     device_, sizeof(parameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,

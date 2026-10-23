@@ -36,7 +36,8 @@ namespace Incubator
 
                 VkImageMemoryBarrier2 toColor{};
                 toColor.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-                toColor.srcStageMask = VK_PIPELINE_STAGE_2_NONE;
+                // 将布局转换排在获取信号量的颜色输出阶段等待之后。
+                toColor.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
                 toColor.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
                 toColor.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
                 toColor.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;

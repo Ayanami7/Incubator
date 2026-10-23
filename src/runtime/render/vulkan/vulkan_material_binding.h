@@ -16,7 +16,7 @@ namespace Incubator
             class VulkanImage;
             class VulkanSampler;
 
-            // One immutable material set using the Renderer's shared material layout.
+            /// @brief 使用 Renderer 共享材质布局的不可变材质描述符集。
             class VulkanMaterialBinding
             {
             public:

@@ -28,13 +28,13 @@ namespace Incubator
 
         inline glm::mat4 makeSceneModel(const SceneTransform& transform)
         {
-            // GLM's Euler quaternion is Rz * Ry * Rx, matching the existing degree controls.
+            // GLM 的欧拉四元数顺序为 Rz * Ry * Rx，与现有角度控件一致。
             return Scene::Transform(transform.position, glm::quat(glm::radians(transform.rotationDegrees)),
                                     transform.scale)
                 .matrix();
         }
 
-        // Call only after Renderer supplies a drawable extent. The caller owns the draw list.
+        // 仅在 Renderer 提供可绘制尺寸后调用。绘制列表由调用方持有。
         inline Render::FrameInput makeSceneFrame(Render::FrameExtent extent, std::span<const Render::DrawItem> draws,
                                                  const SceneCamera& camera = {})
         {

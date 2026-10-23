@@ -13,8 +13,8 @@ namespace Incubator
         };
         static_assert(sizeof(MeshVertex) == 5 * sizeof(float));
 
-        // Copyable reference to one upload, owned until its Renderer is destroyed.
-        // Keeping this reference does not extend the lifetime of the Renderer/device.
+        /// @brief 可复制的网格上传资源引用。
+        /// @note 资源由 Renderer 持有，直到 Renderer 销毁；持有此引用不会延长 Renderer 或设备的生命周期。
         class Mesh
         {
         public:

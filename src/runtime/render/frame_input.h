@@ -22,7 +22,7 @@ namespace Incubator
         struct CameraMatrices
         {
             glm::mat4 view;
-            // Final right-handed, zero-to-one depth projection, including the application's Y adaptation.
+            /// @brief 最终右手系、零到一深度投影矩阵，包含应用所需的 Y 轴适配。
             glm::mat4 projection;
         };
 
@@ -33,7 +33,8 @@ namespace Incubator
             glm::mat4 model;
         };
 
-        // Required application input. The list is borrowed only during drawFrame and may be empty.
+        /// @brief 提交一帧渲染所需的应用输入。
+        /// @note 绘制列表仅在 drawFrame 调用期间借用，也可以为空。
         struct FrameInput
         {
             FrameExtent extent;

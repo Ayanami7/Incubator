@@ -37,7 +37,7 @@ namespace Incubator
                 key.erase(0, 1);
             }
 
-            // A normalized path that still starts with ".." escapes the virtual resource root.
+            // 规范化后仍以 ".." 开头的路径会越出虚拟资源根目录。
             if (key == ".." || key.starts_with("../"))
             {
                 return {};

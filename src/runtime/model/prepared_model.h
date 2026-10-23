@@ -22,20 +22,26 @@ namespace Incubator
     {
         class PreparedModel;
 
-        // Consumer preview policy; source material samplers are not imported.
+        /// @brief 准备模型时使用的纹理预览配置。
+        /// @note 不导入源材质的采样器设置。
         struct PrepareOptions
         {
             Render::TextureMipMode mipMode = Render::TextureMipMode::BaseLevel;
             Render::SamplerDesc sampler;
         };
 
-        // Requires MODEL/TEXTURE Loader routes and an initialized Renderer. Scene shaders are
-        // prepared explicitly by the caller. Throws on failure; releases only this call's CPU holds.
+        /// @brief 从已注册资源准备可供场景使用的模型。
+        /// @param renderer 已初始化且已准备场景着色器的 Renderer。
+        /// @param virtualPath 虚拟模型路径。
+        /// @param options 模型纹理的 mip 和采样配置。
+        /// @return 可共享的不可变模型数据。
+        /// @throws Error::Exception 加载或准备失败时抛出异常。
+        /// @note 需要 MODEL/TEXTURE Loader 路由；仅释放本次调用持有的 CPU 资源。
         std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer& renderer, std::string_view virtualPath,
                                                           PrepareOptions options = {});
 
-        // Immutable metadata and weak GPU references, shared by model consumers. No CPU asset is
-        // retained. GPU resources belong to the Renderer and expire when it closes.
+        /// @brief 可由模型使用方共享的不可变元数据和 GPU 资源弱引用。
+        /// @note 不保留 CPU 资源；GPU 资源归 Renderer 所有，并在 Renderer 关闭时失效。
         class PreparedModel final
         {
         public:
@@ -63,14 +69,15 @@ namespace Incubator
             {
                 return rootNode_;
             }
-            // Depth-first, parent-before-children order; model matrices include the source root.
+            /// @brief 返回按深度优先、父节点先于子节点排列的模型绘制项。
+            /// @note 模型矩阵包含源根节点变换。
             const std::vector<Render::DrawItem>& draws() const noexcept
             {
                 return draws_;
             }
 
-            // Includes source node transforms, excludes the instance transform. Empty or
-            // unbounded drawing content has no usable aggregate; callers must retain its draws.
+            /// @brief 返回包含源节点变换的模型整体边界。
+            /// @note 不包含实例变换。绘制内容为空或无法计算边界时返回空值；调用方必须保留对应绘制项。
             const std::optional<Math::Aabb>& bounds() const noexcept
             {
                 return bounds_;

@@ -687,7 +687,7 @@ namespace
                     EXPECT_TRUE(item.mesh.valid());
                     EXPECT_TRUE(item.material.valid());
                 }
-                // Valid root/parent draws precede the invalid leaf; a valid sibling follows it.
+                // 有效的根节点和父节点绘制项位于无效叶节点之前，之后还有一个有效兄弟节点。
                 EXPECT_EQ(model->draws().back().model, glm::translate(glm::mat4(1), glm::vec3(9, 0, 0)));
             }
         }
@@ -729,7 +729,7 @@ namespace
                 if (ui)
                     renderer.imgui().recordDrawData(data, commands);
             });
-            // Mutate and destroy the submitted CPU storage before the GPU necessarily finishes.
+            // GPU 必然完成前，修改并销毁已提交的 CPU 存储。
             for (auto& draw : draws)
                 draw = {};
             draws.clear();
@@ -1039,7 +1039,7 @@ namespace
 
             ASSERT_TRUE(scene.destroyEntity(firstId));
             ASSERT_TRUE(scene.setVisible(secondId, true));
-            scene.createEntity(model, a);  // New entity follows the surviving second entity.
+            scene.createEntity(model, a);  // 新实体排在仍然存在的第二个实体之后。
             const auto reordered = Scene::extractSceneFrame(scene, {800, 400});
             ASSERT_TRUE(reordered);
             ASSERT_EQ(reordered->draws.size(), 10u);
@@ -1049,7 +1049,7 @@ namespace
             EXPECT_EQ(Scene::extractSceneFrame(scene, {800, 400})->draws.size(), 5u);
             scene.clear();
             model.reset();
-            EXPECT_TRUE(weak.expired());  // Frames retain values/GPU references, not PreparedModel.
+            EXPECT_TRUE(weak.expired());  // 帧持有值和 GPU 引用，不持有 PreparedModel。
             EXPECT_TRUE(Scene::extractSceneFrame(scene, {800, 400})->draws.empty());
             first.reset();
             point(retained.draws[0].model, -2, 24);
@@ -1129,7 +1129,7 @@ namespace
             color(image, 0.789103f, 0.567851f, {188, 255, 188});
             ASSERT_TRUE(scene.setVisible(first, true));
 
-            // An extent changed between extraction and submission must skip the stale input.
+            // 尺寸在提取和提交之间发生变化时，必须跳过过期输入。
             const auto oldExtent = renderer.beginUiFrame();
             ASSERT_TRUE(oldExtent);
             auto stale = Scene::extractSceneFrame(scene, *oldExtent);
@@ -1256,7 +1256,7 @@ namespace
 
     TEST_F(ModelInstanceTest, ImportedInstancesPresentMaterialsDepthAndSurviveListAndSwapchainChanges)
     {
-        // A temporary OBJ variant gives the second format a distinct solid color for depth checks.
+        // 临时 OBJ 变体为第二种格式提供不同的纯色，以便检查深度。
         {
             const fs::path path("assets/models/minimal_obj/materials/model.mtl");
             std::ifstream input(path);
@@ -1293,7 +1293,7 @@ namespace
             point(first[4].model, 0.65f + 0.25f * (0.25f + 0.15f * k), 0.45f + 0.25f * 1.55f * k);
             point(first[2].model, -0.65f + 0.25f * (0.25f + 1.5f * k), 0.45f + 0.125f * k);
             point(first[8].model, -0.3f, -0.2f);
-            // No CPU asset route or FileIO survives into the instance/frame loop.
+            // 实例/帧循环期间不保留 CPU 资产路由或 FileIO。
             ResourceManager::instance().reset();
             fileIO_.reset();
             auto* handle = static_cast<GLFWwindow*>(native->getNativeHandle());
@@ -1315,8 +1315,8 @@ namespace
             color(image, 0.86f, -0.608333f, {255, 0, 0});
             WindowCapture::save(image, "review/model-instances-materials.ppm");
 
-            // Align the glTF leaf with the original OBJ geometry. The near green surface must
-            // occlude the red surface in both submission orders.
+            // 将 glTF 叶节点与原始 OBJ 几何对齐。靠近摄像机的绿色表面必须
+            // 在两种提交顺序下都遮挡红色表面。
             const auto leaf = gltf->draws()[0].model;
             std::array overlap = {
                 Model::ModelInstance{gltf, glm::translate(glm::mat4(1), glm::vec3(0, 0, 0.3f)) * glm::inverse(leaf)},
@@ -1338,7 +1338,7 @@ namespace
             }
             for (int frame = 0; frame < 3; ++frame)
                 ASSERT_TRUE(submit(*native, renderer, {}, true));
-            // Event waits can return early; allow the empty frame to reach the composed desktop.
+            // 事件等待可能提前返回；应留出时间让空帧显示到桌面合成结果中。
             std::this_thread::sleep_for(std::chrono::milliseconds(60));
             image = WindowCapture::capture(*native);
             color(image, 0.789103f, 0.567851f, {51, 61, 71});
@@ -1395,7 +1395,7 @@ namespace
     }
     TEST_F(ModelInstanceTest, DemoModelsWithUnicodeDependenciesPreserveDirectionAndExactGpuColor)
     {
-        // Keep real relative dependency chains while renaming every input kind beyond ANSI.
+        // 保留真实的相对依赖链，同时将所有输入类型的文件名改为超出 ANSI 范围的字符。
         const std::string gltfPath = "models/场景😀-gltf/模型.gltf";
         const std::string objPath = "models/场景😀-obj/模型.obj";
         const std::string pngPath = "textures/方向😀.png";
@@ -1428,8 +1428,8 @@ namespace
         write(pngPath, read(PNG));
 
         auto native = window(true);
-        // This test samples the composed desktop. Raise the window before presenting,
-        // so capture's topmost change is not first applied immediately before BitBlt.
+        // 此测试采样桌面合成结果。呈现前先将窗口置顶，
+        // 避免置顶状态恰好在 BitBlt 前才生效。
         ASSERT_TRUE(SetWindowPos(glfwGetWin32Window(static_cast<GLFWwindow*>(native->getNativeHandle())), HWND_TOPMOST,
                                  0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE));
         std::array<std::shared_ptr<const Model::PreparedModel>, 2> models;
@@ -1441,7 +1441,10 @@ namespace
                 Demo::SceneAssets assets(paths);
                 EXPECT_EQ(assets.texture, nullptr);
                 renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
-                models = {Model::prepareModel(renderer, gltfPath), Model::prepareModel(renderer, objPath)};
+                constexpr Model::PrepareOptions exactSampling{
+                    TextureMipMode::BaseLevel, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::BaseLevel}};
+                models = {Model::prepareModel(renderer, gltfPath, exactSampling),
+                          Model::prepareModel(renderer, objPath, exactSampling)};
                 assets.releaseCpuResources();
             }
             released(ResourceType::MODEL, gltfPath);
@@ -1467,8 +1470,8 @@ namespace
             {
                 SCOPED_TRACE(format == 0 ? "glTF" : "OBJ");
                 const auto& model = models[format];
-                // Cancel the first source node only for the color chart view. The complete
-                // cached hierarchy still renders, and separate tests assert its source matrices.
+                // 仅在色彩图视图中取消第一个源节点。完整的
+                // 缓存层级仍会参与渲染；另有测试检查其源矩阵。
                 const std::array instances{Model::ModelInstance{model, glm::inverse(model->draws()[0].model)}};
                 const auto draws = Model::makeModelDraws(instances);
                 std::vector<uint8_t> pixels;
@@ -1496,7 +1499,7 @@ namespace
                 for (int frame = 0; frame < 4; ++frame)
                 {
                     ASSERT_TRUE(submit(*native, renderer, instances));
-                    // Allow the composed desktop to catch up after window creation/resize.
+                    // 窗口创建或缩放后，等待桌面合成结果更新。
                     glfwWaitEventsTimeout(0.04);
                 }
                 glfwWaitEventsTimeout(0.06);
@@ -1511,7 +1514,7 @@ namespace
                 color(displayed, 0.6f, -1.0f / 6, {188, 255, 188});
                 WindowCapture::save(displayed, std::string("review/") + label + "-window.ppm");
 
-                // Exercise the same initial controls and two shared instances used by Demo.
+                // 使用与 Demo 相同的初始控件和两个共享实例进行测试。
                 glfwSetWindowSize(static_cast<GLFWwindow*>(native->getNativeHandle()), 1280, 720);
                 auto scene = Demo::makeModelSceneControls();
                 const std::array shared{Model::ModelInstance{model, Demo::makeSceneModel(scene.cube.transform)},

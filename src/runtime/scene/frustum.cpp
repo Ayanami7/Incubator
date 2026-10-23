@@ -6,7 +6,7 @@ namespace Incubator::Scene
 {
     namespace
     {
-        // Planes have unit normals, so the tolerance is in world-space units.
+        // 平面法线均为单位向量，因此容差使用世界空间单位。
         constexpr double BOUNDARY_TOLERANCE = 0.00001;
     }  // namespace
 
@@ -17,7 +17,7 @@ namespace Incubator::Scene
         const glm::dvec4 y(clip[0][1], clip[1][1], clip[2][1], clip[3][1]);
         const glm::dvec4 z(clip[0][2], clip[1][2], clip[2][2], clip[3][2]);
         const glm::dvec4 w(clip[0][3], clip[1][3], clip[2][3], clip[3][3]);
-        // -w <= x,y <= w; 0 <= z <= w. In particular, the near plane is z, not w + z.
+        // -w <= x,y <= w；0 <= z <= w。特别地，近平面是 z，而不是 w + z。
         planes_ = {w + x, w - x, w + y, w - y, z, w - z};
         for (auto& plane : planes_)
         {
@@ -39,8 +39,8 @@ namespace Incubator::Scene
 
         for (const auto& plane : planes_)
         {
-            // The corner furthest toward the inward normal maximizes signed distance.
-            // If even that corner lies outside, the entire box is outside this plane.
+            // 沿内法线方向最远的角点具有最大的有符号距离。
+            // 如果连该角点也位于平面外，则整个包围盒都在此平面外。
             const glm::dvec3 positive(plane.x >= 0 ? bounds.max.x : bounds.min.x,
                                       plane.y >= 0 ? bounds.max.y : bounds.min.y,
                                       plane.z >= 0 ? bounds.max.z : bounds.min.z);

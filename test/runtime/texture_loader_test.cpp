@@ -93,7 +93,7 @@ namespace
                          Utils::Utf8::toFsPath(std::string(name) + ".png"));
     }
 
-    // Derive byte-level variants in memory; keep only distinct encoded formats on disk.
+    // 在内存中派生字节级变体；磁盘上只保存编码格式不同的文件。
     std::vector<uint8_t> fixture(std::string_view name)
     {
         if (name == "rgb_trns" || name == "gray_trns")
@@ -280,7 +280,7 @@ namespace
         ASSERT_NE(first, nullptr);
         EXPECT_EQ(manager.registerResource(ResourceType::TEXTURE, "纹理/测试.png"), id_);
         EXPECT_EQ(ResourceRegistry::instance().refCount(id_), 1u);
-        // Changing the file does not invalidate the mounted object.
+        // 修改文件不会使已挂载对象失效。
         writeBytes(fixture("rgb8"));
         EXPECT_EQ(manager.get<TextureResource>(id_), first);
         EXPECT_EQ(first->pixels(), REFERENCE_PIXELS);
@@ -423,7 +423,7 @@ namespace
         const auto root = Utils::Utf8::toFsPath(TEXTURE_BUILD_ASSET_DIR);
         const auto bytes = readBytes(root / "textures/reference_rgba.png");
         EXPECT_EQ(bytes, fixture("rgba8"));
-        // Check our mutation CRC helper against the independently generated IHDR CRC.
+        // 将变异数据的 CRC 辅助函数结果与独立生成的 IHDR CRC 对比。
         std::vector<uint8_t> expectedCrc(4);
         writeBigEndian(expectedCrc, 0, chunkCrc(std::span<const uint8_t>(bytes).subspan(12, 17)));
         EXPECT_TRUE(std::equal(expectedCrc.begin(), expectedCrc.end(), bytes.begin() + 29));

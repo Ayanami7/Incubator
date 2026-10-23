@@ -16,8 +16,8 @@ namespace Incubator::Model
     {
         constexpr uint32_t NO_INDEX = std::numeric_limits<uint32_t>::max();
 
-        // Registration owns the first reference; an existing entry needs an additional hold,
-        // even if a previous caller already released it to zero. Never change Loader routes.
+        // 登记过程持有首个引用；若条目已存在，则需额外持有一个引用，
+        // 即使此前的调用者已将引用计数释放至零也一样。此处不得修改 Loader 路由。
         class CpuHold
         {
         public:
@@ -96,8 +96,8 @@ namespace Incubator::Model
             }
         }
 
-        // Resolve every used dependency before creating GPU resources. Source data is already
-        // validated by ModelResource; copied nodes/parts use dense result-local indices.
+        // 创建 GPU 资源前先解析所有实际使用的依赖项。源数据已由
+        // ModelResource 验证；复制后的节点和部件使用结果内连续索引。
         std::vector<CpuHold> textureHolds;
         std::vector<const Resource::TextureResource*> pixels;
         std::map<std::string, uint32_t> textureMap;
@@ -159,8 +159,8 @@ namespace Incubator::Model
             result->materials_.push_back(renderer.createMaterial(
                 {result->textures_[materialTextures[i]], source->materials()[materials[i]].color, options.sampler}));
 
-        // Cache model-relative draws once. The validated tree needs no per-frame traversal or
-        // structure checks. Reverse the push order so children retain their source ordering.
+        // 模型相对绘制项只缓存一次。树结构已经验证，每帧无需重新遍历或
+        // 检查结构。按相反顺序压入，以保持子节点的源顺序。
         struct PendingNode
         {
             uint32_t index;

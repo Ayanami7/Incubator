@@ -15,7 +15,8 @@ namespace Incubator
             std::array<float, 2> uv{};
         };
 
-        // CPU geometry only. ModelResource validates these arrays when taking ownership.
+        /// @brief 由 CPU 持有的网格顶点和索引数据。
+        /// @note ModelResource 接管这些数组时会进行验证。
         struct MeshData
         {
             std::vector<MeshVertexData> vertices;

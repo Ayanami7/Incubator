@@ -108,7 +108,7 @@ TEST_F(FileIOTest, ReadWriteBinary)
     std::string path = testPath("binary_test.bin");
     const std::array<uint8_t, 8> data = {0x00, 0xFF, 0xAB, 0xCD, 0x12, 0x34, 0x56, 0x78};
 
-    // Write
+    // 写入
     {
         auto handle = fileIO->open(path, OpenMode::Write | OpenMode::Create);
         ASSERT_NE(handle, nullptr);
@@ -116,7 +116,7 @@ TEST_F(FileIOTest, ReadWriteBinary)
         EXPECT_EQ(written, data.size());
     }
 
-    // Read back
+    // 回读
     {
         auto handle = fileIO->open(path, OpenMode::Read);
         ASSERT_NE(handle, nullptr);
@@ -164,7 +164,7 @@ TEST_F(FileIOTest, SeekBegin)
     auto handle = fileIO->open(path, OpenMode::Read);
     ASSERT_NE(handle, nullptr);
 
-    // Seek to position 5
+    // 移动到位置 5
     size_t newPos = handle->seek(5, SeekOrigin::Begin);
     EXPECT_EQ(newPos, 5);
 
@@ -183,7 +183,7 @@ TEST_F(FileIOTest, SeekCurrent)
     auto handle = fileIO->open(path, OpenMode::Read);
     ASSERT_NE(handle, nullptr);
 
-    // Seek 3 from current (after initial position 0)
+    // 从当前位置向前移动 3 字节（初始位置为 0）
     size_t newPos = handle->seek(3, SeekOrigin::Current);
     EXPECT_EQ(newPos, 3);
 
@@ -192,7 +192,7 @@ TEST_F(FileIOTest, SeekCurrent)
     handle->read(span);
     EXPECT_EQ(buf, 'D');
 
-    // Tell should now be 4
+    // 此时 tell 应返回 4
     EXPECT_EQ(handle->tell(), 4);
 }
 
@@ -205,7 +205,7 @@ TEST_F(FileIOTest, SeekEnd)
     auto handle = fileIO->open(path, OpenMode::Read);
     ASSERT_NE(handle, nullptr);
 
-    // Seek -3 from end
+    // 从文件末尾向前移动 3 字节
     size_t newPos = handle->seek(-3, SeekOrigin::End);
     EXPECT_EQ(newPos, content.size() - 3);
 
@@ -292,7 +292,7 @@ TEST_F(FileIOTest, RemoveNonEmptyDirectoryFails)
     std::string fileInDir = dirPath + "/file.txt";
     createSampleFile(fileInDir, "content");
 
-    // RemoveDirectory should fail (directory not empty)
+    // 目录非空时 RemoveDirectory 应失败
     EXPECT_FALSE(fileIO->removeDirectory(dirPath));
 }
 
@@ -309,9 +309,9 @@ TEST_F(FileIOTest, FileHandleAutoCloseOnDestruct)
         auto handle = fileIO->open(path, OpenMode::Read);
         ASSERT_NE(handle, nullptr);
         EXPECT_TRUE(handle->isValid());
-        // handle destroyed here -> auto close
+        // handle 在此处销毁并自动关闭
     }
-    // File should still exist (close doesn't delete)
+    // 关闭不会删除文件，文件仍应存在
     EXPECT_TRUE(fileIO->exists(path));
 }
 
@@ -323,7 +323,7 @@ TEST_F(FileIOTest, MoveFileHandle)
     auto handle1 = fileIO->open(path, OpenMode::Read);
     ASSERT_NE(handle1, nullptr);
 
-    // Move construct
+    // 移动构造
     auto handle2 = std::move(handle1);
     EXPECT_EQ(handle1, nullptr);  // NOLINT
     EXPECT_NE(handle2, nullptr);
@@ -451,13 +451,13 @@ TEST_F(FileIOTest, OpenReadWriteExistingFile)
     auto handle = fileIO->open(path, OpenMode::ReadWrite);
     ASSERT_NE(handle, nullptr);
 
-    // Read existing
+    // 读取现有内容
     std::array<char, 16> readBuf = {};
     auto readSpan = std::span(reinterpret_cast<uint8_t*>(readBuf.data()), readBuf.size());
     size_t n = handle->read(readSpan);
     EXPECT_EQ(n, content.size());
 
-    // Seek to beginning and overwrite
+    // 移动到文件开头并覆盖
     handle->seek(0, SeekOrigin::Begin);
     const std::string newContent = "Modified";
     auto writeSpan = std::span(
@@ -467,7 +467,7 @@ TEST_F(FileIOTest, OpenReadWriteExistingFile)
     handle->write(writeSpan);
     handle->close();
 
-    // Verify
+    // 验证
     std::ifstream ifs(path);
     std::string result;
     std::getline(ifs, result);

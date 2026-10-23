@@ -24,7 +24,7 @@ namespace Incubator
             {
                 return std::string(reinterpret_cast<const char*>(s.data()), s.size());
             }
-        }  // anonymous namespace
+        }  // 匿名命名空间
 
         // ============================================================
         //  路径连接
@@ -70,7 +70,7 @@ namespace Incubator
                 }
                 else if (result.starts_with('/'))
                 {
-                    result = '/' + result;  // /server → //server
+                    result = '/' + result;  // 将 /server 转换为 //server
                 }
                 else
                 {

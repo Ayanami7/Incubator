@@ -9,7 +9,7 @@ namespace Incubator
 {
     namespace Resource
     {
-        /// @brief Owned CPU-side SPIR-V code payload.
+        /// @brief 由 CPU 持有的 SPIR-V 代码数据。
         class ShaderResource final : public ResourceObject
         {
         public:

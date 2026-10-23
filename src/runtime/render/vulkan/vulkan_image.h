@@ -31,7 +31,13 @@ namespace Incubator
                                                                 VkImageUsageFlags usage,
                                                                 TextureMipMode mipMode = TextureMipMode::BaseLevel);
 
-                // Checks queried limits before staging or image allocation; also usable with controlled inputs.
+                /// @brief 验证 RGBA8 图像和 mip 链是否受设备支持。
+                /// @param extent 基础 mip 的图像尺寸。
+                /// @param deviceLimits 设备限制。
+                /// @param formatProperties 图像格式属性。
+                /// @param imageProperties 对应图像配置的设备属性。
+                /// @param mipLevels mip 链级数。
+                /// @note 在创建暂存缓冲区或图像前调用；也可用于受控输入。
                 static void validateRgba8Support(VkExtent2D extent, const VkPhysicalDeviceLimits& deviceLimits,
                                                  const VkFormatProperties& formatProperties,
                                                  const VkImageFormatProperties& imageProperties,

@@ -24,7 +24,7 @@ namespace Incubator
             }
 
             // ============================================================
-            //  WindowGlfw — concrete GLFW implementation of Window
+            //  WindowGlfw — Window 的 GLFW 具体实现
             // ============================================================
 
             class WindowGlfw : public Window
@@ -168,10 +168,10 @@ namespace Incubator
                 Input::InputState input_;
             };
 
-        }  // anonymous namespace
+        }  // 匿名命名空间
 
         // ============================================================
-        //  Factory Function
+        //  工厂函数
         // ============================================================
 
         std::unique_ptr<Window> createPlatformWindow(const WindowDesc& desc)

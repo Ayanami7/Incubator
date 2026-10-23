@@ -154,8 +154,8 @@ namespace Incubator
                 }
             }
 
-            // With at most one parent and no edge into the root, its reachable component is a tree.
-            // A disconnected component (including a separate cycle) is rejected by the final count.
+            // 每个节点最多一个父节点，且没有边指向根节点时，从根节点可达的部分构成一棵树。
+            // 最终节点数校验会拒绝不连通的部分，包括独立的环。
             size_t reached = 0;
             std::vector<uint32_t> pending{rootNode_};
             while (!pending.empty())

@@ -343,7 +343,7 @@ namespace
         image.maxMipLevels = 5;
         image.maxArrayLayers = 1;
         image.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
-        image.maxResourceSize = 84;  // 4x4 + 2x2 + 1x1 RGBA8, not just the 64-byte CPU payload.
+        image.maxResourceSize = 84;  // 4×4、2×2 和 1×1 的 RGBA8 mip 共 84 字节，而不只是 64 字节的 CPU 载荷。
         EXPECT_NO_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image, 3));
         for (auto feature : {VK_FORMAT_FEATURE_TRANSFER_SRC_BIT, VK_FORMAT_FEATURE_BLIT_SRC_BIT,
                              VK_FORMAT_FEATURE_BLIT_DST_BIT, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT})
@@ -378,7 +378,7 @@ namespace
         EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::TEXTURE));
     }
 
-    // Simulates the application's initial unavailable framebuffer without mocking Vulkan.
+    // 模拟应用启动时帧缓冲不可用的情况，不对 Vulkan 做模拟。
     class DeferredFramebufferWindow final : public Window::Window
     {
     public:
@@ -731,13 +731,13 @@ namespace
             const int y = bounds[1] + (bounds[3] - bounds[1]) / 8;
             const size_t offset = (static_cast<size_t>(y) * image.width + x) * 4;
             for (int channel = 0; channel < 3; ++channel)
-                EXPECT_GT(image.rgba[offset + channel], 220);  // Direction texture starts with white.
+                EXPECT_GT(image.rgba[offset + channel], 220);  // 方向纹理以白色作为初始值。
             WindowCapture::save(image, "review/resource-entry-independent-textures.ppm");
             EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture"), 2u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 1u);
             EXPECT_EQ(firstAudit.textureOpens, 1u);
             EXPECT_EQ(secondAudit.textureOpens, 1u);
-            // No explicit wait: closing protects the final submission and releases both textures.
+            // 不显式等待：关闭操作会保护最后一次提交，并释放两张纹理。
         }
         EXPECT_FALSE(reference.valid());
         EXPECT_FALSE(direction.valid());
@@ -916,7 +916,7 @@ namespace
             const auto mip = TextureGpuReview::captureMip(device, *image, 1, {1, 1});
             for (int channel = 0; channel < 3; ++channel)
                 EXPECT_NEAR(mip[channel], 188, 1);
-            EXPECT_NEAR(mip[3], 128, 1);  // Straight alpha is averaged without sRGB conversion or premultiplication.
+            EXPECT_NEAR(mip[3], 128, 1);  // 直通 alpha 直接求平均，不进行 sRGB 转换或预乘。
             const auto baseOnly = VulkanImage::uploadRgba8(device, {2, 2}, VK_FORMAT_R8G8B8A8_SRGB, blackWhite,
                                                            VK_IMAGE_USAGE_SAMPLED_BIT);
             EXPECT_EQ(baseOnly->mipLevels(), 1u);
@@ -929,12 +929,14 @@ namespace
         Log::Registry::get("render.vulkan").setLevel(Log::Level::DEBUG);
         auto window = createWindow(false, 640, 480);
         SceneAssets assets(referenceSceneAssetPaths());
+        Texture observer;
+        std::array<Material, 3> materialObservers;
         {
             Renderer renderer(*window, RendererValidationMode::Required);
             renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
             Texture texture;
             {
-                // Mip 0: BBWW; mip 1: BW; mip 2: linear gray (sRGB 188).
+                // 第 0 级：BBWW；第 1 级：BW；第 2 级为线性灰色（sRGB 188）。
                 std::vector<uint8_t> pixels(4 * 4 * 4);
                 for (size_t i = 0; i < 16; ++i)
                     for (int channel = 0; channel < 4; ++channel)
@@ -945,15 +947,21 @@ namespace
             }
             std::array<Material, 3> materials;
             const std::array modes{MipFilter::BaseLevel, MipFilter::Nearest, MipFilter::Linear};
+            MaterialDesc desc{texture};
             for (size_t i = 0; i < materials.size(); ++i)
-                materials[i] = renderer.createMaterial(
-                    {texture, {1, 1, 1}, {TextureFilter::Nearest, TextureFilter::Nearest, modes[i]}});
+            {
+                desc.sampler = {TextureFilter::Nearest, TextureFilter::Nearest, modes[i]};
+                materials[i] = renderer.createMaterial(desc);
+            }
+            observer = texture;
+            materialObservers = materials;
+            desc = {};
             releaseCpuAssets(assets);
             for (float lod : {0.0f, 1.25f, 1.75f, 10.0f})
             {
                 SCOPED_TRACE(lod);
-                // Four texels / 128 pixels gives the requested implicit LOD. Center u=0.625:
-                // base is white, mip 1 is white, mip 2 is gray. Mip Linear blends in linear RGB.
+                // 4 个纹素对应 128 个像素可得到所需的隐式 LOD。中心 u=0.625：
+                // 基础级和第 1 级为白色，第 2 级为灰色。Mip Linear 在 RGB 线性空间中混合。
                 const float step = std::exp2(lod) / 4.0f;
                 const float u0 = 0.625f - 64.5f * step;
                 const float u1 = u0 + 128.0f * step;
@@ -988,11 +996,26 @@ namespace
                     EXPECT_EQ(pixels[(128 * 384 + 192) * 4 + 3], 255);
                     WindowCapture::save({384, 256, pixels}, "review/mip-lod-" + std::to_string(lod) + "-mode-" +
                                                                 std::to_string(i) + ".ppm");
+                    if (lod == 1.75f && i == 1)
+                        glfwSetWindowSize(static_cast<GLFWwindow*>(window->getNativeHandle()), 800, 600);
+                    window->pollEvents();
+                    const auto extent = renderer.beginUiFrame();
+                    ASSERT_TRUE(extent);
+                    renderer.imgui().endFrame();
+                    renderer.drawFrame({*extent, input.camera, draws}, {0.2f, 0.24f, 0.28f, 1});
                 }
             }
             EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture:"), 1u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+            texture = {};
+            materials = {};
+            EXPECT_TRUE(observer.valid());
+            for (const auto& material : materialObservers)
+                EXPECT_TRUE(material.valid());
         }
+        EXPECT_FALSE(observer.valid());
+        for (const auto& material : materialObservers)
+            EXPECT_FALSE(material.valid());
         expectCleanValidation();
     }
 
@@ -1043,7 +1066,7 @@ namespace
                 return WindowCapture::capture(*window);
             };
             const auto original = present(white);
-            // A third material with another texture does not replace shaders, camera sets or Pipeline.
+            // 使用另一张纹理的第三个材质不会替换着色器、相机描述符集或 Pipeline。
             observers[2] = renderer.createMaterial({otherTexture, {0.0f, 1.0f, 0.0f}});
             desc.texture = {};
             desc.color = {0.0f, 0.0f, 0.0f};
@@ -1064,7 +1087,7 @@ namespace
             const auto image = present(observers[1]);
             const auto bounds = WindowCapture::bounds(image);
             ASSERT_GT(bounds[2] - bounds[0], 100);
-            // The reference's white texel shows the copied nonzero RGB tint after desc was cleared.
+            // desc 清空后，引用中的白色纹素仍能显示已复制的非零 RGB 色调。
             const int x = bounds[0] + 7 * (bounds[2] - bounds[0]) / 8;
             const int y = bounds[1] + (bounds[3] - bounds[1]) / 2;
             const auto offset = (static_cast<size_t>(y) * image.width + x) * 4;
@@ -1118,7 +1141,7 @@ namespace
             for (const auto& invalid : {DrawItem{mesh, {}, glm::mat4(1.0f)}, DrawItem{mesh, expired, glm::mat4(1.0f)},
                                         DrawItem{expiredMesh, observer, glm::mat4(1.0f)}})
             {
-                // The first item is valid: a later failure must reject the entire list before recording.
+                // 第一个绘制项有效；后续项目失败时，必须在录制前拒绝整个列表。
                 const std::array draws{DrawItem{mesh, observer, glm::mat4(1.0f)}, invalid};
                 EXPECT_THROW(moved.drawFrame(controlledFrame(*extent, draws), {0.2f, 0.24f, 0.28f, 1.0f},
                                              [&](void*) { ++recorded; }),
@@ -1155,8 +1178,8 @@ namespace
                 {
                     EXPECT_NEAR(pixels[white + channel], tint == 1.0f ? 255 : 188, 1);
                     EXPECT_NEAR(pixels[gray + channel], tint == 1.0f ? 128 : 92, 1);
-                    EXPECT_NEAR(pixels[(64 * 384 + 320) * 4 + channel], 128, 1);   // UI is not tinted.
-                    EXPECT_NEAR(pixels[(160 * 384 + 320) * 4 + channel], 128, 1);  // Clear is not tinted.
+                    EXPECT_NEAR(pixels[(64 * 384 + 320) * 4 + channel], 128, 1);   // UI 不应受颜色调制。
+                    EXPECT_NEAR(pixels[(160 * 384 + 320) * 4 + channel], 128, 1);  // 清屏颜色不应受颜色调制。
                 }
                 for (int y = 0; y < 3; ++y)
                     for (int x = 0; x < 4; ++x)
@@ -1296,7 +1319,7 @@ namespace
                 };
                 for (int channel = 0; channel < 3; ++channel)
                 {
-                    // Display checks have a wider tolerance than the separate offscreen numeric test.
+                    // 显示效果检查的容差大于独立离屏数值测试的容差。
                     EXPECT_NEAR(sample(-0.65f + 0.24375f, 0.45f, channel), switched ? 188 : 255, 12);
                     EXPECT_NEAR(sample(0.65f + 0.24375f, 0.45f, channel), switched ? 255 : 188, 12);
                     EXPECT_GT(sample(-0.65f + 0.24375f, -0.45f, channel), 220);
@@ -1370,7 +1393,7 @@ namespace
 
     TEST_F(VulkanReviewTest, PartialAssetConstructionReleasesBeforeFixtureCleanup)
     {
-        // A valid header with truncated IDAT reaches the decoder and deterministically fails.
+        // 有效文件头配合截断的 IDAT 会进入解码器，并稳定地触发失败。
         const auto truncatedPath = std::filesystem::path("assets/textures/task05-truncated.png");
         {
             std::ifstream input("assets/textures/reference_rgba.png", std::ios::binary);
@@ -1449,7 +1472,7 @@ namespace
         EXPECT_TRUE(audit.destroyed);
         EXPECT_TRUE(audit.routesClearedBeforeDestroy);
         EXPECT_TRUE(audit.cpuReleasedBeforeDestroy);
-        // Restart with the other asset through the same explicit preparation as Demo.
+        // 通过与 Demo 相同的显式准备流程，使用另一项资产重新启动。
         {
             SceneAssets assets(paths);
             Renderer renderer(*window, RendererValidationMode::Required);
@@ -1623,13 +1646,13 @@ namespace
             EXPECT_THROW(renderer.drawFrame(invalidFrame, {0.2f, 0.3f, 0.4f, 1.0f}), Error::Exception);
             renderer.drawFrame(frame, {0.2f, 0.3f, 0.4f, 1.0f});
             mesh = Mesh{};
-            // Copies share one upload after the CPU arrays and original reference are gone.
+            // CPU 数组和原始引用销毁后，各副本仍共享同一次上传结果。
             for (int frameIndex = 0; frameIndex < 6; ++frameIndex)
                 EXPECT_GT(drawUiFrame(*window, renderer, observer, material), 0);
             Renderer moved(std::move(renderer));
             EXPECT_THROW(renderer.createMesh({}, {}), Error::Exception);
             EXPECT_GT(drawUiFrame(*window, moved, observer, material), 0);
-            // No explicit wait: Renderer protects the last submission and frees meshes before Device.
+            // 不显式等待：Renderer 会保护最后一次提交，并在 Device 销毁前释放网格。
         }
         EXPECT_FALSE(observer.valid());
         expectReleased({});
@@ -1656,7 +1679,7 @@ namespace
                         ImGui::SetCurrentContext(previous);
                     }
                 } restore{ImGui::GetCurrentContext()};
-                // CreateContext preserves an existing current context; this test needs a separate one.
+                // CreateContext 会保留当前已有的上下文；此测试需要单独创建一个上下文。
                 ImGui::SetCurrentContext(nullptr);
                 Renderer second(*secondWindow, RendererValidationMode::Required);
                 second.prepareSceneResources(*assets.vertex, *assets.fragment);
@@ -1773,7 +1796,7 @@ namespace
     TEST_F(VulkanReviewTest, RapidUiShutdownAfterLastSubmission)
     {
         auto window = createWindow();
-        // One, two, and three submitted frames exercise each distinct shutdown boundary.
+        // 分别提交一帧、两帧和三帧，以覆盖不同的关闭边界。
         for (int cycle = 0; cycle < 3; ++cycle)
         {
             SceneAssets assets;
@@ -1786,7 +1809,7 @@ namespace
             for (int frame = 0; frame < 1 + cycle % 3; ++frame)
                 recorded += drawUiFrame(*window, renderer, mesh, material);
             EXPECT_GT(recorded, 0);
-            // No explicit wait here: the destructor must protect the last GPU submission.
+            // 此处不显式等待：析构函数必须保护最后一次 GPU 提交。
         }
         expectCleanValidation();
     }
@@ -1905,8 +1928,8 @@ namespace
             const auto mesh = createCubeMesh(renderer);
             releaseCpuAssets(assets);
             auto present = [&](const Mesh& selectedMesh, float modelX, float cameraX) {
-                // Exercise the public submit path across both GPU frame slots. After return,
-                // changing application input must not change uniforms already submitted.
+                // 通过两个 GPU 帧槽测试公开提交路径。调用返回后，
+                // 修改应用输入不得改变已经提交的 uniform。
                 for (int frame = 0; frame < 8; ++frame)
                 {
                     window->pollEvents();
@@ -1937,7 +1960,7 @@ namespace
             EXPECT_NEAR(baseBounds[2] - baseBounds[0], baseBounds[3] - baseBounds[1], 2);
             ASSERT_EQ(first.rgba.size(), stable.rgba.size());
             size_t changed = 0;
-            // Compare scene pixels, excluding Windows' rounded corners and desktop border pixels.
+            // 比较场景像素时，排除 Windows 圆角区域和桌面边框像素。
             for (int y = 8; y < first.height - 8; ++y)
             {
                 for (int x = 8; x < first.width - 8; ++x)
@@ -1950,7 +1973,7 @@ namespace
                 }
             }
             EXPECT_LT(changed, 32u);
-            // The visible +Z top row must still read red, green, blue, yellow.
+            // 朝向 +Z 的可见顶行仍应依次为红、绿、蓝、黄。
             const int sampleY = baseBounds[1] + (baseBounds[3] - baseBounds[1]) / 6;
             for (int column = 0; column < 3; ++column)
             {
@@ -2025,7 +2048,7 @@ namespace
                 const float y = frameIndex % 2 == 0 ? 0.25f : -0.25f;
                 const auto rightModel = glm::translate(glm::mat4(1.0f), glm::vec3(0.6f, y, 0.0f)) *
                                         glm::rotate(glm::mat4(1.0f), 0.4f, glm::vec3(0.0f, 1.0f, 0.0f)) * scale;
-                // First four frames use different meshes; last two share the plane upload.
+                // 前四帧使用不同网格；最后两帧共享平面网格的上传结果。
                 std::vector<DrawItem> draws = {{plane, material, leftModel},
                                                {frameIndex < 4 ? cube : plane, material, rightModel}};
                 submitControlledScene(*window, renderer, draws);
@@ -2038,7 +2061,7 @@ namespace
                     cube = Mesh{};
                     plane = Mesh{};
                 }
-                // Wait for desktop presentation only; production has no added device-idle wait.
+                // 只等待桌面呈现；正式代码没有增加设备空闲等待。
                 std::this_thread::sleep_for(std::chrono::milliseconds(60));
                 const auto image = WindowCapture::capture(*window);
                 const auto left = WindowCapture::bounds(image, 8, image.width / 2);
@@ -2202,7 +2225,7 @@ namespace
                     return draws.size();
                 };
                 auto& controlledIo = ImGui::GetIO();
-                // Warmup must not retain desktop input before the synthetic stream takes over.
+                // 合成输入流接管前，预热阶段不得保留桌面输入。
                 controlledIo.ClearEventsQueue();
                 controlledIo.ClearInputKeys();
                 controlledIo.ClearInputMouse();
@@ -2216,7 +2239,7 @@ namespace
                                     reference ? "review/demo-multi-reference.ppm" : "review/demo-multi-direction.ppm");
                 const auto click = [&](float x, float y, float dragX = 0.0f) {
                     auto& io = ImGui::GetIO();
-                    // Isolate this controlled input stream from desktop cursor/focus events.
+                    // 将此受控输入流与桌面光标和焦点事件隔离。
                     io.SetAppAcceptingEvents(true);
                     io.AddFocusEvent(true);
                     io.AddMousePosEvent(x, y);
@@ -2241,8 +2264,8 @@ namespace
                     io.SetAppAcceptingEvents(false);
                     return frame();
                 };
-                // Client coordinates of the Demo's default 350-pixel panel and default font.
-                // Exercise the actual widgets through ImGui input, without scene-state test hooks.
+                // Demo 默认 350 像素面板和默认字体对应的客户区坐标。
+                // 通过 ImGui 输入操作实际控件，不使用场景状态测试钩子。
                 const auto initial = Demo::makeSceneDraws(scene, cube, plane, material, planeMaterial);
                 click(60, 135);
                 click(61, 158, 10);

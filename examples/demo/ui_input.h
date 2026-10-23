@@ -16,7 +16,8 @@ namespace Incubator::Demo
         bool captureKeyboard = false;
     };
 
-    // Reads only the batch consumed by NewFrame. Raw input is used solely for cancellation/rearming.
+    /// @brief 从 ImGui 读取 UI 消费后的输入批次。
+    /// @note 原始输入仅用于取消或重新启用交互。
     class UiInputAdapter
     {
     public:
@@ -30,7 +31,7 @@ namespace Incubator::Demo
             const auto& io = ImGui::GetIO();
             if (suspended_)
             {
-                // Pinned ImGui 1.91.9b: observe queue drainage without altering UI/text events.
+                // 固定版本 ImGui 1.91.9b：观察队列排空情况，不改变 UI 或文本事件。
                 if (raw.focused() && ImGui::GetCurrentContext()->InputEventsQueue.empty() &&
                     !raw.mouseButton(Input::MouseButton::Right).down &&
                     !raw.mouseButton(Input::MouseButton::Middle).down && !raw.key(Input::KeyCode::F).down &&

@@ -143,7 +143,7 @@ namespace Incubator::Resource::Detail
         std::string decoded(path);
         if (gltf_ && path != modelPath_)
         {
-            // Assimp prepends the already decoded model directory to the URI.
+            // Assimp 会将已解码的模型目录添加到 URI 前面。
             const auto prefix = Path::getParentPath(modelPath_) + '/';
             decoded =
                 path.starts_with(prefix) ? prefix + decodeModelUri(path.substr(prefix.size())) : decodeModelUri(path);
