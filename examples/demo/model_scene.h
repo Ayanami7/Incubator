@@ -18,7 +18,7 @@ namespace Incubator::Demo
     public:
         void initialize(Demo::DemoApp& app)
         {
-            models_[0] = Model::prepareModel(app.renderer(), "models/avocado/glTF/Avocado.gltf");
+            models_[0] = Model::prepareModel(app.renderer(), "models/avocado/glTF/Avocado.gltf", PREVIEW_OPTIONS);
             switchScene(app, false);
         }
 
@@ -29,7 +29,7 @@ namespace Incubator::Demo
             if (firstUpdate_)
                 firstUpdate_ = false;
             else if (!models_[1])
-                models_[1] = Model::prepareModel(app.renderer(), "models/utah_teapot/utah_teapot.obj");
+                models_[1] = Model::prepareModel(app.renderer(), "models/utah_teapot/utah_teapot.obj", PREVIEW_OPTIONS);
         }
 
         Scene::EntityId createEntity(Demo::DemoApp& app)
@@ -194,6 +194,10 @@ namespace Incubator::Demo
         }
 
     private:
+        static constexpr Model::PrepareOptions PREVIEW_OPTIONS{
+            Render::TextureMipMode::FullChain,
+            {Render::TextureFilter::Linear, Render::TextureFilter::Linear, Render::MipFilter::Linear}};
+
         static float initialScale(bool useObj)
         {
             return useObj ? 0.075f : 24.0f;

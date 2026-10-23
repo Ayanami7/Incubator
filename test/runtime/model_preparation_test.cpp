@@ -407,6 +407,95 @@ namespace
         cleanValidation();
     }
 
+    TEST_F(ModelPreparationTest, ExplicitSamplingPreservesSharingMetadataAndDefaultWhileUsingMipsOnGpu)
+    {
+        class BlackWhiteLoader final : public LoaderBase
+        {
+        public:
+            std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view) override
+            {
+                return std::make_unique<TextureResource>(
+                    id, 2, 2, std::vector<uint8_t>{0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255});
+            }
+        };
+        auto& manager = ResourceManager::instance();
+        manager.registerLoader(ResourceType::MODEL, std::make_unique<SharedModelLoader>());
+        manager.registerLoader(ResourceType::TEXTURE, std::make_unique<BlackWhiteLoader>());
+        auto native = window();
+        std::vector<std::shared_ptr<const Model::PreparedModel>> models;
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            const std::array options{
+                Model::PrepareOptions{},
+                Model::PrepareOptions{TextureMipMode::FullChain,
+                                      {TextureFilter::Linear, TextureFilter::Linear, MipFilter::BaseLevel}},
+                Model::PrepareOptions{TextureMipMode::FullChain,
+                                      {TextureFilter::Linear, TextureFilter::Linear, MipFilter::Linear}}};
+            for (size_t policy = 0; policy < options.size(); ++policy)
+            {
+                SCOPED_TRACE(policy);
+                const auto model = policy == 0 ? Model::prepareModel(renderer, "models/shared.gltf")
+                                               : Model::prepareModel(renderer, "models/shared.gltf", options[policy]);
+                models.push_back(model);
+                released(ResourceType::MODEL, "models/shared.gltf");
+                released(ResourceType::TEXTURE, PNG);
+                ASSERT_TRUE(model->bounds());
+                EXPECT_EQ(model->bounds()->min, models[0]->bounds()->min);
+                EXPECT_EQ(model->bounds()->max, models[0]->bounds()->max);
+                EXPECT_EQ(model->rootNode(), models[0]->rootNode());
+                ASSERT_EQ(model->nodes().size(), 2u);
+                EXPECT_EQ(model->nodes()[0].parts, models[0]->nodes()[0].parts);
+                EXPECT_EQ(model->nodes()[1].parts, (std::vector<uint32_t>{0}));
+                EXPECT_EQ(model->meshes().size(), 1u);
+                EXPECT_EQ(model->textures().size(), 2u);
+                EXPECT_EQ(model->materials().size(), 4u);
+                ASSERT_EQ(model->draws().size(), 5u);
+                for (size_t i = 0; i < model->parts().size(); ++i)
+                {
+                    EXPECT_EQ(model->parts()[i].geometry, 0u);
+                    EXPECT_EQ(model->parts()[i].material, i);
+                    EXPECT_EQ(model->draws()[i].model, models[0]->draws()[i].model);
+                }
+                for (bool minify : {false, true})
+                {
+                    SCOPED_TRACE(minify);
+                    const auto extent = minify ? FrameExtent{1, 1} : FrameExtent{256, 256};
+                    const auto transform = glm::translate(glm::mat4(1), glm::vec3(minify ? -0.4f : 0, 0, 0.5f));
+                    const std::array draws{DrawItem{model->meshes()[0], model->materials()[0], transform}};
+                    const FrameInput input{extent, {glm::mat4(1), glm::mat4(1)}, draws};
+                    std::vector<uint8_t> pixels;
+                    Detail::RendererReviewAccess::withFrame(
+                        renderer, input,
+                        [&](const auto& device, const auto& pipeline, auto frameSet, auto nativeDraws) {
+                            pixels =
+                                TextureGpuReview::captureDraws(device, pipeline, frameSet, nativeDraws,
+                                                               {0, 0, float(extent.width), float(extent.height), 0, 1});
+                        });
+                    ASSERT_EQ(pixels.size(), 384u * 256 * 4);
+                    const size_t offset = minify ? 0 : (128 * 384 + 128) * 4;
+                    const int expected = minify ? (policy == 2 ? 188 : 255) : (policy == 0 ? 255 : 188);
+                    for (int channel = 0; channel < 3; ++channel)
+                        EXPECT_NEAR(pixels[offset + channel], expected, 2);
+                    EXPECT_EQ(pixels[offset + 3], 255);
+                    WindowCapture::save({384, 256, pixels}, "review/sampling-policy-" + std::to_string(policy) +
+                                                                (minify ? "-min.ppm" : "-mag.ppm"));
+                }
+            }
+            EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, "textures/unused.png").valid());
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 3u);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 6u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 12u);
+            EXPECT_EQ(occurrences(messages_.str(), "2x2, format 43, 16 bytes, 2 mips"), 2u);
+            EXPECT_EQ(occurrences(messages_.str(), "2x2, format 43, 16 bytes, 1 mips"), 1u);
+            EXPECT_EQ(occurrences(messages_.str(), "1x1, format 43, 4 bytes, 1 mips"), 3u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+        }
+        for (const auto& model : models)
+            EXPECT_FALSE(model->materials()[0].valid());
+        cleanValidation();
+    }
+
     TEST_F(ModelPreparationTest, MissingAndInvalidPngFailBeforeGpuCreationAndPreserveOtherOwners)
     {
         auto& manager = ResourceManager::instance();

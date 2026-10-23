@@ -13,7 +13,24 @@ auto model = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Avoca
 auto sharedModel = model; // Shares immutable metadata and the same GPU references.
 ```
 
-`prepareModel(Render::Renderer&, std::string_view)` 同步返回 `std::shared_ptr<const PreparedModel>`。
+`prepareModel(Render::Renderer&, std::string_view, PrepareOptions = {})` 同步返回
+`std::shared_ptr<const PreparedModel>`。`PrepareOptions` 包含 `mipMode` 和 `sampler`，默认分别为
+`Render::TextureMipMode::BaseLevel` 与默认 `Render::SamplerDesc`：单层、nearest/repeat/LOD=0。
+旧的两参数调用保持该行为；显式选项作用于本次准备使用的全部纹理与材质，包括共享的白图。
+
+```cpp
+Incubator::Model::PrepareOptions options;
+options.mipMode = Incubator::Render::TextureMipMode::FullChain;
+options.sampler = {Incubator::Render::TextureFilter::Linear, Incubator::Render::TextureFilter::Linear,
+                   Incubator::Render::MipFilter::Linear};
+auto filtered = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Avocado.gltf", options);
+```
+
+上传与采样选择独立：完整链可仅采基础层，单层图片也可绑定 mip 采样而不补建层级。
+同次准备内，相同规范化路径仍共享一次上传及其 mip 链；白图在 FullChain 下仍只有 1×1 一层。
+参数在创建时复制，之后修改 options 不影响已有准备结果。它是消费者的预览策略，
+不导入源 glTF/OBJ sampler，也不向 ModelResource 或 Loader 引入 Render 类型。
+
 路径相对资产根，经现有 ResourceManager/Registry 规范化和查找；应用须提前注册 MODEL 和 TEXTURE 的 Loader。
 函数不安装或替换 Loader，不准备 Shader，不修改全局 Manager 的路由。线程安全仍由调用方保证，
 GPU 准备在 Renderer 所在线程完成，FileIO 至少覆盖 CPU 导入与依赖读取期。
@@ -125,8 +142,9 @@ SceneFrame；应用在提交时借用其 input()，用法与快照持有期见 [
   Renderer 关闭后引用失效，提交旧引用由 Renderer 的既有边界拒绝。
 
 RGB 使用源材质的线性 0–1 参数，白纹理采样后保持该颜色；PNG 沿用 sRGB 采样后乘线性 RGB，输出 alpha=1。
-最近邻、repeat、LOD=0、UV 方向及其他固定显示条件沿用 [ModelLoader](./resource/loader/model_loader.md)
-和 [Render 材质](./render.md) 的约定。
+默认最近邻、repeat、LOD=0；显式 PrepareOptions 可改变过滤及 mip 策略。
+UV 方向、opaque 与其他显示约定见 [ModelLoader](./resource/loader/model_loader.md)
+和 [Render 材质](./render.md)。
 
 完整应用用法见 [模型 Demo](../examples/demo.md)：DemoApp 在 FileIO 生命周期内注册 Model/Texture Loader，准备 Shader 并将模型用于 Scene 实体。prepareModel 本身不清除全局路由。
 

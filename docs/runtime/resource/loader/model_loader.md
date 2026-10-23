@@ -60,7 +60,10 @@ IOStream 累积短读，保留完整元素计数、seek/tell/size 语义；提�
 | 其他特征 | 拒绝动画、骨骼、Morph、GLB/嵌入图像或缓冲、压缩几何/图片及未支持的必需扩展；仅支持无需额外实现的 KHR_materials_unlit 必需扩展 |
 
 普通光照、法线、金属度和其他非基色材质参数不进入当前顶点与 Shader 链路，只作基色预览。
-源 sampler、双面参数不改变既有 nearest/repeat/LOD=0、opaque、无剔除的固定显示条件，不承诺完整 PBR 外观。
+源 sampler 和双面参数不导入，不承诺完整 PBR 外观；opaque、无剔除的显示条件保持。
+模型准备入口默认 nearest/repeat/LOD=0，消费者可通过 [PrepareOptions](../../model.md) 显式选择
+线性过滤和 GPU mip 链。该策略属于模型消费与 Render，不改变 ModelResource/Loader 的 CPU 数据契约，
+也不表示恢复了源资产的 sampler 设置。
 RGB 超范围或非有限、非法结构等错误继续由转换及 ModelResource 构造边界拒绝，不钳制或补默认资产。
 
 Assimp 会压缩未使用的 glTF 顶点，并可能丢弃坏面、三角形余数或错误 UV 流。

@@ -811,6 +811,7 @@ namespace
             GLFWmousebuttonfun button = nullptr;
             GLFWkeyfun key = nullptr;
             GLFWscrollfun scroll = nullptr;
+            GLFWcursorposfun cursor = nullptr;
             const auto checkFocus = [&](Demo::DemoApp& app) {
                 int width, height;
                 app.window().getFramebufferSize(width, height);
@@ -848,6 +849,11 @@ namespace
                     glfwSetKeyCallback(handle, key);
                     scroll = glfwSetScrollCallback(handle, nullptr);
                     glfwSetScrollCallback(handle, scroll);
+                    cursor = glfwSetCursorPosCallback(handle, nullptr);
+                    // Drive the real chained cursor callback with controlled test positions;
+                    // desktop mouse movement/enter events must not mix into the synthetic gestures.
+                    const auto enter = glfwSetCursorEnterCallback(handle, nullptr);
+                    enter(handle, GLFW_TRUE);
                     glfwFocusWindow(handle);
                 },
                 [&](Demo::DemoApp& app, const Demo::FrameTime& time) {
@@ -868,7 +874,7 @@ namespace
                         EXPECT_LT(culled->draws.size(), all->draws.size());
                         opens = state->opens;
                         uploads = count("Uploaded mesh:");
-                        glfwSetCursorPos(handle, 700, 500);
+                        cursor(handle, 700, 500);
                         button(handle, 0, GLFW_PRESS, 0); // Defocus the panel before the shortcut.
                     }
                     if (step == 1) button(handle, 0, GLFW_RELEASE, 0);
@@ -896,7 +902,7 @@ namespace
                         WindowCapture::save(image, obj ? "review/input-teapot-focus.ppm" : "review/input-avocado-focus.ppm");
                         button(handle, 1, GLFW_PRESS, 0);
                     }
-                    if (step == 6) glfwSetCursorPos(handle, 740, 500);
+                    if (step == 6) cursor(handle, 740, 500);
                     if (step == 7) button(handle, 1, GLFW_RELEASE, 0);
                     if (step == 8)
                     {
@@ -904,7 +910,7 @@ namespace
                         EXPECT_NE(rotated.rotation(), focused.rotation());
                         button(handle, 2, GLFW_PRESS, 0);
                     }
-                    if (step == 9) glfwSetCursorPos(handle, 730, 520);
+                    if (step == 9) cursor(handle, 730, 520);
                     if (step == 10) button(handle, 2, GLFW_RELEASE, 0);
                     if (step == 11)
                     {
@@ -912,7 +918,7 @@ namespace
                         scroll(handle, 0, 1);
                     }
                     if (step == 13) button(handle, 1, GLFW_PRESS, 0);
-                    if (step == 14) glfwSetCursorPos(handle, 710, 510);
+                    if (step == 14) cursor(handle, 710, 510);
                     if (step == 15)
                     {
                         beforeMinimize = app.scene().camera();
@@ -929,7 +935,7 @@ namespace
                         app.window().pollEvents();
                         ASSERT_FALSE(app.window().isIconified());
                     }
-                    if (step == 19) glfwSetCursorPos(handle, 500, 700);
+                    if (step == 19) cursor(handle, 500, 700);
                     if (step == 22)
                     {
                         EXPECT_EQ(app.scene().camera().position(), beforeMinimize.position());
@@ -937,7 +943,7 @@ namespace
                         EXPECT_GE(cancellations, 3);
                     }
                     if (step == 23) button(handle, 1, GLFW_PRESS, 0);
-                    if (step == 24) glfwSetCursorPos(handle, 520, 700);
+                    if (step == 24) cursor(handle, 520, 700);
                     if (step == 25) button(handle, 1, GLFW_RELEASE, 0);
                     if (step == 26) EXPECT_NE(app.scene().camera().rotation(), beforeMinimize.rotation());
                     if (step == 29) ASSERT_NO_FATAL_FAILURE(checkFocus(app));
@@ -1054,6 +1060,7 @@ namespace
                 unloaded(ResourceType::MODEL, DEMO_GLTF);
                 unloaded(ResourceType::TEXTURE, DEMO_PNG);
                 EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, DEMO_OBJ).valid());
+                EXPECT_EQ(count("2048x2048, format 43, 16777216 bytes, 12 mips"), 1u);
                 ordinaryOpens = state->opens;
             },
             [&, demo](Demo::DemoApp& app, const Demo::FrameTime& time) {
@@ -1070,6 +1077,7 @@ namespace
                     preparedMeshUploads = count("Uploaded mesh:");
                     preparedTextureUploads = count("Uploaded RGBA8 texture:");
                     preparedMaterialUploads = count("Created material:");
+                    EXPECT_EQ(count("1x1, format 43, 4 bytes, 1 mips"), 1u);
                     EXPECT_GT(preparedMeshUploads, 0u);
                     EXPECT_GT(preparedTextureUploads, 0u);
                     EXPECT_GT(preparedMaterialUploads, 0u);

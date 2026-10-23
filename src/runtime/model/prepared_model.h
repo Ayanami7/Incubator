@@ -7,6 +7,8 @@
 
 #include "runtime/core/math/aabb.h"
 #include "runtime/render/frame_input.h"
+#include "runtime/render/sampler.h"
+#include "runtime/render/texture.h"
 #include "runtime/resource/loader/model_resource.h"
 
 namespace Incubator
@@ -20,9 +22,17 @@ namespace Incubator
     {
         class PreparedModel;
 
+        // Consumer preview policy; source material samplers are not imported.
+        struct PrepareOptions
+        {
+            Render::TextureMipMode mipMode = Render::TextureMipMode::BaseLevel;
+            Render::SamplerDesc sampler;
+        };
+
         // Requires MODEL/TEXTURE Loader routes and an initialized Renderer. Scene shaders are
         // prepared explicitly by the caller. Throws on failure; releases only this call's CPU holds.
-        std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer& renderer, std::string_view virtualPath);
+        std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer& renderer, std::string_view virtualPath,
+                                                          PrepareOptions options = {});
 
         // Immutable metadata and weak GPU references, shared by model consumers. No CPU asset is
         // retained. GPU resources belong to the Renderer and expire when it closes.
@@ -67,7 +77,7 @@ namespace Incubator
             }
 
         private:
-            friend std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer&, std::string_view);
+            friend std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer&, std::string_view, PrepareOptions);
             PreparedModel() = default;
 
             std::vector<Render::Mesh> meshes_;

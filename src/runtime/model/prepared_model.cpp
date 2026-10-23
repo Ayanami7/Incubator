@@ -52,7 +52,8 @@ namespace Incubator::Model
         };
     }  // namespace
 
-    std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer& renderer, std::string_view virtualPath)
+    std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer& renderer, std::string_view virtualPath,
+                                                    PrepareOptions options)
     {
         CpuHold modelHold(Resource::ResourceType::MODEL, virtualPath);
         const auto* source = modelHold.get<Resource::ModelResource>();
@@ -137,11 +138,11 @@ namespace Incubator::Model
         for (const auto* texture : pixels)
         {
             if (texture)
-                result->textures_.push_back(renderer.createTexture(*texture));
+                result->textures_.push_back(renderer.createTexture(*texture, options.mipMode));
             else
             {
                 Resource::TextureResource white({}, 1, 1, {255, 255, 255, 255});
-                result->textures_.push_back(renderer.createTexture(white));
+                result->textures_.push_back(renderer.createTexture(white, options.mipMode));
             }
         }
         for (uint32_t index : geometries)
@@ -156,7 +157,7 @@ namespace Incubator::Model
         }
         for (size_t i = 0; i < materials.size(); ++i)
             result->materials_.push_back(renderer.createMaterial(
-                {result->textures_[materialTextures[i]], source->materials()[materials[i]].color}));
+                {result->textures_[materialTextures[i]], source->materials()[materials[i]].color, options.sampler}));
 
         // Cache model-relative draws once. The validated tree needs no per-frame traversal or
         // structure checks. Reverse the push order so children retain their source ordering.
