@@ -28,6 +28,7 @@
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
+#include "runtime/render/detail/renderer_review.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
 #include "runtime/render/vulkan/glfw_surface.h"
@@ -751,6 +752,90 @@ namespace
         }
         EXPECT_FALSE(observer.valid());
         expectReleased({});
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, SamplerMaterialsShareOneImageAndIndependentlyFilterMinificationAndMagnification)
+    {
+        Log::Registry::get("render").setLevel(Log::Level::DEBUG);
+        Log::Registry::get("render.vulkan").setLevel(Log::Level::DEBUG);
+        auto window = createWindow(false, 640, 480);
+        SceneAssets assets(referenceSceneAssetPaths());
+        Texture observer;
+        std::array<Material, 5> materials;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            {
+                Resource::TextureResource pixels({}, 2, 2,
+                                                 {0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255});
+                observer = renderer.createTexture(pixels);
+            }
+            MaterialDesc desc{observer};
+            EXPECT_EQ(desc.sampler, SamplerDesc{});
+            materials[0] = renderer.createMaterial(desc);
+            desc.sampler = {TextureFilter::Nearest, TextureFilter::Linear, MipFilter::BaseLevel};
+            materials[1] = renderer.createMaterial(desc);
+            desc.sampler = {TextureFilter::Linear, TextureFilter::Nearest, MipFilter::BaseLevel};
+            materials[2] = renderer.createMaterial(desc);
+            desc.sampler = {TextureFilter::Linear, TextureFilter::Linear, MipFilter::Nearest};
+            materials[3] = renderer.createMaterial(desc);
+            desc.sampler.mipFilter = MipFilter::Linear;
+            materials[4] = renderer.createMaterial(desc);
+            desc.sampler = {};
+            desc.color = {0, 0, 0};
+            auto invalid = desc;
+            invalid.sampler.minFilter = static_cast<TextureFilter>(99);
+            EXPECT_THROW(renderer.createMaterial(invalid), Error::Exception);
+            invalid = desc;
+            invalid.sampler.mipFilter = static_cast<MipFilter>(99);
+            EXPECT_THROW(renderer.createMaterial(invalid), Error::Exception);
+            releaseCpuAssets(assets);
+            for (bool minify : {false, true})
+            {
+                const float u0 = minify ? -128.0f : 0.5f;
+                const float u1 = minify ? 0.0f : 0.5f;
+                const std::array<MeshVertex, 4> vertices{{{{-1, -1, 0.5f}, {u0, 0.5f}},
+                                                          {{0, -1, 0.5f}, {u1, 0.5f}},
+                                                          {{0, 1, 0.5f}, {u1, 0.5f}},
+                                                          {{-1, 1, 0.5f}, {u0, 0.5f}}}};
+                const std::array<uint32_t, 6> indices{0, 1, 2, 2, 3, 0};
+                const auto mesh = renderer.createMesh(vertices, indices);
+                for (size_t i = 1; i < materials.size(); ++i)
+                {
+                    SCOPED_TRACE(minify ? "minification" : "magnification");
+                    SCOPED_TRACE(i);
+                    const std::array draws{
+                        DrawItem{mesh, materials[0], glm::mat4(1)},
+                        DrawItem{mesh, materials[i], glm::translate(glm::mat4(1), glm::vec3(1, 0, 0))}};
+                    const FrameInput input{{256, 256}, {glm::mat4(1), glm::mat4(1)}, draws};
+                    std::vector<uint8_t> pixels;
+                    Detail::RendererReviewAccess::withFrame(
+                        renderer, input,
+                        [&](const auto& device, const auto& pipeline, auto frameSet, auto nativeDraws) {
+                            pixels = TextureGpuReview::captureDraws(device, pipeline, frameSet, nativeDraws,
+                                                                    {0, 0, 256, 256, 0, 1});
+                        });
+                    ASSERT_EQ(pixels.size(), 384u * 256 * 4);
+                    const bool linear = i >= 3 || (minify ? i == 2 : i == 1);
+                    for (int channel = 0; channel < 3; ++channel)
+                    {
+                        EXPECT_NEAR(pixels[(128 * 384 + 64) * 4 + channel], 255, 1);
+                        EXPECT_NEAR(pixels[(128 * 384 + 192) * 4 + channel], linear ? 188 : 255, 1);
+                    }
+                    EXPECT_EQ(pixels[(128 * 384 + 192) * 4 + 3], 255);
+                    WindowCapture::save(
+                        {384, 256, pixels},
+                        std::string("review/sampler-") + (minify ? "min-" : "mag-") + std::to_string(i) + ".ppm");
+                }
+            }
+            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture:"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 5u);
+        }
+        EXPECT_FALSE(observer.valid());
+        for (const auto& material : materials)
+            EXPECT_FALSE(material.valid());
         expectCleanValidation();
     }
 

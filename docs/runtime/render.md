@@ -37,8 +37,8 @@ Renderer 不依赖 Scene；旧 extent 跳帧、提交内借用及过期/跨 Rend
 |---|---|
 | `Renderer` | 由应用创建和持有；借用 `Window`；组合并拥有本次渲染所需内部对象；提供初始化、完整帧绘制和关闭入口。 |
 | `Mesh` | 应用可复制的网格引用；其 GPU 顶点/索引由创建它的 Renderer 持有至关闭，引用本身不延长设备寿命。 |
-| `Texture` | 应用可复制的不透明纹理引用；Image 与 Sampler 由创建它的 Renderer 持有至关闭，引用不保留 CPU 资源或延长设备寿命。 |
-| `Material` | 应用可复制的不透明材质引用；创建时复制颜色并保持 Texture 依赖，材质参数与 Descriptor 不可变，由 Renderer 持有至关闭。 |
+| `Texture` | 应用可复制的不透明纹理引用；Image 由创建它的 Renderer 持有至关闭，引用不保留 CPU 资源或延长设备寿命。 |
+| `Material` | 应用可复制的不透明材质引用；创建时复制颜色、采样参数，拥有 Sampler 并保持 Texture 依赖，材质参数与 Descriptor 不可变，由 Renderer 持有至关闭。 |
 | `VulkanInstance` | 创建并拥有 Vulkan Instance 和可选 debug messenger；查询并启用 GLFW 所需实例扩展；销毁晚于 Surface。 |
 | Surface | `GlfwSurface` 由 Render 通过 GLFW 从借用的 Window 创建和销毁；依赖 Instance，Window 必须活到 Surface 销毁之后。 |
 | `VulkanDevice` | 选择支持图形、呈现、Swapchain、Dynamic Rendering 和 Synchronization2 的首个物理设备；创建逻辑设备和队列，查询内存类型并执行有 Fence 的一次性上传提交；销毁前先清理设备子对象。 |
@@ -73,7 +73,7 @@ Renderer 通过 `createTexture(const TextureResource&)` 独立上传纹理，返
 TextureResource 指针或 CPU 像素副本，应用可在下一次绘制前 release 到零。
 GPU Image、Sampler、Descriptor 由 Render 持有，在途帧另持有所用 Material 及其 Texture 依赖至 Fence 完成；
 交换链重建复用这些纹理，不重新读取、解码或上传。立方体 +Z 面顶部 UV 指向 PNG 首行，
-Loader、上传和 Shader 均不再翻转；采样仍为 nearest/repeat/LOD=0。
+Loader、上传和 Shader 均不再翻转；默认采样仍为 nearest/repeat/基础层。
 
 `VulkanImage::uploadRgba8` 在 staging/Image 分配前检查设备 `maxImageDimension2D`、
 所选格式 optimal tiling 的 SAMPLED_IMAGE/TRANSFER_DST 功能，并查询该 2D、单层、单 mip、
@@ -119,7 +119,7 @@ Texture 仅标识 GPU 上传结果，与 CPU ResourceId 分别管理，也不使
 
 ## 最小材质与绑定
 
-`material.h` 定义 `MaterialDesc { Texture texture; std::array<float, 3> color; }` 与 `Material` 引用。
+`material.h` 定义 `MaterialDesc { Texture texture; std::array<float, 3> color; SamplerDesc sampler; }` 与 `Material` 引用。
 纹理是必需输入，color 是有限的 0–1 线性 RGB，默认 `{1, 1, 1}`。例如：
 
 ```cpp
@@ -128,6 +128,26 @@ auto tinted = renderer.createMaterial(desc);
 desc.color = {0.0f, 0.0f, 0.0f}; // Does not change tinted.
 DrawItem item{mesh, tinted, model};
 ```
+
+`sampler.h` 中的 `SamplerDesc` 是不含 Vulkan 类型的值描述：`minFilter` 和 `magFilter`
+使用 `TextureFilter::Nearest/Linear`，分别控制缩小和放大；`mipFilter` 使用
+`MipFilter::BaseLevel/Nearest/Linear`。默认是 nearest、nearest、BaseLevel，U/V 寻址固定 Repeat。
+采样字段追加在颜色之后，原有 `{texture}` 和 `{texture, color}` 初始化保持兼容。
+
+```cpp
+MaterialDesc filtered{texture};
+filtered.sampler = {TextureFilter::Linear, TextureFilter::Linear, MipFilter::BaseLevel};
+auto smooth = renderer.createMaterial(filtered);
+filtered.sampler = {}; // Does not change smooth.
+```
+
+当前上传仍只有基础层，所有 mip 选择均只访问第 0 层，不自动生成或重新上传 mip。
+BaseLevel 也只选择第 0 层。为让 min/mag 不同的基础层材质正确区分缩小与放大，后端使用
+nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相同时保持原有 `maxLod=0`。
+这是 [Vulkan Sampler 规范](https://docs.vulkan.org/spec/latest/chapters/samplers.html)
+规定的基础层过滤方式：直接设零会始终使用 magFilter。
+创建含线性 min/mag 的材质时检查实际图像格式的线性过滤支持，不支持时报 RENDER；
+非法过滤枚举同样拒绝。能力查询只发生在创建阶段，不进入逐帧绘制。
 
 颜色按线性空间相乘，因此白色 texel 乘 `{0.5, 0.5, 0.5}` 后，sRGB 编码结果约为
 188/255；默认白色参数保持原纹理的中灰 128/255。材质参数不作用于清屏或 ImGui。
@@ -145,11 +165,11 @@ DrawItem item{mesh, tinted, model};
 | 物体 model | 64 字节 vertex push constant；逐物体录制 |
 
 帧与材质布局由 Renderer 各创建一份；同一 Shader、附件格式和固定状态下，所有材质共用一份
-Pipeline。新增材质只分配自己的参数 Buffer、DescriptorPool/Set，不复制相机数据、纹理或
+Pipeline。新增材质只分配自己的 Sampler、参数 Buffer、DescriptorPool/Set，不复制相机数据、纹理或
 Pipeline；材质不绑定某个帧槽，可以被多帧同时读取。交换链格式变化仅重建兼容 Pipeline，
 不会重建材质或重新上传资源。
 
-Renderer 持有 Material 至关闭，Material 内部强持有 Texture；在途帧保留所用 Material，
+Renderer 持有 Material 至关闭，Material 拥有自己的 Sampler 并在内部强持有 Texture；在途帧保留所用 Material，
 连带保持参数、Descriptor、Image/Sampler 有效。复制/放下应用 Material 引用不重新创建或
 提前销毁 GPU 资源；`valid()`、移动及关闭后失效语义与 Mesh/Texture 一致。
 关闭先等待提交和呈现，再销毁 Pipeline、材质绑定、共享布局和纹理，最后销毁设备。

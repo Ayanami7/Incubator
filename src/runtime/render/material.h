@@ -3,6 +3,7 @@
 #include <array>
 #include <memory>
 
+#include "runtime/render/sampler.h"
 #include "runtime/render/texture.h"
 
 namespace Incubator
@@ -14,6 +15,7 @@ namespace Incubator
             Texture texture;
             // Linear RGB in [0, 1]. Scene output remains opaque.
             std::array<float, 3> color{1.0f, 1.0f, 1.0f};
+            SamplerDesc sampler;
         };
 
         // Immutable material reference. Copies share the same Renderer-owned resource.

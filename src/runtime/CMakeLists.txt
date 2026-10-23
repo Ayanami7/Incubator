@@ -84,6 +84,7 @@ set(RENDER_HEADERS
     render/mesh.h
     render/texture.h
     render/material.h
+    render/sampler.h
     render/integration/imgui_renderer.h
     render/vulkan/vulkan_swapchain.h
     render/vulkan/vulkan_frame_scheduler.h

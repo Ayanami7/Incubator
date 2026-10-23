@@ -2,6 +2,10 @@
 
 #include <vulkan/vulkan.h>
 
+#include <cstdint>
+
+#include "runtime/render/sampler.h"
+
 namespace Incubator
 {
     namespace Render
@@ -13,7 +17,7 @@ namespace Incubator
             class VulkanSampler
             {
             public:
-                explicit VulkanSampler(const VulkanDevice& device);
+                explicit VulkanSampler(const VulkanDevice& device, SamplerDesc desc = {}, uint32_t mipLevels = 1);
                 ~VulkanSampler();
 
                 VulkanSampler(const VulkanSampler&) = delete;

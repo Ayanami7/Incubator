@@ -102,25 +102,27 @@ namespace Incubator
                 image = Vulkan::VulkanImage::uploadRgba8(device, {texture.width(), texture.height()},
                                                          VK_FORMAT_R8G8B8A8_SRGB, texture.pixels(),
                                                          VK_IMAGE_USAGE_SAMPLED_BIT);
-                sampler = std::make_shared<Vulkan::VulkanSampler>(device);
             }
 
             const Vulkan::VulkanDevice* owner;
             std::shared_ptr<Vulkan::VulkanImage> image;
-            std::shared_ptr<Vulkan::VulkanSampler> sampler;
         };
 
         struct Material::Impl
         {
             Impl(const Vulkan::VulkanDevice& device, std::shared_ptr<Texture::Impl> source,
-                 VkDescriptorSetLayout layout, const std::array<float, 3>& color)
+                 VkDescriptorSetLayout layout, const std::array<float, 3>& color, SamplerDesc sampling)
                 : owner(&device),
                   texture(std::move(source)),
-                  binding(device, layout, *texture->image, *texture->sampler, color)
+                  samplerDesc(sampling),
+                  sampler(device, sampling),
+                  binding(device, layout, *texture->image, sampler, color)
             {}
 
             const Vulkan::VulkanDevice* owner;
             std::shared_ptr<Texture::Impl> texture;
+            const SamplerDesc samplerDesc;
+            Vulkan::VulkanSampler sampler;
             Vulkan::VulkanMaterialBinding binding;
         };
 
@@ -224,8 +226,15 @@ namespace Incubator
                     if (!std::isfinite(value) || value < 0.0f || value > 1.0f)
                         throw Error::Exception(Error::Code::RENDER,
                                                "Material color must be finite linear RGB in [0, 1]");
+                if (desc.sampler.minFilter == TextureFilter::Linear || desc.sampler.magFilter == TextureFilter::Linear)
+                {
+                    VkFormatProperties properties{};
+                    vkGetPhysicalDeviceFormatProperties(device_.physicalDevice(), texture->image->format(), &properties);
+                    if (!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+                        throw Error::Exception(Error::Code::RENDER, "Texture format does not support linear filtering");
+                }
                 auto material = std::make_shared<Material::Impl>(device_, std::move(texture),
-                                                                 bindingSet_->materialLayout(), desc.color);
+                                                                 bindingSet_->materialLayout(), desc.color, desc.sampler);
                 materials_.push_back(material);
                 Log::Registry::get("render").debug("Created material: linear RGB ({}, {}, {})", desc.color[0],
                                                    desc.color[1], desc.color[2]);
