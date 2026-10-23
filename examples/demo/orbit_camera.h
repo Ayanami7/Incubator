@@ -44,18 +44,9 @@ namespace Incubator::Demo
             }
             const bool ending = (gesture_ == Gesture::Rotate && (input.rotate.released || !input.rotate.down)) ||
                                 (gesture_ == Gesture::Pan && (input.pan.released || !input.pan.down));
-            bool started = false;
-            if (gesture_ == Gesture::None && !input.captureMouse)
-            {
-                if (input.rotate.pressed && input.rotate.down)
-                    gesture_ = Gesture::Rotate;
-                else if (input.pan.pressed && input.pan.down)
-                    gesture_ = Gesture::Pan;
-                started = gesture_ != Gesture::None;
-            }
             bool moved = false;
             auto rotation = camera.rotation();
-            if (!started && gesture_ != Gesture::None && (input.delta.x != 0 || input.delta.y != 0))
+            if (gesture_ != Gesture::None && (input.delta.x != 0 || input.delta.y != 0))
             {
                 if (gesture_ == Gesture::Rotate)
                 {
@@ -82,6 +73,15 @@ namespace Incubator::Demo
             // to the existing gesture; explicit cancellation has already cleared gesture_.
             if (ending)
                 cancel();
+            // A press in this batch can start the next gesture after the old one ends.
+            // Its delta has already been handled above and must not move the new gesture.
+            if (gesture_ == Gesture::None && !input.captureMouse)
+            {
+                if (input.rotate.pressed && input.rotate.down)
+                    gesture_ = Gesture::Rotate;
+                else if (input.pan.pressed && input.pan.down)
+                    gesture_ = Gesture::Pan;
+            }
             if (moved)
             {
                 camera = Scene::Camera(target_ + rotation * glm::vec3(0, 0, distance_), rotation, camera.perspective());

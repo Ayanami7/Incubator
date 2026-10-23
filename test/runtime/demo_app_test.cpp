@@ -289,6 +289,73 @@ namespace
         EXPECT_EQ(camera.position(), glm::vec3(0, 0, 8));
     }
 
+    TEST(OrbitCameraTest, RotateReleaseStartsPanWithoutReusingBatchDelta)
+    {
+        for (const bool captured : {false, true})
+        {
+            SCOPED_TRACE(captured);
+            Demo::OrbitCamera orbit;
+            Scene::Camera camera({0, 0, 6}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 100});
+            Demo::UiInput input;
+            input.rotate = {true, true, false};
+            ASSERT_FALSE(orbit.apply(camera, input, {800, 600}));
+
+            input.rotate = {false, false, true};
+            input.pan = {true, true, false};
+            input.delta = {20, 10};
+            input.captureMouse = captured;
+            ASSERT_TRUE(orbit.apply(camera, input, {800, 600}));
+            const auto rotation = glm::angleAxis(-0.1f, glm::vec3(0, 1, 0)) *
+                                  glm::angleAxis(-0.05f, glm::vec3(1, 0, 0));
+            const auto released = rotation * glm::vec3(0, 0, 6);
+            EXPECT_LT(glm::length(camera.position() - released), 0.00001f);
+            EXPECT_NEAR(glm::dot(camera.rotation(), rotation), 1.0f, 0.000001f);
+
+            input.rotate = {};
+            input.pan.pressed = false;
+            input.captureMouse = false;
+            input.delta = {30, 15};
+            EXPECT_EQ(orbit.apply(camera, input, {800, 600}), !captured);
+            const auto expected = captured ? released : released + rotation * glm::vec3(-0.6f, 0.3f, 0);
+            EXPECT_LT(glm::length(camera.position() - expected), 0.00001f);
+            EXPECT_NEAR(glm::dot(camera.rotation(), rotation), 1.0f, 0.000001f);
+        }
+    }
+
+    TEST(OrbitCameraTest, PanReleaseStartsRotateWithoutReusingBatchDelta)
+    {
+        for (const bool captured : {false, true})
+        {
+            SCOPED_TRACE(captured);
+            Demo::OrbitCamera orbit;
+            Scene::Camera camera({0, 0, 6}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 100});
+            Demo::UiInput input;
+            input.pan = {true, true, false};
+            ASSERT_FALSE(orbit.apply(camera, input, {800, 600}));
+
+            input.pan = {false, false, true};
+            input.rotate = {true, true, false};
+            input.delta = {30, 15};
+            input.captureMouse = captured;
+            ASSERT_TRUE(orbit.apply(camera, input, {800, 600}));
+            const glm::vec3 target(-0.6f, 0.3f, 0);
+            const auto released = target + glm::vec3(0, 0, 6);
+            EXPECT_LT(glm::length(camera.position() - released), 0.00001f);
+            EXPECT_EQ(camera.rotation(), glm::quat(1, 0, 0, 0));
+
+            input.pan = {};
+            input.rotate.pressed = false;
+            input.captureMouse = false;
+            input.delta = {20, 10};
+            EXPECT_EQ(orbit.apply(camera, input, {800, 600}), !captured);
+            const auto rotation = glm::angleAxis(-0.1f, glm::vec3(0, 1, 0)) *
+                                  glm::angleAxis(-0.05f, glm::vec3(1, 0, 0));
+            const auto expected = captured ? released : target + rotation * glm::vec3(0, 0, 6);
+            EXPECT_LT(glm::length(camera.position() - expected), 0.00001f);
+            EXPECT_NEAR(glm::dot(camera.rotation(), captured ? glm::quat(1, 0, 0, 0) : rotation), 1.0f, 0.000001f);
+        }
+    }
+
     TEST(OrbitCameraTest, PanUsesWindowCoordinatesAndZoomIsIndependentOfFrameTime)
     {
         Demo::OrbitCamera orbit;
