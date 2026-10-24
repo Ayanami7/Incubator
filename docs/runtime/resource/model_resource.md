@@ -10,6 +10,7 @@ Render 头文件或 GPU 引用。矩阵使用 Runtime 已有的 GLM。
 struct MeshVertexData {
     std::array<float, 3> position{};
     std::array<float, 2> uv{};
+    std::array<float, 3> normal{};
 };
 struct MeshData {
     std::vector<MeshVertexData> vertices;
@@ -18,6 +19,7 @@ struct MeshData {
 struct ModelMaterial {
     std::optional<std::string> texturePath;
     std::array<float, 3> color{1, 1, 1};
+    bool unlit = false;
 };
 struct ModelPart {
     uint32_t geometry = 0;
@@ -85,7 +87,7 @@ ModelResource 构造时一次性校验，失败抛出 `Error::Exception(CONFIG)`
 | 数据 | 接受条件 |
 |---|---|
 | 几何 | 非空顶点及三角形索引列表，索引数是 3 的倍数且不超过 uint32 绘制计数上限；每个 uint32 索引在本几何顶点范围内 |
-| 顶点 | position 和 UV 均有限；UV 可以超出 0–1，沿用 repeat 语义，不钳制 |
+| 顶点 | position、UV 和 normal 均有限；UV 可以超出 0–1，沿用 repeat 语义，不钳制；零法线合法 |
 | 材质 | 线性 RGB 有限且在 0–1，默认白色；不包含透明混合参数 |
 | 纹理路径 | `nullopt` 表示纯色/默认材质；有值时必须是有效非空资源虚拟路径，经 `canonicalizeResourceKey` 规范化，不能以空串代替无贴图 |
 | 部分 | 几何和材质索引有效 |
@@ -115,7 +117,11 @@ instanceTransform * root.localTransform * ... * node.localTransform
 ## 文件导入
 
 ModelLoader 将静态 glTF 2.0（外部 bin/PNG）及 OBJ（外部 mtl/PNG）统一转换为上述数据。
-只消费 position、UV0、uint32 三角形索引和基色；贴图材质要求 UV0，纯色几何可由导入方补固定 UV。
+CPU 载荷保存 position、UV0、normal、uint32 三角形索引和基色；贴图材质要求 UV0，纯色几何可由导入方补固定 UV。
+normal 位于几何局部空间，未乘节点矩阵；默认零向量表示无可用法线，原两字段顶点初始化仍有效。
+ModelResource 只验证法线有限性，不归一化或改写手工输入；法线不影响几何边界，未引用顶点及退化三角形可保留零法线。
+ModelLoader 归一化非零源法线并按格式补齐缺失法线，具体策略见 [ModelLoader](./loader/model_loader.md)。
+`ModelMaterial::unlit` 只记录源材质不受光语义，默认 false，不包含 Render 类型或消费者的预览策略。
 glTF baseColorFactor/Texture、OBJ Kd/map_Kd 映射为线性颜色和外部纹理路径，采样和输出沿用
 [Render 材质约定](../render.md)。动画、骨骼、Morph、GLB/嵌入图像、透明混合及完整 PBR 不在首批范围。
 具体文件格式和材质拒绝规则见 [ModelLoader](./loader/model_loader.md)；手工 CPU 构造不读取或检查实际文件。

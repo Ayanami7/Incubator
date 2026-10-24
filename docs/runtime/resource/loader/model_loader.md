@@ -52,7 +52,7 @@ IOStream 累积短读，保留完整元素计数、seek/tell/size 语义；提�
 |---|---|
 | 静态 `.gltf` 2.0 | 外部 bin/PNG，保留源根、节点局部矩阵、部分及共享 aiMesh 关系 |
 | `.obj` + 外部 `.mtl`/PNG | 三角化，保留导入器提供的根/物体节点，读取 Kd/map_Kd |
-| 几何 | position、UV0、三角形列表；源顶点数量须能由 Assimp 表示，源索引转换为内部 uint32，越界索引拒绝 |
+| 几何 | position、UV0、局部 normal、三角形列表；源顶点数量须能由 Assimp 表示，源索引转换为内部 uint32，越界索引拒绝 |
 | 无贴图材质 | 默认白色或显式 0–1 线性 RGB；无 UV 时补固定 `(0,0)` |
 | 基色贴图 | 仅一张外部 PNG、UV0；贴图材质缺少 UV0、非 UV0、显式 UV 变换（包括恒等）或多重基色贴图均拒绝 |
 | glTF 透明字段 | 仅缺省/OPAQUE；忽略基色 alpha，不用通用 opacity 反向拒绝 OPAQUE；MASK/BLEND/未知模式失败 |
@@ -61,6 +61,8 @@ IOStream 累积短读，保留完整元素计数、seek/tell/size 语义；提�
 
 普通光照、法线、金属度和其他非基色材质参数不进入当前顶点与 Shader 链路，只作基色预览。
 源 sampler 和双面参数不导入，不承诺完整 PBR 外观；opaque、无剔除的显示条件保持。
+glTF 必需或可选的 `KHR_materials_unlit` 通过 Assimp 的 `AI_MATKEY_SHADING_MODEL` / `aiShadingMode_Unlit`
+保存到 `ModelMaterial::unlit`；普通 glTF 和 OBJ 默认 false，不扩展 MTL 光照模型映射。
 模型准备入口默认 nearest/repeat/LOD=0，消费者可通过 [PrepareOptions](../../model.md) 显式选择
 线性过滤和 GPU mip 链。该策略属于模型消费与 Render，不改变 ModelResource/Loader 的 CPU 数据契约，
 也不表示恢复了源资产的 sampler 设置。
@@ -73,6 +75,12 @@ MTL 源检查只识别 Kd 是否声明及不支持的 map_Kd 选项，不另行�
 选项比较与固定 Assimp 一致，不区分 ASCII 大小写；`-o/-s/-t/-type` 及其大小写变体均拒绝。
 
 ## 矩阵、UV 与共享
+
+已有源法线保留方向并归一化，零向量不改为固定方向；非有限分量沿载荷校验及 Loader 的 IO 错误通道拒绝。
+缺少法线时，glTF 使用 `aiProcess_GenNormals` 生成逐面平面法线，可能拆分共享顶点、调整索引；
+OBJ 使用 `aiProcess_GenSmoothNormals`，最大平滑角固定为 80°，不承诺精确还原所有 OBJ smoothing group。
+生成标志按格式二选一，不强制重算已有法线；索引仍为 uint32，拆点不改变面的位置、UV、绕序或材质关联。
+退化三角形和未引用顶点的零法线可保留，法线始终处于几何局部空间。
 
 Assimp 矩阵字段 a/b/c/d 表示行，转换时逐元素写入 GLM 列；局部矩阵和源根均不烘焙进顶点。
 右手、Y-up 和源数值单位保持不变，不自动居中或归一化。每个 aiMesh 对应一份 MeshData 和一个整网格部分，

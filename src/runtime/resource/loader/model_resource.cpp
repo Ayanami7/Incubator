@@ -56,6 +56,14 @@ namespace Incubator
                                                    fmt::format("Model geometry {} has non-finite UV", geometry));
                         }
                     }
+                    for (float value : vertex.normal)
+                    {
+                        if (!std::isfinite(value))
+                        {
+                            throw Error::Exception(Error::Code::CONFIG,
+                                                   fmt::format("Model geometry {} has non-finite normal", geometry));
+                        }
+                    }
                 }
                 return bounds;
             }

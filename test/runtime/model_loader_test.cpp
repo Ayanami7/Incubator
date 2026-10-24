@@ -207,17 +207,17 @@ namespace
             std::ofstream file(filePath, std::ios::binary);
             file.write(content.data(), static_cast<std::streamsize>(content.size()));
         }
-        void editGltf(const std::function<void(rapidjson::Document&)>& edit)
+        void editGltf(const std::function<void(rapidjson::Document&)>& edit, std::string_view path = GLTF)
         {
             rapidjson::Document source;
-            const auto text = read(GLTF);
+            const auto text = read(path);
             source.Parse(text.c_str());
             ASSERT_FALSE(source.HasParseError());
             edit(source);
             rapidjson::StringBuffer buffer;
             rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
             source.Accept(writer);
-            write(GLTF, buffer.GetString());
+            write(path, buffer.GetString());
         }
         ModelResource* load(std::string_view path)
         {
@@ -268,12 +268,105 @@ namespace
         EXPECT_FALSE(model->materials()[model->parts()[1].material].texturePath.has_value());
         EXPECT_EQ(model->materials()[model->parts()[1].material].color, (std::array<float, 3>{0.5f, 1.0f, 0.5f}));
         EXPECT_FLOAT_EQ(model->geometries()[0].vertices[0].position[0], -1.0f);
-        EXPECT_EQ(model->geometries()[0].indices, (std::vector<uint32_t>{0, 1, 2, 0, 2, 3}));
+        EXPECT_EQ(model->geometries()[0].indices, (std::vector<uint32_t>{0, 1, 2, 4, 5, 3}));
         expectClosed();
         ResourceManager::instance().reset();
         fs::remove_all("assets/models");
         EXPECT_EQ(node(*model, "SourceRoot").name, "SourceRoot");
         EXPECT_FLOAT_EQ(model->geometries()[1].vertices[2].position[1], 0.5f);
+    }
+
+    TEST_F(ModelLoaderTest, SourceNormalsAndUnlitSurviveGltfAndObjImport)
+    {
+        constexpr const char* sourcePath = "models/normals/folded.gltf";
+        editGltf([](auto& source) {
+            source["meshes"][0]["primitives"][0]["attributes"].AddMember("NORMAL", 3, source.GetAllocator());
+        }, sourcePath);
+        write("models/normals/required.gltf", read(sourcePath));
+        editGltf(
+            [](auto& source) {
+                auto& a = source.GetAllocator();
+                rapidjson::Value required(rapidjson::kArrayType);
+                required.PushBack("KHR_materials_unlit", a);
+                source.AddMember("extensionsRequired", required, a);
+            },
+            "models/normals/required.gltf");
+        for (const char* path : {sourcePath, "models/normals/required.gltf", "models/normals/source.obj"})
+        {
+            SCOPED_TRACE(path);
+            const auto* model = load(path);
+            ASSERT_NE(model, nullptr) << messages_.str();
+            ASSERT_EQ(model->geometries().size(), 1u);
+            const auto& geometry = model->geometries()[0];
+            const bool obj = std::string_view(path).ends_with(".obj");
+            ASSERT_EQ(geometry.vertices.size(), obj ? 3u : 4u);
+            for (size_t i = 0; i < geometry.vertices.size(); ++i)
+            {
+                const auto& normal = geometry.vertices[i].normal;
+                EXPECT_EQ(normal, (i == geometry.vertices.size() - 1 ? std::array<float, 3>{}
+                                                                     : std::array<float, 3>{0, -1, 0}));
+            }
+            size_t unlit = 0;
+            for (const auto& material : model->materials())
+                unlit += material.unlit;
+            EXPECT_EQ(unlit, obj ? 0u : 1u);
+            EXPECT_EQ(model->materials()[model->parts()[0].material].unlit, !obj);
+            expectClosed();
+        }
+        auto bytes = read("models/normals/folded.bin");
+        const auto invalid = std::numeric_limits<float>::quiet_NaN();
+        std::memcpy(bytes.data() + 92, &invalid, sizeof(invalid));
+        write("models/normals/folded.bin", bytes);
+        write("models/normals/nonfinite.gltf", read(sourcePath));
+        expectFailure("models/normals/nonfinite.gltf", "ModelLoader");
+    }
+
+    TEST_F(ModelLoaderTest, MissingNormalsGenerateFlatGltfAndEightyDegreeSmoothObj)
+    {
+        const auto* gltf = load("models/normals/folded.gltf");
+        ASSERT_NE(gltf, nullptr) << messages_.str();
+        ASSERT_EQ(gltf->geometries().size(), 1u);
+        const auto& folded = gltf->geometries()[0];
+        ASSERT_EQ(folded.vertices.size(), 6u);
+        ASSERT_EQ(folded.indices.size(), 6u);
+        const std::array<std::array<float, 3>, 4> positions{{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+        const std::array<std::array<float, 2>, 4> uvs{{{0, 0}, {1, 0}, {0, 1}, {1, 1}}};
+        const std::array<size_t, 6> corners{0, 1, 2, 0, 3, 1};
+        for (size_t i = 0; i < corners.size(); ++i)
+        {
+            const auto& vertex = folded.vertices[folded.indices[i]];
+            EXPECT_EQ(vertex.position, positions[corners[i]]);
+            EXPECT_EQ(vertex.uv, uvs[corners[i]]);
+            EXPECT_EQ(vertex.normal, (i < 3 ? std::array<float, 3>{0, 0, 1} : std::array<float, 3>{0, 1, 0}));
+        }
+        EXPECT_EQ(gltf->geometryBounds()[0].min, glm::vec3(0));
+        EXPECT_EQ(gltf->geometryBounds()[0].max, glm::vec3(1));
+        EXPECT_EQ(gltf->parts()[0].material, 0u);
+        const auto* obj = load("models/normals/folded.obj");
+        ASSERT_NE(obj, nullptr) << messages_.str();
+        ASSERT_EQ(obj->geometries().size(), 3u);
+        for (size_t part = 0; part < 3; ++part)
+        {
+            const auto& geometry = obj->geometries()[part];
+            ASSERT_EQ(geometry.indices.size(), part == 2 ? 3u : 6u);
+            for (size_t corner = 0; corner < geometry.indices.size(); ++corner)
+            {
+                const auto& vertex = geometry.vertices[geometry.indices[corner]];
+                std::array<float, 3> expected{};
+                if (part == 0)
+                    expected = corner % 3 < 2 ? std::array<float, 3>{0, -0.5f, std::sqrt(0.75f)}
+                                              : (corner < 3 ? std::array<float, 3>{0, 0, 1}
+                                                            : std::array<float, 3>{0, -std::sqrt(0.75f), 0.5f});
+                else if (part == 1)
+                    expected = corner < 3 ? std::array<float, 3>{0, 0, 1}
+                                          : std::array<float, 3>{0, -0.98480775f, -0.17364818f};
+                for (size_t axis = 0; axis < 3; ++axis)
+                    EXPECT_NEAR(vertex.normal[axis], expected[axis], 0.00001f) << part << ':' << corner;
+            }
+        }
+        for (const auto& material : obj->materials())
+            EXPECT_FALSE(material.unlit);
+        expectClosed();
     }
 
     TEST_F(ModelLoaderTest, GltfMatrixConversionPreservesNonIdentityRootAndLocalProducts)
@@ -325,6 +418,19 @@ namespace
                 EXPECT_EQ(geometry.indices.size() % 3, 0u);
                 for (const auto index : geometry.indices)
                     EXPECT_LT(index, geometry.vertices.size());
+                size_t usableNormals = 0;
+                for (const auto& vertex : geometry.vertices)
+                {
+                    const auto& n = vertex.normal;
+                    const auto length = std::hypot(n[0], n[1], n[2]);
+                    EXPECT_TRUE(std::isfinite(length));
+                    if (length > 0)
+                    {
+                        ++usableNormals;
+                        EXPECT_NEAR(length, 1.0f, 0.00001f);
+                    }
+                }
+                EXPECT_GT(usableNormals, 0u);
             }
         };
 
@@ -779,10 +885,11 @@ namespace
         const auto* model = load(GLTF);
         ASSERT_NE(model, nullptr) << messages_.str();
         ASSERT_EQ(model->geometries().size(), 1u);
-        EXPECT_EQ(model->geometries()[0].vertices.size(), vertexCount);
+        EXPECT_EQ(model->geometries()[0].vertices.size(), indexCount);
         ASSERT_EQ(model->geometries()[0].indices.size(), indexCount);
         EXPECT_EQ(model->geometries()[0].indices[vertexCount - 1], 65536u);
-        EXPECT_EQ(model->geometries()[0].indices.back(), 0u);
+        EXPECT_EQ(model->geometries()[0].indices.back(), vertexCount);
+        EXPECT_EQ(model->geometries()[0].vertices.back().position, model->geometries()[0].vertices[0].position);
         expectClosed();
     }
 
@@ -861,7 +968,7 @@ namespace
         });
         const auto* model = load(GLTF);
         ASSERT_NE(model, nullptr) << messages_.str();
-        EXPECT_EQ(model->geometries()[0].indices, (std::vector<uint32_t>{0, 1, 2, 0, 2, 3}));
+        EXPECT_EQ(model->geometries()[0].indices, (std::vector<uint32_t>{0, 1, 2, 4, 5, 3}));
         expectClosed();
     }
 

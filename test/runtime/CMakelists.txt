@@ -5,7 +5,11 @@ foreach(MODEL_FILE IN ITEMS
     minimal_gltf/model.gltf
     minimal_gltf/geometry/mesh.bin
     minimal_obj/model.obj
-    minimal_obj/materials/model.mtl)
+    minimal_obj/materials/model.mtl
+    normals/folded.gltf
+    normals/folded.bin
+    normals/folded.obj
+    normals/source.obj)
     set(MODEL_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/models/${MODEL_FILE}")
     set(MODEL_OUTPUT "${RUNTIME_TEST_ASSET_DIR}/models/${MODEL_FILE}")
     get_filename_component(MODEL_OUTPUT_DIRECTORY "${MODEL_OUTPUT}" DIRECTORY)

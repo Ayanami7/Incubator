@@ -13,6 +13,7 @@ namespace Incubator
         {
             std::array<float, 3> position{};
             std::array<float, 2> uv{};
+            std::array<float, 3> normal{};  ///< 几何局部法线；零向量表示无可用法线。
         };
 
         /// @brief 由 CPU 持有的网格顶点和索引数据。

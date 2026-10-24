@@ -73,7 +73,7 @@ TextureLoader 经 FileIO 完整读取并在内存解码 PNG，TextureResource �
 应用将其借给 `Renderer::createTexture` 同步上传，调用成功后可 release 到零；GPU Texture 与在途资源由 Render
 独立持有。资源根为启动 CWD 下的 `assets/`，资源持有期间保持工作目录稳定。
 
-ModelResource 使用 MODEL 类型，拥有独立的 MeshData、线性基色/外部纹理路径描述、几何与材质关联，
+ModelResource 使用 MODEL 类型，拥有独立的 MeshData（含局部法线）、线性基色/外部纹理路径及源 Unlit 描述、几何与材质关联，
 以及显式源根和节点局部矩阵。构造时校验几何和单根树结构，之后只读访问；多个节点可复用同一几何。
 ModelLoader 通过现有 FileIO 和固定 Assimp 导入外部 bin/PNG 的静态 glTF 2.0、外部 mtl/PNG 的 OBJ，
 返回自有 CPU 资产，图片仅保留路径。GPU 资源准备和实例绘制由 [Model 消费层](../model.md)

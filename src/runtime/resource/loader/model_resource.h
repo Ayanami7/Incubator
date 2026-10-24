@@ -21,6 +21,7 @@ namespace Incubator
             /// @note 路径为空时使用纯色。
             std::optional<std::string> texturePath;
             std::array<float, 3> color{1.0f, 1.0f, 1.0f};  ///< 线性 RGB；输出不透明。
+            bool unlit = false;  ///< 源材质显式声明不受光；不包含消费者的着色策略。
         };
 
         struct ModelPart

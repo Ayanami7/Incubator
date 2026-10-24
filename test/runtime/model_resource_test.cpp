@@ -279,6 +279,29 @@ namespace
         EXPECT_EQ(model->geometries()[0].indices.back(), 65536u);
     }
 
+    TEST(ModelResourceTest, NormalsDefaultToZeroAcceptFiniteValuesAndRejectNonFinite)
+    {
+        const auto legacy = triangle();
+        EXPECT_EQ(legacy.vertices[0].normal, (std::array<float, 3>{}));
+        EXPECT_FALSE(ModelMaterial{}.unlit);
+        ModelInput input;
+        input.geometries[0].vertices[1].normal = {0, -2, 0};
+        input.geometries[0].vertices.push_back({{9, 9, 9}, {0, 0}});
+        const auto model = makeModel(input);
+        EXPECT_EQ(model->geometries()[0].vertices[0].normal, (std::array<float, 3>{}));
+        EXPECT_EQ(model->geometries()[0].vertices[1].normal, (std::array<float, 3>{0, -2, 0}));
+        EXPECT_EQ(model->geometries()[0].vertices.back().normal, (std::array<float, 3>{}));
+        EXPECT_EQ(model->geometryBounds()[0].max, glm::vec3(9));
+        for (size_t axis = 0; axis < 3; ++axis)
+            for (const auto value : {std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(),
+                                     std::numeric_limits<float>::quiet_NaN()})
+            {
+                auto invalid = input;
+                invalid.geometries[0].vertices[0].normal[axis] = value;
+                expectInvalid(invalid, "non-finite normal");
+            }
+    }
+
     TEST(ModelResourceTest, RejectsNonFinitePositionsAndUv)
     {
         for (float value : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),

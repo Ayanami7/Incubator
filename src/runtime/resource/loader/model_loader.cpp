@@ -1,6 +1,7 @@
 #include "runtime/resource/loader/model_loader.h"
 
 #include <assimp/GltfMaterial.h>
+#include <assimp/config.h>
 #include <assimp/material.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
@@ -86,6 +87,12 @@ namespace Incubator::Resource
                 }
             }
             ModelMaterial result;
+            if (gltf)
+            {
+                aiShadingMode shading = aiShadingMode_PBR_BRDF;
+                source.Get(AI_MATKEY_SHADING_MODEL, shading);
+                result.unlit = shading == aiShadingMode_Unlit;
+            }
             aiColor4D color(1.0f, 1.0f, 1.0f, 1.0f);
             if (gltf)
                 source.Get(AI_MATKEY_BASE_COLOR, color);
@@ -153,7 +160,10 @@ namespace Incubator::Resource
             Assimp::Importer importer;
             auto* io = new Detail::AssimpFileIO(fileIO_, path, gltf);
             importer.SetIOHandler(io);  // Importer 持有该数据；FileIO 仅在本次调用期间借用。
-            const auto* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_ValidateDataStructure);
+            importer.SetPropertyFloat(AI_CONFIG_PP_GSN_MAX_SMOOTHING_ANGLE, 80.0f);
+            const unsigned normalProcess = gltf ? aiProcess_GenNormals : aiProcess_GenSmoothNormals;
+            const auto* scene =
+                importer.ReadFile(path, aiProcess_Triangulate | aiProcess_ValidateDataStructure | normalProcess);
             if (!io->failure().empty())
                 throw Error::Exception(Error::Code::IO, io->failure());
             if (!diagnostics.failure.empty())
@@ -206,7 +216,18 @@ namespace Incubator::Resource
                         // 两个导入器都提供 Assimp 的左下原点 UV；glTF 已反转源 V 坐标。
                         uv = {mesh.mTextureCoords[0][v].x, 1.0f - mesh.mTextureCoords[0][v].y};
                     }
-                    geometry.vertices.push_back({{position.x, position.y, position.z}, uv});
+                    std::array<float, 3> normal{};
+                    if (mesh.HasNormals())
+                    {
+                        const auto& sourceNormal = mesh.mNormals[v];
+                        normal = {sourceNormal.x, sourceNormal.y, sourceNormal.z};
+                        // 用双精度长度保留很小或很大的有限法线；非有限值交给载荷边界拒绝。
+                        const double length = std::hypot(double(normal[0]), double(normal[1]), double(normal[2]));
+                        if (std::isfinite(length) && length > 0)
+                            for (auto& component : normal)
+                                component = static_cast<float>(component / length);
+                    }
+                    geometry.vertices.push_back({{position.x, position.y, position.z}, uv, normal});
                 }
                 for (unsigned f = 0; f < mesh.mNumFaces; ++f)
                 {
