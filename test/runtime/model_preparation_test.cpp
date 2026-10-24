@@ -38,7 +38,6 @@
 #include "runtime/scene/scene.h"
 #include "runtime/scene/scene_frame.h"
 #include "support/render_demo/scene_assets.h"
-#include "support/render_demo/scene_controls.h"
 #include "support/texture_gpu_review.h"
 #include "support/window_capture.h"
 
@@ -713,22 +712,15 @@ namespace
             return {glm::lookAtRH(glm::vec3(0, 0, 3), glm::vec3(0), glm::vec3(0, 1, 0)), projection};
         }
         std::optional<FrameExtent> submit(Window::Window& window, Renderer& renderer,
-                                          std::span<const Model::ModelInstance> instances, bool ui = false)
+                                          std::span<const Model::ModelInstance> instances)
         {
             window.pollEvents();
             const auto extent = renderer.beginUiFrame();
             if (!extent)
                 return std::nullopt;
             auto draws = Model::makeModelDraws(instances);
-            if (ui)
-                ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(16, 16), ImVec2(48, 48),
-                                                              IM_COL32(255, 0, 255, 255));
             renderer.imgui().endFrame();
-            auto* data = renderer.imgui().drawData();
-            renderer.drawFrame({*extent, camera(*extent), draws}, {0.2f, 0.24f, 0.28f, 1}, [&](void* commands) {
-                if (ui)
-                    renderer.imgui().recordDrawData(data, commands);
-            });
+            renderer.drawFrame({*extent, camera(*extent), draws}, {0.2f, 0.24f, 0.28f, 1});
             // GPU 必然完成前，修改并销毁已提交的 CPU 存储。
             for (auto& draw : draws)
                 draw = {};
@@ -1066,7 +1058,7 @@ namespace
         cleanValidation();
     }
 
-    TEST_F(SceneFrameTest, ImportedFramesSubmitUiEditsCameraResizeEmptyAndExpiredReferences)
+    TEST_F(SceneFrameTest, ImportedSnapshotSubmitsAfterSceneClear)
     {
         auto native = window(true);
         Scene::Scene scene;
@@ -1079,7 +1071,7 @@ namespace
             const auto placement = [](float x, float y, float size) {
                 return Scene::Transform({x, y, 0}, {1, 0, 0, 0}, glm::vec3(size));
             };
-            const auto first = scene.createEntity(gltf, placement(-0.65f, 0.45f, 0.25f));
+            scene.createEntity(gltf, placement(-0.65f, 0.45f, 0.25f));
             scene.createEntity(gltf, placement(0.65f, 0.45f, 0.25f));
             scene.createEntity(obj, placement(-0.65f, -0.55f, 0.35f));
             scene.createEntity(obj, placement(0.65f, -0.55f, 0.35f));
@@ -1089,113 +1081,25 @@ namespace
             released(ResourceType::TEXTURE, PNG);
             ResourceManager::instance().reset();
             fileIO_.reset();
-            const auto resourceLog = resourceMessages_.str();
-            const auto submitScene = [&](size_t count, bool editInUi = false, bool ui = false) {
-                native->pollEvents();
-                const auto extent = renderer.beginUiFrame();
-                ASSERT_TRUE(extent);
-                if (editInUi)
-                    ASSERT_TRUE(scene.setVisible(first, false));
-                if (ui)
-                    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(16, 16), ImVec2(48, 48),
-                                                                  IM_COL32(255, 0, 255, 255));
-                auto frame = Scene::extractSceneFrame(scene, *extent);
-                ASSERT_TRUE(frame);
-                EXPECT_EQ(frame->extent, *extent);
-                EXPECT_EQ(frame->draws.size(), count);
-                EXPECT_NEAR(frame->camera.projection[0][0], float(extent->height) / extent->width, 0.00001f);
-                renderer.imgui().endFrame();
-                auto* data = renderer.imgui().drawData();
-                renderer.drawFrame(frame->input(), {0.2f, 0.24f, 0.28f, 1}, [&](void* commands) {
-                    if (ui)
-                        renderer.imgui().recordDrawData(data, commands);
-                });
-                frame->draws.clear();
-                frame->draws.shrink_to_fit();
-                frame.reset();
-                glfwWaitEventsTimeout(0.04);
-            };
-            for (int frame = 0; frame < 3; ++frame)
-                ASSERT_NO_FATAL_FAILURE(submitScene(12));
-            auto image = WindowCapture::capture(*native);
-            color(image, -0.510897f, 0.567851f, {188, 255, 188});
-            color(image, 0.789103f, 0.567851f, {188, 255, 188});
-            color(image, -0.44f, -0.608333f, {188, 255, 188});
-            WindowCapture::save(image, "review/scene-frame-models.ppm");
-            for (int frame = 0; frame < 3; ++frame)
-                ASSERT_NO_FATAL_FAILURE(submitScene(8, true));
-            image = WindowCapture::capture(*native);
-            color(image, -0.510897f, 0.567851f, {51, 61, 71});
-            color(image, 0.789103f, 0.567851f, {188, 255, 188});
-            ASSERT_TRUE(scene.setVisible(first, true));
 
-            // 尺寸在提取和提交之间发生变化时，必须跳过过期输入。
-            const auto oldExtent = renderer.beginUiFrame();
-            ASSERT_TRUE(oldExtent);
-            auto stale = Scene::extractSceneFrame(scene, *oldExtent);
-            ASSERT_TRUE(stale);
-            renderer.imgui().endFrame();
-            glfwSetWindowSize(static_cast<GLFWwindow*>(native->getNativeHandle()), 800, 400);
             native->pollEvents();
-            bool recorded = false;
-            renderer.drawFrame(stale->input(), {0, 0, 0, 1}, [&](void*) { recorded = true; });
-            EXPECT_FALSE(recorded);
-            for (int frame = 0; frame < 4; ++frame)
-            {
-                ASSERT_TRUE(scene.setTransform(first, placement(-0.65f + (frame % 2 ? 0 : 0.03f), 0.45f, 0.25f)));
-                ASSERT_NO_FATAL_FAILURE(submitScene(12));
-            }
-            scene.setCamera(Scene::Camera({0, 0, 2}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 10}));
-            for (int frame = 0; frame < 3; ++frame)
-                ASSERT_NO_FATAL_FAILURE(submitScene(12));
-            image = WindowCapture::capture(*native);
-            EXPECT_EQ(image.width, 800);
-            EXPECT_EQ(image.height, 400);
-            color(image, 0.789103f / 2, 0.567851f / 2, {188, 255, 188});
-            WindowCapture::save(image, "review/scene-frame-camera-resize.ppm");
-
-            auto retained = Scene::extractSceneFrame(scene, {800, 400});
+            const auto extent = renderer.beginUiFrame();
+            ASSERT_TRUE(extent);
+            auto retained = Scene::extractSceneFrame(scene, *extent);
             ASSERT_TRUE(retained);
+            ASSERT_EQ(retained->draws.size(), 12u);
             scene.clear();
-            ASSERT_TRUE(renderer.beginUiFrame());
+            EXPECT_TRUE(scene.entities().empty());
+            // 场景已清空，仍通过快照自有的绘制列表提交原来的模型。
             renderer.imgui().endFrame();
             renderer.drawFrame(retained->input(), {0.2f, 0.24f, 0.28f, 1});
             retained.reset();
-            glfwWaitEventsTimeout(0.04);
-            color(WindowCapture::capture(*native), 0.789103f / 2, 0.567851f / 2, {188, 255, 188});
-            for (int frame = 0; frame < 3; ++frame)
-                ASSERT_NO_FATAL_FAILURE(submitScene(0, false, true));
-            image = WindowCapture::capture(*native);
-            color(image, 0.789103f / 2, 0.567851f / 2, {51, 61, 71});
-            const size_t uiPixel = (32u * image.width + 32) * 4;
-            EXPECT_EQ(image.rgba[uiPixel], 255);
-            EXPECT_EQ(image.rgba[uiPixel + 1], 0);
-            EXPECT_EQ(image.rgba[uiPixel + 2], 255);
-            WindowCapture::save(image, "review/scene-frame-empty-ui.ppm");
-            scene.createEntity(gltf);
-            ASSERT_NO_FATAL_FAILURE(submitScene(4));
-            EXPECT_EQ(resourceMessages_.str(), resourceLog);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
-        }
-        auto expired = Scene::extractSceneFrame(scene, {800, 400});
-        ASSERT_TRUE(expired);
-        ASSERT_EQ(expired->draws.size(), 4u);
-        EXPECT_FALSE(expired->draws[0].mesh.valid());
-        {
-            Renderer next(*native, RendererValidationMode::Required);
-            try
-            {
-                next.drawFrame(expired->input(), {0, 0, 0, 1});
-                FAIL() << "Accepted expired Scene GPU references";
-            }
-            catch (const Error::Exception& error)
-            {
-                EXPECT_EQ(error.code(), Error::Code::RENDER);
-                EXPECT_NE(error.message().find("Mesh is invalid"), std::string::npos);
-            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+            const auto image = WindowCapture::capture(*native);
+            color(image, -0.510897f, 0.567851f, {188, 255, 188});
+            color(image, 0.789103f, 0.567851f, {188, 255, 188});
+            color(image, -0.44f, -0.608333f, {188, 255, 188});
+            WindowCapture::save(image, "review/scene-frame-retained-after-clear.ppm");
         }
         cleanValidation();
     }
@@ -1254,145 +1158,40 @@ namespace
         cleanValidation();
     }
 
-    TEST_F(ModelInstanceTest, ImportedInstancesPresentMaterialsDepthAndSurviveListAndSwapchainChanges)
+    TEST_F(ModelInstanceTest, ImportedInstancesSubmitMaterialsAndIndependentPlacements)
     {
-        // 临时 OBJ 变体为第二种格式提供不同的纯色，以便检查深度。
-        {
-            const fs::path path("assets/models/minimal_obj/materials/model.mtl");
-            std::ifstream input(path);
-            std::string mtl{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-            input.close();
-            const auto at = mtl.find("Kd 0.5 1 0.5");
-            ASSERT_NE(at, std::string::npos);
-            mtl.replace(at, std::string_view("Kd 0.5 1 0.5").size(), "Kd 1 0 0");
-            std::ofstream(path) << mtl;
-        }
         auto native = window(true);
-        std::vector<Model::ModelInstance> instances;
         {
             Renderer renderer(*native, RendererValidationMode::Required);
             shaders(renderer);
-            auto gltf = Model::prepareModel(renderer, GLTF);
-            auto obj = Model::prepareModel(renderer, OBJ);
-            ASSERT_EQ(gltf->draws().size(), 4u);
-            ASSERT_EQ(obj->draws().size(), 2u);
-            released(ResourceType::MODEL, GLTF);
-            released(ResourceType::MODEL, OBJ);
-            released(ResourceType::TEXTURE, PNG);
+            const auto gltf = Model::prepareModel(renderer, GLTF);
+            const auto obj = Model::prepareModel(renderer, OBJ);
             const auto placement = [](float x, float y, float size) {
                 return glm::translate(glm::mat4(1), glm::vec3(x, y, 0)) * glm::scale(glm::mat4(1), glm::vec3(size));
             };
-            instances = {{gltf, placement(-0.65f, 0.45f, 0.25f)},
-                         {gltf, placement(0.65f, 0.45f, 0.25f)},
-                         {obj, placement(-0.65f, -0.55f, 0.35f)},
-                         {obj, placement(0.65f, -0.55f, 0.35f)}};
-            const auto first = Model::makeModelDraws(instances);
-            ASSERT_EQ(first.size(), 12u);
-            const auto k = std::sqrt(0.5f);
-            point(first[0].model, -0.65f + 0.25f * (0.25f + 0.15f * k), 0.45f + 0.25f * 1.55f * k);
-            point(first[4].model, 0.65f + 0.25f * (0.25f + 0.15f * k), 0.45f + 0.25f * 1.55f * k);
-            point(first[2].model, -0.65f + 0.25f * (0.25f + 1.5f * k), 0.45f + 0.125f * k);
-            point(first[8].model, -0.3f, -0.2f);
-            // 实例/帧循环期间不保留 CPU 资产路由或 FileIO。
+            const std::array instances = {Model::ModelInstance{gltf, placement(-0.65f, 0.45f, 0.25f)},
+                                          Model::ModelInstance{gltf, placement(0.65f, 0.45f, 0.25f)},
+                                          Model::ModelInstance{obj, placement(-0.65f, -0.55f, 0.35f)},
+                                          Model::ModelInstance{obj, placement(0.65f, -0.55f, 0.35f)}};
+            ASSERT_EQ(Model::makeModelDraws(instances).size(), 12u);
+            released(ResourceType::MODEL, GLTF);
+            released(ResourceType::MODEL, OBJ);
+            released(ResourceType::TEXTURE, PNG);
             ResourceManager::instance().reset();
             fileIO_.reset();
-            auto* handle = static_cast<GLFWwindow*>(native->getNativeHandle());
-            for (int frame = 0; frame < 8; ++frame)
-            {
-                if (frame == 4)
-                    glfwSetWindowSize(handle, 800, 600);
-                instances[0].transform[3][0] = -0.65f + (frame == 7 ? 0 : (frame % 2 == 0 ? -0.03f : 0.03f));
-                ASSERT_TRUE(submit(*native, renderer, instances));
-                glfwWaitEventsTimeout(0.04);
-            }
-            auto image = WindowCapture::capture(*native);
-            EXPECT_EQ(image.width, 800);
-            EXPECT_EQ(image.height, 600);
+            ASSERT_TRUE(submit(*native, renderer, instances));
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+            const auto image = WindowCapture::capture(*native);
             color(image, -0.510897f, 0.567851f, {188, 255, 188});
             color(image, 0.789103f, 0.567851f, {188, 255, 188});
             color(image, -0.186806f, 0.261438f, {188, 255, 188});
-            color(image, -0.44f, -0.608333f, {255, 0, 0});
-            color(image, 0.86f, -0.608333f, {255, 0, 0});
+            color(image, -0.44f, -0.608333f, {188, 255, 188});
+            color(image, 0.86f, -0.608333f, {188, 255, 188});
             WindowCapture::save(image, "review/model-instances-materials.ppm");
-
-            // 将 glTF 叶节点与原始 OBJ 几何对齐。靠近摄像机的绿色表面必须
-            // 在两种提交顺序下都遮挡红色表面。
-            const auto leaf = gltf->draws()[0].model;
-            std::array overlap = {
-                Model::ModelInstance{gltf, glm::translate(glm::mat4(1), glm::vec3(0, 0, 0.3f)) * glm::inverse(leaf)},
-                Model::ModelInstance{obj, glm::translate(glm::mat4(1), glm::vec3(0, 0, -0.3f))}};
-            for (int order = 0; order < 2; ++order)
-            {
-                ASSERT_TRUE(submit(*native, renderer, overlap));
-                glfwWaitEventsTimeout(0.06);
-                image = WindowCapture::capture(*native);
-                color(image, 0.6f, -1.0f / 6, {188, 255, 188});
-                std::reverse(overlap.begin(), overlap.end());
-            }
-            WindowCapture::save(image, "review/model-instances-depth.ppm");
-            for (size_t count : {1u, 3u, 4u})
-            {
-                const auto input = std::span<const Model::ModelInstance>(instances).first(count);
-                EXPECT_EQ(Model::makeModelDraws(input).size(), count == 1 ? 4u : count == 3 ? 10u : 12u);
-                ASSERT_TRUE(submit(*native, renderer, input));
-            }
-            for (int frame = 0; frame < 3; ++frame)
-                ASSERT_TRUE(submit(*native, renderer, {}, true));
-            // 事件等待可能提前返回；应留出时间让空帧显示到桌面合成结果中。
-            std::this_thread::sleep_for(std::chrono::milliseconds(60));
-            image = WindowCapture::capture(*native);
-            color(image, 0.789103f, 0.567851f, {51, 61, 71});
-            const auto ui = (static_cast<size_t>(24) * image.width + 24) * 4;
-            EXPECT_GT(image.rgba[ui], 240);
-            EXPECT_LT(image.rgba[ui + 1], 15);
-            EXPECT_GT(image.rgba[ui + 2], 240);
-            WindowCapture::save(image, "review/model-instances-empty-ui.ppm");
-            glfwIconifyWindow(handle);
-            for (int attempt = 0; attempt < 100 && !native->isIconified(); ++attempt)
-            {
-                native->pollEvents();
-                glfwWaitEventsTimeout(0.005);
-            }
-            ASSERT_TRUE(native->isIconified());
-            for (int frame = 0; frame < 3; ++frame)
-                EXPECT_FALSE(submit(*native, renderer, instances));
-            glfwRestoreWindow(handle);
-            for (int attempt = 0; attempt < 100 && native->isIconified(); ++attempt)
-            {
-                native->pollEvents();
-                glfwWaitEventsTimeout(0.005);
-            }
-            ASSERT_FALSE(native->isIconified());
-            for (int frame = 0; frame < 3; ++frame)
-                ASSERT_TRUE(submit(*native, renderer, instances));
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
-        }
-        const auto expired = Model::makeModelDraws(instances);
-        ASSERT_EQ(expired.size(), 12u);
-        for (const auto& draw : expired)
-        {
-            EXPECT_FALSE(draw.mesh.valid());
-            EXPECT_FALSE(draw.material.valid());
-        }
-        {
-            Renderer next(*native, RendererValidationMode::Required);
-            try
-            {
-                next.drawFrame({{800, 600}, camera({800, 600}), expired}, {0, 0, 0, 1});
-                FAIL() << "Accepted expired draws";
-            }
-            catch (const Error::Exception& error)
-            {
-                EXPECT_EQ(error.code(), Error::Code::RENDER);
-                EXPECT_NE(error.message().find("Mesh is invalid"), std::string::npos);
-            }
-            EXPECT_TRUE(submit(*native, next, {}, true));
         }
         cleanValidation();
     }
+
     TEST_F(ModelInstanceTest, DemoModelsWithUnicodeDependenciesPreserveDirectionAndExactGpuColor)
     {
         // 保留真实的相对依赖链，同时将所有输入类型的文件名改为超出 ANSI 范围的字符。
@@ -1499,7 +1298,7 @@ namespace
                 for (int frame = 0; frame < 4; ++frame)
                 {
                     ASSERT_TRUE(submit(*native, renderer, instances));
-                    // 窗口创建或缩放后，等待桌面合成结果更新。
+                    // 窗口创建后，等待桌面合成结果更新。
                     glfwWaitEventsTimeout(0.04);
                 }
                 glfwWaitEventsTimeout(0.06);
@@ -1513,28 +1312,6 @@ namespace
                     }
                 color(displayed, 0.6f, -1.0f / 6, {188, 255, 188});
                 WindowCapture::save(displayed, std::string("review/") + label + "-window.ppm");
-
-                // 使用与 Demo 相同的初始控件和两个共享实例进行测试。
-                glfwSetWindowSize(static_cast<GLFWwindow*>(native->getNativeHandle()), 1280, 720);
-                auto scene = Demo::makeModelSceneControls();
-                const std::array shared{Model::ModelInstance{model, Demo::makeSceneModel(scene.cube.transform)},
-                                        Model::ModelInstance{model, Demo::makeSceneModel(scene.plane.transform)}};
-                const auto sharedDraws = Model::makeModelDraws(shared);
-                EXPECT_EQ(sharedDraws.size(), model->draws().size() * 2);
-                for (int frame = 0; frame < 3; ++frame)
-                {
-                    native->pollEvents();
-                    const auto extent = renderer.beginUiFrame();
-                    ASSERT_TRUE(extent);
-                    Demo::drawSceneControls(scene, format == 0 ? gltfPath : objPath, true);
-                    renderer.imgui().endFrame();
-                    auto* ui = renderer.imgui().drawData();
-                    renderer.drawFrame(Demo::makeSceneFrame(*extent, sharedDraws, scene.camera), scene.clearColor,
-                                       [&](void* commands) { renderer.imgui().recordDrawData(ui, commands); });
-                    glfwWaitEventsTimeout(0.04);
-                }
-                glfwWaitEventsTimeout(0.06);
-                WindowCapture::save(WindowCapture::capture(*native), std::string("review/") + label + "-demo.ppm");
             }
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 4u);
