@@ -267,11 +267,7 @@ namespace TextureGpuReview
             VulkanImage::uploadRgba8(device, {assets.texture->width(), assets.texture->height()},
                                      VK_FORMAT_R8G8B8A8_SRGB, assets.texture->pixels(), VK_IMAGE_USAGE_SAMPLED_BIT);
         VulkanSampler sampler(device, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::BaseLevel});
-        struct alignas(16) Transforms
-        {
-            glm::mat4 view{1.0f};
-            glm::mat4 projection{1.0f};
-        } transforms;
+        auto transforms = makeFrameUniform({{384, 256}, {glm::mat4(1), glm::mat4(1)}, {}});
         transforms.projection[0][0] = 2.0f;
         transforms.projection[1][1] = -2.0f;
         transforms.projection[2][2] = 0.0f;

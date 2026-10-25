@@ -31,9 +31,16 @@ Transform 是实体整体变换的唯一真源，实体不另存 ModelInstance �
 | find(EntityId) const | 返回只读 Entity 指针；无效、已删除或其他 Scene 的 ID 返回 nullptr |
 | setTransform/setVisible/setModel | 通过 ID 修改指定实体；未命中返回 false，其他实体不变；setModel 可传空解除绑定 |
 | destroyEntity(EntityId) | 删除指定实体，未命中返回 false；其他存活实体相对顺序保持 |
-| clear() | 清除全部实体和它们的模型持有，保留当前 Camera |
+| clear() | 清除全部实体和它们的模型持有，保留当前 Camera 与光照 |
 | entities() const | 返回 span<const Entity>，按存活实体的创建顺序遍历；新实体追加到尾部 |
 | camera() const / setCamera(Camera) | 只读访问或整体替换 Scene 自有 Camera；默认 Camera 有效，设置时复制其值 |
+| lighting() const / setLighting(Render::Lighting) | 只读借用或整体替换 Scene 自有光照；非法设置抛 CONFIG，保留原值 |
+
+`Render::Lighting` 是不含 Vulkan 类型的帧级值：`direction` 为世界空间光线传播方向，
+有限且非零，允许非单位输入；`color` 为有限的 `[0,1]` 线性 RGB，`intensity` 为有限非负数，
+`ambient` 为有限的 `[0,1]` 标量。默认分别为 `(0,0,-1)`、白色、1、0.1；强度 0 关闭直接光。
+Scene 保存输入方向原值，生成 GPU 帧参数时才归一化。新 Scene 使用默认光照，替换场景时由调用方
+显式设置展示值；clear 不重置光照。不创建灯光实体，也不在材质中保存另一份光照。
 
 EntityId 是独立的 uint64 包装，默认 0 无效，只有 Scene 分配非零标识；value() 可用于诊断、operator== 用于比较。
 所有 Scene 共用进程内单调序号，删除、clear 或 Scene 销毁后不复用旧值，其他 Scene 的 ID 不会命中本 Scene。
@@ -67,9 +74,11 @@ if (const auto extent = renderer.beginUiFrame())
 宽高任一为零时返回 nullopt，不计算投影或遍历实体；通常直接使用 beginUiFrame 给出的有效 extent。
 提取期间不修改同一 Scene，不加载文件、解码、上传、创建材质或重新验证 GPU 引用。
 
-SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera` 和 `vector<Render::DrawItem> draws`：
+SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera`、`vector<Render::DrawItem> draws`
+和 `Render::Lighting lighting`：
 
 - 读取当前 Camera，按实际 extent 生成一次最终相机矩阵，供视锥判断和返回结果共用；不再次翻转 Y。
+- 复制当前光照值；后续修改 Scene 光照或替换 Scene 不影响已提取帧，复制/移动后的帧也独立持有光照。
 - 按存活实体创建顺序遍历，跳过隐藏及无模型实体；默认以当前实体 Transform 变换模型整体边界，
   只排除世界 AABB 完全位于视锥外的实体，再组装保留实体的临时 ModelInstance，调用现有 makeModelDraws。
   每个模型沿用其缓存的节点/部分顺序；最终矩阵为 `entity.transform.matrix() * cachedDraw.model`，源根只包含一次。
@@ -85,7 +94,7 @@ SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera` 和 
 Transform、模型绑定、可见性、Camera 位姿/FOV、extent 或当前 Scene 改变，下一次提取立即生效；
 移出后移回的实体重新出现，最终模型矩阵仍只包含一次源根。
 
-`SceneFrame::input() const &` 在调用时构造 FrameInput，span 指向当前结果的 draws；结果本身不保存 span。
+`SceneFrame::input() const &` 在调用时构造 FrameInput，span 指向当前结果的 draws，相机与光照按值复制；结果本身不保存 span。
 只能从左值结果取得视图，直接对临时 SceneFrame 调用 input 被禁止。借用后不要移动/修改结果或重新分配 draws，
 保持其存储活到 drawFrame 返回；复制或移动后，从目标对象重新调用 input，不保留旧视图。
 drawFrame 返回后即可释放或改写 CPU 列表，在途 GPU 持有仍由 Renderer 保护。

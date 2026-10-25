@@ -2,9 +2,12 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#include "runtime/core/error/error.h"
 
 namespace
 {
@@ -19,6 +22,7 @@ namespace
     static_assert(std::is_same_v<decltype(std::declval<Scene&>().find(EntityId{})), const Entity*>);
     static_assert(std::is_same_v<decltype(std::declval<Scene&>().entities()), std::span<const Entity>>);
     static_assert(std::is_same_v<decltype(std::declval<Scene&>().camera()), const Camera&>);
+    static_assert(std::is_same_v<decltype(std::declval<Scene&>().lighting()), const Incubator::Render::Lighting&>);
 
     std::vector<EntityId> ids(const Scene& scene)
     {
@@ -160,6 +164,81 @@ namespace
             EXPECT_FALSE(fresh.destroyEntity(previous));
         }
         EXPECT_EQ(ids(fresh), (std::vector{id}));
+    }
+
+    TEST(SceneEntityCpuTest, LightingValidationPreservesOwnedValueAndClearKeepsIt)
+    {
+        using Incubator::Render::Lighting;
+        Scene scene;
+        EXPECT_EQ(scene.lighting().direction, glm::vec3(0, 0, -1));
+        EXPECT_EQ(scene.lighting().color, glm::vec3(1));
+        EXPECT_EQ(scene.lighting().intensity, 1);
+        EXPECT_EQ(scene.lighting().ambient, 0.1f);
+        EXPECT_TRUE(scene.lighting().valid());
+        Lighting input{{0, 0, -5}, {0.25f, 0.5f, 1}, 0, 0.8f};
+        const auto expected = input;
+        scene.setLighting(input);
+        input.direction = {2, 0, 0};
+        EXPECT_EQ(scene.lighting(), expected);
+
+        std::vector<Lighting> invalids;
+        auto zero = expected;
+        zero.direction = glm::vec3(0);
+        invalids.push_back(zero);
+        for (const float invalid : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+                                    -std::numeric_limits<float>::infinity()})
+        {
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                auto direction = expected;
+                direction.direction[axis] = invalid;
+                invalids.push_back(direction);
+                auto color = expected;
+                color.color[axis] = invalid;
+                invalids.push_back(color);
+            }
+            auto intensity = expected;
+            intensity.intensity = invalid;
+            invalids.push_back(intensity);
+            auto ambient = expected;
+            ambient.ambient = invalid;
+            invalids.push_back(ambient);
+        }
+        for (const float outside : {-0.1f, 1.1f})
+        {
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                auto color = expected;
+                color.color[axis] = outside;
+                invalids.push_back(color);
+            }
+            auto ambient = expected;
+            ambient.ambient = outside;
+            invalids.push_back(ambient);
+        }
+        auto negative = expected;
+        negative.intensity = -0.1f;
+        invalids.push_back(negative);
+        for (const auto& invalid : invalids)
+        {
+            EXPECT_FALSE(invalid.valid());
+            try
+            {
+                scene.setLighting(invalid);
+                FAIL() << "Invalid scene lighting was accepted";
+            }
+            catch (const Incubator::Error::Exception& error)
+            {
+                EXPECT_EQ(error.code(), Incubator::Error::Code::CONFIG);
+            }
+            EXPECT_EQ(scene.lighting(), expected);
+        }
+        scene.createEntity();
+        scene.clear();
+        EXPECT_TRUE(scene.entities().empty());
+        EXPECT_EQ(scene.lighting(), expected);
+        Scene fresh;
+        EXPECT_EQ(fresh.lighting(), Lighting{});
     }
 
     TEST(SceneEntityCpuTest, CameraReplacementOwnsItsValueAndSurvivesClear)

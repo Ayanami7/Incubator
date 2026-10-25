@@ -3,6 +3,7 @@
 #include <span>
 #include <vector>
 
+#include "runtime/render/lighting.h"
 #include "runtime/scene/camera.h"
 #include "runtime/scene/entity.h"
 
@@ -35,6 +36,7 @@ namespace Incubator::Scene
         bool setVisible(EntityId id, bool visible);
         bool setModel(EntityId id, std::shared_ptr<const Model::PreparedModel> model);
         bool destroyEntity(EntityId id);
+        /// @brief 清除实体和模型持有，保留相机与光照。
         void clear();
 
         /// @brief 按创建顺序返回场景中的有效实体。
@@ -45,9 +47,16 @@ namespace Incubator::Scene
         const Camera& camera() const;
         void setCamera(Camera camera);
 
+        /// @brief 只读借用当前光照值。
+        const Render::Lighting& lighting() const;
+        /// @brief 整体替换场景光照，保留输入方向的长度。
+        /// @throws Error::Exception 光照无效时抛出 CONFIG，且不改变原值。
+        void setLighting(Render::Lighting lighting);
+
     private:
         Entity* findMutable(EntityId id);
         std::vector<Entity> entities_;
         Camera camera_;
+        Render::Lighting lighting_{};
     };
 }  // namespace Incubator::Scene

@@ -1,5 +1,13 @@
 #version 450
 
+layout(set = 0, binding = 0, std140) uniform FrameData
+{
+    mat4 view;
+    mat4 projection;
+    vec4 lightDirectionIntensity;
+    vec4 lightColorAmbient;
+} frame;
+
 layout(set = 1, binding = 0) uniform sampler2D colorTexture;
 layout(set = 1, binding = 1, std140) uniform MaterialData
 {

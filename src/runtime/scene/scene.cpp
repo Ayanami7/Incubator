@@ -81,4 +81,18 @@ namespace Incubator::Scene
     {
         camera_ = std::move(camera);
     }
+
+    const Render::Lighting& Scene::lighting() const
+    {
+        return lighting_;
+    }
+
+    void Scene::setLighting(Render::Lighting lighting)
+    {
+        if (!lighting.valid())
+            throw Error::Exception(Error::Code::CONFIG,
+                                   "Scene lighting requires a finite nonzero direction, RGB and "
+                                   "ambient in [0, 1], and nonnegative finite intensity");
+        lighting_ = lighting;
+    }
 }  // namespace Incubator::Scene

@@ -81,6 +81,7 @@ set(RENDER_HEADERS
     render/renderer.h
     render/detail/renderer_review.h
     render/frame_input.h
+    render/lighting.h
     render/mesh.h
     render/texture.h
     render/material.h
@@ -101,6 +102,7 @@ set(RENDER_HEADERS
 )
 set(RENDER_SOURCES
     render/renderer.cpp
+    render/lighting.cpp
     render/integration/imgui_renderer.cpp
     render/vulkan/vulkan_swapchain.cpp
     render/vulkan/vulkan_frame_scheduler.cpp

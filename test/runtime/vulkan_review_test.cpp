@@ -215,6 +215,36 @@ namespace
         EXPECT_NEAR(farPoint.z / farPoint.w, 1.0f, 0.00001f);
     }
 
+    TEST(RenderFrameInputTest, FrameUniformPacksOwnedLightingAndUnitPropagationDirection)
+    {
+        FrameInput input{{800, 600}, {glm::mat4(1), glm::mat4(2)}, {}};
+        const auto defaults = makeFrameUniform(input);
+        EXPECT_EQ(defaults.lightDirectionIntensity, glm::vec4(0, 0, -1, 1));
+        EXPECT_EQ(defaults.lightColorAmbient, glm::vec4(1, 1, 1, 0.1f));
+        input.lighting = {{3, 0, -4}, {0.25f, 0.5f, 1}, 2, 0.3f};
+        const auto packed = makeFrameUniform(input);
+        EXPECT_EQ(packed.view, input.camera.view);
+        EXPECT_EQ(packed.projection, input.camera.projection);
+        EXPECT_NEAR(packed.lightDirectionIntensity.x, 0.6f, 0.00001f);
+        EXPECT_EQ(packed.lightDirectionIntensity.y, 0);
+        EXPECT_NEAR(packed.lightDirectionIntensity.z, -0.8f, 0.00001f);
+        EXPECT_EQ(packed.lightDirectionIntensity.w, 2);
+        EXPECT_EQ(packed.lightColorAmbient, glm::vec4(0.25f, 0.5f, 1, 0.3f));
+        EXPECT_EQ(input.lighting.direction, glm::vec3(3, 0, -4));
+        input.lighting = {};
+        EXPECT_EQ(packed.lightDirectionIntensity.w, 2);
+        for (const float scale : {0.001f, std::numeric_limits<float>::max()})
+        {
+            input.lighting.direction = {scale, 0, -scale};
+            const auto scaled = makeFrameUniform(input);
+            EXPECT_NEAR(glm::length(glm::vec3(scaled.lightDirectionIntensity)), 1, 0.00001f);
+            EXPECT_NEAR(scaled.lightDirectionIntensity.x, std::sqrt(0.5f), 0.00001f);
+            EXPECT_NEAR(scaled.lightDirectionIntensity.z, -std::sqrt(0.5f), 0.00001f);
+        }
+        input.lighting.direction = glm::vec3(0);
+        EXPECT_THROW(makeFrameUniform(input), Error::Exception);
+    }
+
     TEST(RenderColorTest, SurfaceSelectionHasStablePriorityAndExplicitFallback)
     {
         const VkSurfaceFormatKHR bgra{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
@@ -1532,6 +1562,75 @@ namespace
         }
         expectCleanValidation();
     }
+    TEST_F(VulkanReviewTest, InvalidFrameLightingRejectsBeforeAcquisitionAndReviewThenFramesRecover)
+    {
+        auto native = createWindow();
+        DeferredFramebufferWindow window(*native);
+        window.drawable = true;
+        SceneAssets assets;
+        {
+            Renderer renderer(window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const auto mesh = createCubeMesh(renderer);
+            const auto material = renderer.createMaterial({renderer.createTexture(*assets.texture)});
+            releaseCpuAssets(assets);
+            const std::array draws{DrawItem{mesh, material, glm::mat4(1)}};
+            auto frame = Demo::makeSceneFrame({640, 360}, draws);
+            std::array<Lighting, 7> invalids{};
+            invalids[0].direction = glm::vec3(0);
+            invalids[1].direction.x = std::numeric_limits<float>::quiet_NaN();
+            invalids[2].color.y = std::numeric_limits<float>::infinity();
+            invalids[3].color.z = 1.1f;
+            invalids[4].intensity = -1;
+            invalids[5].ambient = -0.1f;
+            invalids[6].intensity = std::numeric_limits<float>::infinity();
+            window.throwOnSize = true;
+            bool recorded = false;
+            const auto reject = [&](const auto& action) {
+                try
+                {
+                    action();
+                    FAIL() << "Invalid frame lighting was accepted";
+                }
+                catch (const Error::Exception& error)
+                {
+                    EXPECT_EQ(error.code(), Error::Code::RENDER);
+                    EXPECT_NE(error.message().find("Frame lighting"), std::string::npos);
+                }
+            };
+            for (const auto& invalid : invalids)
+            {
+                frame.lighting = invalid;
+                reject([&] { renderer.drawFrame(frame, {0, 0, 0, 1}, [&](void*) { recorded = true; }); });
+                reject([&] {
+                    Detail::RendererReviewAccess::withFrame(
+                        renderer, frame, [&](const auto&, const auto&, auto, auto) { recorded = true; });
+                });
+                EXPECT_FALSE(recorded);
+            }
+            window.throwOnSize = false;
+            for (int index = 0; index < 6; ++index)
+            {
+                window.pollEvents();
+                const auto extent = renderer.beginUiFrame();
+                ASSERT_TRUE(extent);
+                renderer.imgui().endFrame();
+                frame = Demo::makeSceneFrame(*extent, draws);
+                frame.lighting = index % 2 ? Lighting{{0, -4, 0}, {0.25f, 1, 0.5f}, 3, 0.8f}
+                                           : Lighting{{0, 0, -5}, {1, 0.5f, 0.25f}, 0, 0};
+                EXPECT_NO_THROW(renderer.drawFrame(frame, {0.2f, 0.24f, 0.28f, 1}));
+            }
+            Detail::RendererReviewAccess::withFrame(
+                renderer, frame, [&](const auto& device, const auto& pipeline, auto frameSet, auto nativeDraws) {
+                    const auto pixels = TextureGpuReview::captureDraws(device, pipeline, frameSet, nativeDraws);
+                    EXPECT_EQ(pixels.size(), 384u * 256 * 4);
+                    recorded = true;
+                });
+            EXPECT_TRUE(recorded);
+        }
+        expectCleanValidation();
+    }
+
     TEST_F(VulkanReviewTest, FinalModelNormalMatricesAndDegenerateUnlitDrawsRemainValid)
     {
         auto window = createWindow();

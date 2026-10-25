@@ -1,10 +1,12 @@
 #version 450
 
-layout(set = 0, binding = 0, std140) uniform CameraData
+layout(set = 0, binding = 0, std140) uniform FrameData
 {
     mat4 view;
     mat4 projection;
-} camera;
+    vec4 lightDirectionIntensity;
+    vec4 lightColorAmbient;
+} frame;
 
 layout(push_constant) uniform ObjectData
 {
@@ -20,7 +22,7 @@ layout(location = 1) out vec3 worldNormal;
 
 void main()
 {
-    gl_Position = camera.projection * camera.view * object.model * vec4(inPosition, 1.0);
+    gl_Position = frame.projection * frame.view * object.model * vec4(inPosition, 1.0);
     uv = inUv;
     vec3 normal = object.normalMatrix * inNormal;
     float scale = max(max(abs(normal.x), abs(normal.y)), abs(normal.z));

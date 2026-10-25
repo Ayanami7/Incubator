@@ -2,9 +2,14 @@
 
 #include <vulkan/vulkan.h>
 
+#include <cstddef>
+#include <glm/vec4.hpp>
 #include <memory>
 #include <span>
+#include <type_traits>
 #include <vector>
+
+#include "runtime/render/frame_input.h"
 
 namespace Incubator
 {
@@ -14,6 +19,26 @@ namespace Incubator
         {
             class VulkanBuffer;
             class VulkanDevice;
+
+            /// @brief 与两个 Shader 的 std140 FrameData 对齐的帧参数。
+            struct alignas(16) VulkanFrameUniform
+            {
+                glm::mat4 view;
+                glm::mat4 projection;
+                glm::vec4 lightDirectionIntensity;  ///< xyz 为单位传播方向，w 为强度。
+                glm::vec4 lightColorAmbient;        ///< xyz 为线性 RGB，w 为环境系数。
+            };
+            static_assert(std::is_standard_layout_v<VulkanFrameUniform>);
+            static_assert(offsetof(VulkanFrameUniform, view) == 0);
+            static_assert(offsetof(VulkanFrameUniform, projection) == 64);
+            static_assert(offsetof(VulkanFrameUniform, lightDirectionIntensity) == 128);
+            static_assert(offsetof(VulkanFrameUniform, lightColorAmbient) == 144);
+            static_assert(alignof(VulkanFrameUniform) == 16);
+            static_assert(sizeof(VulkanFrameUniform) == 160);
+
+            /// @brief 校验光照并打包本次提交的相机与光照值，非单位方向在此归一化。
+            /// @throws Error::Exception 光照输入无效时抛出 RENDER。
+            VulkanFrameUniform makeFrameUniform(const FrameInput& input);
 
             class VulkanBindingSet
             {

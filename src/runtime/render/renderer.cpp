@@ -38,13 +38,6 @@ namespace Incubator
     {
         namespace
         {
-            struct alignas(16) CameraUniform
-            {
-                glm::mat4 view;
-                glm::mat4 projection;
-            };
-            static_assert(sizeof(CameraUniform) == 2 * 16 * sizeof(float));
-
             Vulkan::VulkanObjectData objectData(const glm::mat4& model)
             {
                 Vulkan::VulkanObjectData result{model, {glm::vec4(0), glm::vec4(0), glm::vec4(0)}};
@@ -161,7 +154,7 @@ namespace Incubator
                 for (auto& uniformBuffer : uniformBuffers_)
                 {
                     uniformBuffer = std::make_shared<Vulkan::VulkanBuffer>(
-                        device_, sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                        device_, sizeof(Vulkan::VulkanFrameUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 }
                 scheduler_ = std::make_unique<Vulkan::VulkanFrameScheduler>(device_);
@@ -305,15 +298,15 @@ namespace Incubator
 
             void withReviewFrame(const FrameInput& input, const Detail::RendererReviewAccess::Record& record)
             {
+                const auto frame = Vulkan::makeFrameUniform(input);
                 std::vector<std::shared_ptr<void>> resources;
                 const auto draws = resolveDraws(input, resources);
                 if (!pipeline_)
                     throw Error::Exception(Error::Code::RENDER, "Prepare scene shaders before GPU review");
-                const CameraUniform camera{input.camera.view, input.camera.projection};
                 const std::array uniforms = {std::make_shared<Vulkan::VulkanBuffer>(
-                    device_, sizeof(camera), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                    device_, sizeof(frame), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
-                uniforms[0]->write(0, std::as_bytes(std::span(&camera, 1)));
+                uniforms[0]->write(0, std::as_bytes(std::span(&frame, 1)));
                 Vulkan::VulkanBindingSet bindings(device_, uniforms);
                 record(device_, *pipeline_, bindings.descriptorSet(0), draws);
             }
@@ -321,6 +314,7 @@ namespace Incubator
             void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
                            const std::function<void(void*)>& recordUi)
             {
+                const auto frame = Vulkan::makeFrameUniform(input);
                 std::vector<std::shared_ptr<void>> inFlightResources;
                 const auto draws = resolveDraws(input, inFlightResources);
                 if (!prepareFrame())
@@ -331,8 +325,7 @@ namespace Incubator
 
                 const uint32_t frameIndex = scheduler_->currentFrameIndex();
                 scheduler_->waitForCurrentFrame();
-                const CameraUniform camera{input.camera.view, input.camera.projection};
-                uniformBuffers_[frameIndex]->write(0, std::as_bytes(std::span(&camera, 1)));
+                uniformBuffers_[frameIndex]->write(0, std::as_bytes(std::span(&frame, 1)));
 
                 VkClearColorValue color{};
                 color.float32[0] = clearColor[0];

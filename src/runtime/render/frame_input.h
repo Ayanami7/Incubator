@@ -4,6 +4,7 @@
 #include <glm/mat4x4.hpp>
 #include <span>
 
+#include "runtime/render/lighting.h"
 #include "runtime/render/material.h"
 #include "runtime/render/mesh.h"
 
@@ -40,6 +41,7 @@ namespace Incubator
             FrameExtent extent;
             CameraMatrices camera;
             std::span<const DrawItem> draws;
+            Lighting lighting{};
         };
     }  // namespace Render
 }  // namespace Incubator

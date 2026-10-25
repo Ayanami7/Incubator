@@ -48,7 +48,7 @@ Renderer 不依赖 Scene；旧 extent 跳帧、提交内借用及过期/跨 Rend
 | `VulkanCommandList` | 录制交换链图像布局转换、动态渲染清屏和绘制命令。 |
 | `VulkanBuffer` | 每个 Buffer 独立申请 Vulkan 内存；支持 Host Visible 写入及带 staging 的设备本地静态上传。 |
 | `VulkanImage` | 仅拥有自行创建的 Image、内存和 ImageView；交换链借用图像仍归 Swapchain 管理。 |
-| `VulkanBindingSet` | 拥有共享帧/材质布局，以及相机专用的池与每帧槽 DescriptorSet。 |
+| `VulkanBindingSet` | 拥有共享帧/材质布局，以及帧参数专用的池与每帧槽 DescriptorSet。 |
 | `VulkanMaterialBinding` | 每份材质拥有一组纹理/颜色 Descriptor、对应池和只写一次的 16 字节颜色 Uniform Buffer。 |
 | `VulkanSampler` | 拥有纹理采样器；DescriptorSet 引用它和 ImageView。 |
 
@@ -58,7 +58,7 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 交换链获取信号量在颜色输出阶段等待；首个图像布局转换以同一阶段作为源，
 将获取、布局转换与颜色写入连成依赖，丢弃旧内容也仍须等待获取完成。
 
-`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新相机前等待对应帧槽 Fence，Camera Uniform Buffer 与深度附件按帧槽隔离。帧调度器仅管理获取、提交、呈现和资源持有；场景回调通过 `VulkanCommandList::drawIndexed` 消费网格/材质列表，随后录制 UI。相机 set 0 和共享 Pipeline 每次场景录制绑定一次，材质 set 1 与 model push constant 逐物体录制，不覆盖其他物体或帧槽的数据。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。外部纹理由 `createTexture` 同步上传，通过 Combined Image Sampler 采样；窗口重建复用网格、材质和纹理。
+`Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新帧参数前等待对应帧槽 Fence，Frame Uniform Buffer 与深度附件按帧槽隔离。帧调度器仅管理获取、提交、呈现和资源持有；场景回调通过 `VulkanCommandList::drawIndexed` 消费网格/材质列表，随后录制 UI。帧参数 set 0 和共享 Pipeline 每次场景录制绑定一次，材质 set 1 与 model push constant 逐物体录制，不覆盖其他物体或帧槽的数据。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。外部纹理由 `createTexture` 同步上传，通过 Combined Image Sampler 采样；窗口重建复用网格、材质和纹理。
 
 `Integration::ImGuiRenderer` 将仓库内 ImGui 1.91.9b 的 GLFW 与 Vulkan 后端接入 Runtime。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色和深度格式。交换链图像数量或附件格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭或重配置时适配器先调用 `vkDeviceWaitIdle`，再释放 ImGui Vulkan 资源。后端要求交换链至少有两个图像，数量不足时明确报渲染错误。
 
@@ -186,7 +186,7 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 
 | 数据 | 绑定与更新 |
 |---|---|
-| 帧相机 | set 0 / binding 0，128 字节 view/projection；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
+| 帧相机与光照 | set 0 / binding 0，160 字节 FrameData，对 vertex/fragment 可见；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
 | 材质纹理 | set 1 / binding 0，Combined Image Sampler；共享已有 Texture，不重复上传 |
 | 材质颜色 | set 1 / binding 1，16 字节 fragment Uniform；仅创建时写入 |
 | 物体 model 与法线变换 | 112 字节 vertex push constant；逐物体录制 |
@@ -208,23 +208,34 @@ Renderer 持有 Material 至关闭，Material 拥有自己的 Sampler 并在内�
 
 ## 帧提交
 
-`frame_input.h` 定义本帧共享相机与绘制列表：
+`frame_input.h` 定义本帧共享相机、光照与绘制列表：
 
 | 类型/字段 | 调用方责任 |
 |---|---|
 | `FrameExtent { width, height }` | 使用 `beginUiFrame()` 返回的非零实际交换链 extent，不用窗口逻辑尺寸代替 |
 | `CameraMatrices { view, projection }` | 提供最终 GLM 列主序矩阵；右手坐标，深度 0–1，应用对投影 Y 方向适配一次 |
 | `DrawItem { mesh, material, model }` | 每项独立指定同一 Renderer 创建的网格、材质和最终模型矩阵，网格和材质均可共享 |
-| `FrameInput { extent, camera, draws }` | 相机由同帧所有项共享，draws 是 `span<const DrawItem>`，允许为空；动画时间由应用决定 |
+| `Lighting { direction, color, intensity, ambient }` | 世界空间光线传播方向、线性 RGB、直接光强度及标量环境系数，按值保存 |
+| `FrameInput { extent, camera, draws, lighting }` | 相机与光照由同帧所有项共享，draws 是 `span<const DrawItem>`，允许为空；旧三字段初始化使用默认光照 |
 
 提交签名为 `drawFrame(input, clearColor, recordUi)`，变换顺序为
-`projection * view * model * position`。输入和列表只在本次调用内借用：Camera Uniform 为
-view/projection 两个矩阵，共 128 字节，在等待当前帧槽 Fence 后写入该槽 Buffer；每个 model
+`projection * view * model * position`。输入和列表只在本次调用内借用：Frame Uniform 的
+view/projection 分别位于偏移 0、64，`lightDirectionIntensity`、`lightColorAmbient` 两个 vec4
+分别位于偏移 128、144，总计 160 字节，符合两个 Shader 的 std140 FrameData 布局。
+前者 xyz 为单位传播方向、w 为强度，后者 xyz 为线性 RGB、w 为环境系数。
+Buffer 分配及 Descriptor range 覆盖该帧块；生产 drawFrame 与内部 review 入口共用打包函数。
+生产提交在等待当前帧槽 Fence 后一次写入该槽 Buffer，不逐物体改写帧光照；每个 model
 及其法线变换用 112 字节 vertex-stage push constant 在命令录制时复制。model 占前 64 字节，
 法线矩阵为三个 16 字节对齐的列，偏移分别为 64、80、96；C++ 布局与 Shader 的 mat3 对应。
 返回后调用方可修改或销毁相机、
 模型与 CPU 列表，不影响已提交帧，不存在逐物体共写同一 Uniform 的覆盖。
 Renderer 不额外翻转 Y，不保留输入引用，正常跳帧也不缓存上一帧输入。
+
+`lighting.h` 中的 `Lighting` 默认传播方向 `(0,0,-1)`、白色、强度 1、环境系数 0.1。
+方向必须有限且非零，允许非单位值；打包时归一化，Shader 将使用反方向作为指向光源的方向。
+颜色和环境系数必须为有限的 `[0,1]`，强度必须有限且非负，0 表示关闭直接光。
+非法原始 FrameInput 在获取交换链图像或录制命令前抛 RENDER，包含空绘制列表；之后可重新提交合法帧。
+光照属于帧参数，不从 Scene 或 ResourceManager 读取，也不复制到 Material；当前 fragment 仍保持 Unlit 输出。
 
 绘制列表按提交顺序完整录制，不排序或截断；没有固定物体数量上限，实际受可用内存约束。
 Renderer 在获取图像和录制前解析并检查整个列表的 Mesh/Material。空、过期或跨 Renderer

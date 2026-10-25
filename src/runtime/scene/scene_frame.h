@@ -16,6 +16,7 @@ namespace Incubator::Scene
         Render::FrameExtent extent{0, 0};
         Render::CameraMatrices camera{glm::mat4(1), glm::mat4(1)};
         std::vector<Render::DrawItem> draws;
+        Render::Lighting lighting{};
 
         /// @brief 创建提交渲染所需的借用输入。
         /// @return 指向此帧绘制列表的输入视图。

@@ -1,6 +1,7 @@
 #include "runtime/render/vulkan/vulkan_binding_set.h"
 
 #include <array>
+#include <cmath>
 
 #include "runtime/core/error/error.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
@@ -24,18 +25,34 @@ namespace Incubator
                 }
             }  // namespace
 
+            VulkanFrameUniform makeFrameUniform(const FrameInput& input)
+            {
+                const auto& lighting = input.lighting;
+                if (!lighting.valid())
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "Frame lighting requires a finite nonzero direction, "
+                                           "RGB and ambient in [0, 1], and finite nonnegative intensity");
+                const double length =
+                    std::hypot(static_cast<double>(lighting.direction.x), static_cast<double>(lighting.direction.y),
+                               static_cast<double>(lighting.direction.z));
+                const glm::vec3 direction(glm::dvec3(lighting.direction) / length);
+                return {input.camera.view, input.camera.projection, glm::vec4(direction, lighting.intensity),
+                        glm::vec4(lighting.color, lighting.ambient)};
+            }
+
             VulkanBindingSet::VulkanBindingSet(const VulkanDevice& device,
                                                std::span<const std::shared_ptr<VulkanBuffer>> uniformBuffers)
                 : device_(device)
             {
                 try
                 {
-                    constexpr VkDescriptorSetLayoutBinding cameraBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
-                                                                         VK_SHADER_STAGE_VERTEX_BIT, nullptr};
+                    constexpr VkDescriptorSetLayoutBinding frameBinding{
+                        0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
                     VkDescriptorSetLayoutCreateInfo layoutInfo{};
                     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
                     layoutInfo.bindingCount = 1;
-                    layoutInfo.pBindings = &cameraBinding;
+                    layoutInfo.pBindings = &frameBinding;
                     checkVk(vkCreateDescriptorSetLayout(device_.handle(), &layoutInfo, nullptr, &layout_),
                             "vkCreateDescriptorSetLayout");
 
