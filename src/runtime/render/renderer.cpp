@@ -193,11 +193,20 @@ namespace Incubator
                 for (const auto index : indices)
                     if (index >= vertices.size())
                         throw Error::Exception(Error::Code::RENDER, "Mesh index is outside the vertex array");
-                for (const auto& vertex : vertices)
+                std::vector<MeshVertex> uploadVertices(vertices.begin(), vertices.end());
+                for (auto& vertex : uploadVertices)
+                {
                     for (const float value : vertex.normal)
                         if (!std::isfinite(value))
                             throw Error::Exception(Error::Code::RENDER, "Mesh normal must be finite");
-                auto mesh = std::make_shared<Mesh::Impl>(device_, vertices, indices);
+                    // 上传前以双精度长度归一化，避免有限的大法线在 GPU 矩阵乘法中溢出；零法线保持原样。
+                    const double length = std::hypot(double(vertex.normal[0]), double(vertex.normal[1]),
+                                                     double(vertex.normal[2]));
+                    if (length > 0)
+                        for (auto& value : vertex.normal)
+                            value = static_cast<float>(value / length);
+                }
+                auto mesh = std::make_shared<Mesh::Impl>(device_, uploadVertices, indices);
                 meshes_.push_back(mesh);
                 Log::Registry::get("render").debug("Uploaded mesh: {} vertices ({} bytes), {} indices ({} bytes)",
                                                    vertices.size(), vertices.size_bytes(), indices.size(),

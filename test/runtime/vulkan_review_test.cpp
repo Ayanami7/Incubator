@@ -1648,6 +1648,34 @@ namespace
         expectCleanValidation();
     }
 
+    TEST_F(VulkanReviewTest, LambertFiniteNormalMagnitudesPreserveLightingUnderNonuniformScale)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const Resource::TextureResource cpu({}, 1, 1, {255, 255, 255, 255});
+            const auto material =
+                renderer.createMaterial({renderer.createTexture(cpu), {1, 1, 1}, {}, ShadingMode::Lambert});
+            releaseCpuAssets(assets);
+            for (const float magnitude : {1.0f, 1e20f, 1e38f})
+            {
+                SCOPED_TRACE(magnitude);
+                auto data = Demo::makePlaneMesh();
+                for (auto& vertex : data.vertices)
+                    vertex.normal[2] = magnitude;
+                const auto mesh = renderer.createMesh(data.vertices, data.indices);
+                const auto model = glm::scale(glm::mat4(1), glm::vec3(1, 1, 0.001f));
+                const std::array draws{DrawItem{mesh, material, model}};
+                auto frame = controlledFrame({384, 256}, draws);
+                frame.lighting = {{0, 0, -1}, {1, 1, 1}, 1, 0};
+                expectLinearPixel(TextureGpuReview::captureFrame(renderer, frame), glm::vec3(1));
+            }
+        }
+        expectCleanValidation();
+    }
+
     TEST_F(VulkanReviewTest, LambertZeroCancellationAndSingularNormalsUseOnlyAmbient)
     {
         auto window = createWindow();
