@@ -6,6 +6,7 @@ layout(set = 1, binding = 1, std140) uniform MaterialData
     vec4 color;
 } material;
 layout(location = 0) in vec2 uv;
+layout(location = 1) in vec3 worldNormal;
 layout(location = 0) out vec4 fragmentColor;
 
 void main()

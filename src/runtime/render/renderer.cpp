@@ -45,6 +45,27 @@ namespace Incubator
             };
             static_assert(sizeof(CameraUniform) == 2 * 16 * sizeof(float));
 
+            Vulkan::VulkanObjectData objectData(const glm::mat4& model)
+            {
+                Vulkan::VulkanObjectData result{model, {glm::vec4(0), glm::vec4(0), glm::vec4(0)}};
+                if (model[0][3] != 0 || model[1][3] != 0 || model[2][3] != 0 || model[3][3] != 1)
+                    return result;
+
+                // 使用双精度求逆，且只拒绝零行列式，避免将正常的小比例缩放误判为奇异矩阵。
+                const glm::dmat3 linear(model);
+                const double determinant = glm::determinant(linear);
+                if (!std::isfinite(determinant) || determinant == 0)
+                    return result;
+                const glm::mat3 normal(glm::transpose(glm::inverse(linear)));
+                for (int column = 0; column < 3; ++column)
+                    for (int row = 0; row < 3; ++row)
+                        if (!std::isfinite(normal[column][row]))
+                            return result;
+                for (int column = 0; column < 3; ++column)
+                    result.normalColumns[column] = glm::vec4(normal[column], 0);
+                return result;
+            }
+
             std::vector<const char*> requiredRendererInstanceExtensions()
             {
                 std::vector<const char*> extensions = Vulkan::GlfwSurface::requiredInstanceExtensions();
@@ -178,6 +199,10 @@ namespace Incubator
                 for (const auto index : indices)
                     if (index >= vertices.size())
                         throw Error::Exception(Error::Code::RENDER, "Mesh index is outside the vertex array");
+                for (const auto& vertex : vertices)
+                    for (const float value : vertex.normal)
+                        if (!std::isfinite(value))
+                            throw Error::Exception(Error::Code::RENDER, "Mesh normal must be finite");
                 auto mesh = std::make_shared<Mesh::Impl>(device_, vertices, indices);
                 meshes_.push_back(mesh);
                 Log::Registry::get("render").debug("Uploaded mesh: {} vertices ({} bytes), {} indices ({} bytes)",
@@ -270,7 +295,8 @@ namespace Incubator
                         throw Error::Exception(Error::Code::RENDER,
                                                "Material is invalid or belongs to another Renderer");
                     draws.push_back({gpuMesh->vertexBuffer->handle(), gpuMesh->indexBuffer->handle(),
-                                     gpuMesh->indexCount, gpuMaterial->binding.descriptorSet(), draw.model});
+                                     gpuMesh->indexCount, gpuMaterial->binding.descriptorSet(),
+                                     objectData(draw.model)});
                     inFlightResources.push_back(std::move(gpuMesh));
                     inFlightResources.push_back(std::move(gpuMaterial));
                 }

@@ -151,8 +151,9 @@ namespace Incubator::Model
             std::vector<Render::MeshVertex> vertices;
             vertices.reserve(geometry.vertices.size());
             for (const auto& vertex : geometry.vertices)
-                vertices.push_back(
-                    {{vertex.position[0], vertex.position[1], vertex.position[2]}, {vertex.uv[0], vertex.uv[1]}});
+                vertices.push_back({{vertex.position[0], vertex.position[1], vertex.position[2]},
+                                    {vertex.uv[0], vertex.uv[1]},
+                                    {vertex.normal[0], vertex.normal[1], vertex.normal[2]}});
             result->meshes_.push_back(renderer.createMesh(vertices, geometry.indices));
         }
         for (size_t i = 0; i < materials.size(); ++i)

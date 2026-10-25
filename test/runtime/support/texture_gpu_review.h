@@ -317,9 +317,12 @@ namespace TextureGpuReview
         uiDraw->AddRectFilled(ImVec2(296, 184), ImVec2(360, 224), IM_COL32(128, 128, 128, 128));
         ui.endFrame();
 
-        const std::array draws = {VulkanDrawItem{vertices->handle(), indices->handle(),
-                                                 static_cast<uint32_t>(mesh.indices.size()), material.descriptorSet(),
-                                                 glm::mat4(1.0f)}};
+        const std::array draws = {
+            VulkanDrawItem{vertices->handle(),
+                           indices->handle(),
+                           static_cast<uint32_t>(mesh.indices.size()),
+                           material.descriptorSet(),
+                           {glm::mat4(1.0f), {glm::vec4(1, 0, 0, 0), glm::vec4(0, 1, 0, 0), glm::vec4(0, 0, 1, 0)}}}};
         return captureDraws(device, *pipeline, bindings.descriptorSet(0), draws, {16, 16, 256, 192, 0, 1},
                             [&](VkCommandBuffer commands) { ui.recordDrawData(ui.drawData(), commands); });
     }

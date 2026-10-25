@@ -60,6 +60,8 @@ namespace Incubator
             /// @param indices 索引数据，仅在本次调用期间借用。
             /// @return 由此 Renderer 持有的网格引用。
             /// @note 返回的 Mesh 仅可与此 Renderer 配合使用。
+            /// @note normal 为有限的几何局部法线，可为零或非单位向量；非零法线在顶点阶段变换并归一化。
+            /// @throws Error::Exception 法线非有限或顶点/索引不满足三角形列表约定。
             Mesh createMesh(std::span<const MeshVertex> vertices, std::span<const uint32_t> indices);
 
             /// @brief 同步上传 RGBA8 sRGB 像素。

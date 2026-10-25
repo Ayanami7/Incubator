@@ -189,7 +189,7 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 | 帧相机 | set 0 / binding 0，128 字节 view/projection；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
 | 材质纹理 | set 1 / binding 0，Combined Image Sampler；共享已有 Texture，不重复上传 |
 | 材质颜色 | set 1 / binding 1，16 字节 fragment Uniform；仅创建时写入 |
-| 物体 model | 64 字节 vertex push constant；逐物体录制 |
+| 物体 model 与法线变换 | 112 字节 vertex push constant；逐物体录制 |
 
 帧与材质布局由 Renderer 各创建一份；同一 Shader、附件格式和固定状态下，所有材质共用一份
 Pipeline。新增材质只分配自己的 Sampler、参数 Buffer、DescriptorPool/Set，不复制相机数据、纹理或
@@ -220,7 +220,9 @@ Renderer 持有 Material 至关闭，Material 拥有自己的 Sampler 并在内�
 提交签名为 `drawFrame(input, clearColor, recordUi)`，变换顺序为
 `projection * view * model * position`。输入和列表只在本次调用内借用：Camera Uniform 为
 view/projection 两个矩阵，共 128 字节，在等待当前帧槽 Fence 后写入该槽 Buffer；每个 model
-用 64 字节 vertex-stage push constant 在命令录制时复制。返回后调用方可修改或销毁相机、
+及其法线变换用 112 字节 vertex-stage push constant 在命令录制时复制。model 占前 64 字节，
+法线矩阵为三个 16 字节对齐的列，偏移分别为 64、80、96；C++ 布局与 Shader 的 mat3 对应。
+返回后调用方可修改或销毁相机、
 模型与 CPU 列表，不影响已提交帧，不存在逐物体共写同一 Uniform 的覆盖。
 Renderer 不额外翻转 Y，不保留输入引用，正常跳帧也不缓存上一帧输入。
 
@@ -242,9 +244,16 @@ ImGui 接入后，应用通过 UI 适配层开始 UI 帧、构建界面并结束
 
 ## 应用网格与持有期
 
-`mesh.h` 的 `MeshVertex` 固定为 `float position[3]`、`float uv[2]`，紧密 20 字节；
-Pipeline 按该类型的大小和字段偏移绑定。索引固定为 `uint32_t`，拓扑为不透明三角形列表。
+`mesh.h` 的 `MeshVertex` 依次为 `float position[3]`、`float uv[2]`、默认零的 `float normal[3]`，
+紧密 32 字节，偏移分别为 0、12、20；旧两字段聚合初始化的法线为零。
+Pipeline 按该类型的大小和字段偏移绑定位置、UV 和法线（location 0、1、2）。索引固定为 `uint32_t`，拓扑为不透明三角形列表。
 公共输入不包含 Vulkan 类型。
+
+normal 位于几何局部空间，可以为非单位向量；零向量表示无可用法线，上传时不补造方向。
+Renderer 从最终 `DrawItem::model` 的线性部分计算逆转置，平移不影响结果，也不另存 Scene 法线状态。
+可逆仿射变换支持非均匀、负缩放及正常的小比例缩放，不用固定绝对行列式阈值判定奇异。
+奇异或非仿射矩阵使用零法线变换，保留原模型矩阵和绘制；求逆结果无法有限表示时同样置零。
+顶点阶段在变换后归一化非零法线并输出世界法线，保留零向量；当前 fragment 仍使用原 Unlit 着色。
 
 ```cpp
 // vertices/indices are application-owned vectors; Renderer must already exist.
@@ -260,7 +269,8 @@ renderer.drawFrame(frameInput, clearColor, recordUi);
 
 `createMesh(span<const MeshVertex>, span<const uint32_t>)` 要求非空顶点与索引、索引数量为 3
 的倍数且能表示为 uint32 绘制数量，每个索引小于顶点数量。输入在上传前集中校验，失败抛
-RENDER 错误，不创建默认网格。位置和 UV 的具体内容由应用提供。
+RENDER 错误，不创建默认网格。法线的各分量必须有限，非有限值在分配和上传前拒绝；
+零法线合法，位置和 UV 的具体内容由应用提供。
 
 上传复用 VulkanBuffer 的同步 staging 路径；成功后不保留 CPU 数组或指针。Renderer
 持有所有已创建网格至关闭，复制/丢弃应用的 `Mesh` 引用不重新上传或提前回收 GPU Buffer。

@@ -635,6 +635,9 @@ namespace
         std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view) override
         {
             MeshData mesh{{{{0, 0, 0}, {0, 0}}, {{1, 0, 0}, {1, 0}}, {{0, 1, 0}, {0, 1}}}, {0, 1, 2}};
+            mesh.vertices[0].normal = {1, 1, 0};
+            mesh.vertices[1].normal = {0, 1, 1};
+            mesh.vertices[2].normal = {1, 0, 1};
             const auto root = glm::translate(glm::mat4(1), glm::vec3(10, 0, 0));
             const auto parent = glm::rotate(glm::mat4(1), glm::radians(90.0f), glm::vec3(0, 0, 1));
             const auto leaf = leafTransform_.value_or(glm::translate(glm::mat4(1), glm::vec3(2, 0, 0)) *
@@ -1005,6 +1008,23 @@ namespace
                 point(first->draws[index].model, 1 - 3 * cached[index][1], 2 + 2 * cached[index][0]);
                 point(first->draws[index + 5].model, -2 + 0.5f * cached[index][0], 1 + 2 * cached[index][1]);
             }
+            Detail::RendererReviewAccess::withFrame(
+                renderer, first->input(), [&](const auto&, const auto&, auto, auto nativeDraws) {
+                    ASSERT_EQ(nativeDraws.size(), first->draws.size());
+                    for (size_t index = 0; index < nativeDraws.size(); ++index)
+                    {
+                        const auto& object = nativeDraws[index].object;
+                        const auto reference = glm::transpose(glm::inverse(glm::dmat3(first->draws[index].model)));
+                        for (int column = 0; column < 4; ++column)
+                            EXPECT_EQ(object.model[column], first->draws[index].model[column]);
+                        for (int column = 0; column < 3; ++column)
+                        {
+                            EXPECT_EQ(object.normalColumns[column].w, 0);
+                            for (int row = 0; row < 3; ++row)
+                                EXPECT_NEAR(object.normalColumns[column][row], reference[column][row], 0.00001);
+                        }
+                    }
+                });
             auto copied = *first;
             ASSERT_NE(copied.draws.data(), first->draws.data());
             EXPECT_EQ(copied.input().draws.data(), copied.draws.data());

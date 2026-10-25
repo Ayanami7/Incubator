@@ -8,6 +8,7 @@
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/render/mesh.h"
+#include "runtime/render/vulkan/vulkan_command_list.h"
 #include "runtime/render/vulkan/vulkan_device.h"
 
 namespace Incubator
@@ -54,9 +55,9 @@ namespace Incubator
                     const std::array layouts{frameLayout, materialLayout};
                     layoutInfo.setLayoutCount = static_cast<uint32_t>(layouts.size());
                     layoutInfo.pSetLayouts = layouts.data();
-                    const VkPushConstantRange modelRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
+                    const VkPushConstantRange objectRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VulkanObjectData)};
                     layoutInfo.pushConstantRangeCount = 1;
-                    layoutInfo.pPushConstantRanges = &modelRange;
+                    layoutInfo.pPushConstantRanges = &objectRange;
                     checkVk(vkCreatePipelineLayout(device_.handle(), &layoutInfo, nullptr, &layout_),
                             "vkCreatePipelineLayout");
 
@@ -79,7 +80,8 @@ namespace Incubator
                                                                         VK_VERTEX_INPUT_RATE_VERTEX};
                     constexpr VkVertexInputAttributeDescription vertexAttributes[] = {
                         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, position)},
-                        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)}};
+                        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)},
+                        {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)}};
                     vertexInput.vertexBindingDescriptionCount = 1;
                     vertexInput.pVertexBindingDescriptions = &vertexBinding;
                     vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(std::size(vertexAttributes));

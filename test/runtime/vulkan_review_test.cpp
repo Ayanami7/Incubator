@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <glm/ext/matrix_transform.hpp>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -18,9 +19,6 @@
 #include <thread>
 #include <vector>
 
-#include "support/render_demo/scene_assets.h"
-#include "support/render_demo/scene_frame.h"
-#include "support/render_demo/scene_mesh.h"
 #include "examples/demo/validation_mode.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
@@ -39,6 +37,9 @@
 #include "runtime/resource/loader/shader_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
+#include "support/render_demo/scene_assets.h"
+#include "support/render_demo/scene_frame.h"
+#include "support/render_demo/scene_mesh.h"
 #include "support/texture_gpu_review.h"
 #include "support/window_capture.h"
 
@@ -1531,6 +1532,76 @@ namespace
         }
         expectCleanValidation();
     }
+    TEST_F(VulkanReviewTest, FinalModelNormalMatricesAndDegenerateUnlitDrawsRemainValid)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const Resource::TextureResource white({}, 1, 1, {255, 255, 255, 255});
+            const auto material = renderer.createMaterial({renderer.createTexture(white)});
+            releaseCpuAssets(assets);
+            auto data = Demo::makePlaneMesh();
+            data.vertices[0].normal[0] = 1;
+            data.vertices[1].normal[1] = 2;
+            data.vertices[2].normal[2] = 3;
+            const auto mesh = renderer.createMesh(data.vertices, data.indices);
+            const auto rotation = glm::rotate(glm::mat4(1), glm::radians(37.0f), glm::normalize(glm::vec3(1, 2, 3)));
+            const auto nonuniform = rotation * glm::scale(glm::mat4(1), glm::vec3(2, 3, 0.5f));
+            auto projective = glm::mat4(1);
+            projective[0][3] = 0.25f;
+            const std::array models = {glm::mat4(1),
+                                       rotation,
+                                       nonuniform,
+                                       rotation * glm::scale(glm::mat4(1), glm::vec3(-2, 3, 0.5f)),
+                                       rotation * glm::scale(glm::mat4(1), glm::vec3(0.001f)),
+                                       glm::translate(glm::mat4(1), glm::vec3(7, -2, 4)) * nonuniform,
+                                       glm::scale(glm::mat4(1), glm::vec3(1, 1, 0)),
+                                       projective};
+            std::vector<DrawItem> draws;
+            for (const auto& model : models)
+                draws.push_back({mesh, material, model});
+            const FrameInput frame{{384, 256}, {glm::mat4(1), glm::mat4(1)}, draws};
+            Detail::RendererReviewAccess::withFrame(
+                renderer, frame, [&](const auto& device, const auto& pipeline, auto frameSet, auto nativeDraws) {
+                    ASSERT_EQ(nativeDraws.size(), models.size());
+                    for (size_t index = 0; index < models.size(); ++index)
+                    {
+                        SCOPED_TRACE(index);
+                        const auto& object = nativeDraws[index].object;
+                        const auto reference =
+                            index < 6 ? glm::transpose(glm::inverse(glm::dmat3(models[index]))) : glm::dmat3(0);
+                        for (int column = 0; column < 4; ++column)
+                            EXPECT_EQ(object.model[column], models[index][column]);
+                        for (int column = 0; column < 3; ++column)
+                        {
+                            EXPECT_EQ(object.normalColumns[column].w, 0);
+                            for (int row = 0; row < 3; ++row)
+                            {
+                                EXPECT_TRUE(std::isfinite(object.normalColumns[column][row]));
+                                EXPECT_NEAR(object.normalColumns[column][row], reference[column][row],
+                                            0.00001 * std::max(1.0, std::abs(reference[column][row])));
+                            }
+                        }
+                    }
+                    for (int column = 0; column < 3; ++column)
+                        EXPECT_EQ(nativeDraws[2].object.normalColumns[column],
+                                  nativeDraws[5].object.normalColumns[column]);
+                    // XY 平面在 Z 轴零缩放或透视模型矩阵下仍有面积，Unlit 继续输出白色。
+                    for (size_t index : {6u, 7u})
+                    {
+                        const auto pixels =
+                            TextureGpuReview::captureDraws(device, pipeline, frameSet, nativeDraws.subspan(index, 1));
+                        ASSERT_EQ(pixels.size(), 384u * 256 * 4);
+                        for (int channel = 0; channel < 4; ++channel)
+                            EXPECT_EQ(pixels[(128 * 384 + 192) * 4 + channel], 255);
+                    }
+                });
+        }
+        expectCleanValidation();
+    }
+
     TEST_F(VulkanReviewTest, MeshCreationRejectsInvalidDataAndReferencesExpireAfterRendererClose)
     {
         auto window = createWindow();
@@ -1548,6 +1619,26 @@ namespace
                  {std::vector<uint32_t>{0}, std::vector<uint32_t>{0, 1}, std::vector<uint32_t>{0, 1, 2, 3},
                   std::vector<uint32_t>{0, 1, 4}, std::vector<uint32_t>{0, 1, std::numeric_limits<uint32_t>::max()}})
                 EXPECT_THROW(renderer.createMesh(data.vertices, invalid), Error::Exception);
+            for (const auto& vertex : data.vertices)
+                for (const float value : vertex.normal)
+                    EXPECT_EQ(value, 0.0f);
+            for (int axis = 0; axis < 3; ++axis)
+                for (const float invalid :
+                     {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+                      -std::numeric_limits<float>::infinity()})
+                {
+                    auto invalidVertices = data.vertices;
+                    invalidVertices.back().normal[axis] = invalid;
+                    try
+                    {
+                        renderer.createMesh(invalidVertices, data.indices);
+                        FAIL() << "Non-finite mesh normal was accepted";
+                    }
+                    catch (const Error::Exception& error)
+                    {
+                        EXPECT_EQ(error.code(), Error::Code::RENDER);
+                    }
+                }
             auto mesh = renderer.createMesh(data.vertices, data.indices);
             observer = mesh;
             data.vertices.clear();
