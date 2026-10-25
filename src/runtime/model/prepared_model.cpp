@@ -55,6 +55,8 @@ namespace Incubator::Model
     std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer& renderer, std::string_view virtualPath,
                                                     PrepareOptions options)
     {
+        if (options.shading != Render::ShadingMode::Unlit && options.shading != Render::ShadingMode::Lambert)
+            throw Error::Exception(Error::Code::RENDER, "Model preparation shading mode is invalid");
         CpuHold modelHold(Resource::ResourceType::MODEL, virtualPath);
         const auto* source = modelHold.get<Resource::ModelResource>();
         if (!source)
@@ -158,7 +160,8 @@ namespace Incubator::Model
         }
         for (size_t i = 0; i < materials.size(); ++i)
             result->materials_.push_back(renderer.createMaterial(
-                {result->textures_[materialTextures[i]], source->materials()[materials[i]].color, options.sampler}));
+                {result->textures_[materialTextures[i]], source->materials()[materials[i]].color, options.sampler,
+                 source->materials()[materials[i]].unlit ? Render::ShadingMode::Unlit : options.shading}));
 
         // 模型相对绘制项只缓存一次。树结构已经验证，每帧无需重新遍历或
         // 检查结构。按相反顺序压入，以保持子节点的源顺序。

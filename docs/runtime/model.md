@@ -14,8 +14,8 @@ auto sharedModel = model; // Shares immutable metadata and the same GPU referenc
 ```
 
 `prepareModel(Render::Renderer&, std::string_view, PrepareOptions = {})` 同步返回
-`std::shared_ptr<const PreparedModel>`。`PrepareOptions` 包含 `mipMode` 和 `sampler`，默认分别为
-`Render::TextureMipMode::BaseLevel` 与默认 `Render::SamplerDesc`：单层、nearest/repeat/LOD=0。
+`std::shared_ptr<const PreparedModel>`。`PrepareOptions` 包含 `mipMode`、`sampler` 与追加的 `shading`，默认分别为
+`Render::TextureMipMode::BaseLevel`、默认 `Render::SamplerDesc` 与 `Render::ShadingMode::Unlit`：单层、nearest/repeat/LOD=0、不受光。
 旧的两参数调用保持该行为；显式选项作用于本次准备使用的全部纹理与材质，包括共享的白图。
 
 ```cpp
@@ -23,8 +23,14 @@ Incubator::Model::PrepareOptions options;
 options.mipMode = Incubator::Render::TextureMipMode::FullChain;
 options.sampler = {Incubator::Render::TextureFilter::Linear, Incubator::Render::TextureFilter::Linear,
                    Incubator::Render::MipFilter::Linear};
+options.shading = Incubator::Render::ShadingMode::Lambert;
 auto filtered = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Avocado.gltf", options);
 ```
+
+显式设置 `options.shading = Render::ShadingMode::Lambert` 可选择最小方向光漫反射预览；
+源 `ModelMaterial::unlit` 为 true 的材质始终使用 Unlit。不同模式仍共用生产 Pipeline，
+同次准备的几何、纹理、白图及采样共享规则保持；选项创建时复制，之后修改不改变已有材质。
+非法模式在加载或 GPU 创建前抛 RENDER。该模式不导入源灯光，也不代表 glTF PBR 或完整 MTL 材质还原。
 
 上传与采样选择独立：完整链可仅采基础层，单层图片也可绑定 mip 采样而不补建层级。
 同次准备内，相同规范化路径仍共享一次上传及其 mip 链；白图在 FullChain 下仍只有 1×1 一层。

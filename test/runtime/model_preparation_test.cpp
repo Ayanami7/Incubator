@@ -190,6 +190,75 @@ namespace
         std::ostringstream messages_, resourceMessages_;
     };
 
+    TEST_F(ModelPreparationTest, LambertPreparationKeepsImportedUnlitAndSharesRepeatedGeometryAndWhite)
+    {
+        constexpr const char* path = "models/normals/folded.gltf";
+        const auto sourcePath = fs::path("assets") / path;
+        std::string source;
+        {
+            std::ifstream stream(sourcePath, std::ios::binary);
+            source.assign(std::istreambuf_iterator<char>(stream), {});
+        }
+        const std::string primitive =
+            R"({"attributes": {"POSITION": 0, "TEXCOORD_0": 1}, "indices": 2, "material": 0})";
+        const auto at = source.find(primitive);
+        ASSERT_NE(at, std::string::npos);
+        auto ordinary = primitive;
+        const std::string material = "\"material\": 0";
+        ordinary.replace(ordinary.find(material), material.size(), "\"material\": 1");
+        source.replace(at, primitive.size(), primitive + "," + ordinary);
+        const std::string node = R"({"name": "folded", "mesh": 0})";
+        const auto nodeAt = source.find(node);
+        ASSERT_NE(nodeAt, std::string::npos);
+        source.replace(nodeAt, node.size(), R"({"name":"folded","mesh":0,"children":[1]},{"name":"shared","mesh":0})");
+        {
+            std::ofstream stream(sourcePath, std::ios::binary | std::ios::trunc);
+            stream << source;
+        }
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            Model::PrepareOptions options;
+            options.shading = static_cast<ShadingMode>(99);
+            EXPECT_THROW(Model::prepareModel(renderer, path, options), Error::Exception);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 0u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 0u);
+            const auto legacy = Model::prepareModel(renderer, path);
+            options.shading = ShadingMode::Lambert;
+            const auto lambert = Model::prepareModel(renderer, path, options);
+            options.shading = ShadingMode::Unlit;
+            released(ResourceType::MODEL, path);
+            fileIO_.reset();
+            for (const auto& prepared : {legacy, lambert})
+            {
+                EXPECT_EQ(prepared->meshes().size(), 2u);
+                EXPECT_EQ(prepared->materials().size(), 2u);
+                EXPECT_EQ(prepared->textures().size(), 1u);
+                ASSERT_EQ(prepared->draws().size(), 4u);
+                std::array draws{prepared->draws()[0], prepared->draws()[1]};
+                draws[0].model = glm::translate(glm::mat4(1), glm::vec3(-0.9f, -0.3f, 0.2f)) *
+                                 glm::scale(glm::mat4(1), glm::vec3(0.8f));
+                draws[1].model = glm::translate(glm::mat4(1), glm::vec3(0.1f, -0.3f, 0.2f)) *
+                                 glm::scale(glm::mat4(1), glm::vec3(0.8f));
+                const FrameInput frame{{384, 256}, {glm::mat4(1), glm::mat4(1)}, draws, {{0, 0, -1}, {1, 1, 1}, 0, 0}};
+                const auto pixels = TextureGpuReview::captureFrame(renderer, frame);
+                ASSERT_EQ(pixels.size(), 384u * 256 * 4);
+                for (int channel = 0; channel < 3; ++channel)
+                {
+                    EXPECT_NEAR(pixels[(115 * 384 + 57) * 4 + channel], 255, 2);
+                    EXPECT_NEAR(pixels[(115 * 384 + 249) * 4 + channel], prepared == lambert ? 0 : 255, 2);
+                }
+                EXPECT_EQ(pixels[(115 * 384 + 57) * 4 + 3], 255);
+                EXPECT_EQ(pixels[(115 * 384 + 249) * 4 + 3], 255);
+            }
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 2u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+        }
+        cleanValidation();
+    }
+
     TEST_F(ModelPreparationTest, BothImportedFormatsReleaseCpuAssetsAndDrawSharedResults)
     {
         auto native = window();
@@ -1120,6 +1189,92 @@ namespace
             color(image, 0.789103f, 0.567851f, {188, 255, 188});
             color(image, -0.44f, -0.608333f, {188, 255, 188});
             WindowCapture::save(image, "review/scene-frame-retained-after-clear.ppm");
+        }
+        cleanValidation();
+    }
+
+    TEST_F(ModelInstanceTest, LambertInterpolatedNormalsMatchFinalRootNodeEntityInverseTranspose)
+    {
+        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            Model::PrepareOptions options;
+            options.shading = ShadingMode::Lambert;
+            const auto model = Model::prepareModel(renderer, "models/normal-transforms.gltf", options);
+            released(ResourceType::MODEL, "models/normal-transforms.gltf");
+            EXPECT_EQ(model->rootNode(), 2u);
+            Scene::Scene scene;
+            const auto entity = scene.createEntity(model);
+            const Lighting lighting{{-0.3f, -0.6f, -1}, {0.4f, 0.8f, 0.6f}, 0.8f, 0.12f};
+            scene.setLighting(lighting);
+            const auto root = glm::translate(glm::mat4(1), glm::vec3(10, 0, 0));
+            const auto parent = glm::rotate(glm::mat4(1), glm::radians(90.0f), glm::vec3(0, 0, 1));
+            const auto leaf =
+                glm::translate(glm::mat4(1), glm::vec3(2, 0, 0)) * glm::scale(glm::mat4(1), glm::vec3(2, 3, 1));
+            const glm::quat rotation(glm::vec3(0.3f, 0.4f, 0.2f));
+            const std::array<glm::vec3, 3> positions{glm::vec3(0), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0)};
+            const std::array<glm::vec3, 3> normals{glm::vec3(1, 1, 0), glm::vec3(0, 1, 1), glm::vec3(1, 0, 1)};
+            for (const auto& scale : {glm::vec3(1), glm::vec3(2, 3, 0.5f), glm::vec3(-2, 3, 0.5f), glm::vec3(0.001f)})
+            {
+                SCOPED_TRACE(scale.x);
+                const Scene::Transform transform({-0.5f, 0.3f, 0.1f}, rotation, scale);
+                ASSERT_TRUE(scene.setTransform(entity, transform));
+                const auto expectedModel = glm::translate(glm::mat4(1), transform.position()) *
+                                           glm::mat4_cast(rotation) * glm::scale(glm::mat4(1), scale) * root * parent *
+                                           leaf;
+                auto snapshot = Scene::extractSceneFrame(scene, {384, 256}, false);
+                ASSERT_TRUE(snapshot);
+                ASSERT_EQ(snapshot->draws.size(), 5u);
+                std::array draws{snapshot->draws[2]};
+                for (int column = 0; column < 4; ++column)
+                    for (int row = 0; row < 4; ++row)
+                        EXPECT_NEAR(draws[0].model[column][row], expectedModel[column][row], 0.00001f);
+                const auto center = glm::vec3(expectedModel * glm::vec4(1.0f / 3, 1.0f / 3, 0, 1));
+                float radius = 0;
+                for (const auto& position : positions)
+                    radius = std::max(radius, glm::length(glm::vec3(expectedModel * glm::vec4(position, 1)) - center));
+                radius *= 1.3f;
+                auto projection = glm::orthoRH_ZO(-radius * 1.5f, radius * 1.5f, -radius, radius, 0.1f, 20.0f);
+                projection[1][1] *= -1;
+                const CameraMatrices camera{glm::lookAtRH(center + glm::vec3(0, 0, 10), center, glm::vec3(0, 1, 0)),
+                                            projection};
+                std::array<glm::vec2, 3> screen;
+                std::array<glm::dvec3, 3> worldNormals;
+                const auto normalMatrix = glm::transpose(glm::inverse(glm::dmat3(expectedModel)));
+                for (size_t corner = 0; corner < 3; ++corner)
+                {
+                    const auto clip = camera.projection * camera.view * expectedModel * glm::vec4(positions[corner], 1);
+                    screen[corner] = {(clip.x / clip.w + 1) * 192, (clip.y / clip.w + 1) * 128};
+                    worldNormals[corner] = glm::normalize(normalMatrix * glm::dvec3(normals[corner]));
+                }
+                const auto cross = [](glm::vec2 a, glm::vec2 b) { return a.x * b.y - a.y * b.x; };
+                const glm::vec2 sample(192.5f, 128.5f);
+                const float area = cross(screen[1] - screen[0], screen[2] - screen[0]);
+                const float a = cross(screen[1] - sample, screen[2] - sample) / area;
+                const float b = cross(screen[2] - sample, screen[0] - sample) / area;
+                const float c = 1 - a - b;
+                ASSERT_GT(std::min({a, b, c}), 0.05f);
+                const auto interpolated = glm::normalize(double(a) * worldNormals[0] + double(b) * worldNormals[1] +
+                                                         double(c) * worldNormals[2]);
+                const double diffuse =
+                    std::max(glm::dot(interpolated, -glm::normalize(glm::dvec3(lighting.direction))), 0.0);
+                const auto expected =
+                    glm::dvec3(0.5, 1, 0.5) *
+                    (glm::dvec3(lighting.ambient) + glm::dvec3(lighting.color) * double(lighting.intensity) * diffuse);
+                const auto pixels =
+                    TextureGpuReview::captureFrame(renderer, {{384, 256}, camera, draws, snapshot->lighting});
+                ASSERT_EQ(pixels.size(), 384u * 256 * 4);
+                for (int channel = 0; channel < 3; ++channel)
+                {
+                    const double linear = std::clamp(expected[channel], 0.0, 1.0);
+                    const double encoded =
+                        linear <= 0.0031308 ? 12.92 * linear : 1.055 * std::pow(linear, 1.0 / 2.4) - 0.055;
+                    EXPECT_NEAR(pixels[(128 * 384 + 192) * 4 + channel], encoded * 255, 2);
+                }
+                EXPECT_EQ(pixels[(128 * 384 + 192) * 4 + 3], 255);
+            }
         }
         cleanValidation();
     }

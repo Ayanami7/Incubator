@@ -793,6 +793,90 @@ namespace
         cleanValidation();
     }
 
+    TEST_F(DemoAppTest, LightingWidgetsEditCurrentSceneAndSameFrameSnapshot)
+    {
+        auto state = std::make_shared<Lifetime>();
+        Demo::DemoApp session(options(true), std::make_unique<TrackedFileIO>(state));
+        const auto opens = state->opens;
+        const Render::Lighting initial{{1, 2, -3}, {0.5f, 0.75f, 1}, 0.7f, 0.2f};
+        const Render::Lighting external{{2, 1, -3}, {0.2f, 0.4f, 0.8f}, 0.4f, 0.3f};
+        const Render::Lighting replacement{{-2, -3, -4}, {0.8f, 0.1f, 1}, 0.5f, 0.4f};
+        ImVec2 intensityClick, yawClick;
+        int frames = 0;
+        Scene::SceneFrame retained;
+        session.run({[&](Demo::DemoApp& app) {
+                         app.scene().setLighting(initial);
+                         auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                         glfwSetCursorPosCallback(handle, nullptr);
+                         const auto enter = glfwSetCursorEnterCallback(handle, nullptr);
+                         ASSERT_NE(enter, nullptr);
+                         enter(handle, GLFW_TRUE);
+                         glfwFocusWindow(handle);
+                     },
+                     [&](Demo::DemoApp& app, const Demo::FrameTime&) {
+                         auto& io = ImGui::GetIO();
+                         if (frames == 3 || frames == 5)
+                         {
+                             const auto position = frames == 3 ? intensityClick : yawClick;
+                             io.AddMousePosEvent(position.x, position.y);
+                             io.AddMouseButtonEvent(0, true);
+                         }
+                         if (frames == 4 || frames == 6)
+                             io.AddMouseButtonEvent(0, false);
+                         if (frames == 7)
+                             app.scene().setLighting(external);
+                         if (frames == 8)
+                         {
+                             auto scene = std::make_unique<Scene::Scene>();
+                             scene->setLighting(replacement);
+                             app.setScene(std::move(scene));
+                         }
+                         if (frames == 9)
+                             app.requestExit();
+                     },
+                     [&](Demo::DemoApp& app) {
+                         ImGui::SetNextWindowPos({12, 12}, ImGuiCond_Always);
+                         ImGui::SetNextWindowSize({500, 260}, ImGuiCond_Always);
+                         ImGui::Begin("Lighting controls");
+                         ImGui::PushItemWidth(200);
+                         const auto origin = ImGui::GetCursorScreenPos();
+                         yawClick = {origin.x + 50, origin.y + ImGui::GetFrameHeight() * 0.5f};
+                         intensityClick = {origin.x + 150, yawClick.y + 3 * ImGui::GetFrameHeightWithSpacing()};
+                         Demo::lightingControls(app.scene());
+                         ImGui::PopItemWidth();
+                         ImGui::End();
+                         const auto frame = Scene::extractSceneFrame(app.scene(), {800, 600});
+                         ASSERT_TRUE(frame);
+                         EXPECT_EQ(frame->input().lighting, app.scene().lighting());
+                         if (frames == 3)
+                         {
+                             EXPECT_GT(frame->lighting.intensity, 2.0f);
+                             EXPECT_EQ(frame->lighting.direction, initial.direction);
+                             retained = *frame;
+                         }
+                         if (frames == 5)
+                         {
+                             EXPECT_NE(frame->lighting.direction, initial.direction);
+                             EXPECT_NEAR(glm::length(frame->lighting.direction), 1, 0.00001f);
+                             EXPECT_EQ(frame->lighting.intensity, retained.lighting.intensity);
+                             EXPECT_TRUE(frame->lighting.valid());
+                         }
+                         if (frames == 7)
+                             EXPECT_EQ(frame->lighting, external);
+                         if (frames == 8)
+                             EXPECT_EQ(frame->lighting, replacement);
+                         EXPECT_EQ(state->opens, opens);
+                         ++frames;
+                     }});
+        EXPECT_EQ(frames, 9);
+        EXPECT_GT(retained.lighting.intensity, 2.0f);
+        EXPECT_EQ(retained.lighting.direction, initial.direction);
+        EXPECT_EQ(count("Uploaded mesh:"), 0u);
+        EXPECT_EQ(count("Created material:"), 0u);
+        closed(state);
+        cleanValidation();
+    }
+
     TEST_F(DemoAppTest, BothShowcaseModelsUseProductionInputFocusAndCancelAcrossMinimize)
     {
         copyShowcaseModels();
@@ -810,6 +894,8 @@ namespace
             Scene::EntityId selected;
             glm::mat4 entityMatrix(1);
             Scene::Camera focused, rotated, beforeMinimize;
+            Render::Lighting expectedLighting;
+            std::vector<uint8_t> lastLightingImage;
             GLFWmousebuttonfun button = nullptr;
             GLFWkeyfun key = nullptr;
             GLFWscrollfun scroll = nullptr;
@@ -837,8 +923,11 @@ namespace
                     EXPECT_EQ(pixels[i + 3], 255);
                 }
                 EXPECT_GT(colored, 0u);
-                WindowCapture::save({384, 256, pixels},
-                                    std::string("review/sampling-") + (obj ? "teapot-" : "avocado-") + label + ".ppm");
+                if (std::string_view(label) == "focused" || std::string_view(label) == "relit" ||
+                    std::string_view(label) == "portrait-restored")
+                    WindowCapture::save({384, 256, pixels}, std::string("review/lighting-") +
+                                                                (obj ? "teapot-" : "avocado-") + label + ".ppm");
+                lastLightingImage = std::move(pixels);
             };
             const auto checkFocus = [&](Demo::DemoApp& app) {
                 int width, height;
@@ -893,7 +982,18 @@ namespace
                     if (step == 0)
                     {
                         selected = demo.selected();
+                        ASSERT_EQ(app.scene().entities().size(), 2u);
+                        EXPECT_EQ(app.scene().entities()[0].model, app.scene().entities()[1].model);
+                        expectedLighting = app.scene().lighting();
+                        ASSERT_NO_FATAL_FAILURE(captureSampling(app, "two-instances"));
+                        const auto originalImage = lastLightingImage;
                         auto transform = app.scene().find(selected)->transform;
+                        auto tilted = transform;
+                        tilted.setRotation(glm::quat(glm::vec3(0.2f, 0.6f, 0.1f)));
+                        tilted.setScale(tilted.scale() * glm::vec3(0.8f, 1.2f, 1));
+                        ASSERT_TRUE(app.scene().setTransform(selected, tilted));
+                        ASSERT_NO_FATAL_FAILURE(captureSampling(app, "rotated"));
+                        EXPECT_NE(lastLightingImage, originalImage);
                         transform.setPosition(transform.position() + glm::vec3(100, 0, 0));
                         ASSERT_TRUE(app.scene().setTransform(selected, transform));
                         entityMatrix = transform.matrix();
@@ -915,6 +1015,27 @@ namespace
                         ASSERT_NO_FATAL_FAILURE(checkFocus(app));
                         focused = app.scene().camera();
                         ASSERT_NO_FATAL_FAILURE(captureSampling(app, "focused"));
+                        const auto original = lastLightingImage;
+                        auto off = expectedLighting;
+                        off.intensity = 0;
+                        off.ambient = 0;
+                        app.scene().setLighting(off);
+                        ASSERT_NO_FATAL_FAILURE(captureSampling(app, "off"));
+                        size_t black = 0;
+                        for (size_t at = 0; at < lastLightingImage.size(); at += 4)
+                            black += lastLightingImage[at] <= 2 && lastLightingImage[at + 1] <= 2 &&
+                                     lastLightingImage[at + 2] <= 2;
+                        EXPECT_GT(black, 50u);
+                        expectedLighting = {{0.8f, -0.2f, 0.4f}, {0.25f, 0.6f, 1}, 1.4f, 0.12f};
+                        app.scene().setLighting(expectedLighting);
+                        ASSERT_NO_FATAL_FAILURE(captureSampling(app, "relit"));
+                        size_t changed = 0;
+                        for (size_t at = 0; at < original.size(); ++at)
+                            changed += std::abs(int(lastLightingImage[at]) - int(original[at])) > 4;
+                        EXPECT_GT(changed, 50u);
+                        EXPECT_EQ(app.scene().find(selected)->transform.matrix(), entityMatrix);
+                        EXPECT_EQ(app.scene().camera().position(), focused.position());
+                        EXPECT_EQ(app.scene().camera().rotation(), focused.rotation());
                     }
                     if (step == 5)
                     {
@@ -994,6 +1115,7 @@ namespace
                     }
                     if (step >= 0)
                     {
+                        EXPECT_EQ(app.scene().lighting(), expectedLighting);
                         EXPECT_EQ(state->opens, opens);
                         EXPECT_EQ(count("Uploaded mesh:"), uploads);
                         EXPECT_EQ(count("Uploaded RGBA8 texture:"), textureUploads);
@@ -1027,6 +1149,7 @@ namespace
         const std::weak_ptr<Demo::ModelScene> demoLifetime = demo;
         Scene::EntityId first, second, created;
         Scene::Transform left, right, moved;
+        Render::Lighting previewLighting, retainedLighting;
         constexpr std::array<int, 3> CLEAR{51, 61, 71};
         size_t preparedMeshUploads = 0, preparedTextureUploads = 0, preparedMaterialUploads = 0;
         size_t ordinaryOpens = 0;
@@ -1097,6 +1220,7 @@ namespace
         Demo::Callbacks callbacks{
             [&, demo](Demo::DemoApp& app) {
                 demo->initialize(app);
+                previewLighting = app.scene().lighting();
                 ASSERT_EQ(app.scene().entities().size(), 2u);
                 first = demo->selected();
                 second = app.scene().entities()[1].id;
@@ -1165,7 +1289,10 @@ namespace
                     const auto image = capture(app, "scene-demo-deleted.ppm");
                     EXPECT_EQ(visiblePixels(image, app, moved), 0u);
                     EXPECT_GT(visiblePixels(image, app, right), 0u);
+                    retainedLighting = {{1, -0.5f, 0.25f}, {0.2f, 0.4f, 0.8f}, 0, 0.5f};
+                    app.scene().setLighting(retainedLighting);
                     demo->clear(app);
+                    EXPECT_EQ(app.scene().lighting(), retainedLighting);
                     EXPECT_TRUE(app.scene().entities().empty());
                     EXPECT_EQ(app.scene().find(second), nullptr);
                 }
@@ -1183,6 +1310,7 @@ namespace
                     const auto image = capture(app, "scene-demo-created.ppm");
                     EXPECT_GT(visiblePixels(image, app, app.scene().find(created)->transform), 0u);
                     demo->replaceCamera(app);
+                    EXPECT_EQ(app.scene().lighting(), retainedLighting);
                     EXPECT_FLOAT_EQ(app.scene().camera().position().z, 8);
                 }
                 if (frame == 21)
@@ -1190,6 +1318,7 @@ namespace
                     const auto image = capture(app, "scene-demo-camera.ppm");
                     EXPECT_GT(visiblePixels(image, app, app.scene().find(created)->transform), 0u);
                     demo->switchScene(app, true);
+                    EXPECT_EQ(app.scene().lighting(), previewLighting);
                     EXPECT_EQ(app.scene().find(created), nullptr);
                     EXPECT_FALSE(app.scene().setTransform(created, Scene::Transform{}));
                     EXPECT_FLOAT_EQ(app.scene().camera().position().z, 6);

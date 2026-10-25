@@ -11,6 +11,7 @@
 #include "render_demo/scene_assets.h"
 #include "render_demo/scene_mesh.h"
 #include "runtime/platform/window/window.h"
+#include "runtime/render/detail/renderer_review.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
@@ -258,6 +259,17 @@ namespace TextureGpuReview
 
     // 使用应用的平面和正式着色器渲染到指定 UNORM 格式。
     // 测试附件支持回读，无需在 Renderer 中增加截图接口。
+    /// @brief 通过 Renderer 的真实帧参数、材质和网格执行现有离屏回读。
+    inline std::vector<uint8_t> captureFrame(Renderer& renderer, const FrameInput& input)
+    {
+        std::vector<uint8_t> pixels;
+        Detail::RendererReviewAccess::withFrame(
+            renderer, input, [&](const auto& device, const auto& pipeline, auto frameSet, auto draws) {
+                pixels = captureDraws(device, pipeline, frameSet, draws);
+            });
+        return pixels;
+    }
+
     inline std::vector<uint8_t> capture(VkInstance instance, const VulkanDevice& device, Window::Window& window,
                                         Demo::SceneAssets& assets, VkFormat format,
                                         const std::array<float, 3>& tint = {1.0f, 1.0f, 1.0f},

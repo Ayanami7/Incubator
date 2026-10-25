@@ -47,14 +47,23 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 启动时只准备 Avocado glTF。首次 update 后的下一轮 update 显式准备 Utah Teapot OBJ，此前切换按钮禁用；
 初次 CPU 模型和 PNG 持有已释放，Loader/FileIO 继续存活，因此后续准备仍走原有资源服务。
 每种模型在此示例中准备一次；返回已准备的模型、创建实体、调整姿态和可见性都复用现有 GPU 引用。
+
+两种正式模型显式使用 Lambert 漫反射预览，继续采用 FullChain 和线性 min/mag/mip；
+源 Unlit 材质始终不受光。重置或切换场景时初始化传播方向 `(-0.6,-0.8,-1)`、
+线性颜色 `(1,0.95,0.9)`、强度 1、环境系数 0.15；GPU 帧参数会归一化方向。
+Lighting 折叠区提供 Light yaw/pitch、Light color (linear)、Light intensity 和 Ambient。
+角度产生非零方向，颜色控件显示 `[0,1]` 线性 RGB，强度范围为 `[0,4]`，环境系数为 `[0,1]`。
+强度 0 只关闭直接光，环境系数也为 0 时普通 Lambert 材质为黑色；清屏与 UI 不受灯光影响。
+清空实体保留当前灯光；重置或切换场景恢复上述展示预设。相机操作和聚焦不会改变灯光。
+这些参数直接读写当前 Scene，修改进入本帧提取，不重新准备模型、纹理、mip 或材质。
 轨道操作、聚焦、场景切换和窗口重建不会重新上传图像、生成 mip 或创建材质；没有实时采样模式切换。
 这两份示例准备结果由消费者保留到关闭，不是全局资产缓存。
 
 ## 实现与持有期
 
 `main.cpp` 创建 `DemoApp` 并调用 `run()`；`model_scene.h` 保存模型展示和面板操作。
-`ModelScene` 保存两份共享 PreparedModel、当前选择、Demo 轨道目标/手势和少量面板状态；实体唯一 Transform、可见性及 Camera
-由 Scene 保存。角度和 TRS 编辑值在本轮 UI 中临时取得，发生修改才通过 Scene 的 ID 接口写回。
+`ModelScene` 保存两份共享 PreparedModel、当前选择、Demo 轨道目标/手势和少量面板状态；实体唯一 Transform、可见性、Camera
+及光照由 Scene 保存。角度、TRS 与灯光编辑值在本轮 UI 中临时取得，发生修改才通过 Scene 接口写回。
 创建/删除/清空时不跨结构变更保存实体指针；切换 Scene 后重新选中新 Scene 的实体。
 
 DemoApp 使用单调 Clock 每轮传入 FrameTime，面板显示本轮更新时间；没有固定步长调度或自动实体动画。

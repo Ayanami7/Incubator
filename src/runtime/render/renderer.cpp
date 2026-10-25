@@ -126,12 +126,13 @@ namespace Incubator
         struct Material::Impl
         {
             Impl(const Vulkan::VulkanDevice& device, std::shared_ptr<Texture::Impl> source,
-                 VkDescriptorSetLayout layout, const std::array<float, 3>& color, SamplerDesc sampling)
+                 VkDescriptorSetLayout layout, const std::array<float, 3>& color, SamplerDesc sampling,
+                 ShadingMode shading)
                 : owner(&device),
                   texture(std::move(source)),
                   samplerDesc(sampling),
                   sampler(device, sampling, texture->image->mipLevels()),
-                  binding(device, layout, *texture->image, sampler, color)
+                  binding(device, layout, *texture->image, sampler, color, shading)
             {}
 
             const Vulkan::VulkanDevice* owner;
@@ -245,6 +246,8 @@ namespace Incubator
                     if (!std::isfinite(value) || value < 0.0f || value > 1.0f)
                         throw Error::Exception(Error::Code::RENDER,
                                                "Material color must be finite linear RGB in [0, 1]");
+                if (desc.shading != ShadingMode::Unlit && desc.shading != ShadingMode::Lambert)
+                    throw Error::Exception(Error::Code::RENDER, "Material shading mode is invalid");
                 if (desc.sampler.minFilter == TextureFilter::Linear ||
                     desc.sampler.magFilter == TextureFilter::Linear ||
                     (desc.sampler.mipFilter == MipFilter::Linear && texture->image->mipLevels() > 1))
@@ -256,7 +259,7 @@ namespace Incubator
                         throw Error::Exception(Error::Code::RENDER, "Texture format does not support linear filtering");
                 }
                 auto material = std::make_shared<Material::Impl>(
-                    device_, std::move(texture), bindingSet_->materialLayout(), desc.color, desc.sampler);
+                    device_, std::move(texture), bindingSet_->materialLayout(), desc.color, desc.sampler, desc.shading);
                 materials_.push_back(material);
                 Log::Registry::get("render").debug("Created material: linear RGB ({}, {}, {})", desc.color[0],
                                                    desc.color[1], desc.color[2]);

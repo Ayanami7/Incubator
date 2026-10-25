@@ -22,18 +22,19 @@ namespace Incubator
     {
         class PreparedModel;
 
-        /// @brief 准备模型时使用的纹理预览配置。
-        /// @note 不导入源材质的采样器设置。
+        /// @brief 准备模型时使用的采样与着色预览配置。
+        /// @note 源 Unlit 材质始终不受光；不导入源材质的采样器设置。
         struct PrepareOptions
         {
             Render::TextureMipMode mipMode = Render::TextureMipMode::BaseLevel;
             Render::SamplerDesc sampler;
+            Render::ShadingMode shading = Render::ShadingMode::Unlit;
         };
 
         /// @brief 从已注册资源准备可供场景使用的模型。
         /// @param renderer 已初始化且已准备场景着色器的 Renderer。
         /// @param virtualPath 虚拟模型路径。
-        /// @param options 模型纹理的 mip 和采样配置。
+        /// @param options 模型纹理的 mip、采样及着色配置。
         /// @return 可共享的不可变模型数据。
         /// @throws Error::Exception 加载或准备失败时抛出异常。
         /// @note 需要 MODEL/TEXTURE Loader 路由；仅释放本次调用持有的 CPU 资源。

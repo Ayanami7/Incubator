@@ -26,11 +26,12 @@ namespace Incubator
 
             VulkanMaterialBinding::VulkanMaterialBinding(const VulkanDevice& device, VkDescriptorSetLayout layout,
                                                          const VulkanImage& texture, const VulkanSampler& sampler,
-                                                         const std::array<float, 3>& color)
+                                                         const std::array<float, 3>& color, ShadingMode shading)
                 : device_(device)
             {
-                // std140 vec4：RGB 是线性颜色调制值；未使用的第 4 个分量固定为 1。
-                const std::array<float, 4> parameters{color[0], color[1], color[2], 1.0f};
+                // std140 vec4：RGB 为线性颜色，w 精确编码 0（Unlit）或 1（Lambert），不是 alpha。
+                const std::array<float, 4> parameters{color[0], color[1], color[2], static_cast<float>(shading)};
+                static_assert(sizeof(parameters) == 16);
                 uniform_ = std::make_unique<VulkanBuffer>(
                     device_, sizeof(parameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);

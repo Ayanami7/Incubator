@@ -42,6 +42,9 @@ Transform 是实体整体变换的唯一真源，实体不另存 ModelInstance �
 Scene 保存输入方向原值，生成 GPU 帧参数时才归一化。新 Scene 使用默认光照，替换场景时由调用方
 显式设置展示值；clear 不重置光照。不创建灯光实体，也不在材质中保存另一份光照。
 
+模型 Demo 的灯光控件直接编辑当前 Scene，UI 返回后主循环才提取 SceneFrame；
+重置/切换模型场景显式安装展示预设，普通相机操作、聚焦与实体编辑保留当前光照。
+
 EntityId 是独立的 uint64 包装，默认 0 无效，只有 Scene 分配非零标识；value() 可用于诊断、operator== 用于比较。
 所有 Scene 共用进程内单调序号，删除、clear 或 Scene 销毁后不复用旧值，其他 Scene 的 ID 不会命中本 Scene。
 序号耗尽时创建抛 CONFIG，不回绕分配旧值；不提供跨进程身份或从资源/模型索引构造实体 ID 的接口。

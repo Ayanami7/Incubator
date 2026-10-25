@@ -145,7 +145,7 @@ Texture 仅标识 GPU 上传结果，与 CPU ResourceId 分别管理，也不使
 
 ## 最小材质与绑定
 
-`material.h` 定义 `MaterialDesc { Texture texture; std::array<float, 3> color; SamplerDesc sampler; }` 与 `Material` 引用。
+`material.h` 定义 `MaterialDesc { Texture texture; std::array<float, 3> color; SamplerDesc sampler; ShadingMode shading; }` 与 `Material` 引用。
 纹理是必需输入，color 是有限的 0–1 线性 RGB，默认 `{1, 1, 1}`。例如：
 
 ```cpp
@@ -181,14 +181,27 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 
 `createMaterial` 要求先准备共享 Shader，并在分配 GPU 资源前检查颜色和 Texture 从属关系。
 空、过期、跨 Renderer 纹理，NaN、无穷或越界颜色均明确失败，不替换白图或钳制非法输入。
-创建时将 RGB 复制进 16 字节 std140 `vec4` Uniform，第四分量固定为 1；之后不改写该 Buffer
+创建时将 RGB 复制进 16 字节 std140 `vec4 colorShading` Uniform，第四分量精确编码模式（0 为 Unlit、1 为 Lambert），不是 alpha；之后不改写该 Buffer
 或 Descriptor。无论 PNG alpha 或颜色参数如何，场景输出 alpha 始终为 1，不启用透明混合。
+
+`ShadingMode` 仅包含默认 `Unlit` 和显式 `Lambert`；旧 `{texture}`、`{texture,color}`、
+`{texture,color,sampler}` 初始化保持 Unlit，非法模式在分配材质前按 RENDER 拒绝。
+例如 `MaterialDesc{texture, {1,1,1}, {}, ShadingMode::Lambert}`，创建后修改描述不会改变材质。
+模式与颜色共用同一参数块和固定 Pipeline，不引入 Shader 变体。
+
+设 `B = textureLinearRGB * materialColor`，`D` 为单位光线传播方向，`N` 为单位世界法线：
+Unlit 输出 `B`；Lambert 输出 `B * (ambient + lightColor * intensity * max(dot(N,-D),0))`。
+计算在线性空间进行，最后 clamp 至 `[0,1]` 并使用原有精确 sRGB 编码一次，alpha 固定 1。
+零法线没有直接光贡献，仍保留环境项；直接光强度与环境系数同时为零时为黑色。
+这是最小漫反射预览，不包含 PBR、源灯光、阴影或背面法线翻转。
+
+模型 Demo 显式选择 Lambert 并提供方向、线性颜色、强度与环境控件；Render 的默认材质和旧调用仍为 Unlit。
 
 | 数据 | 绑定与更新 |
 |---|---|
 | 帧相机与光照 | set 0 / binding 0，160 字节 FrameData，对 vertex/fragment 可见；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
 | 材质纹理 | set 1 / binding 0，Combined Image Sampler；共享已有 Texture，不重复上传 |
-| 材质颜色 | set 1 / binding 1，16 字节 fragment Uniform；仅创建时写入 |
+| 材质颜色与模式 | set 1 / binding 1，16 字节 fragment Uniform；仅创建时写入 |
 | 物体 model 与法线变换 | 112 字节 vertex push constant；逐物体录制 |
 
 帧与材质布局由 Renderer 各创建一份；同一 Shader、附件格式和固定状态下，所有材质共用一份
@@ -235,7 +248,7 @@ Renderer 不额外翻转 Y，不保留输入引用，正常跳帧也不缓存上
 方向必须有限且非零，允许非单位值；打包时归一化，Shader 将使用反方向作为指向光源的方向。
 颜色和环境系数必须为有限的 `[0,1]`，强度必须有限且非负，0 表示关闭直接光。
 非法原始 FrameInput 在获取交换链图像或录制命令前抛 RENDER，包含空绘制列表；之后可重新提交合法帧。
-光照属于帧参数，不从 Scene 或 ResourceManager 读取，也不复制到 Material；当前 fragment 仍保持 Unlit 输出。
+光照属于帧参数，不从 Scene 或 ResourceManager 读取，也不复制到 Material；Unlit 不使用光照，Lambert 使用本帧光照。
 
 绘制列表按提交顺序完整录制，不排序或截断；没有固定物体数量上限，实际受可用内存约束。
 Renderer 在获取图像和录制前解析并检查整个列表的 Mesh/Material。空、过期或跨 Renderer
@@ -264,7 +277,7 @@ normal 位于几何局部空间，可以为非单位向量；零向量表示无�
 Renderer 从最终 `DrawItem::model` 的线性部分计算逆转置，平移不影响结果，也不另存 Scene 法线状态。
 可逆仿射变换支持非均匀、负缩放及正常的小比例缩放，不用固定绝对行列式阈值判定奇异。
 奇异或非仿射矩阵使用零法线变换，保留原模型矩阵和绘制；求逆结果无法有限表示时同样置零。
-顶点阶段在变换后归一化非零法线并输出世界法线，保留零向量；当前 fragment 仍使用原 Unlit 着色。
+顶点阶段在变换后归一化非零法线并输出世界法线，保留零向量；Lambert 在片元插值后再次归一化，零法线不贡献直接光。
 
 ```cpp
 // vertices/indices are application-owned vectors; Renderer must already exist.

@@ -5,6 +5,8 @@
 #include <array>
 #include <memory>
 
+#include "runtime/render/material.h"
+
 namespace Incubator
 {
     namespace Render
@@ -22,7 +24,7 @@ namespace Incubator
             public:
                 VulkanMaterialBinding(const VulkanDevice& device, VkDescriptorSetLayout layout,
                                       const VulkanImage& texture, const VulkanSampler& sampler,
-                                      const std::array<float, 3>& color);
+                                      const std::array<float, 3>& color, ShadingMode shading = ShadingMode::Unlit);
                 ~VulkanMaterialBinding();
 
                 VulkanMaterialBinding(const VulkanMaterialBinding&) = delete;

@@ -2,7 +2,9 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -12,8 +14,33 @@
 
 namespace Incubator::Demo
 {
+    /// @brief 编辑 Scene 当前光照；角度及颜色只在本次 UI 构建期间暂存。
+    inline void lightingControls(Scene::Scene& scene)
+    {
+        auto lighting = scene.lighting();
+        const double length =
+            std::hypot(double(lighting.direction.x), double(lighting.direction.y), double(lighting.direction.z));
+        const auto direction = glm::dvec3(lighting.direction) / length;
+        float yaw = glm::degrees(float(std::atan2(direction.x, -direction.z)));
+        float pitch = glm::degrees(float(std::asin(std::clamp(direction.y, -1.0, 1.0))));
+        bool directionChanged = ImGui::SliderFloat("Light yaw", &yaw, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+        directionChanged |= ImGui::SliderFloat("Light pitch", &pitch, -89, 89, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+        if (directionChanged)
+        {
+            const float y = glm::radians(yaw), p = glm::radians(pitch);
+            lighting.direction = {std::cos(p) * std::sin(y), std::sin(p), -std::cos(p) * std::cos(y)};
+        }
+        bool changed = directionChanged;
+        changed |= ImGui::ColorEdit3("Light color (linear)", &lighting.color.x, ImGuiColorEditFlags_Float);
+        changed |=
+            ImGui::SliderFloat("Light intensity", &lighting.intensity, 0, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        changed |= ImGui::SliderFloat("Ambient", &lighting.ambient, 0, 1, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        if (changed)
+            scene.setLighting(lighting);
+    }
+
     /// @brief 实现 Demo 中的模型场景交互和 UI。
-    /// @note 此类只保存使用方状态；实体 Transform 和 Camera 值由 Runtime Scene 持有。
+    /// @note 此类只保存使用方状态；实体 Transform、Camera 和光照值由 Runtime Scene 持有。
     class ModelScene
     {
     public:
@@ -113,6 +140,7 @@ namespace Incubator::Demo
         {
             auto scene = std::make_unique<Scene::Scene>();
             scene->setCamera(Scene::Camera({0, 0, 6}));
+            scene->setLighting({{-0.6f, -0.8f, -1}, {1, 0.95f, 0.9f}, 1, 0.15f});
             const float offset = useObj ? 1.65f : 1.2f;
             selected_ = scene->createEntity(models_[useObj ? 1 : 0], initialTransform(useObj, -offset));
             scene->createEntity(models_[useObj ? 1 : 0], initialTransform(useObj, offset));
@@ -129,6 +157,8 @@ namespace Incubator::Demo
             ImGui::Begin("Incubator Scene Runtime");
             ImGui::Text("Scene: %s | Update: %.2f ms", useObj_ ? "OBJ" : "glTF", deltaSeconds_ * 1000);
             ImGui::ColorEdit3("Clear color", app.clearColor().data());
+            if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen))
+                lightingControls(app.scene());
             if (ImGui::Button("Create entity"))
                 createEntity(app);
             ImGui::SameLine();
@@ -200,7 +230,8 @@ namespace Incubator::Demo
     private:
         static constexpr Model::PrepareOptions PREVIEW_OPTIONS{
             Render::TextureMipMode::FullChain,
-            {Render::TextureFilter::Linear, Render::TextureFilter::Linear, Render::MipFilter::Linear}};
+            {Render::TextureFilter::Linear, Render::TextureFilter::Linear, Render::MipFilter::Linear},
+            Render::ShadingMode::Lambert};
 
         static float initialScale(bool useObj)
         {

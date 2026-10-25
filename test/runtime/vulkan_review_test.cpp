@@ -49,6 +49,28 @@ namespace
     using namespace Incubator::Render;
     using namespace Incubator::Render::Vulkan;
 
+    glm::vec3 linearFromSrgb(glm::vec3 value)
+    {
+        for (int channel = 0; channel < 3; ++channel)
+            value[channel] = value[channel] <= 0.04045f ? value[channel] / 12.92f
+                                                        : std::pow((value[channel] + 0.055f) / 1.055f, 2.4f);
+        return value;
+    }
+
+    void expectLinearPixel(std::span<const uint8_t> pixels, glm::vec3 linear, uint32_t x = 192, uint32_t y = 128,
+                           uint32_t width = 384)
+    {
+        const size_t offset = (size_t(y) * width + x) * 4;
+        ASSERT_LT(offset + 3, pixels.size());
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            const double value = std::clamp(double(linear[channel]), 0.0, 1.0);
+            const double encoded = value <= 0.0031308 ? 12.92 * value : 1.055 * std::pow(value, 1.0 / 2.4) - 0.055;
+            EXPECT_NEAR(pixels[offset + channel], encoded * 255, 2) << "channel=" << channel;
+        }
+        EXPECT_EQ(pixels[offset + 3], 255);
+    }
+
     std::vector<const char*> requiredExtensions()
     {
         auto result = GlfwSurface::requiredInstanceExtensions();
@@ -1562,6 +1584,171 @@ namespace
         }
         expectCleanValidation();
     }
+    TEST_F(VulkanReviewTest, LambertMatchesAnglesLinearColorsAndImmutableUnlitSelection)
+    {
+        Log::Registry::get("render").setLevel(Log::Level::DEBUG);
+        Log::Registry::get("render.vulkan").setLevel(Log::Level::DEBUG);
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const Resource::TextureResource cpu({}, 1, 1, {128, 64, 192, 0});
+            const auto texture = renderer.createTexture(cpu);
+            auto data = Demo::makePlaneMesh();
+            for (auto& vertex : data.vertices)
+                vertex.normal[2] = 1;
+            const auto mesh = renderer.createMesh(data.vertices, data.indices);
+            const std::array<float, 3> tint{0.5f, 0.75f, 0.25f};
+            MaterialDesc desc{texture, tint};
+            EXPECT_EQ(desc.shading, ShadingMode::Unlit);
+            const auto unlit = renderer.createMaterial(desc);
+            desc.shading = static_cast<ShadingMode>(99);
+            EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 1u);
+            desc.shading = ShadingMode::Lambert;
+            const auto lit = renderer.createMaterial(desc);
+            desc.shading = ShadingMode::Unlit;
+            desc.color = {0, 0, 0};
+            desc.texture = {};
+            releaseCpuAssets(assets);
+            const auto base =
+                linearFromSrgb({128 / 255.0f, 64 / 255.0f, 192 / 255.0f}) * glm::vec3(tint[0], tint[1], tint[2]);
+            std::array draws{DrawItem{mesh, lit, glm::mat4(1)}};
+            auto frame = controlledFrame({384, 256}, draws);
+            frame.lighting = {{0, 0, -1}, {0.3f, 0.7f, 0.5f}, 1.2f, 0.15f};
+            for (const float cosine : {1.0f, 0.5f, 0.0f, -1.0f})
+            {
+                SCOPED_TRACE(cosine);
+                frame.lighting.direction = {-std::sqrt(1 - cosine * cosine), 0, -cosine};
+                const auto pixels = TextureGpuReview::captureFrame(renderer, frame);
+                expectLinearPixel(pixels,
+                                  base * (glm::vec3(frame.lighting.ambient) +
+                                          frame.lighting.color * frame.lighting.intensity * std::max(cosine, 0.0f)));
+                draws[0].material = unlit;
+                expectLinearPixel(TextureGpuReview::captureFrame(renderer, frame), base);
+                draws[0].material = lit;
+            }
+            frame.lighting.intensity = 0;
+            frame.lighting.ambient = 0.25f;
+            expectLinearPixel(TextureGpuReview::captureFrame(renderer, frame), base * 0.25f);
+            frame.lighting.ambient = 0;
+            expectLinearPixel(TextureGpuReview::captureFrame(renderer, frame), glm::vec3(0));
+            frame.lighting = {{0, 0, -1}, {1, 1, 1}, 1000, 0};
+            expectLinearPixel(TextureGpuReview::captureFrame(renderer, frame), glm::vec3(1));
+            frame.lighting = {{0, 0, -1}, {0.3f, 0.7f, 0.5f}, 1.2f, 0.15f};
+            const auto expected = base * (glm::vec3(0.15f) + frame.lighting.color * 1.2f);
+            for (const glm::vec3 eye : {glm::vec3(0, 0, 3), glm::vec3(1.5f, 0.5f, 3)})
+            {
+                frame.camera.view = glm::lookAtRH(eye, glm::vec3(0), glm::vec3(0, 1, 0));
+                expectLinearPixel(TextureGpuReview::captureFrame(renderer, frame), expected);
+            }
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, LambertZeroCancellationAndSingularNormalsUseOnlyAmbient)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const Resource::TextureResource cpu({}, 1, 1, {255, 255, 255, 255});
+            const auto material =
+                renderer.createMaterial({renderer.createTexture(cpu), {0.5f, 0.25f, 0.75f}, {}, ShadingMode::Lambert});
+            releaseCpuAssets(assets);
+            auto plane = Demo::makePlaneMesh();
+            const auto zero = renderer.createMesh(plane.vertices, plane.indices);
+            for (auto& vertex : plane.vertices)
+                vertex.normal[2] = 1;
+            const auto normal = renderer.createMesh(plane.vertices, plane.indices);
+            const auto clip = [](float x, float y) { return std::array<float, 3>{x / 192 - 1, y / 128 - 1, 0.5f}; };
+            const auto a = clip(64.5f, 64.5f), b = clip(320.5f, 64.5f), c = clip(64.5f, 192.5f);
+            const std::array<MeshVertex, 3> vertices{{{{a[0], a[1], a[2]}, {0, 0}, {0, 0, 1}},
+                                                      {{b[0], b[1], b[2]}, {0, 0}, {0, 0, -1}},
+                                                      {{c[0], c[1], c[2]}, {0, 0}, {0, 0, -1}}}};
+            const std::array<uint32_t, 3> indices{0, 1, 2};
+            const auto cancelling = renderer.createMesh(vertices, indices);
+            auto projective = glm::mat4(1);
+            projective[0][3] = 0.25f;
+            std::array draws{DrawItem{zero, material, glm::mat4(1)}};
+            FrameInput frame{{384, 256}, {glm::mat4(1), glm::mat4(1)}, draws, {{0, 0, -1}, {1, 1, 1}, 1, 0.2f}};
+            const auto ambient = glm::vec3(0.5f, 0.25f, 0.75f) * 0.2f;
+            expectLinearPixel(TextureGpuReview::captureFrame(renderer, frame), ambient);
+            for (const auto& model : {glm::scale(glm::mat4(1), glm::vec3(1, 1, 0)), projective})
+            {
+                draws[0] = {normal, material, model};
+                expectLinearPixel(TextureGpuReview::captureFrame(renderer, frame), ambient);
+            }
+            draws[0] = {cancelling, material, glm::mat4(1)};
+            for (const float sign : {-1.0f, 1.0f})
+            {
+                frame.lighting.direction.z = sign;
+                expectLinearPixel(TextureGpuReview::captureFrame(renderer, frame), ambient, 128, 96);
+            }
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, LambertFrameSlotsShareLightingAndKeepSubmittedValuesAfterRendererMove)
+    {
+        Log::Registry::get("render").setLevel(Log::Level::DEBUG);
+        auto window = createWindow(true, 768, 512);
+        SceneAssets assets;
+        Mesh meshObserver;
+        Material materialObserver;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            {
+                const Resource::TextureResource cpu({}, 1, 1, {255, 255, 255, 0});
+                auto data = Demo::makePlaneMesh();
+                for (auto& vertex : data.vertices)
+                    vertex.normal[2] = 1;
+                meshObserver = renderer.createMesh(data.vertices, data.indices);
+                materialObserver = renderer.createMaterial(
+                    {renderer.createTexture(cpu), {0.25f, 0.5f, 0.75f}, {}, ShadingMode::Lambert});
+            }
+            releaseCpuAssets(assets);
+            Renderer moved(std::move(renderer));
+            std::array draws{
+                DrawItem{meshObserver, materialObserver, glm::translate(glm::mat4(1), glm::vec3(-0.6f, 0, 0))},
+                DrawItem{meshObserver, materialObserver, glm::translate(glm::mat4(1), glm::vec3(0.6f, 0, 0))}};
+            for (int index = 0; index < 6; ++index)
+            {
+                window->pollEvents();
+                const auto extent = moved.beginUiFrame();
+                ASSERT_TRUE(extent);
+                moved.imgui().endFrame();
+                auto frame = controlledFrame(*extent, draws);
+                frame.lighting = index % 2 ? Lighting{{0, 0, 1}, {1, 0.2f, 0.5f}, 1, 0.3f}
+                                           : Lighting{{0, 0, -2}, {0.4f, 0.6f, 1}, 0.8f, 0.1f};
+                const auto expected =
+                    glm::vec3(0.25f, 0.5f, 0.75f) *
+                    (glm::vec3(frame.lighting.ambient) + (index % 2 ? glm::vec3(0) : frame.lighting.color * 0.8f));
+                moved.drawFrame(frame, {0, 0, 0, 1});
+                frame.lighting = {{1, 0, 0}, {0, 0, 0}, 0, 0};
+                glfwWaitEventsTimeout(0.06);
+                const auto image = WindowCapture::capture(*window);
+                const float aspect = float(extent->width) / extent->height;
+                for (const float x : {-0.6f, 0.6f})
+                {
+                    const auto px = static_cast<uint32_t>((x / aspect + 1) * image.width * 0.5f);
+                    expectLinearPixel(image.rgba, expected, px, image.height / 2, image.width);
+                }
+            }
+            EXPECT_TRUE(meshObserver.valid());
+            EXPECT_TRUE(materialObserver.valid());
+            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded mesh:"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 1u);
+        }
+        EXPECT_FALSE(meshObserver.valid());
+        EXPECT_FALSE(materialObserver.valid());
+        expectCleanValidation();
+    }
+
     TEST_F(VulkanReviewTest, InvalidFrameLightingRejectsBeforeAcquisitionAndReviewThenFramesRecover)
     {
         auto native = createWindow();
