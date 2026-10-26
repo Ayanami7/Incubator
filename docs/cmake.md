@@ -73,7 +73,17 @@ DemoApp 位于 examples/demo，直接组织 Window、FileIO、资源路由、Sce
 - 链接测试框架与对应的运行时库
 - 使用 `FOLDER "UnitTest/runtime"` 属性分组
 
-CTest 的 `WORKING_DIRECTORY` 只对 CTest 入口生效，TestMate 会直接启动测试可执行文件。
+正式测试由 CTest 注册和运行，保留 `gtest_discover_tests()` 的逐用例注册及各目标的 `WORKING_DIRECTORY`、`RUN_SERIAL`、`TIMEOUT` 属性。
+VS Code 测试面板使用 TestMate 提供程序/套件/用例层级及批量运行，关闭 CMake Tools 的 CTest 面板集成；命令行 CTest 继续用于正式复核和阶段验收，入口分工见 [开发工作流](../WORKFLOW.md#6-运行测试)。
+
+| 入口 | 初始工作目录 | 执行与超时 |
+|---|---|---|
+| TestMate | `<build>/` | 全局并发为 1，允许同一程序批量运行；600 秒限制整个进程 |
+| CTest 普通测试 | `<build>/test/runtime/` | 逐用例独立进程 |
+| CTest demo_app_test / model_preparation_test | `<build>/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
+| CTest vulkan_review_test | `<build>/test-fixtures/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
+
+TestMate 不自动读取 CTest 属性；批量与逐用例隔离、超时粒度和初始目录存在上述差异，编辑器通过结果不替代正式 CTest 验收。窗口/GPU 测试同一时间只运行一轮。
 `VulkanReviewTest` 夹具通过编译时的 `RUNTIME_TEST_ASSET_DIR` 进入独立测试资产根，并在结束时恢复原目录；
 因此从构建目录直接运行或通过编辑器运行时，也使用 `<build>/test-fixtures/assets/` 中的精确样本。
 
@@ -83,6 +93,16 @@ CTest 的 `WORKING_DIRECTORY` 只对 CTest 入口生效，TestMate 会直接启�
 - 链接运行时库与所需第三方库
 
 唯一示例目标 demo 编译 examples/demo/main.cpp、demo_app.cpp 和模型展示代码，链接 IncubatorRuntime 和 imgui，依赖 demo_shaders、demo_models，运行工作目录为构建目录。demo_app_test 编译同一 demo_app.cpp 并复用 model_scene.h 验证生命周期和实体操作；旧几何辅助代码放在 test/runtime/support/render_demo。
+
+### 正式应用目标（apps/ 下，规划，尚未实施）
+
+计划新增 `apps/CMakeLists.txt` 作为正式应用入口，由根 CMake 在 Runtime 和资产目标定义后添加；`apps/incubator/CMakeLists.txt` 定义独立可执行目标 `incubator`，收集本应用的 `main.cpp`、`application.h/.cpp` 及后续界面代码。当前目录结构和根 CMake 的添加顺序仍以已实现内容为准，尚未创建上述目录或目标。
+
+- 正式应用链接 `IncubatorRuntime` 与实际使用的界面依赖，不链接 `demo` 或编译 `examples/demo` 源码；Demo 继续作为独立示例目标。
+- 正式应用显式依赖所需 Shader、模型和场景的资产部署目标，沿用 `<build>/assets/` 与增量部署约定。接入时将共用部署目标组织到 `assets/`，使应用构建无需依赖 Demo 可执行目标。
+- 开发运行 cwd 固定为 `${CMAKE_BINARY_DIR}`，由 VS Code、Visual Studio 和应用集成测试的 CTest 启动配置明确指定；手动启动也先进入该目录。cwd 与可执行文件所在目录分别约定，资源按 `<cwd>/assets/` 解析，相对场景文件路径按 cwd 解析，加载场景时不切换 cwd。
+
+应用与示例的职责边界见 [总体架构](../ARCHITECTURE.md#应用与示例)，待开发方向见 [TO_DO.md](../.agents/specs/TO_DO.md)。本节仅记录构建方向，不引入新的 Application 框架。
 
 ### 运行资源（assets/）
 
