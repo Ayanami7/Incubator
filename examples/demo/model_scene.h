@@ -9,6 +9,7 @@
 #include <string>
 
 #include "demo_app.h"
+#include "model_cache.h"
 #include "orbit_camera.h"
 #include "runtime/model/prepared_model.h"
 
@@ -46,7 +47,8 @@ namespace Incubator::Demo
     public:
         void initialize(Demo::DemoApp& app)
         {
-            models_[0] = Model::prepareModel(app.renderer(), "models/avocado/glTF/Avocado.gltf", PREVIEW_OPTIONS);
+            cache_ = std::make_unique<ModelCache>(app.renderer());
+            models_[0] = cache_->resolve(Model::ModelReference("models/avocado/glTF/Avocado.gltf", PREVIEW_OPTIONS));
             switchScene(app, false);
         }
 
@@ -57,7 +59,7 @@ namespace Incubator::Demo
             if (firstUpdate_)
                 firstUpdate_ = false;
             else if (!models_[1])
-                models_[1] = Model::prepareModel(app.renderer(), "models/utah_teapot/utah_teapot.obj", PREVIEW_OPTIONS);
+                models_[1] = cache_->resolve(Model::ModelReference("models/utah_teapot/utah_teapot.obj", PREVIEW_OPTIONS));
         }
 
         Scene::EntityId createEntity(Demo::DemoApp& app)
@@ -245,6 +247,7 @@ namespace Incubator::Demo
             return Scene::Transform({x, -0.78f, 0}, {1, 0, 0, 0}, glm::vec3(initialScale(false)));
         }
 
+        std::unique_ptr<ModelCache> cache_;
         std::array<std::shared_ptr<const Model::PreparedModel>, 2> models_;
         Scene::EntityId selected_;
         bool useObj_ = false;

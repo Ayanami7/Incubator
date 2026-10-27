@@ -101,6 +101,11 @@ GPU 仍由 Renderer 持有到关闭；这与 [Model 持有期](./model.md#持有
 保存先完整编码，再创建或截断目标并同步写入、flush；打开后发生 I/O 错误可能留下截断或部分文件，
 调用方的内存场景不受影响。接口不自动创建目录，也不提供原子替换。
 
+`runtime/scene/scene_rebuild.h` 的 `rebuildScene(description, resolver)` 先校验内容，按实体顺序通过
+调用方解析器取得模型并构造新 Scene，返回新场景及背景；空模型不调用解析器。新实体分配新 ID，
+真实 Transform、Camera 和 Lighting 原样恢复，不重复应用模型源根或展示缩放。解析失败或返回空模型时抛出异常，
+不返回部分场景；调用方应在成功后替换当前场景。解析期间已创建的 GPU 对象仍由 Renderer 持有至关闭。
+
 ## 场景帧提取
 
 ```cpp

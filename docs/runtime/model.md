@@ -43,6 +43,9 @@ auto filtered = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Av
 参数在创建时复制，之后修改 options 不影响已有准备结果。它是消费者的预览策略，
 不导入源 glTF/OBJ sampler，也不向 ModelResource 或 Loader 引入 Render 类型。
 
+Demo 的会话级 `ModelCache` 借用该会话的 Renderer，按 `ModelReference` 的规范化路径和完整选项复用
+`PreparedModel`；不同选项独立准备。缓存由 Demo 回调持有，并在 Renderer 关闭前释放，不跨会话共享。
+
 路径相对资产根，经现有 ResourceManager/Registry 规范化和查找；应用须提前注册 MODEL 和 TEXTURE 的 Loader。
 函数不安装或替换 Loader，不准备 Shader，不修改全局 Manager 的路由。线程安全仍由调用方保证，
 GPU 准备在 Renderer 所在线程完成，FileIO 至少覆盖 CPU 导入与依赖读取期。

@@ -37,6 +37,9 @@
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene.h"
 #include "runtime/scene/scene_description.h"
+#include "runtime/scene/scene_file.h"
+#include "runtime/scene/scene_rebuild.h"
+#include "../../examples/demo/model_cache.h"
 #include "runtime/scene/scene_frame.h"
 #include "support/texture_gpu_review.h"
 #include "support/window_capture.h"
@@ -761,6 +764,91 @@ namespace
         }
         cleanValidation();
     }
+
+    TEST_F(ModelPreparationTest, SceneRebuildReusesSessionModelsAndPreservesFailures)
+    {
+        using Demo::ModelCache;
+        auto native = window();
+        std::weak_ptr<const Model::PreparedModel> firstSession;
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            ModelCache cache(renderer);
+            const Model::ModelReference gltf("models/minimal_gltf/model.gltf");
+            const Model::ModelReference obj("models/minimal_obj/model.obj");
+            const auto first = cache.resolve(gltf);
+            firstSession = first;
+            EXPECT_EQ(first, cache.resolve(Model::ModelReference("MODELS/minimal_gltf/../minimal_gltf/MODEL.gltf")));
+            const auto second = cache.resolve(obj);
+            Scene::SceneDescription description;
+            description.entities = {{gltf, Scene::Transform({1, 2, 3}, {1, 0, 0, 0}, {-2, 0, 3}), false},
+                                    {obj, Scene::Transform({-1, 0, 0}), true},
+                                    {gltf, Scene::Transform({4, 0, 0}), true},
+                                    {std::nullopt, Scene::Transform{}, true}};
+            auto resolver = [&](const Model::ModelReference& ref) { return cache.resolve(ref); };
+            const auto uploads = occurrences(messages_.str(), "Uploaded mesh:");
+            auto built = Scene::rebuildScene(description, resolver);
+            ASSERT_EQ(built.scene->entities().size(), 4u);
+            EXPECT_EQ(built.scene->entities()[0].model, first);
+            EXPECT_EQ(built.scene->entities()[1].model, second);
+            EXPECT_EQ(built.scene->entities()[2].model, first);
+            EXPECT_EQ(built.scene->entities()[3].model, nullptr);
+            EXPECT_FALSE(built.scene->entities()[0].visible);
+            EXPECT_EQ(built.scene->entities()[0].transform.matrix(), description.entities[0].transform.matrix());
+            const auto captured = Scene::captureScene(*built.scene, built.clearColor);
+            EXPECT_EQ(captured.entities[0].model, description.entities[0].model);
+            EXPECT_EQ(captured.entities[1].model, description.entities[1].model);
+            fs::create_directories(sandbox_ / "outside");
+            const auto scenePath = Utils::Utf8::toUtf8String(sandbox_ / "outside" / Utils::Utf8::toFsPath("场景😀.json"));
+            Scene::writeScene(*fileIO_, scenePath, captured);
+            const auto loaded = Scene::readScene(*fileIO_, scenePath);
+            EXPECT_EQ(Scene::rebuildScene(loaded, resolver).scene->entities()[0].model, first);
+            auto again = Scene::rebuildScene(captured, resolver);
+            EXPECT_EQ(again.scene->entities()[0].model, first);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), uploads);
+            const auto oldId = built.scene->entities()[0].id;
+            auto missing = description;
+            missing.entities[1].model = Model::ModelReference("models/missing.gltf");
+            EXPECT_THROW(Scene::rebuildScene(missing, resolver), Error::Exception);
+            EXPECT_NE(built.scene->find(oldId), nullptr);
+            EXPECT_EQ(Scene::rebuildScene(description, resolver).scene->entities()[0].model, first);
+
+            const auto texturePath = fs::path("assets") / PNG;
+            fs::remove(texturePath);
+            Model::PrepareOptions missingTextureOptions;
+            missingTextureOptions.sampler.mipFilter = MipFilter::Linear;
+            auto missingTexture = description;
+            missingTexture.entities[0].model = Model::ModelReference(gltf.path(), missingTextureOptions);
+            EXPECT_THROW(Scene::rebuildScene(missingTexture, resolver), Error::Exception);
+            EXPECT_NE(built.scene->find(oldId), nullptr);
+            fs::copy_file(Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR) / PNG, texturePath);
+            EXPECT_NE(cache.resolve(*missingTexture.entities[0].model), first);
+
+            Model::PrepareOptions option;
+            option.mipMode = TextureMipMode::FullChain;
+            EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
+            option = {}; option.sampler.minFilter = TextureFilter::Linear;
+            EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
+            option = {}; option.sampler.magFilter = TextureFilter::Linear;
+            EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
+            option = {}; option.sampler.mipFilter = MipFilter::Nearest;
+            EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
+            option = {}; option.shading = ShadingMode::Lambert;
+            EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
+            released(ResourceType::MODEL, gltf.path());
+            EXPECT_TRUE(ResourceManager::instance().hasLoader(ResourceType::MODEL));
+        }
+        EXPECT_TRUE(firstSession.expired());
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            ModelCache nextSession(renderer);
+            const auto next = nextSession.resolve(Model::ModelReference(GLTF));
+            EXPECT_TRUE(next->meshes()[0].valid());
+            EXPECT_TRUE(firstSession.expired());
+        }
+        cleanValidation();
+    }
     TEST(ModelInstanceInputTest, EmptyInputIsEmptyAndNullModelIsRejected)
     {
         EXPECT_TRUE(Model::makeModelDraws({}).empty());
@@ -1153,6 +1241,14 @@ namespace
             auto first = Scene::extractSceneFrame(scene, {800, 400});
             ASSERT_TRUE(first);
             ASSERT_EQ(first->draws.size(), 10u);
+            const auto description = Scene::captureScene(scene, {0, 0, 0, 1});
+            auto rebuilt = Scene::rebuildScene(description, [&](const Model::ModelReference&) { return model; });
+            const auto rebuiltFrame = Scene::extractSceneFrame(*rebuilt.scene, {800, 400});
+            ASSERT_TRUE(rebuiltFrame);
+            ASSERT_EQ(rebuiltFrame->draws.size(), first->draws.size());
+            for (size_t index = 0; index < first->draws.size(); ++index)
+                EXPECT_EQ(rebuiltFrame->draws[index].model, first->draws[index].model);
+            rebuilt.scene.reset();
             const std::array<std::array<float, 2>, 5> cached = {{{11, 1}, {9, 1}, {7, 4}, {7, 4}, {10, 1}}};
             for (size_t index = 0; index < cached.size(); ++index)
             {

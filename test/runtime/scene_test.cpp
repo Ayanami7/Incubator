@@ -9,6 +9,7 @@
 
 #include "runtime/core/error/error.h"
 #include "runtime/scene/scene_description.h"
+#include "runtime/scene/scene_rebuild.h"
 
 namespace
 {
@@ -99,6 +100,48 @@ namespace
         description.lighting = {};
         description.clearColor[0] = -1;
         EXPECT_FALSE(description.valid());
+    }
+
+    TEST(SceneDescriptionTest, RebuildPreservesValuesAndDoesNotPublishOnFailure)
+    {
+        using namespace Incubator;
+        Scene old;
+        const auto oldId = old.createEntity({}, Transform({3, 4, 5}, {2, 0, 1, 0}, {-1, 0, 2}), false);
+        old.createEntity();
+        old.setCamera(Camera({2, 3, 4}, {1, 0, 1, 0}, {0.9f, 0.2f, 20}));
+        old.setLighting({{0, -3, -2}, {0.3f, 0.6f, 0.8f}, 2, 0.4f});
+        auto input = Incubator::Scene::captureScene(old, {0.2f, 0.3f, 0.4f, 0.5f});
+        const auto rebuilt = Incubator::Scene::rebuildScene(input, {});
+        ASSERT_EQ(rebuilt.scene->entities().size(), 2u);
+        EXPECT_NE(rebuilt.scene->entities()[0].id, oldId);
+        EXPECT_FALSE(rebuilt.scene->entities()[0].visible);
+        EXPECT_EQ(rebuilt.scene->entities()[0].transform.matrix(), input.entities[0].transform.matrix());
+        EXPECT_EQ(rebuilt.scene->camera().position(), input.camera.position());
+        EXPECT_EQ(rebuilt.scene->camera().rotation(), input.camera.rotation());
+        EXPECT_FLOAT_EQ(rebuilt.scene->camera().perspective().farPlane, 20);
+        EXPECT_EQ(rebuilt.scene->lighting(), input.lighting);
+        EXPECT_EQ(rebuilt.clearColor, input.clearColor);
+        const auto again = Incubator::Scene::captureScene(*rebuilt.scene, rebuilt.clearColor);
+        EXPECT_EQ(again.entities[0].transform.matrix(), input.entities[0].transform.matrix());
+        EXPECT_FALSE(again.entities[0].model);
+
+        input.entities[0].model = Model::ModelReference("models/test.gltf");
+        int calls = 0;
+        auto nullResolver = [&](const Model::ModelReference&) -> std::shared_ptr<const Model::PreparedModel> {
+            ++calls;
+            return {};
+        };
+        input.clearColor[0] = -1;
+        EXPECT_THROW(Incubator::Scene::rebuildScene(input, nullResolver), Error::Exception);
+        EXPECT_EQ(calls, 0);
+        input.clearColor[0] = 0.2f;
+        EXPECT_THROW(Incubator::Scene::rebuildScene(input, nullResolver), Error::Exception);
+        EXPECT_EQ(calls, 1);
+        EXPECT_EQ(old.find(oldId)->transform.position(), glm::vec3(3, 4, 5));
+        EXPECT_FALSE(old.find(oldId)->visible);
+        EXPECT_THROW(Incubator::Scene::rebuildScene(input, {}), Error::Exception);
+        const Incubator::Scene::SceneDescription empty;
+        EXPECT_TRUE(Incubator::Scene::rebuildScene(empty, {}).scene->entities().empty());
     }
 
     TEST(SceneEntityCpuTest, DefaultsAndLogicalEntitiesOwnIndependentValues)

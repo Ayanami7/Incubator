@@ -124,6 +124,7 @@ set(SCENE_HEADERS
     scene/entity.h
     scene/scene.h
     scene/scene_description.h
+    scene/scene_rebuild.h
     scene/scene_file.h
     scene/scene_frame.h
     scene/transform.h
@@ -134,6 +135,7 @@ set(SCENE_HEADERS
 set(SCENE_SOURCES
     scene/scene.cpp
     scene/scene_description.cpp
+    scene/scene_rebuild.cpp
     scene/scene_file.cpp
     scene/scene_frame.cpp
     scene/transform.cpp
