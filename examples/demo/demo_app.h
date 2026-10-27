@@ -72,6 +72,8 @@ namespace Incubator::Demo
         /// @brief 获取当前 Renderer 的借用引用。
         /// @note 仅在会话打开时有效。
         Render::Renderer& renderer();
+        /// @brief 获取当前会话文件服务的借用引用。
+        FileIO::FileIO& fileIO();
         /// @brief 获取当前 Scene 的借用引用。
         /// @note 仅在会话打开时有效；调用 setScene 后必须重新获取。
         Scene::Scene& scene();

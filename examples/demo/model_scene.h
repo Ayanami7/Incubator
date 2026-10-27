@@ -12,6 +12,9 @@
 #include "model_cache.h"
 #include "orbit_camera.h"
 #include "runtime/model/prepared_model.h"
+#include "runtime/core/error/error.h"
+#include "runtime/scene/scene_file.h"
+#include "runtime/scene/scene_rebuild.h"
 
 namespace Incubator::Demo
 {
@@ -67,6 +70,49 @@ namespace Incubator::Demo
             selected_ = app.scene().createEntity(models_[useObj_ ? 1 : 0], initialTransform(useObj_, 0));
             return selected_;
         }
+
+        void selectModel(bool useObj)
+        {
+            useObj_ = useObj;
+        }
+
+        bool save(Demo::DemoApp& app, std::string_view path)
+        {
+            try
+            {
+                Scene::writeScene(app.fileIO(), path, Scene::captureScene(app.scene(), app.clearColor()));
+                message_ = "Saved: " + std::string(path);
+                return true;
+            }
+            catch (const Error::Exception& error)
+            {
+                message_ = error.message();
+                return false;
+            }
+        }
+
+        bool load(Demo::DemoApp& app, std::string_view path)
+        {
+            try
+            {
+                const auto description = Scene::readScene(app.fileIO(), path);
+                auto rebuilt = Scene::rebuildScene(description, [this](const auto& source) { return cache_->resolve(source); });
+                const auto color = rebuilt.clearColor;
+                app.setScene(std::move(rebuilt.scene));
+                app.clearColor() = color;
+                selected_ = {};
+                orbit_.synchronize(app.scene().camera());
+                message_ = "Loaded: " + std::string(path);
+                return true;
+            }
+            catch (const Error::Exception& error)
+            {
+                message_ = error.message();
+                return false;
+            }
+        }
+
+        const std::string& message() const { return message_; }
 
         Scene::EntityId selected() const
         {
@@ -154,20 +200,33 @@ namespace Incubator::Demo
 
         void ui(Demo::DemoApp& app)
         {
+            enum class FileAction { None, Save, Load };
+            FileAction action = FileAction::None;
             ImGui::SetNextWindowPos({12, 12}, ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize({350, 600}, ImGuiCond_FirstUseEver);
             ImGui::Begin("Incubator Scene Runtime");
-            ImGui::Text("Scene: %s | Update: %.2f ms", useObj_ ? "OBJ" : "glTF", deltaSeconds_ * 1000);
+            ImGui::Text("Update: %.2f ms", deltaSeconds_ * 1000);
+            ImGui::InputText("Scene file", scenePath_.data(), scenePath_.size());
+            if (ImGui::Button("Save")) action = FileAction::Save;
+            ImGui::SameLine();
+            if (ImGui::Button("Load")) action = FileAction::Load;
+            if (!message_.empty()) ImGui::TextWrapped("%s", message_.c_str());
             ImGui::ColorEdit3("Clear color", app.clearColor().data());
             if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen))
                 lightingControls(app.scene());
+            int modelIndex = useObj_ ? 1 : 0;
+            if (ImGui::Combo("New model", &modelIndex, "Avocado\0Teapot\0")) useObj_ = modelIndex == 1;
+            ImGui::BeginDisabled(useObj_ && !models_[1]);
             if (ImGui::Button("Create entity"))
                 createEntity(app);
+            ImGui::EndDisabled();
             ImGui::SameLine();
             if (ImGui::Button("Clear scene"))
                 clear(app);
+            ImGui::BeginDisabled(useObj_ && !models_[1]);
             if (ImGui::Button("Reset scene"))
                 switchScene(app, useObj_);
+            ImGui::EndDisabled();
             ImGui::SameLine();
             ImGui::BeginDisabled(!models_[1]);
             if (ImGui::Button(useObj_ ? "Switch to glTF" : "Switch to OBJ"))
@@ -198,13 +257,13 @@ namespace Incubator::Demo
             {
                 auto transform = entity->transform;
                 auto position = transform.position();
-                auto scale = transform.scale() / glm::vec3(initialScale(useObj_));
+                auto scale = transform.scale();
                 auto degrees = glm::degrees(glm::eulerAngles(transform.rotation()));
                 bool visible = entity->visible;
                 if (ImGui::Checkbox("Visible", &visible))
                     app.scene().setVisible(selected_, visible);
                 bool changed = false;
-                if (ImGui::SliderFloat3("Position", &position.x, -3, 3, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+                if (ImGui::DragFloat3("Position", &position.x, 0.05f))
                 {
                     transform.setPosition(position);
                     changed = true;
@@ -214,9 +273,9 @@ namespace Incubator::Demo
                     transform.setRotation(glm::quat(glm::radians(degrees)));
                     changed = true;
                 }
-                if (ImGui::SliderFloat3("Scale multiplier", &scale.x, 0.1f, 3, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+                if (ImGui::DragFloat3("Scale", &scale.x, 0.05f))
                 {
-                    transform.setScale(scale * initialScale(useObj_));
+                    transform.setScale(scale);
                     changed = true;
                 }
                 if (changed)
@@ -227,6 +286,8 @@ namespace Incubator::Demo
             if (ImGui::Button("Exit"))
                 app.requestExit();
             ImGui::End();
+            if (action == FileAction::Save) save(app, scenePath_.data());
+            if (action == FileAction::Load) load(app, scenePath_.data());
         }
 
     private:
@@ -253,6 +314,8 @@ namespace Incubator::Demo
         bool useObj_ = false;
         bool alternateCamera_ = false;
         bool firstUpdate_ = true;
+        std::array<char, 1024> scenePath_{'s', 'c', 'e', 'n', 'e', '.', 'j', 's', 'o', 'n', '\0'};
+        std::string message_;
         double deltaSeconds_ = 0;
         OrbitCamera orbit_;
         Render::FrameExtent extent_{0, 0};

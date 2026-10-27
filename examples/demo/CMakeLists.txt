@@ -53,6 +53,7 @@ endif()
 
 add_dependencies(${TARGET_NAME} IncubatorRuntime)
 add_dependencies(${TARGET_NAME} demo_models)
+add_dependencies(${TARGET_NAME} demo_scenes)
 
 set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "examples")
 

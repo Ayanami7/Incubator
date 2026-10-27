@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "entities": [
+    {"model":{"path":"models/avocado/gltf/avocado.gltf","prepare":{"mipMode":"fullChain","sampler":{"minFilter":"linear","magFilter":"linear","mipFilter":"linear"},"shading":"lambert"}},"transform":{"position":[-1.2,-0.78,0],"rotation":[0,0,0,1],"scale":[24,24,24]},"visible":true},
+    {"model":{"path":"models/utah_teapot/utah_teapot.obj","prepare":{"mipMode":"fullChain","sampler":{"minFilter":"linear","magFilter":"linear","mipFilter":"linear"},"shading":"lambert"}},"transform":{"position":[1.65,0,0],"rotation":[0,0,0,1],"scale":[0.075,0.075,0.075]},"visible":true}
+  ],
+  "camera":{"position":[0,0,6],"rotation":[0,0,0,1],"perspective":{"verticalFov":0.7853982,"nearPlane":0.1,"farPlane":100}},
+  "lighting":{"direction":[-0.6,-0.8,-1],"color":[1,0.95,0.9],"intensity":1,"ambient":0.15},
+  "clearColor":[0.12,0.16,0.22,1]
+}

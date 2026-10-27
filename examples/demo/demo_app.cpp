@@ -105,6 +105,12 @@ namespace Incubator::Demo
         return *renderer_;
     }
 
+    FileIO::FileIO& DemoApp::fileIO()
+    {
+        requireOpen();
+        return *fileIO_;
+    }
+
     Scene::Scene& DemoApp::scene()
     {
         requireOpen();

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <glm/ext/matrix_transform.hpp>
 #include <iostream>
 #include <sstream>
@@ -24,6 +25,7 @@
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene_frame.h"
 #include "support/window_capture.h"
+#include "support/texture_gpu_review.h"
 #include "runtime/render/integration/imgui_renderer.h"
 
 namespace
@@ -941,6 +943,112 @@ namespace
         session.run(std::move(callbacks));
         EXPECT_TRUE(lifetime.expired());
         closed(state);
+        cleanValidation();
+    }
+
+    TEST_F(DemoAppTest, MixedSceneSaveLoadPreservesStateAndRenderedPixels)
+    {
+        copyShowcaseModels();
+        fs::create_directories(sandbox_ / "assets/scenes");
+        fs::copy_file(previous_ / "assets/scenes/mixed.json", sandbox_ / "assets/scenes/mixed.json");
+        Demo::DemoApp session(options());
+        session.run({[&](Demo::DemoApp& app) {
+            Demo::ModelScene demo;
+            demo.initialize(app);
+            demo.update(app, {});
+            demo.update(app, {});
+            const auto original = app.scene().entities()[0].id;
+            const auto avocado = app.scene().find(original)->model;
+            demo.selectModel(true);
+            const auto tea = demo.createEntity(app);
+            const auto teapot = app.scene().find(tea)->model;
+            ASSERT_NE(avocado, teapot);
+            const Scene::Transform pose({1.6f, 0, 0}, {1, 0, 0, 0}, {0.075f, 0.075f, 0.075f});
+            ASSERT_TRUE(app.scene().setTransform(tea, pose));
+            app.scene().createEntity({}, Scene::Transform({5, 1, 2}, {1, 0, 0, 1}, {-1, 0, 2}), false);
+            app.scene().setLighting({{0.2f, -1, -2}, {0.7f, 0.8f, 1}, 1.2f, 0.2f});
+            app.clearColor() = {0.1f, 0.2f, 0.3f, 1};
+            const auto camera = app.scene().camera();
+            auto before = Scene::extractSceneFrame(app.scene(), {384, 256});
+            ASSERT_TRUE(before);
+            const auto pixels = TextureGpuReview::captureFrame(app.renderer(), before->input());
+            const auto uploads = count("Uploaded mesh:");
+            ASSERT_TRUE(demo.save(app, "mixed-save.json")) << demo.message();
+            EXPECT_FALSE(demo.load(app, "missing-scene.json"));
+            EXPECT_NE(app.scene().find(tea), nullptr);
+            EXPECT_EQ(demo.selected(), tea);
+            EXPECT_EQ(app.clearColor(), (std::array<float, 4>{0.1f, 0.2f, 0.3f, 1}));
+            auto invalidModel = Scene::captureScene(app.scene(), app.clearColor());
+            invalidModel.entities[2].model = Model::ModelReference("models/missing.gltf");
+            Scene::writeScene(app.fileIO(), "missing-model.json", invalidModel);
+            EXPECT_FALSE(demo.load(app, "missing-model.json"));
+            EXPECT_NE(app.scene().find(tea), nullptr);
+            EXPECT_EQ(demo.selected(), tea);
+            EXPECT_EQ(app.scene().camera().position(), camera.position());
+            ASSERT_TRUE(demo.load(app, "mixed-save.json")) << demo.message();
+            EXPECT_FALSE(demo.selected().valid());
+            EXPECT_EQ(app.scene().find(original), nullptr);
+            ASSERT_EQ(app.scene().entities().size(), 4u);
+            EXPECT_EQ(app.scene().entities()[0].model, avocado);
+            EXPECT_EQ(app.scene().entities()[2].model, teapot);
+            EXPECT_FALSE(app.scene().entities()[3].visible);
+            EXPECT_EQ(app.scene().entities()[3].model, nullptr);
+            EXPECT_EQ(app.scene().entities()[2].transform.scale(), pose.scale());
+            EXPECT_EQ(app.scene().camera().position(), camera.position());
+            auto after = Scene::extractSceneFrame(app.scene(), {384, 256});
+            ASSERT_TRUE(after);
+            const auto restored = TextureGpuReview::captureFrame(app.renderer(), after->input());
+            ASSERT_EQ(pixels.size(), restored.size());
+            for (size_t i = 0; i < pixels.size(); ++i)
+                EXPECT_LE(std::abs(int(pixels[i]) - int(restored[i])), 2) << i;
+            const auto saveImage = [](const char* path, const std::vector<uint8_t>& rgba) {
+                std::ofstream output(path, std::ios::binary);
+                output << "P6\n384 256\n255\n";
+                for (size_t i = 0; i < rgba.size(); i += 4)
+                    output.write(reinterpret_cast<const char*>(rgba.data() + i), 3);
+                return bool(output);
+            };
+            ASSERT_TRUE(saveImage("scene-before.ppm", pixels));
+            ASSERT_TRUE(saveImage("scene-restored.ppm", restored));
+            EXPECT_EQ(count("Uploaded mesh:"), uploads);
+            ASSERT_TRUE(demo.load(app, "assets/scenes/mixed.json")) << demo.message();
+            ASSERT_EQ(app.scene().entities().size(), 2u);
+            EXPECT_EQ(app.scene().entities()[0].model, avocado);
+            EXPECT_EQ(app.scene().entities()[1].model, teapot);
+            demo.selectModel(false);
+            EXPECT_EQ(app.scene().find(demo.createEntity(app))->model, avocado);
+            demo.clear(app);
+            ASSERT_TRUE(demo.save(app, "empty-save.json"));
+            ASSERT_TRUE(demo.load(app, "empty-save.json"));
+            EXPECT_TRUE(app.scene().entities().empty());
+            app.requestExit();
+        }, {}, {}});
+        cleanValidation();
+    }
+
+    TEST_F(DemoAppTest, SceneFileCommandsObserveSameUiFrame)
+    {
+        copyShowcaseModels();
+        Demo::DemoApp session(options());
+        auto demo = std::make_shared<Demo::ModelScene>();
+        session.run({[demo](auto& app) { demo->initialize(app); }, {}, [demo](auto& app) {
+            demo->ui(app);
+            const auto old = demo->selected();
+            const Scene::Transform edited({2, 1, 0}, {1, 0, 0, 0}, {-2, 0, 3});
+            ASSERT_TRUE(app.scene().setTransform(old, edited));
+            ASSERT_TRUE(demo->save(app, "same-frame.json"));
+            app.scene().setTransform(old, Scene::Transform{});
+            ASSERT_TRUE(demo->load(app, "same-frame.json"));
+            EXPECT_EQ(app.scene().find(old), nullptr);
+            EXPECT_FALSE(demo->selected().valid());
+            ASSERT_EQ(app.scene().entities().size(), 2u);
+            EXPECT_EQ(app.scene().entities()[0].transform.matrix(), edited.matrix());
+            const auto frame = Scene::extractSceneFrame(app.scene(), {640, 480}, false);
+            ASSERT_TRUE(frame);
+            EXPECT_EQ(frame->draws[0].model, edited.matrix() * app.scene().entities()[0].model->draws()[0].model);
+            app.requestExit();
+        }});
+        demo.reset();
         cleanValidation();
     }
 

@@ -22,3 +22,10 @@ foreach(MODEL_FILE IN ITEMS
     list(APPEND DEMO_MODEL_OUTPUTS "${MODEL_OUTPUT}")
 endforeach()
 add_custom_target(demo_models DEPENDS ${DEMO_MODEL_OUTPUTS})
+
+set(DEMO_SCENE_OUTPUT "${CMAKE_BINARY_DIR}/assets/scenes/mixed.json")
+add_custom_command(OUTPUT "${DEMO_SCENE_OUTPUT}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/assets/scenes"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/scenes/mixed.json" "${DEMO_SCENE_OUTPUT}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scenes/mixed.json" VERBATIM)
+add_custom_target(demo_scenes DEPENDS "${DEMO_SCENE_OUTPUT}")

@@ -15,6 +15,13 @@ gtest_discover_tests(demo_test
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
 
+# 独立进程写入与读取同一场景文件，用于阶段重启验收。
+add_executable(scene_restart_test scene_restart_test.cpp "${CMAKE_SOURCE_DIR}/examples/demo/demo_app.cpp")
+target_link_libraries(scene_restart_test PRIVATE IncubatorRuntime vulkan imgui)
+target_include_directories(scene_restart_test PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
+add_dependencies(scene_restart_test demo_models demo_shaders)
+set_target_properties(scene_restart_test PROPERTIES FOLDER "UnitTest/examples/demo")
+
 add_executable(orbit_camera_test orbit_camera_test.cpp)
 target_link_libraries(orbit_camera_test PRIVATE GTest::gtest_main IncubatorRuntime imgui)
 target_include_directories(orbit_camera_test PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
