@@ -1,6 +1,15 @@
 # Deploy exact test inputs under a test-only asset root. Demo builds never receive fixtures.
 set(RUNTIME_TEST_ASSET_DIR "${CMAKE_BINARY_DIR}/test-fixtures/assets")
 set(RUNTIME_TEST_FIXTURE_OUTPUTS)
+foreach(SCENE_FILE IN ITEMS mixed.json invalid-camera.json)
+    set(SCENE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scenes/${SCENE_FILE}")
+    set(SCENE_OUTPUT "${RUNTIME_TEST_ASSET_DIR}/scenes/${SCENE_FILE}")
+    add_custom_command(OUTPUT "${SCENE_OUTPUT}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${RUNTIME_TEST_ASSET_DIR}/scenes"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SCENE_SOURCE}" "${SCENE_OUTPUT}"
+        DEPENDS "${SCENE_SOURCE}" VERBATIM)
+    list(APPEND RUNTIME_TEST_FIXTURE_OUTPUTS "${SCENE_OUTPUT}")
+endforeach()
 foreach(MODEL_FILE IN ITEMS
     minimal_gltf/model.gltf
     minimal_gltf/geometry/mesh.bin
@@ -99,6 +108,10 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
                 PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
         endif()
     else()
+        if(TEST_NAME STREQUAL "scene_file_test")
+            target_compile_definitions(${TEST_NAME} PRIVATE SCENE_FIXTURE_DIR="${RUNTIME_TEST_ASSET_DIR}/scenes")
+            add_dependencies(${TEST_NAME} runtime_test_fixtures)
+        endif()
         if(TEST_NAME STREQUAL "assimp_fileio_test" OR TEST_NAME STREQUAL "model_loader_test")
             target_link_libraries(${TEST_NAME} PRIVATE assimp::assimp)
         endif()

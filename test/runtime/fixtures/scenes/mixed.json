@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "entities": [{
+    "model": {"path": "models/兔子/模型.gltf", "prepare": {"mipMode": "fullChain", "sampler": {"minFilter": "linear", "magFilter": "nearest", "mipFilter": "linear"}, "shading": "lambert"}},
+    "transform": {"position": [1.25, -2, 3], "rotation": [0, 0, 0, 1], "scale": [0, -2, 4]}, "visible": false
+  }, {"model": null, "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "visible": true}],
+  "camera": {"position": [0, 0, 6], "rotation": [0, 0, 0, 1], "perspective": {"verticalFov": 0.7853982, "nearPlane": 0.1, "farPlane": 100}},
+  "lighting": {"direction": [-0.6, -0.8, -1], "color": [1, 0.95, 0.9], "intensity": 1, "ambient": 0.15},
+  "clearColor": [0.12, 0.16, 0.22, 1]
+}

@@ -124,6 +124,7 @@ set(SCENE_HEADERS
     scene/entity.h
     scene/scene.h
     scene/scene_description.h
+    scene/scene_file.h
     scene/scene_frame.h
     scene/transform.h
     scene/camera.h
@@ -133,6 +134,7 @@ set(SCENE_HEADERS
 set(SCENE_SOURCES
     scene/scene.cpp
     scene/scene_description.cpp
+    scene/scene_file.cpp
     scene/scene_frame.cpp
     scene/transform.cpp
     scene/camera.cpp
@@ -186,7 +188,7 @@ target_link_libraries(${TARGET_NAME} PRIVATE imgui)
 target_link_libraries(${TARGET_NAME} PRIVATE stb_image)
 target_link_libraries(${TARGET_NAME} PRIVATE assimp::assimp)
 
-# Only the source-input checks use Assimp's bundled JSON parser; no public header exposes it.
+# Model input checks and scene files use Assimp's bundled JSON parser privately.
 target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
     "${THIRD_PARTY_DIR}/assimp/contrib/rapidjson/include")
 

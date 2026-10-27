@@ -69,6 +69,38 @@ GPU 仍由 Renderer 持有到关闭；这与 [Model 持有期](./model.md#持有
 默认描述使用默认 Camera、Lighting 和背景 `{0.12, 0.16, 0.22, 1}`。`SceneDescription::valid()`
 检查可直接修改的光照和背景；Transform、Camera 和 ModelReference 继续由各自类型保证合法性。
 
+## 场景 JSON 文件
+
+`runtime/scene/scene_file.h` 提供 `encodeScene`、`decodeScene` 以及显式接收 FileIO 的
+`readScene` / `writeScene`。文本为 UTF-8、无 BOM 的 JSON v1：
+
+```json
+{
+  "version": 1,
+  "entities": [{
+    "model": {"path": "models/example.gltf", "prepare": {
+      "mipMode": "fullChain", "sampler": {"minFilter": "linear", "magFilter": "linear", "mipFilter": "linear"},
+      "shading": "lambert"
+    }},
+    "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]},
+    "visible": true
+  }],
+  "camera": {"position": [0, 0, 6], "rotation": [0, 0, 0, 1],
+    "perspective": {"verticalFov": 0.7853982, "nearPlane": 0.1, "farPlane": 100}},
+  "lighting": {"direction": [0, 0, -1], "color": [1, 1, 1], "intensity": 1, "ambient": 0.1},
+  "clearColor": [0.12, 0.16, 0.22, 1]
+}
+```
+
+字段均必需，`model` 可为 `null`；四元数顺序为 xyzw，FOV 使用弧度。枚举区分大小写：
+`mipMode` 为 `baseLevel/fullChain`，min/mag 过滤为 `nearest/linear`，mip 过滤为
+`baseLevel/nearest/linear`，`shading` 为 `unlit/lambert`。未知字段忽略；错误格式、非法值及其他版本抛 IO，
+错误含字段上下文。内存描述无效时编码抛 CONFIG。编解码不加载模型或创建 GPU 资源。
+
+文件接口接收 UTF-8 原生路径；模型路径仍相对资产根，与场景文件所在目录无关。
+保存先完整编码，再创建或截断目标并同步写入、flush；打开后发生 I/O 错误可能留下截断或部分文件，
+调用方的内存场景不受影响。接口不自动创建目录，也不提供原子替换。
+
 ## 场景帧提取
 
 ```cpp
