@@ -7,6 +7,7 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "demo_app.h"
 #include "model_cache.h"
@@ -48,26 +49,20 @@ namespace Incubator::Demo
     class ModelScene
     {
     public:
-        void initialize(Demo::DemoApp& app)
+        void initialize(Demo::DemoApp& app, std::string_view path = "assets/scenes/mixed.json")
         {
             cache_ = std::make_unique<ModelCache>(app.renderer());
-            models_[0] = cache_->resolve(Model::ModelReference("models/avocado/glTF/Avocado.gltf", PREVIEW_OPTIONS));
-            switchScene(app, false);
+            openScene(app, path);
         }
 
-        void update(Demo::DemoApp& app, const Demo::FrameTime& time)
+        void update(Demo::DemoApp&, const Demo::FrameTime& time)
         {
             deltaSeconds_ = time.deltaSeconds();
-            // 初始化阶段释放 glTF 的 CPU 资源后，再于后续更新中准备 OBJ。
-            if (firstUpdate_)
-                firstUpdate_ = false;
-            else if (!models_[1])
-                models_[1] = cache_->resolve(Model::ModelReference("models/utah_teapot/utah_teapot.obj", PREVIEW_OPTIONS));
         }
 
         Scene::EntityId createEntity(Demo::DemoApp& app)
         {
-            selected_ = app.scene().createEntity(models_[useObj_ ? 1 : 0], initialTransform(useObj_, 0));
+            selected_ = app.scene().createEntity(presetModel(useObj_), initialTransform(useObj_, 0));
             return selected_;
         }
 
@@ -80,8 +75,10 @@ namespace Incubator::Demo
         {
             try
             {
+                auto buffer = pathBuffer(path);
                 Scene::writeScene(app.fileIO(), path, Scene::captureScene(app.scene(), app.clearColor()));
                 message_ = "Saved: " + std::string(path);
+                scenePath_ = std::move(buffer);
                 return true;
             }
             catch (const Error::Exception& error)
@@ -95,14 +92,7 @@ namespace Incubator::Demo
         {
             try
             {
-                const auto description = Scene::readScene(app.fileIO(), path);
-                auto rebuilt = Scene::rebuildScene(description, [this](const auto& source) { return cache_->resolve(source); });
-                const auto color = rebuilt.clearColor;
-                app.setScene(std::move(rebuilt.scene));
-                app.clearColor() = color;
-                selected_ = {};
-                orbit_.synchronize(app.scene().camera());
-                message_ = "Loaded: " + std::string(path);
+                openScene(app, path);
                 return true;
             }
             catch (const Error::Exception& error)
@@ -113,6 +103,8 @@ namespace Incubator::Demo
         }
 
         const std::string& message() const { return message_; }
+        /// @brief 获取当前场景文件面板中的 UTF-8 路径。
+        std::string_view scenePath() const { return scenePath_.data(); }
 
         Scene::EntityId selected() const
         {
@@ -183,15 +175,16 @@ namespace Incubator::Demo
         /// @brief 替换当前模型展示场景。
         /// @param app 当前 Demo 应用。
         /// @param useObj 是否使用 OBJ 模型。
-        /// @note 仅在目标模型准备完成后调用；后续更新完成后，UI 才会启用 OBJ 切换。
+        /// @note 按需准备展示模型，并在当前会话内复用。
         void switchScene(Demo::DemoApp& app, bool useObj)
         {
+            const auto model = presetModel(useObj);
             auto scene = std::make_unique<Scene::Scene>();
             scene->setCamera(Scene::Camera({0, 0, 6}));
             scene->setLighting({{-0.6f, -0.8f, -1}, {1, 0.95f, 0.9f}, 1, 0.15f});
             const float offset = useObj ? 1.65f : 1.2f;
-            selected_ = scene->createEntity(models_[useObj ? 1 : 0], initialTransform(useObj, -offset));
-            scene->createEntity(models_[useObj ? 1 : 0], initialTransform(useObj, offset));
+            selected_ = scene->createEntity(model, initialTransform(useObj, -offset));
+            scene->createEntity(model, initialTransform(useObj, offset));
             app.setScene(std::move(scene));
             useObj_ = useObj;
             alternateCamera_ = false;
@@ -216,22 +209,16 @@ namespace Incubator::Demo
                 lightingControls(app.scene());
             int modelIndex = useObj_ ? 1 : 0;
             if (ImGui::Combo("New model", &modelIndex, "Avocado\0Teapot\0")) useObj_ = modelIndex == 1;
-            ImGui::BeginDisabled(useObj_ && !models_[1]);
             if (ImGui::Button("Create entity"))
                 createEntity(app);
-            ImGui::EndDisabled();
             ImGui::SameLine();
             if (ImGui::Button("Clear scene"))
                 clear(app);
-            ImGui::BeginDisabled(useObj_ && !models_[1]);
             if (ImGui::Button("Reset scene"))
                 switchScene(app, useObj_);
-            ImGui::EndDisabled();
             ImGui::SameLine();
-            ImGui::BeginDisabled(!models_[1]);
             if (ImGui::Button(useObj_ ? "Switch to glTF" : "Switch to OBJ"))
                 switchScene(app, !useObj_);
-            ImGui::EndDisabled();
             if (ImGui::Button("Replace camera"))
                 replaceCamera(app);
             if (ImGui::Button("Reset camera"))
@@ -291,6 +278,33 @@ namespace Incubator::Demo
         }
 
     private:
+        static std::vector<char> pathBuffer(std::string_view path)
+        {
+            std::vector<char> buffer(std::max(size_t{1024}, path.size() + 1), '\0');
+            std::copy(path.begin(), path.end(), buffer.begin());
+            return buffer;
+        }
+
+        void openScene(Demo::DemoApp& app, std::string_view path)
+        {
+            auto buffer = pathBuffer(path);
+            const auto description = Scene::readScene(app.fileIO(), path);
+            auto rebuilt = Scene::rebuildScene(description, [this](const auto& source) { return cache_->resolve(source); });
+            auto message = "Loaded: " + std::string(path);
+            app.setScene(std::move(rebuilt.scene));
+            app.clearColor() = rebuilt.clearColor;
+            selected_ = {};
+            orbit_.synchronize(app.scene().camera());
+            scenePath_ = std::move(buffer);
+            message_ = std::move(message);
+        }
+
+        std::shared_ptr<const Model::PreparedModel> presetModel(bool useObj)
+        {
+            return cache_->resolve(Model::ModelReference(
+                useObj ? "models/utah_teapot/utah_teapot.obj" : "models/avocado/glTF/Avocado.gltf", PREVIEW_OPTIONS));
+        }
+
         static constexpr Model::PrepareOptions PREVIEW_OPTIONS{
             Render::TextureMipMode::FullChain,
             {Render::TextureFilter::Linear, Render::TextureFilter::Linear, Render::MipFilter::Linear},
@@ -309,22 +323,20 @@ namespace Incubator::Demo
         }
 
         std::unique_ptr<ModelCache> cache_;
-        std::array<std::shared_ptr<const Model::PreparedModel>, 2> models_;
         Scene::EntityId selected_;
         bool useObj_ = false;
         bool alternateCamera_ = false;
-        bool firstUpdate_ = true;
-        std::array<char, 1024> scenePath_{'s', 'c', 'e', 'n', 'e', '.', 'j', 's', 'o', 'n', '\0'};
+        std::vector<char> scenePath_ = pathBuffer("");
         std::string message_;
         double deltaSeconds_ = 0;
         OrbitCamera orbit_;
         Render::FrameExtent extent_{0, 0};
     };
 
-    inline Demo::Callbacks makeCallbacks()
+    inline Demo::Callbacks makeCallbacks(std::string startupScene = "assets/scenes/mixed.json")
     {
         auto demo = std::make_shared<ModelScene>();
-        return {[demo](auto& app) { demo->initialize(app); },
+        return {[demo, startupScene = std::move(startupScene)](auto& app) { demo->initialize(app, startupScene); },
                 [demo](auto& app, const auto& time) { demo->update(app, time); }, [demo](auto& app) { demo->ui(app); },
                 [demo](auto&) { demo->cancelInteraction(); },
                 [demo](auto& app, auto extent, const auto& input) { demo->input(app, extent, input); }};

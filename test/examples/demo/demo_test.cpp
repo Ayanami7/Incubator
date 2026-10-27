@@ -16,6 +16,7 @@
 
 #include "runtime/core/utils/utf8.h"
 #include "examples/demo/model_scene.h"
+#include "examples/demo/startup_config.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/model/prepared_model.h"
@@ -173,6 +174,9 @@ namespace
             for (const char* directory : {"avocado", "utah_teapot"})
                 fs::copy(previous_ / "assets/models" / directory, sandbox_ / "assets/models" / directory,
                          fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+            fs::create_directories(sandbox_ / "assets/scenes");
+            fs::copy_file(previous_ / "assets/scenes/mixed.json", sandbox_ / "assets/scenes/mixed.json",
+                          fs::copy_options::overwrite_existing);
         }
         Demo::DemoOptions options(bool visible = false)
         {
@@ -237,6 +241,85 @@ namespace
         std::ostringstream renderLog_;
     };
 
+    TEST_F(DemoAppTest, StartupConfigOpensCustomSceneAndTracksSuccessfulFileOperations)
+    {
+        auto io = NativeIO::createPlatformFileIO();
+        Scene::SceneDescription content;
+        content.entities.push_back({Model::ModelReference(GLTF), Scene::Transform({1, 2, 0}), false});
+        content.entities.push_back({std::nullopt, Scene::Transform({4, 5, 6}), true});
+        content.camera = Scene::Camera({0, 1, 9});
+        content.lighting = {{0, -2, -3}, {0.2f, 0.6f, 0.8f}, 2, 0.3f};
+        content.clearColor = {0.2f, 0.3f, 0.4f, 1};
+        Scene::writeScene(*io, "custom-scene.json", content);
+        {
+            std::ofstream configFile("incubator.json");
+            configFile << R"({"window":{"title":"配置窗口","width":640,"height":480},"startupScene":"custom-scene.json"})";
+        }
+        auto config = Demo::readStartupConfig(*io);
+        config.options.window.visible = false;
+        config.options.validation = Render::RendererValidationMode::Required;
+        Demo::DemoApp session(config.options, std::move(io));
+        session.run({[&](auto& app) {
+            Demo::ModelScene demo;
+            demo.initialize(app, config.startupScene);
+            EXPECT_EQ(demo.scenePath(), "custom-scene.json");
+            EXPECT_FALSE(demo.selected().valid());
+            ASSERT_EQ(app.scene().entities().size(), 2u);
+            EXPECT_EQ(app.scene().entities()[0].transform.position(), glm::vec3(1, 2, 0));
+            EXPECT_FALSE(app.scene().entities()[0].visible);
+            EXPECT_EQ(app.scene().entities()[1].model, nullptr);
+            EXPECT_EQ(app.scene().camera().position(), content.camera.position());
+            EXPECT_EQ(app.scene().lighting(), content.lighting);
+            EXPECT_EQ(app.clearColor(), content.clearColor);
+            int width, height;
+            app.window().getWindowSize(width, height);
+            EXPECT_EQ(width, 640);
+            EXPECT_EQ(height, 480);
+            demo.update(app, {});
+            demo.update(app, {});
+            EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, DEMO_GLTF).valid());
+            EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, DEMO_OBJ).valid());
+            demo.select(app.scene().entities()[0].id);
+            EXPECT_FALSE(demo.load(app, "missing-scene.json"));
+            EXPECT_EQ(demo.scenePath(), "custom-scene.json");
+            EXPECT_TRUE(demo.selected().valid());
+            ASSERT_TRUE(demo.save(app, "另存场景.json"));
+            EXPECT_EQ(demo.scenePath(), "另存场景.json");
+            ASSERT_TRUE(demo.save(app, demo.scenePath()));
+            EXPECT_FALSE(demo.save(app, "missing-directory/scene.json"));
+            EXPECT_EQ(demo.scenePath(), "另存场景.json");
+            ASSERT_TRUE(demo.load(app, "custom-scene.json"));
+            EXPECT_EQ(demo.scenePath(), "custom-scene.json");
+            EXPECT_FALSE(demo.selected().valid());
+            app.requestExit();
+        }, {}, {}});
+        EXPECT_FALSE(session.isOpen());
+        cleanValidation();
+    }
+
+    TEST_F(DemoAppTest, StartupSceneErrorsStopBeforeUpdateAndCloseSession)
+    {
+        auto io = NativeIO::createPlatformFileIO();
+        Scene::SceneDescription description;
+        description.entities.push_back({Model::ModelReference("models/missing.gltf"), Scene::Transform{}, true});
+        Scene::writeScene(*io, "missing-model-scene.json", description);
+        std::ofstream("invalid-scene.json") << "{}";
+        for (const char* path : {"missing-scene.json", "invalid-scene.json", "missing-model-scene.json"})
+        {
+            SCOPED_TRACE(path);
+            auto state = std::make_shared<Lifetime>();
+            Demo::DemoApp session(options(), std::make_unique<TrackedFileIO>(state));
+            auto callbacks = Demo::makeCallbacks(path);
+            int updates = 0;
+            callbacks.update = [&](auto&, const auto&) { ++updates; };
+            EXPECT_THROW(session.run(std::move(callbacks)), Error::Exception);
+            EXPECT_EQ(updates, 0);
+            EXPECT_FALSE(session.isOpen());
+            closed(state);
+        }
+        cleanValidation();
+    }
+
     TEST_F(DemoAppTest, OrbitFocusCommandsKeepAssetsAndEntitiesAndSynchronizeReplacement)
     {
         copyShowcaseModels();
@@ -245,6 +328,7 @@ namespace
         session.run({[&](Demo::DemoApp& app) {
             Demo::ModelScene demo;
             demo.initialize(app);
+            demo.switchScene(app, false);
             const auto id = demo.selected();
             const auto transform = app.scene().find(id)->transform.matrix();
             const auto opens = state->opens;
@@ -858,6 +942,7 @@ namespace
         };
         Demo::Callbacks callbacks{[&, demo](auto& app) {
                                       demo->initialize(app);
+                                      demo->switchScene(app, false);
                                       gltf = app.scene().entities()[0].model;
                                   },
                                   [&, demo](auto& app, const auto& time) {
@@ -893,7 +978,10 @@ namespace
         auto demo = std::make_shared<Demo::ModelScene>();
         const std::weak_ptr<Demo::ModelScene> lifetime = demo;
         int updates = 0;
-        Demo::Callbacks callbacks{[demo](auto& app) { demo->initialize(app); },
+        Demo::Callbacks callbacks{[demo](auto& app) {
+                                      demo->initialize(app);
+                                      demo->switchScene(app, false);
+                                  },
                                   [&, demo](auto& app, const auto& time) {
                                       demo->update(app, time);
                                       if (++updates == 3)
@@ -949,12 +1037,11 @@ namespace
     TEST_F(DemoAppTest, MixedSceneSaveLoadPreservesStateAndRenderedPixels)
     {
         copyShowcaseModels();
-        fs::create_directories(sandbox_ / "assets/scenes");
-        fs::copy_file(previous_ / "assets/scenes/mixed.json", sandbox_ / "assets/scenes/mixed.json");
         Demo::DemoApp session(options());
         session.run({[&](Demo::DemoApp& app) {
             Demo::ModelScene demo;
             demo.initialize(app);
+            demo.switchScene(app, false);
             demo.update(app, {});
             demo.update(app, {});
             const auto original = app.scene().entities()[0].id;
@@ -1031,7 +1118,10 @@ namespace
         copyShowcaseModels();
         Demo::DemoApp session(options());
         auto demo = std::make_shared<Demo::ModelScene>();
-        session.run({[demo](auto& app) { demo->initialize(app); }, {}, [demo](auto& app) {
+        session.run({[demo](auto& app) {
+            demo->initialize(app);
+            demo->switchScene(app, false);
+        }, {}, [demo](auto& app) {
             demo->ui(app);
             const auto old = demo->selected();
             const Scene::Transform edited({2, 1, 0}, {1, 0, 0, 0}, {-2, 0, 3});

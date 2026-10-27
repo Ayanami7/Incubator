@@ -12,14 +12,32 @@ Set-Location 'E:/Project/VScode/Incubator/build'
 & './examples/demo/demo.exe'
 ```
 
-工作目录必须是对应构建目录。目标依赖 `demo_shaders`、`demo_models` 和 `demo_scenes`，
+工作目录必须是对应构建目录。目标依赖 `demo_shaders`、`demo_models`、`demo_scenes` 和 `demo_config`，
 复用 `<build>/assets/` 中的 SPIR-V、Avocado glTF/bin/PNG 和 Utah Teapot OBJ，以及展示场景 `assets/scenes/mixed.json`，不需要复制额外资产。
 Visual Studio 的目标调试工作目录也设为 `${CMAKE_BINARY_DIR}`。
 VS Code 唯一的 `Debug` 配置指向本示例，完成构建后按 F5 启动。
 
-初始显示两个共享 Avocado glTF 模型的实体，分别位于 `(-1.2, -0.78, 0)` 和 `(1.2, -0.78, 0)`，
-缩放均为 24，以适配模型原始单位。相机位于 `(0, 0, 6)`、朝向 −Z，垂直 FOV 45°，近/远裁面 0.1/100。
-模型保留源节点层级、基色纹理和单位。切换到 Teapot OBJ 时使用 0.075 的展示缩放。
+程序从 cwd 读取 `incubator.json`。仓库根目录中的同名文件是默认配置源文件，构建时增量复制到
+`<build>/incubator.json`；需持续保留的默认配置修改应写入源文件后重新构建。
+
+```json
+{
+  "window": {"title": "Incubator Engine Demo", "width": 1280, "height": 720},
+  "startupScene": "assets/scenes/mixed.json"
+}
+```
+
+配置文件不存在或字段省略时使用上述默认值；未知字段忽略。已有文件的读取失败、JSON 格式错误或字段无效会停止启动。
+宽高要求正的 32 位整数；标题和启动场景要求非空 UTF-8 字符串，不能包含 NUL。窗口其他选项及 Validation 策略继续由代码决定。
+配置路径和场景路径都按 cwd 解析，配置文件所在目录不改变场景路径的基准，加载期间不切换 cwd。
+配置由 Demo 消费层通过现有 FileIO 和私有 RapidJSON 依赖读取，不提供 Runtime 配置管理器或自动回写。
+
+默认启动场景为 `assets/scenes/mixed.json`，包含一个 Avocado 和一个 Teapot。
+Avocado 位于 `(-1.2, -0.78, 0)`、缩放为 24；Teapot 位于 `(1.65, 0, 0)`、缩放为 0.075。
+相机位于 `(0, 0, 6)`、朝向 −Z，垂直 FOV 45°，近/远裁面 0.1/100。
+启动时通过既有场景文件读取和重建接口恢复实体、Camera、Lighting 和背景，不再固定创建两个 Avocado。
+启动场景缺失、内容无效或模型准备失败时关闭会话并返回 1。
+模型保留源节点层级、基色纹理和单位；面板创建及重置仍使用上述展示缩放。
 两种模型准备时均显式选择 `TextureMipMode::FullChain` 和线性 min/mag/mip 过滤，寻址保持 Repeat。
 Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 白图仍只有一层。
 这是 Demo 的预览策略，未导入源 sampler；`prepareModel(renderer, path)` 的默认单层最近邻行为保持。
@@ -31,7 +49,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 |---|---|
 | 实体列表 | 按创建顺序显示 EntityId，点击选中 |
 | New model / Create entity | 选择 Avocado 或 Teapot，在画面中央按该模型的创建预设添加共享实体，并选中 |
-| Scene file / Save / Load | 编辑 UTF-8 文件路径，保存或加载场景；默认 `scene.json`，可加载 `assets/scenes/mixed.json` |
+| Scene file / Save / Load | 显示启动场景路径；编辑 UTF-8 路径保存或加载，成功后记住该路径；指定其他路径即可另存 |
 | Visible | 显示/隐藏当前实体，保留其变换 |
 | Position / Rotation / Scale | 独立编辑实体的真实 TRS；支持零、负值及非均匀缩放，旋转使用角度并转换为四元数 |
 | Delete selected | 删除选中实体，旧 ID 失效，其他实体保持 |
@@ -45,11 +63,17 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | Clear color | 修改背景颜色 |
 | Exit | 请求会话退出，也可直接关闭窗口 |
 
-启动时只准备 Avocado glTF。首次 update 后的下一轮 update 显式准备 Utah Teapot OBJ，此前切换按钮禁用；
-初次 CPU 模型和 PNG 持有已释放，Loader/FileIO 继续存活，因此后续准备仍走原有资源服务。
-每种模型在此示例中准备一次；返回已准备的模型、创建实体、调整姿态和可见性都复用现有 GPU 引用。
+启动时仅准备场景实际引用的模型；创建实体、重置或切换展示场景时按需准备相应预设模型。
+相同规范化来源与完整准备选项在当前会话内复用；不同选项分别准备。
+准备后 CPU 模型和 PNG 持有已释放，Loader/FileIO 继续存活，因此后续操作仍走原有资源服务。
+调整姿态和可见性复用现有 GPU 引用。
 
 保存包含所有实体（包括隐藏和无模型实体）、模型来源与准备配置、Camera、Lighting 和背景。加载成功后替换场景、清除选择并同步相机控制器；失败时显示错误并保留原场景。保存覆盖文件，打开后的写入失败可能留下部分文件。
+
+保存成功后面板路径更新为目标文件；程序调用的保存或加载失败不会改写面板路径。
+多个场景使用不同文件路径分别保存，一次只打开一个 Scene。相对保存路径按 cwd 解析；
+运行目录中的 `assets/scenes/mixed.json` 是部署副本，保存它不会回写仓库资产。
+需要长期维护的项目场景可显式保存到仓库 `assets/scenes/` 的绝对路径，并补充对应部署规则；临时内容可保存在构建目录。
 
 两种正式模型显式使用 Lambert 漫反射预览，继续采用 FullChain 和线性 min/mag/mip；
 源 Unlit 材质始终不受光。重置或切换场景时初始化传播方向 `(-0.6,-0.8,-1)`、
@@ -60,11 +84,12 @@ Lighting 折叠区提供 Light yaw/pitch、Light color (linear)、Light intensit
 清空实体保留当前灯光；重置或切换场景恢复上述展示预设。相机操作和聚焦不会改变灯光。
 这些参数直接读写当前 Scene，修改进入本帧提取，不重新准备模型、纹理、mip 或材质。
 轨道操作、聚焦、场景切换和窗口重建不会重新上传图像、生成 mip 或创建材质；没有实时采样模式切换。
-这两份示例准备结果由消费者保留到关闭，不是全局资产缓存。
+本会话的模型准备结果由消费者保留到关闭，不是全局资产缓存。
 
 ## 实现与持有期
 
-`main.cpp` 创建 `DemoApp` 并调用 `run()`；`model_scene.h` 保存模型展示和面板操作。
+`main.cpp` 创建 FileIO、读取启动配置，将同一 FileIO 交给 `DemoApp`，并以启动场景路径创建主循环回调；
+`DemoApp::run()` 无参入口使用默认场景路径，不自行读取配置。`model_scene.h` 保存模型展示和面板操作。
 `ModelScene` 保存会话模型复用表、当前选择、Demo 轨道目标/手势和少量面板状态；实体唯一 Transform、可见性、Camera
 及光照由 Scene 保存。角度、TRS 与灯光编辑值在本轮 UI 中临时取得，发生修改才通过 Scene 接口写回。
 创建/删除/清空时不跨结构变更保存实体指针；重置或切换展示场景后选中新场景的实体；从文件加载成功后清除旧选择。
@@ -90,14 +115,15 @@ Debug 示例沿用 Optional Validation，Release 为 Disabled；需要强制验�
 ## 构建与代码边界
 
 按 WORKFLOW.md 的 Debug/all 命令构建，唯一示例目标为 demo。该目标编译 main.cpp、
-demo_app.cpp、model_scene.h，链接 IncubatorRuntime 和 imgui，并依赖 demo_shaders、demo_models、demo_scenes。
-默认入口展示 Avocado；面板允许混合创建模型并读取场景文件。
+demo_app.cpp、startup_config.cpp、model_scene.h，链接 IncubatorRuntime 和 imgui，
+并依赖 demo_shaders、demo_models、demo_scenes、demo_config。默认入口读取混合模型场景；面板允许混合创建模型并读取场景文件。
 
 DemoApp 属于 examples，不编译进 IncubatorRuntime；它负责本程序的初始化、主循环和清理。
 带回调的 run 重载仅供集成测试驱动相同生命周期。Runtime 保留 Resource、Render、Model、Scene 等能力。
 Demo 消费层测试位于 `test/examples/demo/demo_test.cpp`，目标为 `demo_test`，启动 cwd 为构建目录；
 需要修改输入的测试夹具在独立工作副本中运行并恢复 cwd。纯 CPU 轨道相机测试位于同目录的
 `orbit_camera_test.cpp`。TestMate 和 CTest 的执行约定见 [开发工作流](../../WORKFLOW.md#6-运行测试)。
+`startup_config_test` 验证不依赖窗口或 GPU 的配置解析与文件读取行为。
 展示冒烟、场景命令与输入接入分别验证，精确光照、采样和裁剪由 Runtime 专项覆盖。
 合成输入按 ImGui 已消费的批次安排；焦点丢失会清空鼠标位置，恢复后先提供有效坐标，再按下并移动，
 不能按固定 update 轮数假定位移已经被消费。

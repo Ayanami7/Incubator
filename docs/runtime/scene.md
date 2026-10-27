@@ -20,7 +20,8 @@ scene.destroyEntity(first);
 // second still owns the same immutable PreparedModel.
 ```
 
-Scene 不可复制或移动，使用一个 vector 保存实体，属于单线程 Runtime；当前不提供 ECS、实体父子树或场景文件读写。
+Scene 不可复制或移动，使用一个 vector 保存实体，属于单线程 Runtime；当前不提供 ECS 或实体父子树。
+场景内容捕获、JSON 文件读写和重建由同模块的独立接口提供，见下文。
 Entity 保存 `id`、`transform`、`visible` 和可空的 `shared_ptr<const PreparedModel> model`。
 Transform 是实体整体变换的唯一真源，实体不另存 ModelInstance 或可修改的整体矩阵。
 模型内部节点仍属于 PreparedModel，不按节点创建实体。

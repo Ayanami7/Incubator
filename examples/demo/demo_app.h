@@ -3,8 +3,8 @@
 #include <array>
 #include <functional>
 #include <memory>
-#include <string>
 
+#include "demo_options.h"
 #include "runtime/core/clock/clock.h"
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
@@ -14,15 +14,6 @@
 
 namespace Incubator::Demo
 {
-    struct DemoOptions
-    {
-        Window::WindowDesc window;
-        Render::RendererValidationMode validation = Render::RendererValidationMode::Disabled;
-        std::string vertexShader = "shaders/cube.vert.spv";
-        std::string fragmentShader = "shaders/cube.frag.spv";
-        std::array<float, 4> clearColor{0.12f, 0.16f, 0.22f, 1};
-    };
-
     struct FrameTime
     {
         Clock::TimePoint now;

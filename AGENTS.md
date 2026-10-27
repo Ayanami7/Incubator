@@ -16,7 +16,8 @@ Incubator 是一个 C++ 图形渲染器/游戏引擎项目。当前以 Windows�
 ```text
 Incubator/
 ├── 3rdparty/           # 第三方依赖库
-├── assets/             # 项目资产源文件与部署规则
+├── assets/             # 项目资产源文件
+├── cmake/              # 构建辅助与资产部署规则
 ├── bin/                # 二进制输出预留目录，实际位置以 CMake 为准
 ├── build/              # 构建产物、部署资产与测试输出
 ├── src/
@@ -28,6 +29,7 @@ Incubator/
 ├── .agents/specs/      # 可选方向、当前任务与任务归档
 ├── ARCHITECTURE.md     # 当前架构、职责边界与所有权
 ├── WORKFLOW.md         # 构建、测试与提交规范
+├── incubator.json      # 默认应用启动配置，构建时部署到运行目录
 ├── CMakeLists.txt      # 构建入口
 └── README.md           # 项目说明
 ```
@@ -42,7 +44,8 @@ Incubator/
 - Demo 的运行 cwd 必须为对应构建目录（本工作区为 `E:/Project/VScode/Incubator/build`），资产从 `<cwd>/assets/` 读取；可执行文件所在目录与 cwd 分别约定。
 - `.agents/` 下的文件一律不允许跟踪进入 Git。没有明确要求时，不修改 `README.md`。
 - 遵循**不要过度设计和防御性编程**：以实际需求和现有职责为依据，复用现有实现，保留必要校验，不提前引入通用框架或额外机制。
-- 项目自有 C++ 注释统一使用简体中文，接口说明采用 Doxygen 格式；新增或修改注释时遵循[注释规范](./.agents/rules/code_style.md#注释规范)。
+- 项目自有文件中的说明性注释统一使用简体中文，覆盖 C++、Shader、CMake、脚本和配置示例；新增或修改注释时使用完整的中文说明，避免整句英文或不必要的中英文混杂。标识符、API 名称、标准技术术语、规范引用及 `namespace` 等结构标记保留原文；第三方代码和自动生成文件保持原样。
+- C++ 接口说明采用 Doxygen 格式，具体写法遵循[注释规范](./.agents/rules/code_style.md#注释规范)。日常修改同步整理涉及范围内的注释，全仓历史注释另行集中处理。
 
 ## 文档职责
 

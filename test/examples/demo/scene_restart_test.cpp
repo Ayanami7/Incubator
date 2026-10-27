@@ -19,9 +19,10 @@ int main(int argc, char** argv)
         Incubator::Demo::DemoApp app(options);
         app.run({[&](auto& session) {
                      Incubator::Demo::ModelScene demo;
-                     demo.initialize(session);
+                     demo.initialize(session, mode == "read" ? argv[2] : "assets/scenes/mixed.json");
                      if (mode == "write")
                      {
+                         demo.switchScene(session, false);
                          demo.update(session, {});
                          demo.update(session, {});
                          demo.selectModel(true);
@@ -40,34 +41,26 @@ int main(int argc, char** argv)
                      }
                      else if (mode == "read")
                      {
-                         if (!demo.load(session, argv[2]))
-                         {
-                             std::cerr << demo.message();
+                         const auto d = Incubator::Scene::captureScene(session.scene(), session.clearColor());
+                         const Incubator::Model::PrepareOptions expected{
+                             Incubator::Render::TextureMipMode::FullChain,
+                             {Incubator::Render::TextureFilter::Linear, Incubator::Render::TextureFilter::Linear,
+                              Incubator::Render::MipFilter::Linear},
+                             Incubator::Render::ShadingMode::Lambert};
+                         if (d.entities.size() != 4 || !d.entities[0].model || !d.entities[2].model ||
+                             d.entities[3].model || d.entities[3].visible ||
+                             d.entities[0].model->path() != "models/avocado/gltf/avocado.gltf" ||
+                             d.entities[2].model->path() != "models/utah_teapot/utah_teapot.obj" ||
+                             d.entities[0].model->options() != expected || d.entities[2].model->options() != expected ||
+                             d.entities[2].transform.scale() != glm::vec3(-0.1f, 0.2f, 0) ||
+                             d.camera.position() != glm::vec3(1, 2, 8) ||
+                             d.camera.perspective().verticalFov != 0.9f ||
+                             d.camera.perspective().nearPlane != 0.2f || d.camera.perspective().farPlane != 90 ||
+                             d.lighting.direction != glm::vec3(0, -2, -3) ||
+                             d.lighting.color != glm::vec3(0.2f, 0.6f, 0.8f) || d.lighting.intensity != 2 ||
+                             d.lighting.ambient != 0.3f ||
+                             d.clearColor != std::array<float, 4>{0.2f, 0.3f, 0.4f, 0.5f})
                              result = 1;
-                         }
-                         else
-                         {
-                             const auto d = Incubator::Scene::captureScene(session.scene(), session.clearColor());
-                             const Incubator::Model::PrepareOptions expected{
-                                 Incubator::Render::TextureMipMode::FullChain,
-                                 {Incubator::Render::TextureFilter::Linear, Incubator::Render::TextureFilter::Linear,
-                                  Incubator::Render::MipFilter::Linear},
-                                 Incubator::Render::ShadingMode::Lambert};
-                             if (d.entities.size() != 4 || !d.entities[0].model || !d.entities[2].model ||
-                                 d.entities[3].model || d.entities[3].visible ||
-                                 d.entities[0].model->path() != "models/avocado/gltf/avocado.gltf" ||
-                                 d.entities[2].model->path() != "models/utah_teapot/utah_teapot.obj" ||
-                                 d.entities[0].model->options() != expected || d.entities[2].model->options() != expected ||
-                                 d.entities[2].transform.scale() != glm::vec3(-0.1f, 0.2f, 0) ||
-                                 d.camera.position() != glm::vec3(1, 2, 8) ||
-                                 d.camera.perspective().verticalFov != 0.9f ||
-                                 d.camera.perspective().nearPlane != 0.2f || d.camera.perspective().farPlane != 90 ||
-                                 d.lighting.direction != glm::vec3(0, -2, -3) ||
-                                 d.lighting.color != glm::vec3(0.2f, 0.6f, 0.8f) || d.lighting.intensity != 2 ||
-                                 d.lighting.ambient != 0.3f ||
-                                 d.clearColor != std::array<float, 4>{0.2f, 0.3f, 0.4f, 0.5f})
-                                 result = 1;
-                         }
                      }
                      else
                          result = 2;

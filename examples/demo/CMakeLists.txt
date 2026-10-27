@@ -1,4 +1,4 @@
-# examples/demo CMakelists.txt
+# Demo 可执行目标与生产 Shader 编译规则。
 
 set(TARGET_NAME demo)
 
@@ -6,7 +6,10 @@ add_executable(
     ${TARGET_NAME}
     main.cpp
     demo_app.h
+    demo_options.h
     demo_app.cpp
+    startup_config.h
+    startup_config.cpp
     model_scene.h
     model_cache.h
     ui_input.h
@@ -29,7 +32,7 @@ if(WIN32)
         COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 --target-env spirv1.6 --glsl-version 450
                 -S vert -o "${CUBE_VERTEX_SPIRV}" "${ASSETS_DIR}/shaders/cube.vert"
         DEPENDS "${ASSETS_DIR}/shaders/cube.vert"
-        COMMENT "Compiling cube vertex shader for Vulkan 1.3 / SPIR-V 1.6"
+        COMMENT "编译 Vulkan 1.3 / SPIR-V 1.6 顶点 Shader"
         VERBATIM
     )
     add_custom_command(
@@ -38,7 +41,7 @@ if(WIN32)
         COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 --target-env spirv1.6 --glsl-version 450
                 -S frag -o "${CUBE_FRAGMENT_SPIRV}" "${ASSETS_DIR}/shaders/cube.frag"
         DEPENDS "${ASSETS_DIR}/shaders/cube.frag"
-        COMMENT "Compiling cube fragment shader for Vulkan 1.3 / SPIR-V 1.6"
+        COMMENT "编译 Vulkan 1.3 / SPIR-V 1.6 片元 Shader"
         VERBATIM
     )
     add_custom_target(demo_shaders DEPENDS "${CUBE_VERTEX_SPIRV}" "${CUBE_FRAGMENT_SPIRV}")
@@ -48,12 +51,13 @@ if(WIN32)
 endif()
 
 if(MSVC)
-    target_compile_options(${TARGET_NAME} PUBLIC /utf-8) # MSVC unicode support
+    target_compile_options(${TARGET_NAME} PUBLIC /utf-8) # 使用 UTF-8 源文件编码。
 endif()
 
 add_dependencies(${TARGET_NAME} IncubatorRuntime)
 add_dependencies(${TARGET_NAME} demo_models)
 add_dependencies(${TARGET_NAME} demo_scenes)
+add_dependencies(${TARGET_NAME} demo_config)
 
 set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "examples")
 
@@ -63,5 +67,6 @@ target_link_libraries(
     imgui
 )
 target_include_directories(
-    ${TARGET_NAME} PUBLIC
+    ${TARGET_NAME} SYSTEM PRIVATE
+    "${THIRD_PARTY_DIR}/assimp/contrib/rapidjson/include"
 )

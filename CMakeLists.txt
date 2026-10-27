@@ -30,7 +30,7 @@ set(THIRD_PARTY_DIR "${INCUBATOR_ROOT_DIR}/3rdparty")
 add_subdirectory(3rdparty)
 
 add_subdirectory(src)
-add_subdirectory(assets)
+include("${INCUBATOR_ROOT_DIR}/cmake/assets.cmake")
 
 # 单元测试和示例
 enable_testing()

@@ -23,7 +23,10 @@ MSVC + Ninja 使用 `/showIncludes` 解析头文件依赖，其前缀按配置�
 
 ```
 Incubator/
-├── CMakeLists.txt      # 入口：全局设置 + 依次添加子目录
+├── CMakeLists.txt      # 入口：全局设置、子目录与辅助规则
+├── incubator.json      # 默认启动配置，部署到构建目录根部
+├── cmake/
+│   └── assets.cmake    # 运行资产与默认启动配置部署（文件依赖与增量复制）
 ├── 3rdparty/
 │   └── CMakeLists.txt  # 第三方依赖库（各库独立 CMakeLists 或子目录）
 ├── src/
@@ -36,8 +39,7 @@ Incubator/
 │       ├── model/
 │       ├── scene/
 │       └── render/
-├── assets/
-│   └── CMakeLists.txt  # 运行资源部署（文件依赖与增量复制）
+├── assets/            # 资产源文件
 ├── test/
 │   └── CMakeLists.txt  # 测试入口（按被测层/模块建子目录与可执行目标）
 └── examples/
@@ -49,7 +51,7 @@ Incubator/
 ### 根 CMakeLists.txt
 
 - 设置全局变量：CMake 版本、C++ 标准、路径变量（`SRC_DIR`、`THIRD_PARTY_DIR` 等）
-- 依次添加 `3rdparty` → `src` → `assets` → `test` → `examples`
+- 依次添加 `3rdparty` → `src`，包含 `cmake/assets.cmake`，再添加 `test` → `examples`
 
 ### 运行时库目标（src/runtime/）
 
@@ -102,14 +104,14 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 - 独立可执行目标，演示引擎模块的实际用法
 - 链接运行时库与所需第三方库
 
-唯一示例目标 demo 编译 examples/demo/main.cpp、demo_app.cpp 和模型展示代码，链接 IncubatorRuntime 和 imgui，依赖 demo_shaders、demo_models、demo_scenes，运行工作目录为构建目录。demo_test 编译同一 demo_app.cpp 并复用 model_scene.h 验证生命周期和实体操作；几何辅助代码放在 test/support/render_demo。
+唯一示例目标 demo 编译 examples/demo/main.cpp、demo_app.cpp、startup_config.cpp 和模型展示代码，链接 IncubatorRuntime 和 imgui，依赖 demo_shaders、demo_models、demo_scenes、demo_config，运行工作目录为构建目录。demo_test 编译同一 demo_app.cpp、startup_config.cpp 并复用 model_scene.h 验证生命周期、启动场景和实体操作；startup_config_test 独立验证配置解析与 FileIO，几何辅助代码放在 test/support/render_demo。
 
 ### 正式应用目标（apps/ 下，规划，尚未实施）
 
 计划新增 `apps/CMakeLists.txt` 作为正式应用入口，由根 CMake 在 Runtime 和资产目标定义后添加；`apps/incubator/CMakeLists.txt` 定义独立可执行目标 `incubator`，收集本应用的 `main.cpp`、`application.h/.cpp` 及后续界面代码。当前目录结构和根 CMake 的添加顺序仍以已实现内容为准，尚未创建上述目录或目标。
 
 - 正式应用链接 `IncubatorRuntime` 与实际使用的界面依赖，不链接 `demo` 或编译 `examples/demo` 源码；Demo 继续作为独立示例目标。
-- 正式应用显式依赖所需 Shader、模型和场景的资产部署目标，沿用 `<build>/assets/` 与增量部署约定。接入时将共用部署目标组织到 `assets/`，使应用构建无需依赖 Demo 可执行目标。
+- 正式应用显式依赖所需 Shader、模型和场景的资产部署目标，沿用 `<build>/assets/` 与增量部署约定。接入时将共用部署目标组织到 `cmake/assets.cmake`，使应用构建无需依赖 Demo 可执行目标。
 - 开发运行 cwd 固定为 `${CMAKE_BINARY_DIR}`，由 VS Code、Visual Studio 和应用集成测试的 CTest 启动配置明确指定；手动启动也先进入该目录。cwd 与可执行文件所在目录分别约定，资源按 `<cwd>/assets/` 解析，相对场景文件路径按 cwd 解析，加载场景时不切换 cwd。
 
 应用与示例的职责边界见 [总体架构](../ARCHITECTURE.md#应用与示例)，待开发方向见 [TO_DO.md](../.agents/specs/TO_DO.md)。本节仅记录构建方向，不引入新的 Application 框架。
@@ -119,7 +121,9 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 - 源文件到构建目录使用 `add_custom_command(OUTPUT ... DEPENDS ...)` 与 `copy_if_different`。
 - 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
-- Demo 资产目标 `demo_models` 位于 `assets/CMakeLists.txt`，只显式复制 Avocado glTF/bin/PNG 与 Utah Teapot OBJ。`demo_scenes` 部署混合模型场景 `assets/scenes/mixed.json`；`demo_shaders` 在 `examples/demo/CMakeLists.txt` 编译生产 Shader，Demo 依赖这三个目标。
+- Demo 资产目标 `demo_models` 位于 `cmake/assets.cmake`，只显式复制 Avocado glTF/bin/PNG 与 Utah Teapot OBJ。`demo_scenes` 在同一文件中部署混合模型场景 `assets/scenes/mixed.json`；`demo_shaders` 在 `examples/demo/CMakeLists.txt` 编译生产 Shader，Demo 依赖这三个目标。
+- `demo_config` 在 `cmake/assets.cmake` 中将仓库根目录的 `incubator.json` 增量复制到 `<build>/incubator.json`，Demo 显式依赖该目标。配置部署与资产部署均为单向复制，运行时保存不回写源文件；新场景仍需显式加入部署规则。
+- 配置解析复用 Assimp 附带的 RapidJSON 头文件，`demo`、`demo_test` 和 `startup_config_test` 分别设置私有包含目录，不对外暴露解析器类型或增加链接库。
 - `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。Vulkan review 使用精确纹理 fixture，真实模型集成测试按需读取选定模型；不向 `<build>/assets/` 部署测试输入。
 
 ### Assimp 依赖
