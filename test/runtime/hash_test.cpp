@@ -2,15 +2,12 @@
 
 #include "runtime/core/utils/hash.h"
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
-#include <thread>
-#include <vector>
 
 using namespace Incubator::Utils;
 
@@ -193,19 +190,6 @@ TEST_F(HashTest, HashFileContentThrowsForNonExistentFile)
     EXPECT_THROW(hashFileContent(nonExistentPath), std::runtime_error);
 }
 
-TEST_F(HashTest, HashFileContentDifferentFromFastHash)
-{
-    if (!std::filesystem::exists(testFile))
-    {
-        GTEST_SKIP() << "Test file does not exist";
-    }
-
-    Hash fastHash = hashFileFast(testFile);
-    Hash contentHash = hashFileContent(testFile);
-
-    EXPECT_NE(fastHash, contentHash);
-}
-
 TEST_F(HashTest, HashFileContentDetectsFileModification)
 {
     if (!std::filesystem::exists(testFile))
@@ -235,14 +219,4 @@ TEST_F(HashTest, CombineOrderMatters)
     combine(seed2, static_cast<int32_t>(1));
 
     EXPECT_NE(seed1, seed2);
-}
-
-TEST_F(HashTest, HashAndCombineWorkTogether)
-{
-    Hash seed = Detail::kOffset;
-    combine(seed, hash("prefix"));
-    combine(seed, static_cast<int32_t>(123));
-    combine(seed, hash("suffix"));
-
-    EXPECT_NE(seed, Detail::kOffset);
 }

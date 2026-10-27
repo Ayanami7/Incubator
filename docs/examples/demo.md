@@ -92,7 +92,13 @@ demo_app.cpp、model_scene.h，链接 IncubatorRuntime 和 imgui，并依赖 dem
 
 DemoApp 属于 examples，不编译进 IncubatorRuntime；它负责本程序的初始化、主循环和清理。
 带回调的 run 重载仅供集成测试驱动相同生命周期。Runtime 保留 Resource、Render、Model、Scene 等能力。
-原程序几何和精确纹理辅助代码位于 test/runtime/support/render_demo，供渲染测试使用。
+Demo 消费层测试位于 `test/examples/demo/demo_test.cpp`，目标为 `demo_test`，启动 cwd 为构建目录；
+需要修改输入的测试夹具在独立工作副本中运行并恢复 cwd。纯 CPU 轨道相机测试位于同目录的
+`orbit_camera_test.cpp`。TestMate 和 CTest 的执行约定见 [开发工作流](../../WORKFLOW.md#6-运行测试)。
+展示冒烟、场景命令与输入接入分别验证，精确光照、采样和裁剪由 Runtime 专项覆盖。
+合成输入按 ImGui 已消费的批次安排；焦点丢失会清空鼠标位置，恢复后先提供有效坐标，再按下并移动，
+不能按固定 update 轮数假定位移已经被消费。
+原程序几何和精确纹理辅助代码位于 test/support/render_demo，供渲染测试使用。
 
 Demo 关闭前保持 Loader 和 FileIO 存活，允许初次准备后继续加载模型。
 正常退出和异常退出均先释放回调/场景持有，再清理路由、Renderer、Window 和 FileIO。

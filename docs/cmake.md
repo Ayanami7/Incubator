@@ -71,7 +71,12 @@ DemoApp 位于 examples/demo，直接组织 Window、FileIO、资源路由、Sce
 
 - 为每个被测模块创建独立可执行目标（`<模块>_test.exe`）
 - 链接测试框架与对应的运行时库
-- 使用 `FOLDER "UnitTest/runtime"` 属性分组
+- Runtime 测试使用 `FOLDER "UnitTest/runtime"`，Demo 测试使用 `FOLDER "UnitTest/examples/demo"` 分组
+
+`test/runtime/` 保存 Runtime 模块及跨模块集成测试；`test/examples/demo/` 中的 `demo_test`
+编译同一份生产 `demo_app.cpp`，验证 Demo 会话及面板接入。`orbit_camera_test` 单独验证示例轨道相机，
+`render_input_test` 验证帧参数与 Vulkan 能力判断；这两个目标不创建窗口或初始化 GPU，也不依赖资产部署。
+共享截图、GPU 回读和渲染样本辅助代码位于 `test/support/`，精确 fixture 保留在 `test/runtime/fixtures/`。
 
 正式测试由 CTest 注册和运行，保留 `gtest_discover_tests()` 的逐用例注册及各目标的 `WORKING_DIRECTORY`、`RUN_SERIAL`、`TIMEOUT` 属性。
 VS Code 测试面板使用 TestMate 提供程序/套件/用例层级及批量运行，关闭 CMake Tools 的 CTest 面板集成；命令行 CTest 继续用于正式复核和阶段验收，入口分工见 [开发工作流](../WORKFLOW.md#6-运行测试)。
@@ -80,19 +85,24 @@ VS Code 测试面板使用 TestMate 提供程序/套件/用例层级及批量运
 |---|---|---|
 | TestMate | `<build>/` | 全局并发为 1，允许同一程序批量运行；600 秒限制整个进程 |
 | CTest 普通测试 | `<build>/test/runtime/` | 逐用例独立进程 |
-| CTest demo_app_test / model_preparation_test | `<build>/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
+| CTest demo_test / model_preparation_test | `<build>/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
+| CTest orbit_camera_test | `<build>/` | CPU 用例，逐用例独立进程 |
 | CTest vulkan_review_test | `<build>/test-fixtures/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
 
 TestMate 不自动读取 CTest 属性；批量与逐用例隔离、超时粒度和初始目录存在上述差异，编辑器通过结果不替代正式 CTest 验收。窗口/GPU 测试同一时间只运行一轮。
+TestMate 通过 `build/test/{runtime,examples/demo}/*_test.exe` 发现两处测试程序。迁移或删除目标后，
+应定点删除旧可执行文件，避免编辑器继续发现失效目标。
+Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直接运行测试程序即可；正式验收使用 CTest。
 `VulkanReviewTest` 夹具通过编译时的 `RUNTIME_TEST_ASSET_DIR` 进入独立测试资产根，并在结束时恢复原目录；
 因此从构建目录直接运行或通过编辑器运行时，也使用 `<build>/test-fixtures/assets/` 中的精确样本。
+需要修改资产的 Demo/模型测试在自己的工作副本中运行，结束时恢复启动 cwd；不修改项目源资产或共享 fixture。
 
 ### 示例目标（examples/ 下）
 
 - 独立可执行目标，演示引擎模块的实际用法
 - 链接运行时库与所需第三方库
 
-唯一示例目标 demo 编译 examples/demo/main.cpp、demo_app.cpp 和模型展示代码，链接 IncubatorRuntime 和 imgui，依赖 demo_shaders、demo_models，运行工作目录为构建目录。demo_app_test 编译同一 demo_app.cpp 并复用 model_scene.h 验证生命周期和实体操作；旧几何辅助代码放在 test/runtime/support/render_demo。
+唯一示例目标 demo 编译 examples/demo/main.cpp、demo_app.cpp 和模型展示代码，链接 IncubatorRuntime 和 imgui，依赖 demo_shaders、demo_models，运行工作目录为构建目录。demo_test 编译同一 demo_app.cpp 并复用 model_scene.h 验证生命周期和实体操作；几何辅助代码放在 test/support/render_demo。
 
 ### 正式应用目标（apps/ 下，规划，尚未实施）
 
@@ -110,7 +120,7 @@ TestMate 不自动读取 CTest 属性；批量与逐用例隔离、超时粒度�
 - 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
 - Demo 资产目标 `demo_models` 位于 `assets/CMakeLists.txt`，只显式复制 Avocado glTF/bin/PNG 与 Utah Teapot OBJ。`demo_shaders` 在 `examples/demo/CMakeLists.txt` 编译生产 Shader；Demo 依赖这两个目标。
-- `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。Vulkan review 测试另部署 Demo 默认使用的 Avocado 基色 PNG；其他真实模型集成测试按需读取选定模型，不向 `<build>/assets/` 部署测试输入。
+- `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。Vulkan review 使用精确纹理 fixture，真实模型集成测试按需读取选定模型；不向 `<build>/assets/` 部署测试输入。
 
 ### Assimp 依赖
 

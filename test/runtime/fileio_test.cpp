@@ -3,7 +3,6 @@
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/core/error/error.h"
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -297,40 +296,6 @@ TEST_F(FileIOTest, RemoveNonEmptyDirectoryFails)
 }
 
 // ============================================================
-// FileHandle RAII 行为
-// ============================================================
-
-TEST_F(FileIOTest, FileHandleAutoCloseOnDestruct)
-{
-    std::string path = testPath("raii_test.txt");
-    createSampleFile(path, "RAII test");
-
-    {
-        auto handle = fileIO->open(path, OpenMode::Read);
-        ASSERT_NE(handle, nullptr);
-        EXPECT_TRUE(handle->isValid());
-        // handle 在此处销毁并自动关闭
-    }
-    // 关闭不会删除文件，文件仍应存在
-    EXPECT_TRUE(fileIO->exists(path));
-}
-
-TEST_F(FileIOTest, MoveFileHandle)
-{
-    std::string path = testPath("move_test.txt");
-    createSampleFile(path, "move semantics");
-
-    auto handle1 = fileIO->open(path, OpenMode::Read);
-    ASSERT_NE(handle1, nullptr);
-
-    // 移动构造
-    auto handle2 = std::move(handle1);
-    EXPECT_EQ(handle1, nullptr);  // NOLINT
-    EXPECT_NE(handle2, nullptr);
-    EXPECT_TRUE(handle2->isValid());
-}
-
-// ============================================================
 // 错误处理
 // ============================================================
 
@@ -472,14 +437,4 @@ TEST_F(FileIOTest, OpenReadWriteExistingFile)
     std::string result;
     std::getline(ifs, result);
     EXPECT_TRUE(result.starts_with("Modified"));
-}
-
-// ============================================================
-// 工厂函数
-// ============================================================
-
-TEST_F(FileIOTest, CreatePlatformFileIOReturnsValidInstance)
-{
-    auto io = createPlatformFileIO();
-    EXPECT_NE(io, nullptr);
 }

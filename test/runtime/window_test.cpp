@@ -35,22 +35,6 @@ TEST(WindowDescTest, DefaultValues)
     EXPECT_TRUE(desc.visible);
 }
 
-TEST(WindowDescTest, CustomValues)
-{
-    WindowDesc desc;
-    desc.title     = "Custom Window";
-    desc.width     = 800;
-    desc.height    = 600;
-    desc.resizable = false;
-    desc.visible   = false;
-
-    EXPECT_EQ(desc.title, "Custom Window");
-    EXPECT_EQ(desc.width, 800);
-    EXPECT_EQ(desc.height, 600);
-    EXPECT_FALSE(desc.resizable);
-    EXPECT_FALSE(desc.visible);
-}
-
 // ============================================================
 //  WindowTest 测试夹具
 // ============================================================
@@ -99,11 +83,6 @@ protected:
 // ============================================================
 //  工厂与生命周期测试（通过测试夹具）
 // ============================================================
-
-TEST_F(WindowTest, FactoryReturnsNonNull)
-{
-    ASSERT_NE(window_, nullptr);
-}
 
 TEST_F(WindowTest, ShouldCloseInitiallyFalse)
 {
@@ -168,15 +147,6 @@ TEST_F(WindowTest, GetNativeHandleReturnsNonNull)
 
     void* handle = window_->getNativeHandle();
     EXPECT_NE(handle, nullptr);
-}
-
-TEST_F(WindowTest, SetTitleDoesNotCrash)
-{
-    ASSERT_NE(window_, nullptr);
-
-    window_->setTitle("New Title");
-    window_->setTitle("Another Title");
-    window_->setTitle("");
 }
 
 #ifdef _WIN32

@@ -37,7 +37,6 @@
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene.h"
 #include "runtime/scene/scene_frame.h"
-#include "support/render_demo/scene_assets.h"
 #include "support/texture_gpu_review.h"
 #include "support/window_capture.h"
 
@@ -1187,7 +1186,9 @@ namespace
             const auto image = WindowCapture::capture(*native);
             color(image, -0.510897f, 0.567851f, {188, 255, 188});
             color(image, 0.789103f, 0.567851f, {188, 255, 188});
+            color(image, -0.186806f, 0.261438f, {188, 255, 188});
             color(image, -0.44f, -0.608333f, {188, 255, 188});
+            color(image, 0.86f, -0.608333f, {188, 255, 188});
             WindowCapture::save(image, "review/scene-frame-retained-after-clear.ppm");
         }
         cleanValidation();
@@ -1333,40 +1334,6 @@ namespace
         cleanValidation();
     }
 
-    TEST_F(ModelInstanceTest, ImportedInstancesSubmitMaterialsAndIndependentPlacements)
-    {
-        auto native = window(true);
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            const auto gltf = Model::prepareModel(renderer, GLTF);
-            const auto obj = Model::prepareModel(renderer, OBJ);
-            const auto placement = [](float x, float y, float size) {
-                return glm::translate(glm::mat4(1), glm::vec3(x, y, 0)) * glm::scale(glm::mat4(1), glm::vec3(size));
-            };
-            const std::array instances = {Model::ModelInstance{gltf, placement(-0.65f, 0.45f, 0.25f)},
-                                          Model::ModelInstance{gltf, placement(0.65f, 0.45f, 0.25f)},
-                                          Model::ModelInstance{obj, placement(-0.65f, -0.55f, 0.35f)},
-                                          Model::ModelInstance{obj, placement(0.65f, -0.55f, 0.35f)}};
-            ASSERT_EQ(Model::makeModelDraws(instances).size(), 12u);
-            released(ResourceType::MODEL, GLTF);
-            released(ResourceType::MODEL, OBJ);
-            released(ResourceType::TEXTURE, PNG);
-            ResourceManager::instance().reset();
-            fileIO_.reset();
-            ASSERT_TRUE(submit(*native, renderer, instances));
-            std::this_thread::sleep_for(std::chrono::milliseconds(60));
-            const auto image = WindowCapture::capture(*native);
-            color(image, -0.510897f, 0.567851f, {188, 255, 188});
-            color(image, 0.789103f, 0.567851f, {188, 255, 188});
-            color(image, -0.186806f, 0.261438f, {188, 255, 188});
-            color(image, -0.44f, -0.608333f, {188, 255, 188});
-            color(image, 0.86f, -0.608333f, {188, 255, 188});
-            WindowCapture::save(image, "review/model-instances-materials.ppm");
-        }
-        cleanValidation();
-    }
-
     TEST_F(ModelInstanceTest, DemoModelsWithUnicodeDependenciesPreserveDirectionAndExactGpuColor)
     {
         // 保留真实的相对依赖链，同时将所有输入类型的文件名改为超出 ANSI 范围的字符。
@@ -1409,18 +1376,12 @@ namespace
         std::array<std::shared_ptr<const Model::PreparedModel>, 2> models;
         {
             Renderer renderer(*native, RendererValidationMode::Required);
-            {
-                Demo::SceneAssetPaths paths;
-                paths.model = gltfPath;
-                Demo::SceneAssets assets(paths);
-                EXPECT_EQ(assets.texture, nullptr);
-                renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
-                constexpr Model::PrepareOptions exactSampling{
-                    TextureMipMode::BaseLevel, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::BaseLevel}};
-                models = {Model::prepareModel(renderer, gltfPath, exactSampling),
-                          Model::prepareModel(renderer, objPath, exactSampling)};
-                assets.releaseCpuResources();
-            }
+            shaders(renderer);
+            constexpr Model::PrepareOptions exactSampling{
+                TextureMipMode::BaseLevel, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::BaseLevel}};
+            models = {Model::prepareModel(renderer, gltfPath, exactSampling),
+                      Model::prepareModel(renderer, objPath, exactSampling)};
+            ResourceManager::instance().reset();
             released(ResourceType::MODEL, gltfPath);
             released(ResourceType::MODEL, objPath);
             released(ResourceType::TEXTURE, pngPath);

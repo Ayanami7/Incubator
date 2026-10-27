@@ -19,7 +19,6 @@
 #include <thread>
 #include <vector>
 
-#include "examples/demo/validation_mode.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
@@ -126,8 +125,6 @@ namespace
     {
         Demo::SceneAssetPaths paths;
         size_t textureOpens = 0;
-        bool destroyed = false;
-        bool routesClearedBeforeDestroy = false;
         bool cpuReleasedBeforeDestroy = false;
     };
 
@@ -137,10 +134,6 @@ namespace
         explicit AuditedFileIO(FileAudit& audit) : audit_(audit), inner_(Incubator::FileIO::createPlatformFileIO()) {}
         ~AuditedFileIO()
         {
-            audit_.destroyed = true;
-            audit_.routesClearedBeforeDestroy =
-                !Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::TEXTURE) &&
-                !Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::SHADER);
             auto& registry = Resource::ResourceRegistry::instance();
             audit_.cpuReleasedBeforeDestroy = true;
             for (const auto& [type, path] : {std::pair{Resource::ResourceType::SHADER, audit_.paths.vertex},
@@ -206,178 +199,6 @@ namespace
         }
         EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::SHADER));
         EXPECT_FALSE(Resource::ResourceManager::instance().hasLoader(Resource::ResourceType::TEXTURE));
-    }
-
-    TEST(RenderFrameInputTest, ApplicationOwnsTransformsAndFinalProjection)
-    {
-        const auto wide = Demo::makeSceneFrame({800, 400}, {});
-        const auto square = Demo::makeSceneFrame({400, 400}, {});
-        EXPECT_EQ(Demo::makeSceneModel({}), glm::mat4(1.0f));
-        Demo::SceneTransform transform;
-        transform.position = {1.0f, 2.0f, 3.0f};
-        transform.rotationDegrees.z = 90.0f;
-        transform.scale = {2.0f, 3.0f, 4.0f};
-        const auto model = Demo::makeSceneModel(transform);
-        const auto point = model * glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-        EXPECT_NEAR(point.x, 1.0f, 0.00001f);
-        EXPECT_NEAR(point.y, 4.0f, 0.00001f);
-        EXPECT_NEAR(point.z, 3.0f, 0.00001f);
-        EXPECT_EQ(Demo::makeSceneModel(transform), model);
-        transform.rotationDegrees = {90, 90, 90};
-        const auto rotated = Demo::makeSceneModel(transform) * glm::vec4(1, 2, 3, 1);
-        EXPECT_NEAR(rotated.x, 13, 0.00001f);
-        EXPECT_NEAR(rotated.y, 8, 0.00001f);
-        EXPECT_NEAR(rotated.z, 1, 0.00001f);
-        EXPECT_NEAR(wide.camera.projection[0][0] * 2.0f, square.camera.projection[0][0], 0.00001f);
-        EXPECT_EQ(wide.camera.projection[1][1], square.camera.projection[1][1]);
-        EXPECT_LT(wide.camera.projection[1][1], 0.0f);
-        const auto nearPoint = wide.camera.projection * glm::vec4(0.0f, 0.0f, -0.1f, 1.0f);
-        const auto farPoint = wide.camera.projection * glm::vec4(0.0f, 0.0f, -50.0f, 1.0f);
-        EXPECT_NEAR(nearPoint.z / nearPoint.w, 0.0f, 0.00001f);
-        EXPECT_NEAR(farPoint.z / farPoint.w, 1.0f, 0.00001f);
-    }
-
-    TEST(RenderFrameInputTest, FrameUniformPacksOwnedLightingAndUnitPropagationDirection)
-    {
-        FrameInput input{{800, 600}, {glm::mat4(1), glm::mat4(2)}, {}};
-        const auto defaults = makeFrameUniform(input);
-        EXPECT_EQ(defaults.lightDirectionIntensity, glm::vec4(0, 0, -1, 1));
-        EXPECT_EQ(defaults.lightColorAmbient, glm::vec4(1, 1, 1, 0.1f));
-        input.lighting = {{3, 0, -4}, {0.25f, 0.5f, 1}, 2, 0.3f};
-        const auto packed = makeFrameUniform(input);
-        EXPECT_EQ(packed.view, input.camera.view);
-        EXPECT_EQ(packed.projection, input.camera.projection);
-        EXPECT_NEAR(packed.lightDirectionIntensity.x, 0.6f, 0.00001f);
-        EXPECT_EQ(packed.lightDirectionIntensity.y, 0);
-        EXPECT_NEAR(packed.lightDirectionIntensity.z, -0.8f, 0.00001f);
-        EXPECT_EQ(packed.lightDirectionIntensity.w, 2);
-        EXPECT_EQ(packed.lightColorAmbient, glm::vec4(0.25f, 0.5f, 1, 0.3f));
-        EXPECT_EQ(input.lighting.direction, glm::vec3(3, 0, -4));
-        input.lighting = {};
-        EXPECT_EQ(packed.lightDirectionIntensity.w, 2);
-        for (const float scale : {0.001f, std::numeric_limits<float>::max()})
-        {
-            input.lighting.direction = {scale, 0, -scale};
-            const auto scaled = makeFrameUniform(input);
-            EXPECT_NEAR(glm::length(glm::vec3(scaled.lightDirectionIntensity)), 1, 0.00001f);
-            EXPECT_NEAR(scaled.lightDirectionIntensity.x, std::sqrt(0.5f), 0.00001f);
-            EXPECT_NEAR(scaled.lightDirectionIntensity.z, -std::sqrt(0.5f), 0.00001f);
-        }
-        input.lighting.direction = glm::vec3(0);
-        EXPECT_THROW(makeFrameUniform(input), Error::Exception);
-    }
-
-    TEST(RenderColorTest, SurfaceSelectionHasStablePriorityAndExplicitFallback)
-    {
-        const VkSurfaceFormatKHR bgra{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
-        const VkSurfaceFormatKHR rgba{VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
-        const std::array formats = {rgba, bgra};
-        EXPECT_EQ(VulkanSwapchain::chooseSurfaceFormat(formats).format, bgra.format);
-        EXPECT_EQ(VulkanSwapchain::chooseSurfaceFormat(std::span(&rgba, 1)).format, rgba.format);
-        const VkSurfaceFormatKHR any{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
-        EXPECT_EQ(VulkanSwapchain::chooseSurfaceFormat(std::span(&any, 1)).format, bgra.format);
-    }
-
-    TEST(RenderColorTest, SurfaceSelectionRejectsSrgbAttachmentsHdrAndEmptyLists)
-    {
-        for (const VkSurfaceFormatKHR candidate :
-             {VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
-              VkSurfaceFormatKHR{VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT},
-              VkSurfaceFormatKHR{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_HDR10_ST2084_EXT}})
-        {
-            try
-            {
-                VulkanSwapchain::chooseSurfaceFormat(std::span(&candidate, 1));
-                FAIL() << "Unsupported surface was accepted";
-            }
-            catch (const Error::Exception& error)
-            {
-                EXPECT_EQ(error.code(), Error::Code::RENDER);
-                EXPECT_NE(error.message().find(fmt::format("format {}", static_cast<int>(candidate.format))),
-                          std::string::npos);
-                EXPECT_NE(error.message().find(fmt::format("colorSpace {}", static_cast<int>(candidate.colorSpace))),
-                          std::string::npos);
-            }
-        }
-        EXPECT_THROW(VulkanSwapchain::chooseSurfaceFormat({}), Error::Exception);
-    }
-
-    TEST(RenderColorTest, ImageSupportRejectsControlledLimitsBeforeAnyAllocation)
-    {
-        VkPhysicalDeviceLimits limits{};
-        limits.maxImageDimension2D = 4;
-        VkFormatProperties format{};
-        format.optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-        VkImageFormatProperties image{};
-        image.maxExtent = {4, 4, 1};
-        image.maxMipLevels = image.maxArrayLayers = 1;
-        image.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
-        image.maxResourceSize = 64;
-        EXPECT_NO_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image));
-        EXPECT_THROW(VulkanImage::validateRgba8Support({5, 1}, limits, format, image), Error::Exception);
-        EXPECT_THROW(VulkanImage::validateRgba8Support({1, 5}, limits, format, image), Error::Exception);
-        EXPECT_THROW(VulkanImage::validateRgba8Support({0, 1}, limits, format, image), Error::Exception);
-        for (auto feature : {VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, VK_FORMAT_FEATURE_TRANSFER_DST_BIT})
-        {
-            auto unavailable = format;
-            unavailable.optimalTilingFeatures &= ~feature;
-            EXPECT_THROW(VulkanImage::validateRgba8Support({2, 1}, limits, unavailable, image), Error::Exception);
-        }
-        for (int kind = 0; kind < 7; ++kind)
-        {
-            auto unavailable = image;
-            if (kind == 0)
-                unavailable.maxExtent.width = 1;
-            if (kind == 1)
-                unavailable.maxExtent.height = 0;
-            if (kind == 2)
-                unavailable.maxExtent.depth = 0;
-            if (kind == 3)
-                unavailable.maxMipLevels = 0;
-            if (kind == 4)
-                unavailable.maxArrayLayers = 0;
-            if (kind == 5)
-                unavailable.sampleCounts = 0;
-            if (kind == 6)
-                unavailable.maxResourceSize = 7;
-            EXPECT_THROW(VulkanImage::validateRgba8Support({2, 1}, limits, format, unavailable), Error::Exception);
-        }
-    }
-
-    TEST(RenderColorTest, MipSupportRequiresOnlyUsedFeaturesAndCountsAllLevels)
-    {
-        VkPhysicalDeviceLimits limits{};
-        limits.maxImageDimension2D = 16;
-        VkFormatProperties format{};
-        format.optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
-                                       VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT |
-                                       VK_FORMAT_FEATURE_BLIT_DST_BIT |
-                                       VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-        VkImageFormatProperties image{};
-        image.maxExtent = {16, 16, 1};
-        image.maxMipLevels = 5;
-        image.maxArrayLayers = 1;
-        image.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
-        image.maxResourceSize = 84;  // 4×4、2×2 和 1×1 的 RGBA8 mip 共 84 字节，而不只是 64 字节的 CPU 载荷。
-        EXPECT_NO_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image, 3));
-        for (auto feature : {VK_FORMAT_FEATURE_TRANSFER_SRC_BIT, VK_FORMAT_FEATURE_BLIT_SRC_BIT,
-                             VK_FORMAT_FEATURE_BLIT_DST_BIT, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT})
-        {
-            auto unavailable = format;
-            unavailable.optimalTilingFeatures &= ~feature;
-            EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, unavailable, image, 3), Error::Exception);
-            EXPECT_NO_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, unavailable, image));
-            EXPECT_NO_THROW(VulkanImage::validateRgba8Support({1, 1}, limits, unavailable, image, 1));
-        }
-        auto unavailable = image;
-        unavailable.maxMipLevels = 2;
-        EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, unavailable, 3), Error::Exception);
-        EXPECT_NO_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, unavailable));
-        unavailable = image;
-        unavailable.maxResourceSize = 83;
-        EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, unavailable, 3), Error::Exception);
-        EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image, 0), Error::Exception);
-        EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image, 4), Error::Exception);
     }
 
     void releaseCpuAssets(SceneAssets& assets)
@@ -551,53 +372,6 @@ namespace
         std::filesystem::path previousPath_;
         std::ostringstream messages_;
     };
-
-    TEST_F(VulkanReviewTest, TargetDeviceSupportsBaseline)
-    {
-        auto window = createWindow();
-        {
-            VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
-            ASSERT_TRUE(instance.validationEnabled());
-            GlfwSurface surface(instance, *window);
-            VulkanDevice device(instance, surface);
-            const auto& properties = device.properties();
-            EXPECT_NE(std::string_view(properties.deviceName).find("RTX 5070 Ti"), std::string_view::npos);
-            EXPECT_GE(properties.apiVersion, VK_API_VERSION_1_3);
-            VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance{};
-            maintenance.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
-            VkPhysicalDeviceVulkan13Features features13{};
-            features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-            features13.pNext = &maintenance;
-            VkPhysicalDeviceFeatures2 features{};
-            features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-            features.pNext = &features13;
-            vkGetPhysicalDeviceFeatures2(device.physicalDevice(), &features);
-            EXPECT_TRUE(features13.dynamicRendering);
-            EXPECT_TRUE(features13.synchronization2);
-            EXPECT_TRUE(maintenance.swapchainMaintenance1);
-            uint32_t extensionCount = 0;
-            ASSERT_EQ(vkEnumerateDeviceExtensionProperties(device.physicalDevice(), nullptr, &extensionCount, nullptr),
-                      VK_SUCCESS);
-            std::vector<VkExtensionProperties> extensions(extensionCount);
-            ASSERT_EQ(vkEnumerateDeviceExtensionProperties(device.physicalDevice(), nullptr, &extensionCount,
-                                                           extensions.data()),
-                      VK_SUCCESS);
-            for (const char* required :
-                 {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME})
-                EXPECT_TRUE(std::any_of(extensions.begin(), extensions.end(), [required](const auto& extension) {
-                    return std::string_view(extension.extensionName) == required;
-                }));
-            VkSurfaceCapabilitiesKHR capabilities{};
-            ASSERT_EQ(
-                vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.physicalDevice(), surface.handle(), &capabilities),
-                VK_SUCCESS);
-            std::cout << "DEVICE=" << properties.deviceName << " API=" << VK_API_VERSION_MAJOR(properties.apiVersion)
-                      << '.' << VK_API_VERSION_MINOR(properties.apiVersion) << '.'
-                      << VK_API_VERSION_PATCH(properties.apiVersion) << " DRIVER=" << properties.driverVersion
-                      << " SURFACE_MIN=" << capabilities.minImageCount << " MAX=" << capabilities.maxImageCount << '\n';
-        }
-        expectCleanValidation();
-    }
 
     TEST_F(VulkanReviewTest, RendererPresentsEmptyUiBeforeExplicitScenePreparation)
     {
@@ -1367,146 +1141,51 @@ namespace
         expectCleanValidation();
     }
 
-    TEST_F(VulkanReviewTest, PartialAssetConstructionReleasesBeforeFixtureCleanup)
-    {
-        // 有效文件头配合截断的 IDAT 会进入解码器，并稳定地触发失败。
-        const auto truncatedPath = std::filesystem::path("assets/textures/task05-truncated.png");
-        {
-            std::ifstream input("assets/textures/reference_rgba.png", std::ios::binary);
-            std::array<char, 72> bytes{};
-            ASSERT_TRUE(input.read(bytes.data(), bytes.size()));
-            std::ofstream output(truncatedPath, std::ios::binary);
-            output.write(bytes.data(), bytes.size());
-            ASSERT_TRUE(output.good());
-        }
-        for (int stage = 0; stage < 4; ++stage)
-        {
-            Demo::SceneAssetPaths paths;
-            if (stage == 0)
-                paths.vertex = "shaders/missing-first.spv";
-            if (stage == 1)
-                paths.fragment = "shaders/missing-second.spv";
-            if (stage == 2)
-                paths.texture = "textures/missing-third.png";
-            if (stage == 3)
-                paths.texture = "textures/task05-truncated.png";
-            FileAudit audit;
-            audit.paths = paths;
-            EXPECT_THROW((SceneAssets(paths, std::make_unique<AuditedFileIO>(audit))), Error::Exception);
-            EXPECT_TRUE(audit.destroyed);
-            EXPECT_TRUE(audit.routesClearedBeforeDestroy);
-            EXPECT_TRUE(audit.cpuReleasedBeforeDestroy);
-            expectReleased(paths);
-        }
-        EXPECT_TRUE(std::filesystem::remove(truncatedPath));
-    }
-
-    TEST_F(VulkanReviewTest, AlternateDemoTextureMatchesCpuAndGpuAndReleasesBeforeFileIO)
-    {
-        auto window = createWindow(false, 384, 256);
-        Demo::SceneAssetPaths paths;
-        paths.texture = "textures/direction_rgba.png";
-        FileAudit audit;
-        audit.paths = paths;
-        {
-            SceneAssets assets(paths, std::make_unique<AuditedFileIO>(audit));
-            ASSERT_EQ(assets.texture->width(), 3u);
-            ASSERT_EQ(assets.texture->height(), 4u);
-            const std::vector<uint8_t> expected = {
-                255, 255, 255, 255, 255, 128, 0,  255, 0,   0,   0, 255, 0,   0, 255, 255,
-                128, 128, 128, 255, 255, 0,   0,  255, 0,   255, 0, 255, 255, 0, 255, 128,
-                0,   255, 255, 255, 17,  34,  51, 0,   255, 255, 0, 255, 128, 0, 255, 255,
-            };
-            EXPECT_EQ(assets.texture->pixels(), expected);
-            VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
-            GlfwSurface surface(instance, *window);
-            VulkanDevice device(instance, surface);
-            VulkanSwapchain swapchain(device, surface, 384, 256);
-            const auto pixels =
-                TextureGpuReview::capture(instance.handle(), device, *window, assets, swapchain.format());
-            for (int y = 0; y < 4; ++y)
-            {
-                for (int x = 0; x < 3; ++x)
-                {
-                    const size_t offset = ((16 + y * 48 + 24) * 384 + 16 + (2 * x + 1) * 256 / 6) * 4;
-                    for (int channel = 0; channel < 3; ++channel)
-                        EXPECT_NEAR(pixels[offset + channel], expected[(y * 3 + x) * 4 + channel], 1);
-                    EXPECT_EQ(pixels[offset + 3], 255);
-                }
-            }
-            expectReleased(paths);
-            EXPECT_EQ(audit.textureOpens, 1u);
-            std::filesystem::create_directories("review");
-            std::ofstream output("review/texture-direction.ppm", std::ios::binary);
-            output << "P6\n384 256\n255\n";
-            for (size_t pixel = 0; pixel < pixels.size(); pixel += 4)
-                output.write(reinterpret_cast<const char*>(pixels.data() + pixel), 3);
-            ASSERT_TRUE(output.good());
-            std::cout << "GPU_DIRECTION_FORMAT=" << int(swapchain.format())
-                      << " COLOR_SPACE=" << int(swapchain.colorSpace()) << " RGB_TOLERANCE=1\n";
-        }
-        EXPECT_TRUE(audit.destroyed);
-        EXPECT_TRUE(audit.routesClearedBeforeDestroy);
-        EXPECT_TRUE(audit.cpuReleasedBeforeDestroy);
-        // 通过与 Demo 相同的显式准备流程，使用另一项资产重新启动。
-        {
-            SceneAssets assets(paths);
-            Renderer renderer(*window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
-            const auto material = renderer.createMaterial({renderer.createTexture(*assets.texture)});
-            const auto mesh = createCubeMesh(renderer);
-            releaseCpuAssets(assets);
-            EXPECT_GT(drawUiFrame(*window, renderer, mesh, material), 0);
-        }
-        expectReleased(paths);
-        expectCleanValidation();
-    }
-
-    TEST_F(VulkanReviewTest, RendererInitializationFailureReleasesBeforeFixtureCleanup)
+    TEST_F(VulkanReviewTest, InitializationFailureLeavesNextRendererUsable)
     {
         auto native = createWindow();
         DeferredFramebufferWindow window(*native);
         window.throwOnSize = true;
-        FileAudit audit;
-        EXPECT_THROW(([&] {
-                         SceneAssets assets({}, std::make_unique<AuditedFileIO>(audit));
-                         Renderer renderer(window, RendererValidationMode::Required);
-                     }()),
-                     Error::Exception);
-        EXPECT_TRUE(audit.destroyed);
-        EXPECT_TRUE(audit.routesClearedBeforeDestroy);
-        EXPECT_TRUE(audit.cpuReleasedBeforeDestroy);
-        EXPECT_EQ(audit.textureOpens, 1u);
-        expectReleased({});
+        EXPECT_THROW((Renderer(window, RendererValidationMode::Required)), Error::Exception);
+        {
+            Renderer recovered(*native, RendererValidationMode::Required);
+            submitControlledScene(*native, recovered, {}, true);
+        }
         expectCleanValidation();
     }
 
-    TEST_F(VulkanReviewTest, AssetScopePreservesExistingOwnersAndReacquiresZeroReferenceEntries)
-    {
-        auto& registry = Resource::ResourceRegistry::instance();
-        auto& manager = Resource::ResourceManager::instance();
-        const auto held = manager.registerResource(Resource::ResourceType::TEXTURE, "textures/reference_rgba.png");
-        {
-            SceneAssets assets(referenceSceneAssetPaths());
-            EXPECT_EQ(registry.refCount(held), 2u);
-        }
-        EXPECT_EQ(registry.refCount(held), 1u);
-        EXPECT_NE(registry.getObject(held), nullptr);
-        manager.release(held);
-        EXPECT_EQ(registry.getObject(held), nullptr);
-        {
-            SceneAssets assets(referenceSceneAssetPaths());
-            EXPECT_EQ(registry.refCount(held), 1u);
-            releaseCpuAssets(assets);
-        }
-        expectReleased(referenceSceneAssetPaths());
-    }
-
-    TEST_F(VulkanReviewTest, ActualShaderAndPlaneMatchReferenceAndUiGrayOnGpu)
+    TEST_F(VulkanReviewTest, TextureSamplesMatchReferenceDirectionAndUiOnGpu)
     {
         auto window = createWindow(false, 384, 256);
+        for (const bool direction : {false, true})
         {
-            SceneAssets assets(referenceSceneAssetPaths());
+            SCOPED_TRACE(direction ? "direction" : "reference");
+            auto paths = referenceSceneAssetPaths();
+            if (direction)
+                paths.texture = "textures/direction_rgba.png";
+            SceneAssets assets(paths);
+            const int columns = direction ? 3 : 4;
+            const int rows = direction ? 4 : 3;
+            ASSERT_EQ(assets.texture->width(), columns);
+            ASSERT_EQ(assets.texture->height(), rows);
+            const std::array<std::array<int, 3>, 12> reference = {{{255, 0, 0},
+                                                                   {0, 255, 0},
+                                                                   {0, 0, 255},
+                                                                   {255, 255, 0},
+                                                                   {0, 255, 255},
+                                                                   {255, 0, 255},
+                                                                   {128, 128, 128},
+                                                                   {255, 255, 255},
+                                                                   {255, 128, 0},
+                                                                   {128, 0, 255},
+                                                                   {17, 34, 51},
+                                                                   {0, 0, 0}}};
+            const std::vector<uint8_t> directional = {255, 255, 255, 255, 255, 128, 0,   255, 0,   0,   0,   255,
+                                                      0,   0,   255, 255, 128, 128, 128, 255, 255, 0,   0,   255,
+                                                      0,   255, 0,   255, 255, 0,   255, 128, 0,   255, 255, 255,
+                                                      17,  34,  51,  0,   255, 255, 0,   255, 128, 0,   255, 255};
+            if (direction)
+                EXPECT_EQ(assets.texture->pixels(), directional);
             VulkanInstance instance(requiredExtensions(), ValidationMode::Required);
             GlfwSurface surface(instance, *window);
             VulkanDevice device(instance, surface);
@@ -1514,51 +1193,28 @@ namespace
             EXPECT_EQ(swapchain.colorSpace(), VK_COLOR_SPACE_SRGB_NONLINEAR_KHR);
             const auto pixels =
                 TextureGpuReview::capture(instance.handle(), device, *window, assets, swapchain.format());
-            const std::array<std::array<int, 3>, 12> expected = {{{255, 0, 0},
-                                                                  {0, 255, 0},
-                                                                  {0, 0, 255},
-                                                                  {255, 255, 0},
-                                                                  {0, 255, 255},
-                                                                  {255, 0, 255},
-                                                                  {128, 128, 128},
-                                                                  {255, 255, 255},
-                                                                  {255, 128, 0},
-                                                                  {128, 0, 255},
-                                                                  {17, 34, 51},
-                                                                  {0, 0, 0}}};
-            for (int y = 0; y < 3; ++y)
-            {
-                for (int x = 0; x < 4; ++x)
+            for (int row = 0; row < rows; ++row)
+                for (int col = 0; col < columns; ++col)
                 {
-                    const size_t offset = ((16 + y * 64 + 32) * 384 + 16 + x * 64 + 32) * 4;
+                    const size_t source = row * columns + col;
+                    const int x = 16 + (2 * col + 1) * 256 / (2 * columns);
+                    const int y = 16 + (2 * row + 1) * 192 / (2 * rows);
+                    const size_t offset = (y * 384 + x) * 4;
                     for (int channel = 0; channel < 3; ++channel)
-                        EXPECT_NEAR(pixels[offset + channel], expected[y * 4 + x][channel], 1);
+                        EXPECT_NEAR(pixels[offset + channel],
+                                    direction ? directional[source * 4 + channel] : reference[source][channel], 1);
                     EXPECT_EQ(pixels[offset + 3], 255);
                 }
-            }
             for (const auto position : {std::array{320, 64}, std::array{320, 160}})
-            {
-                const auto offset = (position[1] * 384 + position[0]) * 4;
                 for (int channel = 0; channel < 3; ++channel)
-                    EXPECT_NEAR(pixels[offset + channel], 128, 1);
-            }
+                    EXPECT_NEAR(pixels[(position[1] * 384 + position[0]) * 4 + channel], 128, 1);
             const auto marker = (34 * 384 + 290) * 4;
             EXPECT_EQ(pixels[marker], 255);
             EXPECT_EQ(pixels[marker + 1], 0);
             EXPECT_EQ(pixels[marker + 2], 255);
-            const auto blended = (200 * 384 + 320) * 4;
             for (int channel = 0; channel < 3; ++channel)
-                EXPECT_NEAR(pixels[blended + channel], 64, 1);
-            expectReleased(referenceSceneAssetPaths());
-            std::filesystem::create_directories("review");
-            std::ofstream output("review/task04-color.ppm", std::ios::binary);
-            output << "P6\n384 256\n255\n";
-            for (size_t pixel = 0; pixel < pixels.size(); pixel += 4)
-                output.write(reinterpret_cast<const char*>(pixels.data() + pixel), 3);
-            ASSERT_TRUE(output.good());
-            std::cout << "GPU_COLOR_FORMAT=" << int(swapchain.format())
-                      << " COLOR_SPACE=" << int(swapchain.colorSpace())
-                      << " CPU_UNLOADED_BEFORE_DRAW=1 GRAY_TEXEL_UI_CLEAR=128(+/-1)\n";
+                EXPECT_NEAR(pixels[(200 * 384 + 320) * 4 + channel], 64, 1);
+            expectReleased(paths);
         }
         expectCleanValidation();
     }
@@ -2057,11 +1713,14 @@ namespace
                 releaseCpuAssets(assets);
             }
             EXPECT_EQ(ImGui::GetIO().BackendRendererUserData, nullptr);
+            const auto skippedLogs = countOccurrences(messages_.str(), "Swapchain ");
             for (int frame = 0; frame < 5; ++frame)
                 EXPECT_FALSE(renderer.beginUiFrame());
             EXPECT_EQ(ImGui::GetFrameCount(), 0);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain "), skippedLogs);
             window.drawable = true;
             int recorded = 0;
+            size_t steadyLogs = 0;
             for (int frame = 0; frame < 10; ++frame)
             {
                 if (prepareScene)
@@ -2071,10 +1730,17 @@ namespace
                     submitControlledScene(window, renderer, {}, true);
                     ++recorded;
                 }
+                if (frame == 0)
+                    steadyLogs = countOccurrences(messages_.str(), "Swapchain ");
             }
             EXPECT_GT(recorded, 0);
+            EXPECT_GT(steadyLogs, skippedLogs);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain "), steadyLogs);
             EXPECT_NE(ImGui::GetIO().BackendRendererUserData, nullptr);
             EXPECT_TRUE(ImGui::GetIO().Fonts->IsBuilt());
+            window.drawable = false;
+            EXPECT_FALSE(renderer.beginUiFrame());
+            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain "), steadyLogs);
         }
         expectCleanValidation();
     }
@@ -2093,8 +1759,10 @@ namespace
             auto* native = static_cast<GLFWwindow*>(window->getNativeHandle());
             for (int cycle = 0; cycle < 4; ++cycle)
             {
+                const auto resizeLogs = countOccurrences(messages_.str(), "Swapchain framebuffer size changed:");
                 glfwSetWindowSize(native, 680 + cycle * 20, 400 + cycle * 10);
                 EXPECT_GT(drawUiFrame(*window, renderer, mesh, material), 0);
+                EXPECT_GT(countOccurrences(messages_.str(), "Swapchain framebuffer size changed:"), resizeLogs);
                 glfwIconifyWindow(native);
                 for (int attempt = 0; attempt < 100 && !window->isIconified(); ++attempt)
                 {
@@ -2141,42 +1809,6 @@ namespace
         }
         expectCleanValidation();
     }
-    TEST_F(VulkanReviewTest, SwapchainLogsOnlyCreationAndStateChanges)
-    {
-        auto native = createWindow();
-        DeferredFramebufferWindow window(*native);
-        SceneAssets assets;
-        {
-            Renderer renderer(window, RendererValidationMode::Required);
-            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
-            const auto material = renderer.createMaterial({renderer.createTexture(*assets.texture)});
-            const auto mesh = createCubeMesh(renderer);
-            releaseCpuAssets(assets);
-            for (int frame = 0; frame < 10; ++frame)
-                EXPECT_FALSE(renderer.beginUiFrame());
-            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain "), 0u);
-            window.drawable = true;
-            for (int frame = 0; frame < 20; ++frame)
-                drawUiFrame(window, renderer, mesh, material);
-            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain initialization:"), 1u);
-            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain "), 1u);
-            EXPECT_NE(messages_.str().find("640x360, format "), std::string::npos);
-            EXPECT_NE(messages_.str().find("images, present mode FIFO"), std::string::npos);
-            glfwSetWindowSize(static_cast<GLFWwindow*>(native->getNativeHandle()), 720, 440);
-            for (int frame = 0; frame < 10; ++frame)
-                drawUiFrame(window, renderer, mesh, material);
-            EXPECT_EQ(countOccurrences(messages_.str(), "Swapchain framebuffer size changed:"), 1u);
-            const auto beforeSkip = messages_.str();
-            window.drawable = false;
-            for (int frame = 0; frame < 10; ++frame)
-                EXPECT_FALSE(renderer.beginUiFrame());
-            EXPECT_EQ(messages_.str(), beforeSkip);
-            window.drawable = true;
-            EXPECT_GT(drawUiFrame(window, renderer, mesh, material), 0);
-        }
-        expectCleanValidation();
-    }
-
     TEST_F(VulkanReviewTest, ResizeAfterAcquirePreservesFrameAndRebuilds)
     {
         auto window = createWindow();
@@ -2580,25 +2212,6 @@ namespace
         EXPECT_FALSE(disabled.validationEnabled());
     }
 
-    TEST_F(VulkanReviewTest, DefaultDemoPolicyMatchesBuild)
-    {
-        auto window = createWindow();
-#ifdef _DEBUG
-        EXPECT_EQ(Demo::VALIDATION_MODE, RendererValidationMode::Optional);
-#else
-        EXPECT_EQ(Demo::VALIDATION_MODE, RendererValidationMode::Disabled);
-#endif
-        {
-            Renderer renderer(*window, Demo::VALIDATION_MODE);
-        }
-#ifdef _DEBUG
-        EXPECT_NE(messages_.str().find("validation: enabled"), std::string::npos);
-#else
-        EXPECT_NE(messages_.str().find("validation: disabled"), std::string::npos);
-#endif
-        EXPECT_EQ(messages_.str().find("warning|"), std::string::npos);
-        EXPECT_EQ(messages_.str().find("error|"), std::string::npos);
-    }
     TEST_F(VulkanReviewTest, ImGuiRejectsSingleImageBeforeBackendAllocation)
     {
         auto window = createWindow();

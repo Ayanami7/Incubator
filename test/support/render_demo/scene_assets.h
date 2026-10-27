@@ -7,7 +7,6 @@
 
 #include "runtime/core/error/error.h"
 #include "runtime/platform/fileio/fileio.h"
-#include "runtime/resource/loader/model_loader.h"
 #include "runtime/resource/loader/shader_loader.h"
 #include "runtime/resource/loader/shader_resource.h"
 #include "runtime/resource/loader/texture_loader.h"
@@ -23,11 +22,10 @@ namespace Incubator
         {
             std::string_view vertex = "shaders/cube.vert.spv";
             std::string_view fragment = "shaders/cube.frag.spv";
-                std::string_view texture = "models/avocado/glTF/Avocado_baseColor.png";
-            std::string_view model;
+            std::string_view texture = "textures/reference_rgba.png";
         };
 
-        // 在此作用域内，Demo 和复核测试独占 Manager 的 Loader 路由。
+        // 在此作用域内，渲染测试独占 Manager 的 Shader/Texture Loader 路由。
         // 已构造的清理成员也能处理外层构造函数失败的情况。
         class SceneAssets
         {
@@ -86,13 +84,9 @@ namespace Incubator
                                        std::make_unique<Resource::ShaderLoader>(*fileIO_));
                 manager.registerLoader(Resource::ResourceType::TEXTURE,
                                        std::make_unique<Resource::TextureLoader>(*fileIO_));
-                if (!paths.model.empty())
-                    manager.registerLoader(Resource::ResourceType::MODEL,
-                                           std::make_unique<Resource::ModelLoader>(*fileIO_));
                 vertex = load<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.vertex);
                 fragment = load<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.fragment);
-                if (paths.model.empty())
-                    texture = load<Resource::TextureResource>(Resource::ResourceType::TEXTURE, paths.texture);
+                texture = load<Resource::TextureResource>(Resource::ResourceType::TEXTURE, paths.texture);
             }
 
             SceneAssets(const SceneAssets&) = delete;
