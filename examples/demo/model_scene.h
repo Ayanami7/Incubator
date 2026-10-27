@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,6 +15,8 @@
 #include "orbit_camera.h"
 #include "runtime/model/prepared_model.h"
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
+#include "runtime/core/utils/utf8.h"
 #include "runtime/scene/scene_file.h"
 #include "runtime/scene/scene_rebuild.h"
 
@@ -79,11 +82,14 @@ namespace Incubator::Demo
                 Scene::writeScene(app.fileIO(), path, Scene::captureScene(app.scene(), app.clearColor()));
                 message_ = "Saved: " + std::string(path);
                 scenePath_ = std::move(buffer);
+                Log::Registry::get("demo").info("Saved scene '{}' ({} entities)", logPath(scenePath_.data()),
+                                                app.scene().entities().size());
                 return true;
             }
             catch (const Error::Exception& error)
             {
                 message_ = error.message();
+                Log::Registry::get("demo").error("Failed to save scene '{}': {}", path, error.message());
                 return false;
             }
         }
@@ -98,6 +104,7 @@ namespace Incubator::Demo
             catch (const Error::Exception& error)
             {
                 message_ = error.message();
+                Log::Registry::get("demo").error("Failed to load scene '{}': {}", path, error.message());
                 return false;
             }
         }
@@ -278,6 +285,13 @@ namespace Incubator::Demo
         }
 
     private:
+        static std::string logPath(std::string_view path)
+        {
+            std::error_code error;
+            const auto absolute = std::filesystem::absolute(Utils::Utf8::toFsPath(path), error);
+            return error ? std::string(path) : Utils::Utf8::toUtf8String(absolute.lexically_normal());
+        }
+
         static std::vector<char> pathBuffer(std::string_view path)
         {
             std::vector<char> buffer(std::max(size_t{1024}, path.size() + 1), '\0');
@@ -297,6 +311,8 @@ namespace Incubator::Demo
             orbit_.synchronize(app.scene().camera());
             scenePath_ = std::move(buffer);
             message_ = std::move(message);
+            Log::Registry::get("demo").info("Loaded scene '{}' ({} entities)", logPath(scenePath_.data()),
+                                            app.scene().entities().size());
         }
 
         std::shared_ptr<const Model::PreparedModel> presetModel(bool useObj)

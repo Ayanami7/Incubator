@@ -6,6 +6,7 @@
 #include <span>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
 
 namespace Incubator::Demo
@@ -77,7 +78,10 @@ namespace Incubator::Demo
         {
             auto file = fileIO.open(Utils::Utf8::toFsPath(path), FileIO::OpenMode::Read);
             if (!file)
+            {
+                Log::Registry::get("demo").debug("Startup config '{}' not found; using defaults", path);
                 return {};
+            }
             const auto size = file->size();
             if (size > std::string{}.max_size())
                 throw Error::Exception(Error::Code::IO, "Startup config is too large");
@@ -91,7 +95,9 @@ namespace Incubator::Demo
                     throw Error::Exception(Error::Code::IO, "Incomplete startup config read");
                 position += count;
             }
-            return decodeStartupConfig(json);
+            auto config = decodeStartupConfig(json);
+            Log::Registry::get("demo").info("Loaded startup config: {}", path);
+            return config;
         }
         catch (const Error::Exception& error)
         {
