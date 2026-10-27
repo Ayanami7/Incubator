@@ -20,7 +20,7 @@ scene.destroyEntity(first);
 // second still owns the same immutable PreparedModel.
 ```
 
-Scene 不可复制或移动，使用一个 vector 保存实体，属于单线程 Runtime；当前不提供 ECS、实体父子树或持久化。
+Scene 不可复制或移动，使用一个 vector 保存实体，属于单线程 Runtime；当前不提供 ECS、实体父子树或场景文件读写。
 Entity 保存 `id`、`transform`、`visible` 和可空的 `shared_ptr<const PreparedModel> model`。
 Transform 是实体整体变换的唯一真源，实体不另存 ModelInstance 或可修改的整体矩阵。
 模型内部节点仍属于 PreparedModel，不按节点创建实体。
@@ -57,6 +57,17 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
 多个实体直接共享同一 PreparedModel，不复制几何、像素或 GPU 对象。模型绑定/实体操作不加载文件、不准备资源；
 删除、解除模型或 clear 只结束对应逻辑持有，其他实体不受影响。即使 PreparedModel 的最后一个逻辑持有结束，
 GPU 仍由 Renderer 持有到关闭；这与 [Model 持有期](./model.md#持有期及失败) 一致。
+
+## 场景内容快照
+
+`runtime/scene/scene_description.h` 提供 `SceneDescription` 和 `captureScene(scene, clearColor)`。
+捕获按创建顺序复制全部实体，包括隐藏、离屏、无模型及无绘制内容的实体，保存可空模型来源、真实 Transform 和可见性；
+同时复制 Camera、原始 Lighting 和调用方传入的背景。快照不含 EntityId、派生矩阵、GPU 引用或交互状态，
+之后修改或销毁 Scene 不会改变它。捕获不读取文件或准备 GPU 资源。
+
+背景 RGB 为 sRGB 编码、alpha 为线性值，各分量必须有限且位于 `[0,1]`；无效输入抛 CONFIG。
+默认描述使用默认 Camera、Lighting 和背景 `{0.12, 0.16, 0.22, 1}`。`SceneDescription::valid()`
+检查可直接修改的光照和背景；Transform、Camera 和 ModelReference 继续由各自类型保证合法性。
 
 ## 场景帧提取
 

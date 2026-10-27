@@ -123,6 +123,7 @@ set(RENDER_SOURCES
 set(SCENE_HEADERS
     scene/entity.h
     scene/scene.h
+    scene/scene_description.h
     scene/scene_frame.h
     scene/transform.h
     scene/camera.h
@@ -131,6 +132,7 @@ set(SCENE_HEADERS
 )
 set(SCENE_SOURCES
     scene/scene.cpp
+    scene/scene_description.cpp
     scene/scene_frame.cpp
     scene/transform.cpp
     scene/camera.cpp
@@ -138,6 +140,7 @@ set(SCENE_SOURCES
 )
 
 set(ALL_HEADERS
+    model/model_reference.h
     model/prepared_model.h
     model/model_instance.h
     ${CORE_HEADERS}
@@ -147,6 +150,7 @@ set(ALL_HEADERS
     ${SCENE_HEADERS}
 )
 set(ALL_SOURCES
+    model/model_reference.cpp
     model/prepared_model.cpp
     model/model_instance.cpp
     ${CORE_SOURCES}

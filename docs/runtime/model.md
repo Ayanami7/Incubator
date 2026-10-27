@@ -30,7 +30,11 @@ auto filtered = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Av
 显式设置 `options.shading = Render::ShadingMode::Lambert` 可选择最小方向光漫反射预览；
 源 `ModelMaterial::unlit` 为 true 的材质始终使用 Unlit。不同模式仍共用生产 Pipeline，
 同次准备的几何、纹理、白图及采样共享规则保持；选项创建时复制，之后修改不改变已有材质。
-非法模式在加载或 GPU 创建前抛 RENDER。该模式不导入源灯光，也不代表 glTF PBR 或完整 MTL 材质还原。
+非法 mip、采样或着色选项在加载或 GPU 创建前抛 RENDER，空绘制模型也遵守此约定。该模式不导入源灯光，也不代表 glTF PBR 或完整 MTL 材质还原。
+
+`ModelReference(path, options)` 拥有规范化的 UTF-8 虚拟路径和完整准备配置；构造时拒绝非法路径和选项，
+值相等比较包含路径、mip、全部采样选项和着色模式。`PreparedModel::source()` 返回只读来源，保存调用时请求的配置；
+源 Unlit 材质不改变该记录。来源不持有 CPU 资源，也不创建缓存或延长 GPU 资源生命周期。
 
 上传与采样选择独立：完整链可仅采基础层，单层图片也可绑定 mip 采样而不补建层级。
 同次准备内，相同规范化路径仍共享一次上传及其 mip 链；白图在 FullChain 下仍只有 1×1 一层。
@@ -61,6 +65,7 @@ Renderer 在提交时由最终 DrawItem::model 计算法线逆转置，包含实
 
 | 接口 | 内容与索引 |
 |---|---|
+| `source()` | 拥有规范化虚拟路径和请求配置的只读 ModelReference |
 | `meshes()` | 唯一已上传 Mesh 的紧凑数组 |
 | `materials()` | 被使用源材质对应的不可变 Material 紧凑数组 |
 | `textures()` | 唯一 PNG Texture 和可选共享白纹理的数组 |

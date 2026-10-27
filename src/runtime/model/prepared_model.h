@@ -3,9 +3,11 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "runtime/core/math/aabb.h"
+#include "runtime/model/model_reference.h"
 #include "runtime/render/frame_input.h"
 #include "runtime/render/sampler.h"
 #include "runtime/render/texture.h"
@@ -22,15 +24,6 @@ namespace Incubator
     {
         class PreparedModel;
 
-        /// @brief 准备模型时使用的采样与着色预览配置。
-        /// @note 源 Unlit 材质始终不受光；不导入源材质的采样器设置。
-        struct PrepareOptions
-        {
-            Render::TextureMipMode mipMode = Render::TextureMipMode::BaseLevel;
-            Render::SamplerDesc sampler;
-            Render::ShadingMode shading = Render::ShadingMode::Unlit;
-        };
-
         /// @brief 从已注册资源准备可供场景使用的模型。
         /// @param renderer 已初始化且已准备场景着色器的 Renderer。
         /// @param virtualPath 虚拟模型路径。
@@ -46,6 +39,11 @@ namespace Incubator
         class PreparedModel final
         {
         public:
+            /// @brief 返回准备时请求的来源路径与配置。
+            const ModelReference& source() const noexcept
+            {
+                return source_;
+            }
             const std::vector<Render::Mesh>& meshes() const noexcept
             {
                 return meshes_;
@@ -86,8 +84,9 @@ namespace Incubator
 
         private:
             friend std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer&, std::string_view, PrepareOptions);
-            PreparedModel() = default;
+            explicit PreparedModel(ModelReference source) : source_(std::move(source)) {}
 
+            ModelReference source_;
             std::vector<Render::Mesh> meshes_;
             std::vector<Render::Material> materials_;
             std::vector<Render::Texture> textures_;

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "runtime/core/error/error.h"
+#include "runtime/scene/scene_description.h"
 
 namespace
 {
@@ -30,6 +31,74 @@ namespace
         for (const auto& entity : scene.entities())
             result.push_back(entity.id);
         return result;
+    }
+
+    TEST(SceneDescriptionTest, CapturesAllLogicalEntitiesAndIndependentEnvironment)
+    {
+        using namespace Incubator;
+        Scene scene;
+        const Incubator::Scene::SceneDescription defaults;
+        EXPECT_TRUE(defaults.valid());
+        EXPECT_TRUE(defaults.entities.empty());
+        EXPECT_EQ(defaults.clearColor, (std::array<float, 4>{0.12f, 0.16f, 0.22f, 1}));
+        EXPECT_TRUE(Incubator::Scene::captureScene(scene, defaults.clearColor).entities.empty());
+        const Transform first({1000, -2, 3}, {2, 0, 0, 2}, {-2, 0, 3});
+        const auto id = scene.createEntity({}, first, false);
+        scene.createEntity({}, Transform({1, 2, 3}));
+        const Camera camera({4, 5, 6}, {2, 0, 2, 0}, {0.8f, 0.2f, 42});
+        scene.setCamera(camera);
+        const Render::Lighting lighting{{0, -4, -2}, {0.2f, 0.4f, 0.8f}, 2, 0.3f};
+        scene.setLighting(lighting);
+        const std::array<float, 4> color{0.2f, 0.3f, 0.4f, 0.5f};
+        const auto captured = Incubator::Scene::captureScene(scene, color);
+        ASSERT_EQ(captured.entities.size(), 2u);
+        EXPECT_FALSE(captured.entities[0].model);
+        EXPECT_FALSE(captured.entities[0].visible);
+        EXPECT_EQ(captured.entities[0].transform.position(), first.position());
+        EXPECT_EQ(captured.entities[0].transform.rotation(), first.rotation());
+        EXPECT_EQ(captured.entities[0].transform.scale(), glm::vec3(-2, 0, 3));
+        EXPECT_EQ(captured.entities[1].transform.position(), glm::vec3(1, 2, 3));
+        EXPECT_EQ(captured.camera.position(), camera.position());
+        EXPECT_EQ(captured.camera.rotation(), camera.rotation());
+        EXPECT_FLOAT_EQ(captured.camera.perspective().verticalFov, 0.8f);
+        EXPECT_FLOAT_EQ(captured.camera.perspective().nearPlane, 0.2f);
+        EXPECT_FLOAT_EQ(captured.camera.perspective().farPlane, 42);
+        EXPECT_EQ(captured.lighting, lighting);
+        EXPECT_EQ(captured.clearColor, color);
+        scene.setTransform(id, Transform{});
+        scene.setCamera(Camera{});
+        scene.setLighting({});
+        scene.clear();
+        EXPECT_EQ(captured.entities[0].transform.position(), first.position());
+        EXPECT_EQ(captured.camera.position(), camera.position());
+        EXPECT_EQ(captured.lighting, lighting);
+    }
+
+    TEST(SceneDescriptionTest, RejectsInvalidBackgroundAndReportsInvalidMutableValues)
+    {
+        using namespace Incubator;
+        Scene scene;
+        for (float value : {-0.01f, 1.01f, std::numeric_limits<float>::infinity(),
+                            std::numeric_limits<float>::quiet_NaN()})
+        {
+            auto color = std::array<float, 4>{0, 0, 0, 1};
+            color[3] = value;
+            try
+            {
+                (void)Incubator::Scene::captureScene(scene, color);
+                FAIL() << "Invalid background accepted";
+            }
+            catch (const Error::Exception& error)
+            {
+                EXPECT_EQ(error.code(), Error::Code::CONFIG);
+            }
+        }
+        Incubator::Scene::SceneDescription description;
+        description.lighting.direction = {0, 0, 0};
+        EXPECT_FALSE(description.valid());
+        description.lighting = {};
+        description.clearColor[0] = -1;
+        EXPECT_FALSE(description.valid());
     }
 
     TEST(SceneEntityCpuTest, DefaultsAndLogicalEntitiesOwnIndependentValues)

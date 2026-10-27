@@ -55,15 +55,14 @@ namespace Incubator::Model
     std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer& renderer, std::string_view virtualPath,
                                                     PrepareOptions options)
     {
-        if (options.shading != Render::ShadingMode::Unlit && options.shading != Render::ShadingMode::Lambert)
-            throw Error::Exception(Error::Code::RENDER, "Model preparation shading mode is invalid");
-        CpuHold modelHold(Resource::ResourceType::MODEL, virtualPath);
+        ModelReference sourceReference(virtualPath, options);
+        CpuHold modelHold(Resource::ResourceType::MODEL, sourceReference.path());
         const auto* source = modelHold.get<Resource::ModelResource>();
         if (!source)
             throw Error::Exception(Error::Code::RENDER,
                                    fmt::format("Cannot prepare model '{}': model load failed", virtualPath));
 
-        auto result = std::shared_ptr<PreparedModel>(new PreparedModel);
+        auto result = std::shared_ptr<PreparedModel>(new PreparedModel(std::move(sourceReference)));
         result->nodes_ = source->nodes();
         result->rootNode_ = source->rootNode();
         std::vector<uint32_t> geometryMap(source->geometries().size(), NO_INDEX);

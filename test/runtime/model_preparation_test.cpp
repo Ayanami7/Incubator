@@ -36,6 +36,7 @@
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene.h"
+#include "runtime/scene/scene_description.h"
 #include "runtime/scene/scene_frame.h"
 #include "support/texture_gpu_review.h"
 #include "support/window_capture.h"
@@ -52,6 +53,51 @@ namespace
 
     static_assert(
         std::is_same_v<decltype(std::declval<Model::PreparedModel&>().bounds()), const std::optional<Math::Aabb>&>);
+    static_assert(std::is_same_v<decltype(std::declval<Model::PreparedModel&>().source()), const Model::ModelReference&>);
+
+    TEST(ModelReferenceTest, NormalizesAndComparesEveryOptionAndRejectsInvalidValues)
+    {
+        const Model::ModelReference base("Models\\Unused\\..\\Scene.GLTF");
+        EXPECT_EQ(base.path(), "models/scene.gltf");
+        EXPECT_EQ(base, Model::ModelReference("models/./scene.gltf"));
+        EXPECT_NE(base, Model::ModelReference("models/other.gltf"));
+        Model::PrepareOptions options;
+        options.mipMode = TextureMipMode::FullChain;
+        EXPECT_NE(base, Model::ModelReference("models/scene.gltf", options));
+        options = {};
+        options.sampler.minFilter = TextureFilter::Linear;
+        EXPECT_NE(base, Model::ModelReference("models/scene.gltf", options));
+        options = {};
+        options.sampler.magFilter = TextureFilter::Linear;
+        EXPECT_NE(base, Model::ModelReference("models/scene.gltf", options));
+        for (const auto mip : {MipFilter::Nearest, MipFilter::Linear})
+        {
+            options = {};
+            options.sampler.mipFilter = mip;
+            EXPECT_NE(base, Model::ModelReference("models/scene.gltf", options));
+        }
+        options = {};
+        options.shading = ShadingMode::Lambert;
+        EXPECT_NE(base, Model::ModelReference("models/scene.gltf", options));
+        for (const auto path : {std::string(""), std::string("../escape.gltf"), std::string("C:asset.gltf"),
+                                std::string("x\0y", 3), std::string("\xff", 1)})
+            EXPECT_THROW((void)Model::ModelReference{path}, Error::Exception);
+        options = {};
+        options.mipMode = static_cast<TextureMipMode>(99);
+        EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", options}), Error::Exception);
+        options = {};
+        options.sampler.minFilter = static_cast<TextureFilter>(99);
+        EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", options}), Error::Exception);
+        options = {};
+        options.sampler.magFilter = static_cast<TextureFilter>(99);
+        EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", options}), Error::Exception);
+        options = {};
+        options.sampler.mipFilter = static_cast<MipFilter>(99);
+        EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", options}), Error::Exception);
+        options = {};
+        options.shading = static_cast<ShadingMode>(99);
+        EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", options}), Error::Exception);
+    }
 
     size_t occurrences(std::string_view text, std::string_view value)
     {
@@ -224,9 +270,14 @@ namespace
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 0u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 0u);
             const auto legacy = Model::prepareModel(renderer, path);
+            EXPECT_EQ(legacy->source(), Model::ModelReference(path));
             options.shading = ShadingMode::Lambert;
-            const auto lambert = Model::prepareModel(renderer, path, options);
+            std::string sourcePath = "Models/normals/../normals/FOLDED.gltf";
+            const auto lambert = Model::prepareModel(renderer, sourcePath, options);
+            sourcePath.clear();
             options.shading = ShadingMode::Unlit;
+            EXPECT_EQ(lambert->source().path(), path);
+            EXPECT_EQ(lambert->source().options().shading, ShadingMode::Lambert);
             released(ResourceType::MODEL, path);
             fileIO_.reset();
             for (const auto& prepared : {legacy, lambert})
@@ -432,6 +483,19 @@ namespace
             Renderer renderer(*native, RendererValidationMode::Required);
             shaders(renderer);
             model = Model::prepareModel(renderer, "models/shared.gltf");
+            Scene::Scene scene;
+            const auto hidden = scene.createEntity(model, Scene::Transform({1000, 0, 0}, {1, 0, 0, 0}, {-2, 0, 3}), false);
+            scene.createEntity();
+            const auto snapshot = Scene::captureScene(scene, {0.2f, 0.3f, 0.4f, 1});
+            ASSERT_EQ(snapshot.entities.size(), 2u);
+            ASSERT_TRUE(snapshot.entities[0].model);
+            EXPECT_EQ(*snapshot.entities[0].model, model->source());
+            EXPECT_FALSE(snapshot.entities[0].visible);
+            EXPECT_EQ(snapshot.entities[0].transform.position(), glm::vec3(1000, 0, 0));
+            EXPECT_FALSE(snapshot.entities[1].model);
+            scene.setModel(hidden, {});
+            scene.clear();
+            EXPECT_EQ(snapshot.entities[0].model->path(), "models/shared.gltf");
             EXPECT_EQ(model->meshes().size(), 1u);
             EXPECT_EQ(model->materials().size(), 4u);
             EXPECT_EQ(model->textures().size(), 2u);
@@ -504,6 +568,7 @@ namespace
                 SCOPED_TRACE(policy);
                 const auto model = policy == 0 ? Model::prepareModel(renderer, "models/shared.gltf")
                                                : Model::prepareModel(renderer, "models/shared.gltf", options[policy]);
+                EXPECT_EQ(model->source(), Model::ModelReference("models/shared.gltf", options[policy]));
                 models.push_back(model);
                 released(ResourceType::MODEL, "models/shared.gltf");
                 released(ResourceType::TEXTURE, PNG);
@@ -651,6 +716,7 @@ namespace
         EXPECT_FALSE(model->meshes()[0].valid());
         EXPECT_FALSE(model->materials()[0].valid());
         EXPECT_FALSE(model->textures()[0].valid());
+        EXPECT_EQ(model->source(), Model::ModelReference(GLTF));
         cleanValidation();
     }
 
@@ -660,7 +726,15 @@ namespace
         auto native = window();
         {
             Renderer renderer(*native, RendererValidationMode::Required);
-            const auto model = Model::prepareModel(renderer, "models/empty.gltf");
+            Model::PrepareOptions invalid;
+            invalid.mipMode = static_cast<TextureMipMode>(99);
+            EXPECT_THROW(Model::prepareModel(renderer, "models/empty.gltf", invalid), Error::Exception);
+            invalid = {};
+            invalid.sampler.magFilter = static_cast<TextureFilter>(99);
+            EXPECT_THROW(Model::prepareModel(renderer, "models/empty.gltf", invalid), Error::Exception);
+            EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, "models/empty.gltf").valid());
+            auto model = Model::prepareModel(renderer, "models/empty.gltf");
+            EXPECT_EQ(model->source(), Model::ModelReference("models/empty.gltf"));
             EXPECT_TRUE(model->meshes().empty());
             EXPECT_TRUE(model->materials().empty());
             EXPECT_TRUE(model->textures().empty());
@@ -670,7 +744,16 @@ namespace
             EXPECT_EQ(model->nodes().size(), 2u);
             Scene::Scene scene;
             scene.createEntity(model);
+            const auto captured = Scene::captureScene(scene, {0, 0, 0, 1});
+            ASSERT_EQ(captured.entities.size(), 1u);
+            ASSERT_TRUE(captured.entities[0].model);
+            EXPECT_EQ(captured.entities[0].model->path(), "models/empty.gltf");
             EXPECT_TRUE(Scene::extractSceneFrame(scene, {400, 400})->draws.empty());
+            std::weak_ptr<const Model::PreparedModel> weak = model;
+            scene.clear();
+            model.reset();
+            EXPECT_TRUE(weak.expired());
+            EXPECT_EQ(captured.entities[0].model->path(), "models/empty.gltf");
             released(ResourceType::MODEL, "models/empty.gltf");
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, PNG).valid());
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, "textures/unused.png").valid());
