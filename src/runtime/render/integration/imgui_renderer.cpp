@@ -5,8 +5,12 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
+#include <limits>
+#include <span>
+
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
+#include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
 
 namespace Incubator
@@ -22,17 +26,36 @@ namespace Incubator
                 contextCreated_ = true;
                 ImGuiIO& io = ImGui::GetIO();
                 io.IniFilename = nullptr;
-                io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-                ImGui::StyleColorsDark();
-
-                auto* glfwWindow = static_cast<GLFWwindow*>(window_.getNativeHandle());
-                if (!glfwWindow || !ImGui_ImplGlfw_InitForVulkan(glfwWindow, true))
+                io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
+                // 只使用主窗口，平台多窗口与布局持久化由后续工作区任务决定。
+                io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
+                try
+                {
+                    auto fileIO = FileIO::createPlatformFileIO();
+                    auto file = fileIO->open("assets/fonts/NotoSansSC-Regular.otf", FileIO::OpenMode::Read);
+                    if (!file || file->size() == 0 || file->size() > std::numeric_limits<int>::max())
+                        throw Error::Exception(Error::Code::IO, "Cannot load UI font assets/fonts/NotoSansSC-Regular.otf");
+                    fontData_.resize(static_cast<size_t>(file->size()));
+                    size_t offset = 0;
+                    while (offset < fontData_.size())
+                    {
+                        const auto count = file->read(std::span(fontData_).subspan(offset));
+                        if (!count)
+                            throw Error::Exception(Error::Code::IO, "Incomplete UI font read");
+                        offset += count;
+                    }
+                    updateDpi();
+                    auto* glfwWindow = static_cast<GLFWwindow*>(window_.getNativeHandle());
+                    if (!glfwWindow || !ImGui_ImplGlfw_InitForVulkan(glfwWindow, true))
+                        throw Error::Exception(Error::Code::RENDER, "Failed to initialize ImGui GLFW backend");
+                    glfwInitialized_ = true;
+                }
+                catch (...)
                 {
                     ImGui::DestroyContext();
                     contextCreated_ = false;
-                    throw Error::Exception(Error::Code::RENDER, "Failed to initialize ImGui GLFW backend");
+                    throw;
                 }
-                glfwInitialized_ = true;
             }
 
             ImGuiRenderer::~ImGuiRenderer()
@@ -98,9 +121,58 @@ namespace Incubator
 
             void ImGuiRenderer::beginFrame()
             {
-                ImGui_ImplVulkan_NewFrame();
                 ImGui_ImplGlfw_NewFrame();
+                updateDpi();
+                ImGui_ImplVulkan_NewFrame();
                 ImGui::NewFrame();
+            }
+
+            void ImGuiRenderer::updateDpi()
+            {
+                const float contentScale = window_.getContentScale();
+                int width, height, framebufferWidth, framebufferHeight;
+                window_.getWindowSize(width, height);
+                window_.getFramebufferSize(framebufferWidth, framebufferHeight);
+                const float framebufferScale = height > 0 && framebufferHeight > 0
+                                                   ? float(framebufferHeight) / float(height)
+                                                   : 1.0f;
+                if (contentScale == contentScale_ && framebufferScale == framebufferScale_)
+                    return;
+
+                // 在 NewFrame 之前等待旧字体的所有 GPU 使用结束，不使本轮绘制数据失效。
+                if (vulkanInitialized_ && vkDeviceWaitIdle(device_) != VK_SUCCESS)
+                    throw Error::Exception(Error::Code::RENDER, "Failed to wait before UI font rebuild");
+                auto& io = ImGui::GetIO();
+                io.Fonts->Clear();
+                ImFontConfig fontConfig;
+                fontConfig.FontDataOwnedByAtlas = false;
+                io.FontDefault = io.Fonts->AddFontFromMemoryTTF(
+                    fontData_.data(), static_cast<int>(fontData_.size()), 18.0f * contentScale, &fontConfig,
+                    io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+                if (!io.FontDefault || !io.Fonts->Build())
+                    throw Error::Exception(Error::Code::RENDER, "Failed to build UI font atlas");
+                io.FontGlobalScale = 1.0f / framebufferScale;
+
+                // 每次从相同的基础样式计算，避免 DPI 往返时累积缩放。
+                ImGuiStyle style;
+                ImGui::StyleColorsDark(&style);
+                style.WindowPadding = {12, 12};
+                style.FramePadding = {8, 6};
+                style.ItemSpacing = {8, 8};
+                style.ItemInnerSpacing = {6, 4};
+                style.ScrollbarSize = 16;
+                style.WindowRounding = 4;
+                style.FrameRounding = 3;
+                style.GrabRounding = 3;
+                style.ScaleAllSizes(contentScale / framebufferScale);
+                ImGui::GetStyle() = style;
+                if (vulkanInitialized_ && !ImGui_ImplVulkan_CreateFontsTexture())
+                    throw Error::Exception(Error::Code::RENDER, "Failed to upload rebuilt UI font texture");
+                contentScale_ = contentScale;
+                framebufferScale_ = framebufferScale;
+                Log::Registry::get("render").info("UI font rebuilt: DPI {}, framebuffer scale {}, atlas {}x{}",
+                                                 contentScale, framebufferScale, io.Fonts->TexWidth,
+                                                 io.Fonts->TexHeight);
             }
 
             void ImGuiRenderer::endFrame()

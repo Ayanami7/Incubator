@@ -146,7 +146,7 @@ namespace
             fs::remove_all(sandbox_);
             fs::create_directories(sandbox_ / "assets");
             const auto fixtureRoot = Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR);
-            for (const char* directory : {"models", "textures", "shaders"})
+            for (const char* directory : {"models", "textures", "shaders", "fonts"})
                 fs::copy(fixtureRoot / directory, sandbox_ / "assets" / directory, fs::copy_options::recursive);
             fs::current_path(sandbox_);
             ResourceManager::instance().reset();

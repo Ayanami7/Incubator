@@ -272,5 +272,5 @@ DemoApp 每轮执行 beginInputFrame → pollEvents → update → beginUiFrame�
 取消后适配器持续丢弃操作，直到 ImGui 待处理队列排空，且原始状态与 ImGui 的右/中键和 F 均释放。
 中性帧本身不产生操作，此后的新合法按下才能开始交互。该恢复边界内的按下也被丢弃，需释放后重按；
 不重放最小化/失焦期间的操作，不清空 ImGui 的 UI/文本事件。
-仅为判断队列是否排空，示例适配层读取固定 ImGui 1.91.9b 的内部 InputEventsQueue；升级时须复核此依赖。
+仅为判断队列是否排空，示例适配层读取固定 ImGui 1.91.9b-docking 的内部 InputEventsQueue；升级时须复核此依赖。
 Runtime Input 和 Window 不依赖 ImGui，原始状态仍独立可读且不被 UI 消费改写。

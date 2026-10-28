@@ -21,7 +21,7 @@ gtest_discover_tests(demo_test
 add_executable(scene_restart_test scene_restart_test.cpp "${CMAKE_SOURCE_DIR}/examples/demo/demo_app.cpp")
 target_link_libraries(scene_restart_test PRIVATE IncubatorRuntime vulkan imgui)
 target_include_directories(scene_restart_test PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
-add_dependencies(scene_restart_test demo_models demo_scenes demo_shaders)
+add_dependencies(scene_restart_test demo_models demo_scenes demo_shaders runtime_ui_fonts)
 set_target_properties(scene_restart_test PROPERTIES FOLDER "UnitTest/examples/demo")
 
 add_executable(orbit_camera_test orbit_camera_test.cpp)

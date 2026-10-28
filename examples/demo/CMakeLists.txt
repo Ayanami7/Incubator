@@ -58,6 +58,7 @@ add_dependencies(${TARGET_NAME} IncubatorRuntime)
 add_dependencies(${TARGET_NAME} demo_models)
 add_dependencies(${TARGET_NAME} demo_scenes)
 add_dependencies(${TARGET_NAME} demo_config)
+add_dependencies(${TARGET_NAME} runtime_ui_fonts)
 
 set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "examples")
 

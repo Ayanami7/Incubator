@@ -1,4 +1,4 @@
-# 3rdparty/imgui CMakeLists.txt
+# 固定版本 ImGui Docking，核心与 GLFW/Vulkan 后端来自同一发布标签。
 set(TARGET_NAME imgui)
 
 add_library(

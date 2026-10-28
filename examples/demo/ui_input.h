@@ -31,7 +31,7 @@ namespace Incubator::Demo
             const auto& io = ImGui::GetIO();
             if (suspended_)
             {
-                // 固定版本 ImGui 1.91.9b：观察队列排空情况，不改变 UI 或文本事件。
+                // 固定版本 ImGui 1.91.9b-docking：观察队列排空情况，不改变 UI 或文本事件。
                 if (raw.focused() && ImGui::GetCurrentContext()->InputEventsQueue.empty() &&
                     !raw.mouseButton(Input::MouseButton::Right).down &&
                     !raw.mouseButton(Input::MouseButton::Middle).down && !raw.key(Input::KeyCode::F).down &&

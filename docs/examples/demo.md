@@ -17,6 +17,12 @@ Set-Location 'E:/Project/VScode/Incubator/build'
 Visual Studio 的目标调试工作目录也设为 `${CMAKE_BINARY_DIR}`。
 VS Code 唯一的 `Debug` 配置指向本示例，完成构建后按 F5 启动。
 
+Demo 还显式依赖 `runtime_ui_fonts`，部署 Noto Sans SC Regular 和原始 SIL Open Font License。
+UI 使用 18 基础字号及统一控件间距，字体与样式随窗口 DPI 更新；窗口移动到不同缩放比例的显示器时，
+在下一 UI 帧前同步重建字体，不逐帧缩放旧样式。字体覆盖英文和常用简体中文路径，完整范围见
+`assets/fonts/SOURCE.md`。Docking 能力已启用，当前界面尚未建立停靠工作区，仍保持单操作系统窗口。
+字体及样式缩放与启动配置的窗口宽高分别处理，具体换算见 [Render](../runtime/render.md)。
+
 程序从 cwd 读取 `incubator.json`。仓库根目录中的同名文件是默认配置源文件，构建时增量复制到
 `<build>/incubator.json`；需持续保留的默认配置修改应写入源文件后重新构建。
 

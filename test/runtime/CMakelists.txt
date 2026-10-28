@@ -1,6 +1,16 @@
-# Deploy exact test inputs under a test-only asset root. Demo builds never receive fixtures.
+# 精确测试输入部署到独立资产根；测试界面复用同一份生产字体及许可。
 set(RUNTIME_TEST_ASSET_DIR "${CMAKE_BINARY_DIR}/test-fixtures/assets")
 set(RUNTIME_TEST_FIXTURE_OUTPUTS)
+foreach(FONT_FILE IN ITEMS NotoSansSC-Regular.otf OFL.txt)
+    set(FONT_OUTPUT "${RUNTIME_TEST_ASSET_DIR}/fonts/${FONT_FILE}")
+    add_custom_command(OUTPUT "${FONT_OUTPUT}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${RUNTIME_TEST_ASSET_DIR}/fonts"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ASSETS_DIR}/fonts/${FONT_FILE}" "${FONT_OUTPUT}"
+        DEPENDS "${ASSETS_DIR}/fonts/${FONT_FILE}"
+        COMMENT "部署测试界面字体及许可 ${FONT_FILE}"
+        VERBATIM)
+    list(APPEND RUNTIME_TEST_FIXTURE_OUTPUTS "${FONT_OUTPUT}")
+endforeach()
 foreach(SCENE_FILE IN ITEMS mixed.json invalid-camera.json)
     set(SCENE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scenes/${SCENE_FILE}")
     set(SCENE_OUTPUT "${RUNTIME_TEST_ASSET_DIR}/scenes/${SCENE_FILE}")
@@ -91,14 +101,15 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
     if(TEST_NAME STREQUAL "render_input_test")
         target_link_libraries(${TEST_NAME} PRIVATE vulkan)
     endif()
-    if(TEST_NAME STREQUAL "vulkan_review_test" OR TEST_NAME STREQUAL "model_preparation_test")
+    if(TEST_NAME STREQUAL "vulkan_review_test" OR TEST_NAME STREQUAL "model_preparation_test"
+       OR TEST_NAME STREQUAL "imgui_integration_test")
         target_link_libraries(${TEST_NAME} PRIVATE vulkan imgui)
         add_dependencies(${TEST_NAME} runtime_test_fixtures runtime_test_shaders)
         target_compile_definitions(${TEST_NAME} PRIVATE RUNTIME_TEST_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}")
         if(TEST_NAME STREQUAL "model_preparation_test")
             add_dependencies(${TEST_NAME} demo_models)
         endif()
-        if(TEST_NAME STREQUAL "vulkan_review_test")
+        if(TEST_NAME STREQUAL "vulkan_review_test" OR TEST_NAME STREQUAL "imgui_integration_test")
             gtest_discover_tests(${TEST_NAME}
                 WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/test-fixtures"
                 PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)

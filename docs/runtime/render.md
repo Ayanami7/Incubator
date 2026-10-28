@@ -60,7 +60,13 @@ GPU 内存首版采用 Vulkan 原生逐资源分配，不接入 VMA，也不自�
 
 `Renderer::drawFrame` 负责一个完整帧。帧槽（两组命令池、命令缓冲、获取信号量和提交 Fence）按帧索引轮转；present 等待信号量和呈现 Fence 按交换链图像索引分配。更新帧参数前等待对应帧槽 Fence，Frame Uniform Buffer 与深度附件按帧槽隔离。帧调度器仅管理获取、提交、呈现和资源持有；场景回调通过 `VulkanCommandList::drawIndexed` 消费网格/材质列表，随后录制 UI。帧参数 set 0 和共享 Pipeline 每次场景录制绑定一次，材质 set 1 与 model push constant 逐物体录制，不覆盖其他物体或帧槽的数据。相机、投影和模型矩阵由应用提供，Renderer 不生成场景相机或按内部时间旋转。外部纹理由 `createTexture` 同步上传，通过 Combined Image Sampler 采样；窗口重建复用网格、材质和纹理。
 
-`Integration::ImGuiRenderer` 将仓库内 ImGui 1.91.9b 的 GLFW 与 Vulkan 后端接入 Runtime。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色和深度格式。交换链图像数量或附件格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭或重配置时适配器先调用 `vkDeviceWaitIdle`，再释放 ImGui Vulkan 资源。后端要求交换链至少有两个图像，数量不足时明确报渲染错误。
+`Integration::ImGuiRenderer` 将仓库内固定标签 `v1.91.9b-docking` 的核心及 GLFW/Vulkan 后端接入 Runtime，来源见 `3rdparty/imgui-1.91.9b/SOURCE.md`。启用 Docking 和键盘导航，保持单操作系统窗口；工作区是否创建 DockSpace 由消费者决定。Renderer 拥有该适配器，适配器管理 ImGui Context、GLFW 回调和 Vulkan 描述符池/字体资源；其 Vulkan 后端以 `UseDynamicRendering` 配置为当前交换链颜色和深度格式。交换链图像数量或附件格式改变时，Renderer 在等待帧和呈现完成后重新配置后端。关闭或重配置时适配器先调用 `vkDeviceWaitIdle`，再释放 ImGui Vulkan 资源。后端要求交换链至少有两个图像，数量不足时明确报渲染错误。
+
+UI 字体从 `<cwd>/assets/fonts/NotoSansSC-Regular.otf` 经平台 FileIO 读取，字体缺失明确报告 IO 错误，不依赖系统字体路径。原字体与许可随应用部署，来源和覆盖范围见 `assets/fonts/SOURCE.md`。使用现有 stb 栅格化器和 ImGui ChineseSimplifiedCommon 字形范围，覆盖英文、相关标点及约 2500 个常用简体汉字，不保证生僻字或完整 Unicode。
+
+基础字号为 18，基础 FramePadding 为 `(8,6)`，WindowPadding 为 `(12,12)`，其他间距、滚动条及圆角随样式统一缩放。以 `contentScale = Window::getContentScale()` 表示显示器缩放，`framebufferScale = framebufferHeight / windowHeight` 表示实际像素密度：字体按 `18 × contentScale` 栅格化，`FontGlobalScale = 1 / framebufferScale`，样式按 `contentScale / framebufferScale` 缩放。这样 Windows 的逻辑控件随系统缩放变大，而具有独立高密度 framebuffer 的窗口不重复放大逻辑尺寸。
+
+适配器在每次 `beginFrame()`、GLFW 更新显示信息后及 `ImGui::NewFrame()` 前检测上述比例。变化时等待旧 GPU 工作完成，重建字体图集并上传，再从相同基础样式重新计算；稳定帧不重建、不等待设备空闲。字体与样式属于 UI 状态，不改变 Scene、Camera、场景纹理或窗口分辨率。布局持久化当前仍关闭，由消费者后续启用。
 
 应用每轮先轮询事件，再调用 `renderer.beginUiFrame()`。Renderer 在此入口准备交换链、ImGui Vulkan 后端与字体图集，成功才开始 UI 帧并返回 `std::optional<FrameExtent>` 中的实际绘制尺寸；首次零尺寸、最小化或暂不可创建时返回 `std::nullopt`，应用跳过投影计算、UI 构建及绘制。成功后应用使用 ImGui API 构建界面并通过适配器调用 `endFrame()`。`drawData()` 返回仅供本次 `Renderer::drawFrame` 使用的数据；Renderer 在场景 indexed draw 后、结束同一动态渲染作用域前执行 UI 录制回调。UI 数据不跨帧保留；acquire 结果要求跳帧时不提交本轮数据，下一轮在准备后端后重新生成 UI。颜色附件使用 CLEAR 加载和 STORE 保存，因此 UI 叠加时保留场景颜色。
 

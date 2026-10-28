@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <vector>
 
 namespace Incubator
 {
@@ -29,14 +30,19 @@ namespace Incubator
                                       VkFormat depthFormat, uint32_t imageCount);
                 /// @brief 开始 ImGui 帧。
                 /// @note 需要先调用 initializeVulkan；应用代码应使用 Renderer::beginUiFrame。
+                /// 在新帧开始前检测 DPI 变化，必要时同步重建字体与样式。
                 void beginFrame();
                 void endFrame();
                 void* drawData() const noexcept;
                 void recordDrawData(void* drawData, void* nativeCommandBuffer) const;
 
             private:
+                void updateDpi();
                 void shutdownVulkan() noexcept;
                 Window::Window& window_;
+                std::vector<uint8_t> fontData_;
+                float contentScale_ = 0;
+                float framebufferScale_ = 0;
                 VkInstance instance_ = VK_NULL_HANDLE;
                 VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
                 VkDevice device_ = VK_NULL_HANDLE;

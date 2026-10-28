@@ -89,13 +89,13 @@ VS Code 测试面板使用 TestMate 提供程序/套件/用例层级及批量运
 | CTest 普通测试 | `<build>/test/runtime/` | 逐用例独立进程 |
 | CTest demo_test / model_preparation_test | `<build>/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
 | CTest orbit_camera_test | `<build>/` | CPU 用例，逐用例独立进程 |
-| CTest vulkan_review_test | `<build>/test-fixtures/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
+| CTest vulkan_review_test / imgui_integration_test | `<build>/test-fixtures/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
 
 TestMate 不自动读取 CTest 属性；批量与逐用例隔离、超时粒度和初始目录存在上述差异，编辑器通过结果不替代正式 CTest 验收。窗口/GPU 测试同一时间只运行一轮。
 TestMate 通过 `build/test/{runtime,examples/demo}/*_test.exe` 发现两处测试程序。迁移或删除目标后，
 应定点删除旧可执行文件，避免编辑器继续发现失效目标。
 Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直接运行测试程序即可；正式验收使用 CTest。
-`VulkanReviewTest` 夹具通过编译时的 `RUNTIME_TEST_ASSET_DIR` 进入独立测试资产根，并在结束时恢复原目录；
+`VulkanReviewTest` 和 `ImGuiIntegrationTest` 夹具通过编译时的 `RUNTIME_TEST_ASSET_DIR` 进入独立测试资产根，并在结束时恢复原目录；
 因此从构建目录直接运行或通过编辑器运行时，也使用 `<build>/test-fixtures/assets/` 中的精确样本。
 需要修改资产的 Demo/模型测试在自己的工作副本中运行，结束时恢复启动 cwd；不修改项目源资产或共享 fixture。
 
@@ -123,6 +123,8 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
 - Demo 资产目标 `demo_models` 位于 `cmake/assets.cmake`，只显式复制 Avocado glTF/bin/PNG 与 Utah Teapot OBJ。`demo_scenes` 在同一文件中部署混合模型场景 `assets/scenes/mixed.json`；`demo_shaders` 在 `examples/demo/CMakeLists.txt` 编译生产 Shader，Demo 依赖这三个目标。
 - `demo_config` 在 `cmake/assets.cmake` 中将仓库根目录的 `incubator.json` 增量复制到 `<build>/incubator.json`，Demo 显式依赖该目标。配置部署与资产部署均为单向复制，运行时保存不回写源文件；新场景仍需显式加入部署规则。
+- `runtime_ui_fonts` 在同一文件中部署 `assets/fonts/NotoSansSC-Regular.otf` 与 `OFL.txt` 到 `<build>/assets/fonts/`，Demo 及独立进程场景恢复程序显式依赖该目标。字体来源与许可见 `assets/fonts/SOURCE.md`，不使用开发机系统字体。
+- `runtime_test_fixtures` 将同一生产字体及许可复制到 `<build>/test-fixtures/assets/fonts/`，GPU 和 Demo 隔离工作目录继续使用该字体。`imgui_integration_test` 按 GPU 测试属性串行运行于 `<build>/test-fixtures/`，覆盖受控 DPI 更新、像素密度与原生窗口字体呈现；模拟缩放与实际显示证据分别保存。
 - 配置解析复用 Assimp 附带的 RapidJSON 头文件，`demo`、`demo_test` 和 `startup_config_test` 分别设置私有包含目录，不对外暴露解析器类型或增加链接库。
 - `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。Vulkan review 使用精确纹理 fixture，真实模型集成测试按需读取选定模型；不向 `<build>/assets/` 部署测试输入。
 

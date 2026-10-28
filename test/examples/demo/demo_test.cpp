@@ -147,7 +147,7 @@ namespace
             fs::remove_all(sandbox_);
             fs::create_directories(sandbox_ / "assets");
             const auto fixtureRoot = Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR);
-            for (const char* directory : {"models", "textures", "shaders"})
+            for (const char* directory : {"models", "textures", "shaders", "fonts"})
                 fs::copy(fixtureRoot / directory, sandbox_ / "assets" / directory,
                          fs::copy_options::recursive);
             fs::current_path(sandbox_);
@@ -713,7 +713,10 @@ namespace
                      },
                      [&](Demo::DemoApp& app) {
                          ImGui::SetNextWindowPos({12, 12}, ImGuiCond_Always);
-                         ImGui::SetNextWindowSize({500, 260}, ImGuiCond_Always);
+                         // 面板需容纳 DPI 缩放后的五行控件，避免把点击发到裁剪区。
+                         const auto height = 5 * ImGui::GetFrameHeightWithSpacing() + ImGui::GetFrameHeight() +
+                                             2 * ImGui::GetStyle().WindowPadding.y;
+                         ImGui::SetNextWindowSize({600, height}, ImGuiCond_Always);
                          ImGui::Begin("Lighting controls");
                          ImGui::PushItemWidth(200);
                          const auto origin = ImGui::GetCursorScreenPos();
