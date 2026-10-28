@@ -24,11 +24,12 @@
 #include "runtime/render/vulkan/vulkan_device.h"
 #include "runtime/render/vulkan/vulkan_frame_scheduler.h"
 #include "runtime/render/vulkan/vulkan_image.h"
-#include "runtime/render/vulkan/vulkan_scene_target.h"
 #include "runtime/render/vulkan/vulkan_instance.h"
 #include "runtime/render/vulkan/vulkan_material_binding.h"
 #include "runtime/render/vulkan/vulkan_pipeline.h"
 #include "runtime/render/vulkan/vulkan_sampler.h"
+#include "runtime/render/vulkan/vulkan_scene_target.h"
+#include "runtime/render/vulkan/vulkan_shadow_target.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
 #include "runtime/resource/loader/shader_resource.h"
 #include "runtime/resource/loader/texture_resource.h"
@@ -206,8 +207,8 @@ namespace Incubator
                         if (!std::isfinite(value))
                             throw Error::Exception(Error::Code::RENDER, "Mesh normal must be finite");
                     // 上传前以双精度长度归一化，避免有限的大法线在 GPU 矩阵乘法中溢出；零法线保持原样。
-                    const double length = std::hypot(double(vertex.normal[0]), double(vertex.normal[1]),
-                                                     double(vertex.normal[2]));
+                    const double length =
+                        std::hypot(double(vertex.normal[0]), double(vertex.normal[1]), double(vertex.normal[2]));
                     if (length > 0)
                         for (auto& value : vertex.normal)
                             value = static_cast<float>(value / length);
@@ -248,6 +249,17 @@ namespace Incubator
                 fragmentShader_ = std::move(fragmentWords);
                 bindingSet_ = std::move(bindingSet);
                 pipeline_ = std::move(pipeline);
+            }
+
+            void prepareShadowResources(const Resource::ShaderResource& vertexShader)
+            {
+                if (!bindingSet_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare scene resources before shadow resources");
+                if (!shadowVertexShader_.empty())
+                    throw Error::Exception(Error::Code::RENDER, "Shadow resources are already prepared");
+                if (vertexShader.words().empty())
+                    throw Error::Exception(Error::Code::RENDER, "Shadow vertex shader must contain SPIR-V words");
+                shadowVertexShader_ = vertexShader.words();
             }
 
             Material createMaterial(const MaterialDesc& desc)
@@ -314,8 +326,29 @@ namespace Incubator
                 return draws;
             }
 
+            std::vector<Vulkan::VulkanShadowDrawItem> resolveShadowDraws(const FrameInput& input,
+                                                                         std::vector<std::shared_ptr<void>>& resources)
+            {
+                std::vector<Vulkan::VulkanShadowDrawItem> draws;
+                draws.reserve(input.shadowDraws.size());
+                for (const auto& draw : input.shadowDraws)
+                {
+                    auto mesh = draw.mesh.impl_.lock();
+                    if (!mesh || mesh->owner != &device_)
+                        throw Error::Exception(Error::Code::RENDER,
+                                               "Shadow mesh is invalid or belongs to another Renderer");
+                    draws.push_back(
+                        {mesh->vertexBuffer->handle(), mesh->indexBuffer->handle(), mesh->indexCount, draw.model});
+                    resources.push_back(std::move(mesh));
+                }
+                return draws;
+            }
+
             void withReviewFrame(const FrameInput& input, const Detail::RendererReviewAccess::Record& record)
             {
+                if (input.shadow)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "Shadow review requires the independent scene target path");
                 const auto frame = Vulkan::makeFrameUniform(input);
                 std::vector<std::shared_ptr<void>> resources;
                 const auto draws = resolveDraws(input, resources);
@@ -333,6 +366,9 @@ namespace Incubator
                            const std::function<void(void*)>& recordUi)
             {
                 const auto frame = Vulkan::makeFrameUniform(input);
+                if (input.shadow)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "Shadows require drawSceneTarget; drawFrame does not support shadows");
                 std::vector<std::shared_ptr<void>> inFlightResources;
                 const auto draws = resolveDraws(input, inFlightResources);
                 if (recordUi)
@@ -372,26 +408,47 @@ namespace Incubator
                     needsRebuild_ = true;
             }
 
-            void reviewOutput(const SceneOutput& output, const std::function<void(const Vulkan::VulkanDevice&,const Vulkan::VulkanImage&)>& record)
+            void reviewOutput(
+                const SceneOutput& output,
+                const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record)
             {
                 const auto target = output.impl_.lock();
-                if (!target || target->owner != &device_) throw Error::Exception(Error::Code::RENDER,"Invalid scene output");
+                if (!target || target->owner != &device_)
+                    throw Error::Exception(Error::Code::RENDER, "Invalid scene output");
                 scheduler_->waitForFrames();
-                record(device_,target->target->color());
+                record(device_, target->target->color());
             }
+            void reviewShadowOutput(
+                const SceneOutput& output,
+                const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record)
+            {
+                const auto target = output.impl_.lock();
+                const auto found = std::find(sceneTargets_.begin(), sceneTargets_.end(), target);
+                if (!target || target->owner != &device_ || found == sceneTargets_.end())
+                    throw Error::Exception(Error::Code::RENDER, "Invalid scene output for shadow review");
+                const auto& shadow = shadowTargets_[size_t(found - sceneTargets_.begin())];
+                if (!shadow)
+                    throw Error::Exception(Error::Code::RENDER, "No shadow target was prepared for this frame slot");
+                scheduler_->waitForFrames();
+                record(device_, shadow->image());
+            }
+
             SceneOutput prepareSceneTarget(FrameExtent extent)
             {
                 SceneOutput output;
-                if (!extent.width || !extent.height) return output;
+                if (!extent.width || !extent.height)
+                    return output;
                 scheduler_->waitForCurrentFrame();
                 const auto frameIndex = scheduler_->currentFrameIndex();
                 auto& slot = sceneTargets_[frameIndex];
-                if (!slot || slot->target->color().extent().width != extent.width || slot->target->color().extent().height != extent.height)
+                if (!slot || slot->target->color().extent().width != extent.width ||
+                    slot->target->color().extent().height != extent.height)
                 {
                     const auto oldExtent = slot ? slot->target->color().extent() : VkExtent2D{};
                     auto next = std::make_shared<SceneOutput::Impl>();
                     next->owner = &device_;
-                    next->target = std::make_unique<Vulkan::VulkanSceneTarget>(device_, VkExtent2D{extent.width,extent.height},depthFormat_);
+                    next->target = std::make_unique<Vulkan::VulkanSceneTarget>(
+                        device_, VkExtent2D{extent.width, extent.height}, depthFormat_);
                     imguiRenderer_->releaseSceneImage(frameIndex);
                     slot = std::move(next);
                     Log::Registry::get("render").debug(
@@ -400,7 +457,9 @@ namespace Incubator
                         extent.width, extent.height, static_cast<int>(slot->target->color().format()),
                         static_cast<int>(depthFormat_));
                 }
-                output.impl_ = slot; output.extent_ = extent; return output;
+                output.impl_ = slot;
+                output.extent_ = extent;
+                return output;
             }
             uint64_t sceneImage(const SceneOutput& output)
             {
@@ -411,29 +470,75 @@ namespace Incubator
                 return imguiRenderer_->sceneImage(slot, target->target->color().view());
             }
             void drawSceneTarget(const SceneOutput& output, const FrameInput& input,
-                                 const std::array<float,4>& clearColor, const std::function<void(void*)>& ui)
+                                 const std::array<float, 4>& clearColor, const std::function<void(void*)>& ui)
             {
                 auto target = output.impl_.lock();
                 const auto index = scheduler_->currentFrameIndex();
-                if (!target || target->owner != &device_ || target != sceneTargets_[index] || output.extent() != input.extent)
-                    throw Error::Exception(Error::Code::RENDER,"Invalid current scene output");
+                if (!target || target->owner != &device_ || target != sceneTargets_[index] ||
+                    output.extent() != input.extent)
+                    throw Error::Exception(Error::Code::RENDER, "Invalid current scene output");
                 const auto frame = Vulkan::makeFrameUniform(input);
                 std::vector<std::shared_ptr<void>> resources;
-                const auto draws = resolveDraws(input,resources);
-                if (!draws.empty() && !bindingSet_) throw Error::Exception(Error::Code::RENDER,"Prepare scene shaders first");
+                const auto draws = resolveDraws(input, resources);
+                if (!draws.empty() && !bindingSet_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare scene shaders first");
+                std::vector<Vulkan::VulkanShadowDrawItem> shadowDraws;
+                if (input.shadow)
+                {
+                    if (shadowVertexShader_.empty())
+                        throw Error::Exception(Error::Code::RENDER,
+                                               "Prepare shadow vertex shader before enabling shadows");
+                    shadowDraws = resolveShadowDraws(input, resources);
+                }
                 int width, height;
                 window_.getFramebufferSize(width, height);
                 // UI 命令已生成；尺寸变化时丢弃本帧，下轮开始前再重建后端及绑定。
                 if (needsRebuild_ || width != requestedWidth_ || height != requestedHeight_)
                     return;
                 scheduler_->waitForCurrentFrame();
-                if (bindingSet_) uniformBuffers_[index]->write(0,std::as_bytes(std::span(&frame,1)));
+                if (bindingSet_)
+                    uniformBuffers_[index]->write(0, std::as_bytes(std::span(&frame, 1)));
                 if (!draws.empty() && !scenePipeline_)
-                    scenePipeline_ = std::make_unique<Vulkan::VulkanPipeline>(device_,VK_FORMAT_R8G8B8A8_UNORM,depthFormat_,bindingSet_->layout(),bindingSet_->materialLayout(),vertexShader_,fragmentShader_);
+                    scenePipeline_ = std::make_unique<Vulkan::VulkanPipeline>(
+                        device_, VK_FORMAT_R8G8B8A8_UNORM, depthFormat_, bindingSet_->layout(),
+                        bindingSet_->materialLayout(), vertexShader_, fragmentShader_);
+                std::shared_ptr<Vulkan::VulkanShadowTarget> shadow;
+                if (input.shadow)
+                {
+                    auto& slot = shadowTargets_[index];
+                    if (!slot)
+                        slot = std::make_shared<Vulkan::VulkanShadowTarget>(device_);
+                    shadow = slot;
+                    if (!shadowPipeline_)
+                        shadowPipeline_ = std::make_unique<Vulkan::VulkanPipeline>(
+                            device_, VK_FORMAT_UNDEFINED, shadow->image().format(), bindingSet_->layout(),
+                            VK_NULL_HANDLE, shadowVertexShader_, std::vector<uint32_t>{});
+                    resources.push_back(shadow);
+                }
                 resources.push_back(target);
-                VkClearColorValue clear{}; std::copy(clearColor.begin(),clearColor.end(),clear.float32);
-                if (!scheduler_->renderAndPresent(*swapchain_,clear,[&](VkCommandBuffer cmd){if(ui) ui(static_cast<void*>(cmd));},resources,
-                    [&](VkCommandBuffer cmd){target->target->record(cmd,clear,[&](VkCommandBuffer scene){if(!draws.empty()) Vulkan::VulkanCommandList::drawIndexed(scene,*scenePipeline_,bindingSet_->descriptorSet(index),draws);});})) needsRebuild_=true;
+                resources.push_back(uniformBuffers_[index]);
+                VkClearColorValue clear{};
+                std::copy(clearColor.begin(), clearColor.end(), clear.float32);
+                if (!scheduler_->renderAndPresent(
+                        *swapchain_, clear,
+                        [&](VkCommandBuffer cmd) {
+                            if (ui)
+                                ui(static_cast<void*>(cmd));
+                        },
+                        resources,
+                        [&](VkCommandBuffer cmd) {
+                            if (shadow)
+                                shadow->record(cmd, [&](VkCommandBuffer depth) {
+                                    Vulkan::VulkanCommandList::drawShadow(
+                                        depth, *shadowPipeline_, bindingSet_->descriptorSet(index), shadowDraws);
+                                });
+                            target->target->record(cmd, clear, [&](VkCommandBuffer scene) {
+                                if (!draws.empty())
+                                    Vulkan::VulkanCommandList::drawIndexed(scene, *scenePipeline_,
+                                                                           bindingSet_->descriptorSet(index), draws);
+                            });
+                        }))
+                    needsRebuild_ = true;
             }
 
             Integration::ImGuiRenderer& imgui()
@@ -492,6 +597,7 @@ namespace Incubator
             Vulkan::VulkanDevice device_;
             std::vector<uint32_t> vertexShader_;
             std::vector<uint32_t> fragmentShader_;
+            std::vector<uint32_t> shadowVertexShader_;
             std::vector<std::shared_ptr<Mesh::Impl>> meshes_;
             std::vector<std::shared_ptr<Texture::Impl>> textures_;
             std::array<std::shared_ptr<Vulkan::VulkanBuffer>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
@@ -502,6 +608,9 @@ namespace Incubator
             std::unique_ptr<Vulkan::VulkanPipeline> pipeline_;
             std::array<std::shared_ptr<SceneOutput::Impl>, Vulkan::VulkanFrameScheduler::FRAME_COUNT> sceneTargets_{};
             std::unique_ptr<Vulkan::VulkanPipeline> scenePipeline_;
+            std::array<std::shared_ptr<Vulkan::VulkanShadowTarget>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
+                shadowTargets_{};
+            std::unique_ptr<Vulkan::VulkanPipeline> shadowPipeline_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
             std::unique_ptr<Integration::ImGuiRenderer> imguiRenderer_;
             VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
@@ -542,6 +651,13 @@ namespace Incubator
             impl_->prepareSceneResources(vertexShader, fragmentShader);
         }
 
+        void Renderer::prepareShadowResources(const Resource::ShaderResource& vertexShader)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            impl_->prepareShadowResources(vertexShader);
+        }
+
         Material Renderer::createMaterial(const MaterialDesc& desc)
         {
             if (!impl_)
@@ -580,13 +696,32 @@ namespace Incubator
 
 namespace Incubator::Render
 {
-    SceneOutput Renderer::prepareSceneTarget(FrameExtent extent) { return impl_->prepareSceneTarget(extent); }
-    void Renderer::drawSceneTarget(const SceneOutput& output,const FrameInput& input,const std::array<float,4>& color,const std::function<void(void*)>& ui) { impl_->drawSceneTarget(output,input,color,ui); }
-}
+    SceneOutput Renderer::prepareSceneTarget(FrameExtent extent)
+    {
+        return impl_->prepareSceneTarget(extent);
+    }
+    void Renderer::drawSceneTarget(const SceneOutput& output, const FrameInput& input,
+                                   const std::array<float, 4>& color, const std::function<void(void*)>& ui)
+    {
+        impl_->drawSceneTarget(output, input, color, ui);
+    }
+}  // namespace Incubator::Render
 
-void Incubator::Render::Detail::RendererReviewAccess::withSceneOutput(Renderer& renderer,const SceneOutput& output,const std::function<void(const Vulkan::VulkanDevice&,const Vulkan::VulkanImage&)>& record) { renderer.impl_->reviewOutput(output,record); }
+void Incubator::Render::Detail::RendererReviewAccess::withSceneOutput(
+    Renderer& renderer, const SceneOutput& output,
+    const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record)
+{
+    renderer.impl_->reviewOutput(output, record);
+}
 
 uint64_t Incubator::Render::Renderer::sceneImage(const SceneOutput& output)
 {
     return impl_->sceneImage(output);
+}
+
+void Incubator::Render::Detail::RendererReviewAccess::withShadowOutput(
+    Renderer& renderer, const SceneOutput& output,
+    const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record)
+{
+    renderer.impl_->reviewShadowOutput(output, record);
 }

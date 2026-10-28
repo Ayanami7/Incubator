@@ -36,8 +36,22 @@ namespace Incubator
                     std::hypot(static_cast<double>(lighting.direction.x), static_cast<double>(lighting.direction.y),
                                static_cast<double>(lighting.direction.z));
                 const glm::vec3 direction(glm::dvec3(lighting.direction) / length);
-                return {input.camera.view, input.camera.projection, glm::vec4(direction, lighting.intensity),
-                        glm::vec4(lighting.color, lighting.ambient)};
+                if (input.shadow)
+                {
+                    for (int column = 0; column < 4; ++column)
+                        for (int row = 0; row < 4; ++row)
+                            if (!std::isfinite(input.shadow->viewProjection[column][row]))
+                                throw Error::Exception(Error::Code::RENDER, "Shadow view projection must be finite");
+                    if (!std::isfinite(input.shadow->depthBias) || input.shadow->depthBias < 0)
+                        throw Error::Exception(Error::Code::RENDER,
+                                               "Shadow receiver depth bias must be finite and nonnegative");
+                }
+                return {input.camera.view,
+                        input.camera.projection,
+                        glm::vec4(direction, lighting.intensity),
+                        glm::vec4(lighting.color, lighting.ambient),
+                        input.shadow ? input.shadow->viewProjection : glm::mat4(1),
+                        input.shadow ? glm::vec4(input.shadow->depthBias, 1, 0, 0) : glm::vec4(0)};
             }
 
             VulkanBindingSet::VulkanBindingSet(const VulkanDevice& device,

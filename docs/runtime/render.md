@@ -199,13 +199,13 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 Unlit 输出 `B`；Lambert 输出 `B * (ambient + lightColor * intensity * max(dot(N,-D),0))`。
 计算在线性空间进行，最后 clamp 至 `[0,1]` 并使用原有精确 sRGB 编码一次，alpha 固定 1。
 零法线没有直接光贡献，仍保留环境项；直接光强度与环境系数同时为零时为黑色。
-这是最小漫反射预览，不包含 PBR、源灯光、阴影或背面法线翻转。
+这是最小漫反射预览，不包含 PBR、源灯光、主场景阴影采样或背面法线翻转。
 
 模型 Demo 显式选择 Lambert 并提供方向、线性颜色、强度与环境控件；Render 的默认材质和旧调用仍为 Unlit。
 
 | 数据 | 绑定与更新 |
 |---|---|
-| 帧相机与光照 | set 0 / binding 0，160 字节 FrameData，对 vertex/fragment 可见；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
+| 帧相机与光照 | set 0 / binding 0，240 字节 FrameData，对 vertex/fragment 可见；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
 | 材质纹理 | set 1 / binding 0，Combined Image Sampler；共享已有 Texture，不重复上传 |
 | 材质颜色与模式 | set 1 / binding 1，16 字节 fragment Uniform；仅创建时写入 |
 | 物体 model 与法线变换 | 112 字节 vertex push constant；逐物体录制 |
@@ -240,8 +240,10 @@ Renderer 持有 Material 至关闭，Material 拥有自己的 Sampler 并在内�
 提交签名为 `drawFrame(input, clearColor, recordUi)`，变换顺序为
 `projection * view * model * position`。输入和列表只在本次调用内借用：Frame Uniform 的
 view/projection 分别位于偏移 0、64，`lightDirectionIntensity`、`lightColorAmbient` 两个 vec4
-分别位于偏移 128、144，总计 160 字节，符合两个 Shader 的 std140 FrameData 布局。
-前者 xyz 为单位传播方向、w 为强度，后者 xyz 为线性 RGB、w 为环境系数。
+分别位于偏移 128、144；shadowViewProjection 位于 160，shadowParams 位于 224，总计 240 字节，
+符合场景顶点、片元和阴影深度 Shader 的 std140 FrameData 布局。
+光照两个 vec4 的前者 xyz 为单位传播方向、w 为强度，后者 xyz 为线性 RGB、w 为环境系数。
+shadowParams.x 为接收深度偏移，y 为阴影启用标记；关闭时光源矩阵为单位矩阵、参数为零。
 Buffer 分配及 Descriptor range 覆盖该帧块；生产 drawFrame 与内部 review 入口共用打包函数。
 生产提交在等待当前帧槽 Fence 后一次写入该槽 Buffer，不逐物体改写帧光照；每个 model
 及其法线变换用 112 字节 vertex-stage push constant 在命令录制时复制。model 占前 64 字节，
@@ -323,7 +325,7 @@ Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `test/
 `ModelInstance` 共享准备结果，`makeModelDraws` 将实例整体变换左乘模型缓存的节点累计变换，返回普通 DrawItem
 列表。应用通过同一 FrameInput 提交，列表借用、在途持有和关闭后的引用校验沿用上述约定。
 
-当前支持共享相机与固定 Pipeline、逐物体 Mesh/Material/model 的不透明列表，以及帧级方向光和环境项驱动的 Unlit/Lambert 着色；应用控制模型与动画，可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供材质文件/Loader、模型文件解析、PBR、阴影、多光源、异步资产加载、热重载、显存池、多后端或多视口。
+当前支持共享相机与固定 Pipeline、逐物体 Mesh/Material/model 的不透明列表，以及帧级方向光和环境项驱动的 Unlit/Lambert 着色；应用控制模型与动画，可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供材质文件/Loader、模型文件解析、PBR、主场景阴影采样、多光源、异步资产加载、热重载、显存池、多后端或多视口。
 
 ## 独立场景目标
 
@@ -348,7 +350,7 @@ ImGui 纹理标识，生成图像命令。Integration 按帧槽持有描述符�
 ## 阴影帧参数
 
 `runtime/render/shadow.h` 提供消费者设置 `ShadowSettings`、值快照 `ShadowFrame` 和
-`makeShadowFrame(settings, direction)`。当前支持 CPU 光源投影与投射物快照生成，GPU 阴影绘制与采样尚未接入。
+`makeShadowFrame(settings, direction)`。当前支持 CPU 光源投影、投射物快照及 GPU 深度绘制，主场景阴影采样尚未接入。
 
 | 设置 | 默认值 | 约定 |
 |---|---|---|
@@ -369,4 +371,28 @@ ImGui 纹理标识，生成图像命令。Integration 按帧槽持有描述符�
 启用时无效参数或无法用有限 float 矩阵表示的结果抛 CONFIG。
 
 `FrameInput` 尾部增加默认空的 `shadow` 和 `shadowDraws`。前者按值复制光源矩阵与偏移，后者借用独立投射列表；
-旧聚合初始化仍默认无阴影，GPU 帧参数布局当前保持原样。列表所有权及复制、移动约定见 [场景帧提取](scene.md#场景帧提取)。
+旧聚合初始化仍默认无阴影，共同 GPU 帧参数为上述 240 字节布局。列表所有权及复制、移动约定见 [场景帧提取](scene.md#场景帧提取)。
+
+
+### 独立阴影深度绘制
+
+应用先调用 `prepareSceneResources`，再把经现有 ShaderResource 加载的深度顶点 Shader 借给
+`prepareShadowResources`。Renderer 复制 SPIR-V 后即可释放 CPU Resource；不启用阴影的消费者无需准备该 Shader。
+空 Shader、重复准备或尚未准备场景布局时抛 RENDER。Renderer 不隐式读取或编译 Shader。
+
+`drawSceneTarget` 收到非空 shadow 时，在本次主场景之前清除并绘制深度图；即使 shadowDraws 为空也清为 1。
+第一个有效提交即使用本帧光源矩阵与模型矩阵，不延迟一帧。投射列表只解析同一 Renderer 的有效网格和模型矩阵，
+不读取材质引用、不计算法线矩阵；使用原网格三角形列表和双面深度测试，最近表面获胜。
+模型 push constant 为 64 字节，与主场景 112 字节的法线参数分开录制。
+
+阴影图固定为 1024×1024、单层、单 sample，每个帧槽独占一张。首次有效启用时按需分配，
+候选依次为 D32_SFLOAT、D16_UNORM，检查 optimal tiling 的深度附件、采样及回读能力，并查询实际 usage 的图像支持。
+无支持格式或分配/Pipeline 创建失败抛 RENDER，不使用全亮资源掩盖失败。
+稳定帧、启停及视口尺寸变化复用阴影图和深度 Pipeline，不逐帧等待整个设备；旧槽在 Fence 完成后才更新 UBO 与录制。
+
+Synchronization2 在深度早/晚测试写入与片元采样之间建立依赖，结束布局为 SHADER_READ_ONLY_OPTIMAL；
+再次写入从该布局转回深度附件。帧调度器持有网格、目标及帧 Buffer 至 Fence 完成，关闭先等待在途资源。
+内部 Review 可以在等待后借用实际深度图，受控测试复用回读及片元采样支持；这不是产品截图或调试视图接口。
+
+`drawFrame` 及直接帧 Review 不执行阴影流程，收到非空 shadow 时在录制和提交前抛 RENDER；
+原有无阴影调用保持兼容。主场景目前仍沿用原 Lambert 结果，完成深度绘制不表示已把阴影乘入直接光。

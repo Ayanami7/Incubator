@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <glm/ext/matrix_clip_space.hpp>
@@ -28,6 +29,7 @@
 #include "runtime/render/detail/renderer_review.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
+#include "runtime/render/vulkan/vulkan_shadow_target.h"
 #include "runtime/resource/loader/model_loader.h"
 #include "runtime/resource/loader/shader_loader.h"
 #include "runtime/resource/loader/shader_resource.h"
@@ -108,6 +110,57 @@ namespace
         for (auto at = text.find(value); at != std::string_view::npos; at = text.find(value, at + value.size()))
             ++count;
         return count;
+    }
+
+    float readShadowDepth(const Vulkan::VulkanDevice& device, const Vulkan::VulkanImage& image, uint32_t x = 512,
+                          uint32_t y = 512)
+    {
+        const auto bytes = TextureGpuReview::captureMip(device, image, 0, {1, 1}, VK_IMAGE_ASPECT_DEPTH_BIT,
+                                                        {int32_t(x), int32_t(y), 0});
+        if (image.format() == VK_FORMAT_D16_UNORM)
+        {
+            uint16_t value;
+            std::memcpy(&value, bytes.data(), sizeof(value));
+            return float(value) / 65535.0f;
+        }
+        float value;
+        std::memcpy(&value, bytes.data(), sizeof(value));
+        return value;
+    }
+
+    uint8_t sampleShadowDepth(const Vulkan::VulkanDevice& device, const Vulkan::VulkanImage& image,
+                              const std::vector<uint32_t>& vertex, const std::vector<uint32_t>& fragment)
+    {
+        // 复用正式纹理 Shader 的 Unlit 路径验证真实片元采样，只取深度的 R 分量。
+        const auto frame = Vulkan::makeFrameUniform({{384, 256}, {glm::mat4(1), glm::mat4(1)}, {}});
+        const std::array uniforms{std::make_shared<Vulkan::VulkanBuffer>(
+            device, sizeof(frame), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
+        uniforms[0]->write(0, std::as_bytes(std::span(&frame, 1)));
+        Vulkan::VulkanBindingSet bindings(device, uniforms);
+        Vulkan::VulkanSampler sampler(device, {});
+        Vulkan::VulkanMaterialBinding material(device, bindings.materialLayout(), image, sampler, {1, 1, 1});
+        Vulkan::VulkanPipeline pipeline(device, VK_FORMAT_R8G8B8A8_UNORM, device.findDepthFormat(), bindings.layout(),
+                                        bindings.materialLayout(), vertex, fragment);
+        auto mesh = Demo::makePlaneMesh();
+        for (auto& v : mesh.vertices)
+        {
+            v.uv[0] = 0.5f;
+            v.uv[1] = 0.5f;
+        }
+        auto vertices = Vulkan::VulkanBuffer::uploadStatic(
+            device, std::as_bytes(std::span(mesh.vertices)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT);
+        auto indices = Vulkan::VulkanBuffer::uploadStatic(
+            device, std::as_bytes(std::span(mesh.indices)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT);
+        const std::array draws{Vulkan::VulkanDrawItem{vertices->handle(),
+                                                      indices->handle(),
+                                                      uint32_t(mesh.indices.size()),
+                                                      material.descriptorSet(),
+                                                      {glm::mat4(1), {}}}};
+        const auto pixels = TextureGpuReview::captureDraws(device, pipeline, bindings.descriptorSet(0), draws);
+        return pixels[(128 * 384 + 192) * 4];
     }
 
     class SharedModelLoader final : public LoaderBase
@@ -204,6 +257,16 @@ namespace
                 fs::copy(previous_ / "assets/models" / directory, sandbox_ / "assets/models" / directory,
                          fs::copy_options::recursive | fs::copy_options::overwrite_existing);
         }
+        void shadowShader(Renderer& renderer)
+        {
+            auto& manager = ResourceManager::instance();
+            const auto id = manager.registerResource(ResourceType::SHADER, "shaders/shadow.vert.spv");
+            const auto* shader = manager.get<ShaderResource>(id);
+            ASSERT_NE(shader, nullptr);
+            renderer.prepareShadowResources(*shader);
+            manager.release(id);
+            released(ResourceType::SHADER, "shaders/shadow.vert.spv");
+        }
         void released(ResourceType type, std::string_view path)
         {
             const auto id = ResourceRegistry::instance().lookup(type, path);
@@ -238,6 +301,129 @@ namespace
         std::ostringstream messages_, resourceMessages_;
     };
 
+    TEST_F(ModelPreparationTest, ShadowDepthTargetsFollowSlotsAndKeepNearestSurfaceWithoutMaterials)
+    {
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            shadowShader(renderer);
+            std::array<std::vector<uint32_t>, 2> words;
+            auto& manager = ResourceManager::instance();
+            for (size_t i = 0; i < words.size(); ++i)
+            {
+                const auto id = manager.registerResource(ResourceType::SHADER,
+                                                         i ? "shaders/cube.frag.spv" : "shaders/cube.vert.spv");
+                words[i] = manager.get<ShaderResource>(id)->words();
+                manager.release(id);
+            }
+            const std::array<MeshVertex, 4> vertices{
+                {{{-2, -2, 0}, {0, 0}}, {{2, -2, 0}, {1, 0}}, {{2, 2, 0}, {1, 1}}, {{-2, 2, 0}, {0, 1}}}};
+            const std::array<uint32_t, 6> forward{0, 1, 2, 0, 2, 3}, reverse{2, 1, 0, 3, 2, 0};
+            const auto mesh = renderer.createMesh(vertices, forward);
+            const auto reversed = renderer.createMesh(vertices, reverse);
+            ShadowSettings settings;
+            settings.enabled = true;
+            settings.halfExtent = {4, 4};
+            settings.nearPlane = 1;
+            settings.farPlane = 9;
+            const auto shadow = makeShadowFrame(settings, {0, 0, -1});
+            const std::array<float, 8> expected{0.25f, 0.75f, 1, 0.125f, 1, 1, 0.25f, 0.75f};
+            std::array<VkImage, 2> handles{};
+            std::array<SceneOutput, 2> outputs;
+            for (size_t i = 0; i < expected.size(); ++i)
+            {
+                native->pollEvents();
+                ASSERT_TRUE(renderer.beginUiFrame());
+                const FrameExtent extent{i < 4 ? 192u : 256u, 128};
+                auto output = renderer.prepareSceneTarget(extent);
+                std::vector<DrawItem> casters;
+                if (i != 2 && i != 4 && i != 5)
+                {
+                    casters.push_back({mesh, {}, glm::translate(glm::mat4(1), {0, 0, -2})});
+                    if (i != 1 && i != 7)
+                    {
+                        const auto model = glm::translate(glm::mat4(1), {0, 0, i == 3 ? 3 : 2}) *
+                                           glm::scale(glm::mat4(1), {-0.5f, 1.5f, 0});
+                        casters.push_back({i == 3 ? reversed : mesh, {}, model});
+                        casters.push_back(casters[0]);
+                    }
+                }
+                FrameInput input{extent, {glm::mat4(1), glm::mat4(1)}, {}, {}, i == 4 ? std::nullopt : shadow, casters};
+                renderer.imgui().endFrame();
+                renderer.drawSceneTarget(output, input, {0, 0, 0, 1});
+                outputs[i % 2] = output;
+                if (i == 4)
+                    continue;
+                Detail::RendererReviewAccess::withShadowOutput(
+                    renderer, output, [&](const auto& device, const auto& image) {
+                        EXPECT_EQ(image.extent().width, 1024u);
+                        EXPECT_EQ(image.extent().height, 1024u);
+                        EXPECT_EQ(image.mipLevels(), 1u);
+                        if (!handles[i % 2])
+                            handles[i % 2] = image.handle();
+                        EXPECT_EQ(image.handle(), handles[i % 2]);
+                        EXPECT_NEAR(readShadowDepth(device, image), expected[i], 0.00003f);
+                        EXPECT_NEAR(readShadowDepth(device, image, 0, 0), 1, 0.00003f);
+                        if (i < 2)
+                        {
+                            const double encoded = 1.055 * std::pow(double(expected[i]), 1.0 / 2.4) - 0.055;
+                            EXPECT_NEAR(sampleShadowDepth(device, image, words[0], words[1]), encoded * 255, 2);
+                        }
+                    });
+                if (i == 1)
+                    Detail::RendererReviewAccess::withShadowOutput(
+                        renderer, outputs[0], [&](const auto& device, const auto& image) {
+                            EXPECT_NE(handles[0], handles[1]);
+                            EXPECT_NEAR(readShadowDepth(device, image), 0.25f, 0.00003f);
+                        });
+            }
+        }
+        EXPECT_EQ(occurrences(messages_.str(), "Created shadow target:"), 2u);
+        EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline: color format 0,"), 1u);
+        cleanValidation();
+    }
+
+    TEST_F(ModelPreparationTest, ShadowResourcesRejectMissingShaderAndInvalidMeshBeforeSubmission)
+    {
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            ShaderResource empty({}, {});
+            EXPECT_THROW(renderer.prepareShadowResources(empty), Error::Exception);
+            shaders(renderer);
+            EXPECT_THROW(renderer.prepareShadowResources(empty), Error::Exception);
+            native->pollEvents();
+            ASSERT_TRUE(renderer.beginUiFrame());
+            auto output = renderer.prepareSceneTarget({128, 128});
+            FrameInput input{{128, 128}, {glm::mat4(1), glm::mat4(1)}, {}, {}, ShadowFrame{}, {}};
+            renderer.imgui().endFrame();
+            bool recorded = false;
+            const auto reject = [&](auto&& submit) {
+                try
+                {
+                    submit();
+                    FAIL() << "Invalid shadow submission was accepted";
+                }
+                catch (const Error::Exception& error)
+                {
+                    EXPECT_EQ(error.code(), Error::Code::RENDER);
+                }
+                EXPECT_FALSE(recorded);
+            };
+            reject([&] { renderer.drawSceneTarget(output, input, {0, 0, 0, 1}, [&](void*) { recorded = true; }); });
+            shadowShader(renderer);
+            const std::array<DrawItem, 1> invalid{DrawItem{}};
+            input.shadowDraws = invalid;
+            reject([&] { renderer.drawSceneTarget(output, input, {0, 0, 0, 1}, [&](void*) { recorded = true; }); });
+            reject([&] { renderer.drawFrame(input, {0, 0, 0, 1}, [&](void*) { recorded = true; }); });
+            input.shadow.reset();
+            EXPECT_NO_THROW(renderer.drawSceneTarget(output, input, {0, 0, 0, 1}));
+        }
+        EXPECT_EQ(occurrences(messages_.str(), "Created shadow target:"), 0u);
+        cleanValidation();
+    }
+
     TEST_F(ModelPreparationTest, IndependentSceneTargetsFollowFrameSlotsAndExpireAfterResize)
     {
         auto native = window();
@@ -256,11 +442,14 @@ namespace
                 auto output = renderer.prepareSceneTarget(extent);
                 ASSERT_TRUE(output.valid());
                 EXPECT_EQ(output.extent(), extent);
-                if (i == 0) retained = output;
-                if (i == 4) EXPECT_FALSE(retained.valid());
+                if (i == 0)
+                    retained = output;
+                if (i == 4)
+                    EXPECT_FALSE(retained.valid());
                 Scene::Scene scene;
                 scene.setCamera(Scene::Camera({0, 0, 3}));
-                if (i % 2) scene.createEntity(model);
+                if (i % 2)
+                    scene.createEntity(model);
                 const auto frame = Scene::extractSceneFrame(scene, extent);
                 renderer.imgui().endFrame();
                 renderer.drawSceneTarget(output, frame->input(), {0.2f, 0.3f, 0.4f, 1});
@@ -945,6 +1134,53 @@ namespace
     private:
         std::optional<glm::mat4> leafTransform_;
     };
+
+    TEST_F(ModelPreparationTest, ShadowDepthUsesSourceTransformsAndKeepsInFlightSlotsAcrossToggles)
+    {
+        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            shadowShader(renderer);
+            auto model = Model::prepareModel(renderer, "models/shadow-source.gltf");
+            const Scene::Transform pose({1, 2, 2}, {1, 0, 0, 1}, {2, -3, 0});
+            const std::array instances{Model::ModelInstance{model, pose.matrix()}};
+            auto casters = Model::makeModelDraws(instances);
+            for (auto& draw : casters)
+                draw.material = {};
+            ShadowSettings settings;
+            settings.enabled = true;
+            settings.center = {2, 68.0f / 3, 0};
+            settings.halfExtent = {3, 3};
+            settings.nearPlane = 1;
+            settings.farPlane = 9;
+            for (int i = 0; i < 10; ++i)
+            {
+                native->pollEvents();
+                ASSERT_TRUE(renderer.beginUiFrame());
+                const FrameExtent extent{i < 4 ? 192u : 320u, 128};
+                auto output = renderer.prepareSceneTarget(extent);
+                settings.enabled = i != 4 && i != 7;
+                FrameInput input{extent, {glm::mat4(1), glm::mat4(1)},          {},
+                                 {},     makeShadowFrame(settings, {0, 0, -1}), casters};
+                renderer.imgui().endFrame();
+                renderer.drawSceneTarget(output, input, {0, 0, 0, 1});
+                if (i == 0)
+                    Detail::RendererReviewAccess::withShadowOutput(
+                        renderer, output, [&](const auto& device, const auto& image) {
+                            // 源根平移先于实体旋转和缩放；已知三角形重心应在深度图中心且深度为 0.25。
+                            EXPECT_NEAR(readShadowDepth(device, image), 0.25f, 0.00003f);
+                        });
+            }
+            // 后续帧不额外等待回读，关闭时由帧槽持有和 Fence 保证深度资源仍然有效。
+            casters.clear();
+            model.reset();
+        }
+        EXPECT_EQ(occurrences(messages_.str(), "Created shadow target:"), 2u);
+        EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline: color format 0,"), 1u);
+        cleanValidation();
+    }
 
     TEST_F(ModelPreparationTest, UnavailablePartBoundsInvalidateWholeModelWithoutDiscardingDraws)
     {

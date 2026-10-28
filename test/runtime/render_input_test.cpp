@@ -8,6 +8,7 @@
 #include "runtime/core/error/error.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
 #include "runtime/render/vulkan/vulkan_image.h"
+#include "runtime/render/vulkan/vulkan_shadow_target.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
 #include "support/render_demo/scene_frame.h"
 
@@ -52,6 +53,18 @@ namespace
         const auto defaults = makeFrameUniform(input);
         EXPECT_EQ(defaults.lightDirectionIntensity, glm::vec4(0, 0, -1, 1));
         EXPECT_EQ(defaults.lightColorAmbient, glm::vec4(1, 1, 1, 0.1f));
+        EXPECT_EQ(defaults.shadowViewProjection, glm::mat4(1));
+        EXPECT_EQ(defaults.shadowParams, glm::vec4(0));
+        input.shadow = ShadowFrame{glm::mat4(2), 0.002f};
+        const auto shadow = makeFrameUniform(input);
+        EXPECT_EQ(shadow.shadowViewProjection, glm::mat4(2));
+        EXPECT_EQ(shadow.shadowParams, glm::vec4(0.002f, 1, 0, 0));
+        input.shadow->viewProjection[0][0] = std::numeric_limits<float>::infinity();
+        EXPECT_THROW(makeFrameUniform(input), Error::Exception);
+        input.shadow->viewProjection = glm::mat4(1);
+        input.shadow->depthBias = -1;
+        EXPECT_THROW(makeFrameUniform(input), Error::Exception);
+        input.shadow.reset();
         input.lighting = {{3, 0, -4}, {0.25f, 0.5f, 1}, 2, 0.3f};
         const auto packed = makeFrameUniform(input);
         EXPECT_EQ(packed.view, input.camera.view);
@@ -74,6 +87,39 @@ namespace
         }
         input.lighting.direction = glm::vec3(0);
         EXPECT_THROW(makeFrameUniform(input), Error::Exception);
+    }
+
+    TEST(RenderFrameInputTest, ShadowFormatRequiresSampledDepthAttachmentAndFixedImageSupport)
+    {
+        VkFormatProperties format{};
+        format.optimalTilingFeatures = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                       VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+        VkImageFormatProperties image{{1024, 1024, 1}, 1, 1, VK_SAMPLE_COUNT_1_BIT, 1024 * 1024 * 4};
+        EXPECT_NO_THROW(VulkanShadowTarget::validateSupport(VK_FORMAT_D32_SFLOAT, format, image));
+        EXPECT_NO_THROW(VulkanShadowTarget::validateSupport(VK_FORMAT_D16_UNORM, format, image));
+        for (const auto feature : {VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
+                                   VK_FORMAT_FEATURE_TRANSFER_SRC_BIT})
+        {
+            auto unsupported = format;
+            unsupported.optimalTilingFeatures &= ~feature;
+            try
+            {
+                VulkanShadowTarget::validateSupport(VK_FORMAT_D32_SFLOAT, unsupported, image);
+                FAIL() << "Unsupported shadow format was accepted";
+            }
+            catch (const Error::Exception& error)
+            {
+                EXPECT_EQ(error.code(), Error::Code::RENDER);
+            }
+        }
+        image.maxExtent.width = 512;
+        EXPECT_THROW(VulkanShadowTarget::validateSupport(VK_FORMAT_D32_SFLOAT, format, image), Error::Exception);
+        image.maxExtent.width = 1024;
+        image.sampleCounts = VK_SAMPLE_COUNT_4_BIT;
+        EXPECT_THROW(VulkanShadowTarget::validateSupport(VK_FORMAT_D32_SFLOAT, format, image), Error::Exception);
+        image.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
+        image.maxResourceSize = 1;
+        EXPECT_THROW(VulkanShadowTarget::validateSupport(VK_FORMAT_D32_SFLOAT, format, image), Error::Exception);
     }
 
     TEST(RenderColorTest, SurfaceSelectionHasStablePriorityAndExplicitFallback)

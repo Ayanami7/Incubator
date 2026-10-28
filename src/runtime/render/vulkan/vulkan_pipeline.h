@@ -16,6 +16,7 @@ namespace Incubator
             class VulkanPipeline
             {
             public:
+                /// @brief colorFormat 为 UNDEFINED 时仅绘制深度，忽略材质布局及片元 Shader。
                 VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
                                VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout materialLayout,
                                const std::vector<uint32_t>& vertexShader, const std::vector<uint32_t>& fragmentShader);

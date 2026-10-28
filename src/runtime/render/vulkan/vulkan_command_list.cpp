@@ -28,14 +28,15 @@ namespace Incubator
                                            uint32_t imageIndex, const VkClearColorValue& clearColor, VkImage depthImage,
                                            VkImageView depthView,
                                            const std::function<void(VkCommandBuffer)>& recordScene,
-                                   const std::function<void(VkCommandBuffer)>& beforeScene)
+                                           const std::function<void(VkCommandBuffer)>& beforeScene)
             {
                 VkCommandBufferBeginInfo beginInfo{};
                 beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 checkVk(vkBeginCommandBuffer(commandBuffer, &beginInfo), "vkBeginCommandBuffer");
 
-                if (beforeScene) beforeScene(commandBuffer);
+                if (beforeScene)
+                    beforeScene(commandBuffer);
 
                 VkImageMemoryBarrier2 toColor{};
                 toColor.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
@@ -122,6 +123,23 @@ namespace Incubator
                 dependency.imageMemoryBarrierCount = 1;
                 vkCmdPipelineBarrier2(commandBuffer, &dependency);
                 checkVk(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
+            }
+
+            void VulkanCommandList::drawShadow(VkCommandBuffer commands, const VulkanPipeline& pipeline,
+                                               VkDescriptorSet frameSet, std::span<const VulkanShadowDrawItem> draws)
+            {
+                vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+                vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, 1, &frameSet,
+                                        0, nullptr);
+                const VkDeviceSize offset = 0;
+                for (const auto& draw : draws)
+                {
+                    vkCmdPushConstants(commands, pipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(draw.model),
+                                       &draw.model);
+                    vkCmdBindVertexBuffers(commands, 0, 1, &draw.vertexBuffer, &offset);
+                    vkCmdBindIndexBuffer(commands, draw.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+                    vkCmdDrawIndexed(commands, draw.indexCount, 1, 0, 0, 0);
+                }
             }
 
             void VulkanCommandList::drawIndexed(VkCommandBuffer commandBuffer, const VulkanPipeline& pipeline,

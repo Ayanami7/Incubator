@@ -1,7 +1,5 @@
 #pragma once
 
-#include "runtime/render/scene_output.h"
-
 #include <array>
 #include <functional>
 #include <memory>
@@ -11,6 +9,7 @@
 #include "runtime/render/frame_input.h"
 #include "runtime/render/material.h"
 #include "runtime/render/mesh.h"
+#include "runtime/render/scene_output.h"
 #include "runtime/render/texture.h"
 
 namespace Incubator
@@ -82,6 +81,11 @@ namespace Incubator
             void prepareSceneResources(const Resource::ShaderResource& vertexShader,
                                        const Resource::ShaderResource& fragmentShader);
 
+            /// @brief 在场景资源准备后复制阴影深度顶点 Shader，首次启用时创建深度资源。
+            /// @param vertexShader 使用共同 FrameData 与模型矩阵的深度顶点 Shader。
+            /// @note 未启用阴影的调用方不需要调用；不读取文件或保留 CPU Resource。
+            void prepareShadowResources(const Resource::ShaderResource& vertexShader);
+
             /// @brief 根据描述创建不可变材质绑定。
             /// @param desc 材质描述，仅在本次调用期间借用。
             /// @return 由此 Renderer 持有的材质引用。
@@ -93,7 +97,7 @@ namespace Incubator
             std::optional<FrameExtent> beginUiFrame();
 
             /// @brief 提交场景帧并在当前渲染通道中记录 UI。
-            /// @param input 场景帧输入；尺寸变化后过期的输入会被跳过，应在下一帧重新生成。
+            /// @param input 场景帧输入；不接受启用阴影的输入，尺寸变化后的过期输入会被跳过。
             /// @param clearColor 清屏颜色；RGB 使用 sRGB 编码，alpha 为线性值，与 ImGui 后端一致。
             /// @param recordUi 在活动颜色/深度渲染作用域内调用的 UI 记录回调。
             /// @note 回调参数是原生命令缓冲区，仅在本次回调期间有效。
@@ -101,7 +105,8 @@ namespace Incubator
                            const std::function<void(void*)>& recordUi = {});
             /// @brief 等待当前帧槽后准备独立场景图像；零尺寸返回无效引用。
             SceneOutput prepareSceneTarget(FrameExtent extent);
-            /// @brief 同帧先绘制独立场景，再在交换链渲染作用域中记录 UI。
+            /// @brief 同帧先绘制阴影深度（启用时）与独立场景，再记录交换链 UI。
+            /// @note 启用阴影前需准备深度 Shader；主场景阴影采样尚未接入。
             void drawSceneTarget(const SceneOutput& output, const FrameInput& input,
                                  const std::array<float, 4>& clearColor,
                                  const std::function<void(void*)>& recordUi = {});

@@ -41,6 +41,15 @@ namespace Incubator
                 VulkanObjectData object;
             };
 
+            /// @brief 深度绘制只借用网格缓冲区和模型矩阵，不解析材质或法线。
+            struct VulkanShadowDrawItem
+            {
+                VkBuffer vertexBuffer;
+                VkBuffer indexBuffer;
+                uint32_t indexCount;
+                glm::mat4 model;
+            };
+
             class VulkanCommandList
             {
             public:
@@ -51,6 +60,9 @@ namespace Incubator
 
                 static void drawIndexed(VkCommandBuffer commandBuffer, const VulkanPipeline& pipeline,
                                         VkDescriptorSet frameSet, std::span<const VulkanDrawItem> draws);
+                /// @brief 绑定光源帧参数并录制双面深度绘制。
+                static void drawShadow(VkCommandBuffer commandBuffer, const VulkanPipeline& pipeline,
+                                       VkDescriptorSet frameSet, std::span<const VulkanShadowDrawItem> draws);
             };
         }  // namespace Vulkan
     }  // namespace Render

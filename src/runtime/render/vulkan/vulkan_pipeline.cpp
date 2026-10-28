@@ -35,6 +35,7 @@ namespace Incubator
                                            const std::vector<uint32_t>& fragmentShader)
                 : device_(device), colorFormat_(colorFormat), depthFormat_(depthFormat)
             {
+                const bool depthOnly = colorFormat == VK_FORMAT_UNDEFINED;
                 VkShaderModule vertexModule = VK_NULL_HANDLE;
                 VkShaderModule fragmentModule = VK_NULL_HANDLE;
                 try
@@ -45,17 +46,22 @@ namespace Incubator
                     moduleInfo.pCode = vertexShader.data();
                     checkVk(vkCreateShaderModule(device_.handle(), &moduleInfo, nullptr, &vertexModule),
                             "vkCreateShaderModule(vertex)");
-                    moduleInfo.codeSize = fragmentShader.size() * sizeof(uint32_t);
-                    moduleInfo.pCode = fragmentShader.data();
-                    checkVk(vkCreateShaderModule(device_.handle(), &moduleInfo, nullptr, &fragmentModule),
-                            "vkCreateShaderModule(fragment)");
+                    if (!depthOnly)
+                    {
+                        moduleInfo.codeSize = fragmentShader.size() * sizeof(uint32_t);
+                        moduleInfo.pCode = fragmentShader.data();
+                        checkVk(vkCreateShaderModule(device_.handle(), &moduleInfo, nullptr, &fragmentModule),
+                                "vkCreateShaderModule(fragment)");
+                    }
 
                     VkPipelineLayoutCreateInfo layoutInfo{};
                     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
                     const std::array layouts{frameLayout, materialLayout};
-                    layoutInfo.setLayoutCount = static_cast<uint32_t>(layouts.size());
+                    layoutInfo.setLayoutCount = depthOnly ? 1u : static_cast<uint32_t>(layouts.size());
                     layoutInfo.pSetLayouts = layouts.data();
-                    const VkPushConstantRange objectRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VulkanObjectData)};
+                    const VkPushConstantRange objectRange{
+                        VK_SHADER_STAGE_VERTEX_BIT, 0,
+                        depthOnly ? uint32_t(sizeof(glm::mat4)) : uint32_t(sizeof(VulkanObjectData))};
                     layoutInfo.pushConstantRangeCount = 1;
                     layoutInfo.pPushConstantRanges = &objectRange;
                     checkVk(vkCreatePipelineLayout(device_.handle(), &layoutInfo, nullptr, &layout_),
@@ -84,7 +90,8 @@ namespace Incubator
                         {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)}};
                     vertexInput.vertexBindingDescriptionCount = 1;
                     vertexInput.pVertexBindingDescriptions = &vertexBinding;
-                    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(std::size(vertexAttributes));
+                    vertexInput.vertexAttributeDescriptionCount =
+                        depthOnly ? 1u : static_cast<uint32_t>(std::size(vertexAttributes));
                     vertexInput.pVertexAttributeDescriptions = vertexAttributes;
                     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
                     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -117,18 +124,18 @@ namespace Incubator
                                                      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
                     VkPipelineColorBlendStateCreateInfo blend{};
                     blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-                    blend.attachmentCount = 1;
+                    blend.attachmentCount = depthOnly ? 0u : 1u;
                     blend.pAttachments = &blendAttachment;
                     VkPipelineRenderingCreateInfo rendering{};
                     rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-                    rendering.colorAttachmentCount = 1;
+                    rendering.colorAttachmentCount = depthOnly ? 0u : 1u;
                     rendering.pColorAttachmentFormats = &colorFormat_;
                     rendering.depthAttachmentFormat = depthFormat_;
 
                     VkGraphicsPipelineCreateInfo pipelineInfo{};
                     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
                     pipelineInfo.pNext = &rendering;
-                    pipelineInfo.stageCount = static_cast<uint32_t>(stages.size());
+                    pipelineInfo.stageCount = depthOnly ? 1u : static_cast<uint32_t>(stages.size());
                     pipelineInfo.pStages = stages.data();
                     pipelineInfo.pVertexInputState = &vertexInput;
                     pipelineInfo.pInputAssemblyState = &inputAssembly;

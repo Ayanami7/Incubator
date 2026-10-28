@@ -80,6 +80,7 @@ set(RESOURCE_SOURCES
 set(RENDER_HEADERS
     render/scene_output.h
     render/vulkan/vulkan_scene_target.h
+    render/vulkan/vulkan_shadow_target.h
     render/renderer.h
     render/detail/renderer_review.h
     render/frame_input.h
@@ -105,6 +106,7 @@ set(RENDER_HEADERS
 )
 set(RENDER_SOURCES
     render/vulkan/vulkan_scene_target.cpp
+    render/vulkan/vulkan_shadow_target.cpp
     render/renderer.cpp
     render/lighting.cpp
     render/shadow.cpp

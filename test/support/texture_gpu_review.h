@@ -100,7 +100,9 @@ namespace TextureGpuReview
 
     // 将一个受控的小型 mip 读取到现有复核缓冲区，再恢复图像采样布局。
     inline std::vector<uint8_t> captureMip(const VulkanDevice& device, const VulkanImage& image,
-                                            uint32_t level, VkExtent2D extent)
+                                            uint32_t level, VkExtent2D extent,
+                                            VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+                                            VkOffset3D offset = {0, 0, 0})
     {
         Readback readback(device);
         device.executeImmediate([&](VkCommandBuffer commands) {
@@ -114,14 +116,15 @@ namespace TextureGpuReview
             toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
             toTransfer.srcQueueFamilyIndex = toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransfer.image = image.handle();
-            toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1};
+            toTransfer.subresourceRange = {aspect, level, 1, 0, 1};
             VkDependencyInfo dependency{};
             dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
             dependency.imageMemoryBarrierCount = 1;
             dependency.pImageMemoryBarriers = &toTransfer;
             vkCmdPipelineBarrier2(commands, &dependency);
             VkBufferImageCopy copy{};
-            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+            copy.imageSubresource = {aspect, level, 0, 1};
+            copy.imageOffset = offset;
             copy.imageExtent = {extent.width, extent.height, 1};
             vkCmdCopyImageToBuffer(commands, image.handle(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1,
                                    &copy);

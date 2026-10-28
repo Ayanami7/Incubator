@@ -19,7 +19,12 @@ namespace Incubator::Render::Detail
     /// @note 回调借用 Renderer 实际持有的 GPU 资源；附件创建和回读由测试支持代码完成，不属于应用接口。
     struct RendererReviewAccess
     {
-        static void withSceneOutput(Renderer& renderer, const SceneOutput& output,
+        static void withSceneOutput(
+            Renderer& renderer, const SceneOutput& output,
+            const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record);
+        /// @brief 等待在途帧后借用对应场景槽的阴影深度图，供回读或受控采样复核。
+        static void withShadowOutput(
+            Renderer& renderer, const SceneOutput& output,
             const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record);
         using Record = std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanPipeline&, VkDescriptorSet,
                                           std::span<const Vulkan::VulkanDrawItem>)>;

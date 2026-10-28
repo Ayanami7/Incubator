@@ -58,7 +58,7 @@ endforeach()
 add_custom_target(runtime_test_fixtures DEPENDS ${RUNTIME_TEST_FIXTURE_OUTPUTS})
 
 set(RUNTIME_TEST_SHADER_OUTPUTS)
-foreach(SHADER_FILE IN ITEMS cube.vert.spv cube.frag.spv)
+foreach(SHADER_FILE IN ITEMS cube.vert.spv cube.frag.spv shadow.vert.spv)
     set(SHADER_SOURCE "${CMAKE_BINARY_DIR}/assets/shaders/${SHADER_FILE}")
     set(SHADER_OUTPUT "${RUNTIME_TEST_ASSET_DIR}/shaders/${SHADER_FILE}")
     add_custom_command(
