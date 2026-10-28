@@ -425,6 +425,18 @@ namespace Incubator::Demo
             {
                 ImGui::TextUnformatted("Background");
                 ImGui::ColorEdit3("##background", app.clearColor().data(), ImGuiColorEditFlags_NoInputs);
+                auto& shadows = app.shadowSettings();
+                ImGui::Checkbox("Shadows", &shadows.enabled);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "Fixed light bounds: center (%g, %g, %g), half extents (%g, %g), depth %g..%g.\n"
+                        "1024x1024; the range follows light direction, not the camera.",
+                        shadows.center.x, shadows.center.y, shadows.center.z, shadows.halfExtent.x,
+                        shadows.halfExtent.y, shadows.nearPlane, shadows.farPlane);
+                ImGui::TextUnformatted("Receiver depth bias");
+                ImGui::SliderFloat("##shadowBias", &shadows.depthBias, 0, 0.01f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+                ImGui::TextWrapped("Shadow preview settings are not saved in scene files.");
+                ImGui::Separator();
                 lightingControls(app.scene());
             }
             ImGui::PopItemWidth();
@@ -501,10 +513,13 @@ namespace Incubator::Demo
         Render::FrameExtent extent_{0, 0};
     };
 
-    inline Demo::Callbacks makeCallbacks(std::string startupScene = "assets/scenes/mixed.json")
+    inline Demo::Callbacks makeCallbacks(std::string startupScene = "assets/scenes/shadows.json")
     {
         auto demo = std::make_shared<ModelScene>();
-        return {[demo, startupScene = std::move(startupScene)](auto& app) { demo->initialize(app, startupScene); },
+        return {[demo, startupScene = std::move(startupScene)](auto& app) {
+                    demo->initialize(app, startupScene);
+                    app.shadowSettings().enabled = true;
+                },
                 {},
                 [demo](auto& app) { demo->ui(app); },
                 [demo](auto&) { demo->cancelInteraction(); },

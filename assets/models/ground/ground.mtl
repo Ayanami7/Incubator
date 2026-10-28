@@ -1,0 +1,5 @@
+# 中性灰色不透明接收面，基色按线性 RGB 解释。
+newmtl Ground
+Kd 0.5 0.52 0.55
+d 1
+illum 2

@@ -121,7 +121,7 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 - 源文件到构建目录使用 `add_custom_command(OUTPUT ... DEPENDS ...)` 与 `copy_if_different`。
 - 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
-- Demo 资产目标 `demo_models` 位于 `cmake/assets.cmake`，只显式复制 Avocado glTF/bin/PNG 与 Utah Teapot OBJ。`demo_scenes` 在同一文件中部署混合模型场景 `assets/scenes/mixed.json`；`demo_shaders` 在 `examples/demo/CMakeLists.txt` 编译 `cube.vert`、`cube.frag` 和阴影深度顶点 `shadow.vert`，输出到构建资产目录；`runtime_test_shaders` 增量复制这三份 SPIR-V 到独立测试资产根。Demo 依赖上述部署目标，是否准备深度 Shader 由消费者显式决定。
+- Demo 资产目标 `demo_models` 位于 `cmake/assets.cmake`，显式复制 Avocado glTF/bin/PNG、Utah Teapot OBJ 与正式展示地面 ground/ground.obj、ground.mtl。`demo_scenes` 在同一文件中增量部署 `assets/scenes/shadows.json` 与兼容场景 `assets/scenes/mixed.json`；`demo_shaders` 在 `examples/demo/CMakeLists.txt` 编译 `cube.vert`、`cube.frag` 和阴影深度顶点 `shadow.vert`，输出到构建资产目录；`runtime_test_shaders` 增量复制这三份 SPIR-V 到独立测试资产根。Demo 依赖上述部署目标，Demo 默认配置指向 shadows.json，深度 Shader 在首次有效阴影视口中按需准备；其他消费者继续显式决定是否启用。
 - `demo_config` 在 `cmake/assets.cmake` 中将仓库根目录的 `incubator.json` 增量复制到 `<build>/incubator.json`，Demo 显式依赖该目标。配置部署与资产部署均为单向复制，运行时保存不回写源文件；新场景仍需显式加入部署规则。
 - `runtime_ui_fonts` 在同一文件中部署 `assets/fonts/NotoSansSC-Regular.otf` 与 `OFL.txt` 到 `<build>/assets/fonts/`，Demo 及独立进程场景恢复程序显式依赖该目标。字体来源与许可见 `assets/fonts/SOURCE.md`，不使用开发机系统字体。
 - `runtime_test_fixtures` 将同一生产字体及许可复制到 `<build>/test-fixtures/assets/fonts/`，GPU 和 Demo 隔离工作目录继续使用该字体。`imgui_integration_test` 按 GPU 测试属性串行运行于 `<build>/test-fixtures/`，覆盖受控 DPI 更新、像素密度与原生窗口字体呈现；模拟缩放与实际显示证据分别保存。

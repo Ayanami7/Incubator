@@ -3,6 +3,8 @@ set(DEMO_MODEL_OUTPUTS)
 foreach(MODEL_FILE IN ITEMS
     README.md
     utah_teapot/utah_teapot.obj
+    ground/ground.obj
+    ground/ground.mtl
     avocado/glTF/Avocado.gltf
     avocado/glTF/Avocado.bin
     avocado/glTF/Avocado_baseColor.png
@@ -23,12 +25,18 @@ foreach(MODEL_FILE IN ITEMS
 endforeach()
 add_custom_target(demo_models DEPENDS ${DEMO_MODEL_OUTPUTS})
 
-set(DEMO_SCENE_OUTPUT "${CMAKE_BINARY_DIR}/assets/scenes/mixed.json")
-add_custom_command(OUTPUT "${DEMO_SCENE_OUTPUT}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/assets/scenes"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ASSETS_DIR}/scenes/mixed.json" "${DEMO_SCENE_OUTPUT}"
-    DEPENDS "${ASSETS_DIR}/scenes/mixed.json" VERBATIM)
-add_custom_target(demo_scenes DEPENDS "${DEMO_SCENE_OUTPUT}")
+set(DEMO_SCENE_OUTPUTS)
+foreach(SCENE_FILE IN ITEMS mixed.json shadows.json)
+    set(SCENE_OUTPUT "${CMAKE_BINARY_DIR}/assets/scenes/${SCENE_FILE}")
+    add_custom_command(OUTPUT "${SCENE_OUTPUT}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/assets/scenes"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ASSETS_DIR}/scenes/${SCENE_FILE}" "${SCENE_OUTPUT}"
+        DEPENDS "${ASSETS_DIR}/scenes/${SCENE_FILE}"
+        COMMENT "部署示例场景 ${SCENE_FILE}"
+        VERBATIM)
+    list(APPEND DEMO_SCENE_OUTPUTS "${SCENE_OUTPUT}")
+endforeach()
+add_custom_target(demo_scenes DEPENDS ${DEMO_SCENE_OUTPUTS})
 
 set(DEMO_CONFIG_OUTPUT "${CMAKE_BINARY_DIR}/incubator.json")
 add_custom_command(OUTPUT "${DEMO_CONFIG_OUTPUT}"

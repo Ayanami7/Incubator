@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "entities": [
+    {
+      "model": {
+        "path": "models/avocado/gltf/avocado.gltf",
+        "prepare": {
+          "mipMode": "fullChain",
+          "sampler": {
+            "minFilter": "linear",
+            "magFilter": "linear",
+            "mipFilter": "linear"
+          },
+          "shading": "lambert"
+        }
+      },
+      "transform": {
+        "position": [
+          -1.2,
+          -0.8488543,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          24,
+          24,
+          24
+        ]
+      },
+      "visible": true
+    },
+    {
+      "model": {
+        "path": "models/utah_teapot/utah_teapot.obj",
+        "prepare": {
+          "mipMode": "fullChain",
+          "sampler": {
+            "minFilter": "linear",
+            "magFilter": "linear",
+            "mipFilter": "linear"
+          },
+          "shading": "lambert"
+        }
+      },
+      "transform": {
+        "position": [
+          1.35,
+          -0.259375,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          0.075,
+          0.075,
+          0.075
+        ]
+      },
+      "visible": true
+    },
+    {
+      "model": {
+        "path": "models/ground/ground.obj",
+        "prepare": {
+          "mipMode": "fullChain",
+          "sampler": {
+            "minFilter": "linear",
+            "magFilter": "linear",
+            "mipFilter": "linear"
+          },
+          "shading": "lambert"
+        }
+      },
+      "transform": {
+        "position": [
+          0,
+          -0.85,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "visible": true
+    }
+  ],
+  "camera": {
+    "position": [
+      4,
+      2.5,
+      5.5
+    ],
+    "rotation": [
+      -0.17863546028704871,
+      0.30373933574327433,
+      0.05808936021889234,
+      0.934054288828882
+    ],
+    "perspective": {
+      "verticalFov": 0.7853982,
+      "nearPlane": 0.1,
+      "farPlane": 100
+    }
+  },
+  "lighting": {
+    "direction": [
+      -0.6,
+      -1,
+      -0.4
+    ],
+    "color": [
+      1,
+      0.95,
+      0.9
+    ],
+    "intensity": 1,
+    "ambient": 0.15
+  },
+  "clearColor": [
+    0.12,
+    0.16,
+    0.22,
+    1
+  ]
+}

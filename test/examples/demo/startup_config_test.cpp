@@ -18,7 +18,7 @@ namespace
         EXPECT_EQ(defaults.options.window.title, "Incubator Engine Demo");
         EXPECT_EQ(defaults.options.window.width, 1920);
         EXPECT_EQ(defaults.options.window.height, 1080);
-        EXPECT_EQ(defaults.startupScene, "assets/scenes/mixed.json");
+        EXPECT_EQ(defaults.startupScene, "assets/scenes/shadows.json");
         const auto partial = Demo::decodeStartupConfig(R"({"window":{"width":900},"unknown":true})");
         EXPECT_EQ(partial.options.window.width, 900);
         EXPECT_EQ(partial.options.window.height, defaults.options.window.height);
@@ -76,7 +76,7 @@ namespace
         const auto utf8 = Utils::Utf8::toUtf8String(path);
         auto io = FileIO::createPlatformFileIO();
         fs::remove(path);
-        EXPECT_EQ(Demo::readStartupConfig(*io, utf8).startupScene, "assets/scenes/mixed.json");
+        EXPECT_EQ(Demo::readStartupConfig(*io, utf8).startupScene, "assets/scenes/shadows.json");
         {
             std::ofstream file(path, std::ios::binary);
             file << R"({"startupScene":"assets/scenes/主场景.json"})";

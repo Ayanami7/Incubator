@@ -54,7 +54,8 @@ namespace Incubator::Demo
         void run();
         /// @brief 使用指定回调运行应用循环。
         /// @param callbacks 应用初始化、更新、输入和 UI 回调。
-        /// @note run 仅允许执行一次且不可重入。正常返回或回调失败都会结束会话；错误交由调用方记录日志，且关闭前会先释放回调对象。
+        /// @note run
+        /// 仅允许执行一次且不可重入。正常返回或回调失败都会结束会话；错误交由调用方记录日志，且关闭前会先释放回调对象。
         void run(Callbacks callbacks);
         void requestExit();
         bool isOpen() const;
@@ -74,6 +75,9 @@ namespace Incubator::Demo
         /// @param scene 新场景。
         void setScene(std::unique_ptr<Scene::Scene> scene);
         std::array<float, 4>& clearColor();
+        /// @brief 编辑本会话的阴影预览设置；不参与场景或启动配置的保存加载。
+        /// @note 默认关闭，Demo 接收偏移预设为 0.003；启用时仅支持独立视口，首次有效帧按需准备深度 Shader。
+        Render::ShadowSettings& shadowSettings();
         /// @brief 在当前 UI 帧中显示独立场景视口；关闭或隐藏时只提交其他 UI。
         void sceneViewport(const char* title, bool* open = nullptr);
         /// @brief 返回本轮布局确定的场景图像逻辑区域。
@@ -95,6 +99,8 @@ namespace Incubator::Demo
         std::unique_ptr<Render::Renderer> renderer_;
         std::unique_ptr<Scene::Scene> scene_;
         std::array<float, 4> clearColor_;
+        Render::ShadowSettings shadowSettings_{};
+        bool shadowResourcesPrepared_ = false;
         Render::FrameExtent sceneExtent_{};
         Render::SceneOutput sceneOutput_;
         ViewportRegion viewportRegion_;

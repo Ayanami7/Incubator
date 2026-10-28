@@ -49,6 +49,7 @@ namespace Incubator::Demo
     DemoApp::DemoApp(DemoOptions options, std::unique_ptr<FileIO::FileIO> fileIO)
         : fileIO_(std::move(fileIO)), clearColor_(options.clearColor)
     {
+        shadowSettings_.depthBias = 0.003f;
         auto& manager = Resource::ResourceManager::instance();
         // 注册任何路由或启用路由清理前，先检查完整路由表。
         if (!manager.loadersEmpty())
@@ -133,6 +134,12 @@ namespace Incubator::Demo
     {
         requireOpen();
         return clearColor_;
+    }
+
+    Render::ShadowSettings& DemoApp::shadowSettings()
+    {
+        requireOpen();
+        return shadowSettings_;
     }
 
     void DemoApp::sceneViewport(const char* title, bool* open)
@@ -234,8 +241,17 @@ namespace Incubator::Demo
                     renderer_->imgui().endFrame();
                     break;
                 }
-                const auto frame = Scene::extractSceneFrame(*scene_, renderExtent);
+                const auto frame = Scene::extractSceneFrame(*scene_, renderExtent, true, shadowSettings_);
                 renderer_->imgui().endFrame();
+                if (callbacks.layout && frame && frame->shadow && !shadowResourcesPrepared_)
+                {
+                    const ShaderHold depth("shaders/shadow.vert.spv");
+                    const auto* shader = Resource::ResourceManager::instance().get<Resource::ShaderResource>(depth.id);
+                    if (!shader)
+                        throw Error::Exception(Error::Code::RENDER, "Cannot load application shadow shader");
+                    renderer_->prepareShadowResources(*shader);
+                    shadowResourcesPrepared_ = true;
+                }
                 auto* data = renderer_->imgui().drawData();
                 const auto record = [&](void* commands) { renderer_->imgui().recordDrawData(data, commands); };
                 if (callbacks.layout && frame)

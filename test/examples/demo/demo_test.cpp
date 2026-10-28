@@ -8,6 +8,8 @@
 #include <fstream>
 #include <glm/ext/matrix_transform.hpp>
 #include <iostream>
+#include <iterator>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -171,12 +173,13 @@ namespace
         }
         void copyShowcaseModels()
         {
-            for (const char* directory : {"avocado", "utah_teapot"})
+            for (const char* directory : {"avocado", "utah_teapot", "ground"})
                 fs::copy(previous_ / "assets/models" / directory, sandbox_ / "assets/models" / directory,
                          fs::copy_options::recursive | fs::copy_options::overwrite_existing);
             fs::create_directories(sandbox_ / "assets/scenes");
-            fs::copy_file(previous_ / "assets/scenes/mixed.json", sandbox_ / "assets/scenes/mixed.json",
-                          fs::copy_options::overwrite_existing);
+            for (const char* file : {"mixed.json", "shadows.json"})
+                fs::copy_file(previous_ / "assets/scenes" / file, sandbox_ / "assets/scenes" / file,
+                              fs::copy_options::overwrite_existing);
         }
         Demo::DemoOptions options(bool visible = false)
         {
@@ -240,6 +243,207 @@ namespace
         fs::path previous_, sandbox_;
         std::ostringstream renderLog_;
     };
+
+    TEST_F(DemoAppTest, ShadowPreviewUsesCurrentFrameAndSurvivesFilesAndWindowRecovery)
+    {
+        copyShowcaseModels();
+        auto config = options(true);
+        config.window.width = 1920;
+        config.window.height = 1080;
+        Demo::DemoApp session(config);
+        auto demo = std::make_shared<Demo::ModelScene>();
+        Render::SceneOutput previous;
+        std::array<std::shared_ptr<const Model::PreparedModel>, 3> models;
+        WindowCapture::Image on, off, changedLight;
+        std::set<VkImage> shadowImages;
+        float previewBias = 0;
+        int frame = 0, uiCallsWhileMinimized = 0;
+        const auto difference = [](const WindowCapture::Image& a, const WindowCapture::Image& b) {
+            size_t changed = 0;
+            for (size_t at = 0; at + 3 < std::min(a.rgba.size(), b.rgba.size()); at += 4)
+                if (std::abs(int(a.rgba[at]) - int(b.rgba[at])) > 2 ||
+                    std::abs(int(a.rgba[at + 1]) - int(b.rgba[at + 1])) > 2 ||
+                    std::abs(int(a.rgba[at + 2]) - int(b.rgba[at + 2])) > 2)
+                    ++changed;
+            return changed;
+        };
+        const auto capture = [&](Demo::DemoApp& app, const char* name) {
+            WindowCapture::Image image;
+            const auto extent = previous.extent();
+            image.width = int(extent.width);
+            image.height = int(extent.height);
+            Render::Detail::RendererReviewAccess::withSceneOutput(
+                app.renderer(), previous, [&](const auto& device, const auto& target) {
+                    image.rgba = TextureGpuReview::captureMip(device, target, 0, {extent.width, extent.height});
+                });
+            Render::Detail::RendererReviewAccess::withShadowOutput(app.renderer(), previous,
+                                                                   [&](const auto&, const auto& target) {
+                                                                       shadowImages.insert(target.handle());
+                                                                       EXPECT_EQ(target.extent().width, 1024u);
+                                                                       EXPECT_EQ(target.extent().height, 1024u);
+                                                                   });
+            if (name)
+            {
+                WindowCapture::save(image, std::string("review/") + name + "-scene.ppm");
+                glfwWaitEventsTimeout(0.06);
+                WindowCapture::save(WindowCapture::capture(app.window()),
+                                    std::string("review/") + name + "-workspace.ppm");
+            }
+            return image;
+        };
+        session.run({[&](auto& app) {
+                         demo->initialize(app, "assets/scenes/shadows.json");
+                         ASSERT_EQ(app.scene().entities().size(), 3u);
+                         for (size_t i = 0; i < models.size(); ++i)
+                             models[i] = app.scene().entities()[i].model;
+                         app.shadowSettings().enabled = true;
+                         previewBias = app.shadowSettings().depthBias;
+                     },
+                     [&](auto& app, const auto&) {
+                         ++frame;
+                         if (frame == 5)
+                             on = capture(app, "shadow-on");
+                         if (frame == 6)
+                         {
+                             off = capture(app, "shadow-off");
+                             ASSERT_EQ(on.width, off.width);
+                             ASSERT_EQ(on.height, off.height);
+                             EXPECT_GT(difference(on, off), 500u);
+                             size_t darker = 0;
+                             for (size_t at = 0; at + 3 < on.rgba.size(); at += 4)
+                                 if (int(off.rgba[at]) - int(on.rgba[at]) > 8)
+                                     ++darker;
+                             EXPECT_GT(darker, 500u);
+                         }
+                         if (frame == 7)
+                         {
+                             const auto again = capture(app, nullptr);
+                             EXPECT_EQ(again.rgba, on.rgba);
+                         }
+                         if (frame == 8)
+                         {
+                             changedLight = capture(app, "changed-light");
+                             EXPECT_GT(difference(on, changedLight), 500u);
+                         }
+                         if (frame == 9)
+                             EXPECT_GT(difference(changedLight, capture(app, "moved-model")), 500u);
+                         if (frame == 12)
+                             EXPECT_EQ(capture(app, nullptr).rgba, on.rgba);
+                         auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                         if (frame == 13)
+                         {
+                             glfwIconifyWindow(handle);
+                             for (int attempt = 0; attempt < 100 && !app.window().isIconified(); ++attempt)
+                                 glfwWaitEventsTimeout(0.005);
+                             ASSERT_TRUE(app.window().isIconified());
+                         }
+                         if (frame == 16)
+                         {
+                             EXPECT_EQ(uiCallsWhileMinimized, 0);
+                             glfwRestoreWindow(handle);
+                             for (int attempt = 0; attempt < 100 && app.window().isIconified(); ++attempt)
+                                 glfwWaitEventsTimeout(0.005);
+                             ASSERT_FALSE(app.window().isIconified());
+                             glfwSetWindowSize(handle, 1280, 720);
+                             demo->restoreLayout();
+                         }
+                         if (frame == 19)
+                         {
+                             EXPECT_TRUE(previous.valid());
+                             capture(app, "restored");
+                             app.requestExit();
+                         }
+                     },
+                     [&](auto& app) {
+                         if (frame >= 13 && frame < 16)
+                             ++uiCallsWhileMinimized;
+                         demo->ui(app);
+                         if (frame == 5)
+                             app.shadowSettings().enabled = false;
+                         if (frame == 6)
+                             app.shadowSettings().enabled = true;
+                         if (frame == 7)
+                         {
+                             auto lighting = app.scene().lighting();
+                             lighting.direction = {-1, -0.9f, -0.2f};
+                             app.scene().setLighting(lighting);
+                         }
+                         if (frame == 8)
+                         {
+                             const auto& entity = app.scene().entities()[0];
+                             auto pose = entity.transform;
+                             pose.setPosition(pose.position() + glm::vec3(0.4f, 0, 0.3f));
+                             app.scene().setTransform(entity.id, pose);
+                         }
+                         if (frame == 9)
+                         {
+                             app.shadowSettings().depthBias = 0.002f;
+                             ASSERT_TRUE(demo->save(app, "shadow-saved.json"));
+                             std::ifstream file("shadow-saved.json");
+                             const std::string json((std::istreambuf_iterator<char>(file)), {});
+                             file.close();
+                             EXPECT_EQ(json.find("\"shadow"), std::string::npos);
+                             app.shadowSettings().enabled = false;
+                             app.shadowSettings().depthBias = 0.003f;
+                             ASSERT_TRUE(demo->load(app, "shadow-saved.json"));
+                             EXPECT_EQ(demo->scenePath(), "shadow-saved.json");
+                             EXPECT_FALSE(app.shadowSettings().enabled);
+                             EXPECT_EQ(app.shadowSettings().depthBias, 0.003f);
+                         }
+                         if (frame == 10)
+                         {
+                             ASSERT_TRUE(demo->load(app, "assets/scenes/mixed.json"));
+                             ASSERT_EQ(app.scene().entities().size(), 2u);
+                             EXPECT_EQ(app.scene().entities()[0].model, models[0]);
+                             EXPECT_EQ(app.scene().entities()[1].model, models[1]);
+                             ASSERT_TRUE(demo->save(app, "mixed-copy.json"));
+                             ASSERT_TRUE(demo->load(app, "mixed-copy.json"));
+                             EXPECT_FALSE(app.shadowSettings().enabled);
+                         }
+                         if (frame == 11)
+                         {
+                             ASSERT_TRUE(demo->load(app, "assets/scenes/shadows.json"));
+                             ASSERT_EQ(app.scene().entities().size(), 3u);
+                             for (size_t i = 0; i < models.size(); ++i)
+                                 EXPECT_EQ(app.scene().entities()[i].model, models[i]);
+                             EXPECT_EQ(app.shadowSettings().depthBias, 0.003f);
+                             app.shadowSettings().enabled = true;
+                             app.shadowSettings().depthBias = previewBias;
+                         }
+                         previous = app.renderer().prepareSceneTarget(app.sceneExtent());
+                         glfwWaitEventsTimeout(0.04);
+                     },
+                     [demo](auto&) { demo->cancelInteraction(); },
+                     [demo](auto& app, auto extent, const auto& input) { demo->input(app, extent, input); },
+                     [demo](auto& app) { demo->layout(app); }});
+        EXPECT_EQ(shadowImages.size(), 2u);
+        EXPECT_EQ(count("Created shadow target:"), 2u);
+        cleanValidation();
+    }
+
+    TEST_F(DemoAppTest, MissingPreviewShadowShaderReportsRenderAndClosesSession)
+    {
+        fs::remove("assets/shaders/shadow.vert.spv");
+        Demo::DemoApp session(options());
+        try
+        {
+            session.run({[](auto& app) { app.shadowSettings().enabled = true; },
+                         {},
+                         {},
+                         {},
+                         {},
+                         [](auto& app) { app.sceneViewport("Scene"); }});
+            FAIL() << "Accepted missing shadow shader";
+        }
+        catch (const Error::Exception& error)
+        {
+            EXPECT_EQ(error.code(), Error::Code::RENDER);
+            EXPECT_NE(error.message().find("shadow shader"), std::string::npos);
+        }
+        EXPECT_FALSE(session.isOpen());
+        EXPECT_TRUE(ResourceManager::instance().loadersEmpty());
+        cleanValidation();
+    }
 
     TEST_F(DemoAppTest, FileAssociationIgnoresPendingPathAndFailedActions)
     {
@@ -427,6 +631,7 @@ namespace
                          const auto model = Model::prepareModel(app.renderer(), GLTF);
                          app.scene().createEntity(model);
                          app.scene().setCamera(Scene::Camera({0, 0, 3}));
+                         app.shadowSettings().enabled = true;
                      },
                      [&](auto& app, const auto&) {
                          if (++frame == 8)
@@ -457,6 +662,7 @@ namespace
                          app.sceneViewport("Viewport", &open);
                      }});
         EXPECT_EQ(frame, 8);
+        EXPECT_EQ(count("Created shadow target:"), 2u);
         cleanValidation();
     }
 

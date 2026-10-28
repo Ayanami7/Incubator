@@ -51,13 +51,13 @@ namespace TextureGpuReview
     class Readback
     {
     public:
-        explicit Readback(const VulkanDevice& device) : device_(device)
+        explicit Readback(const VulkanDevice& device, size_t bytes = 384 * 256 * 4) : device_(device), bytes_(bytes)
         {
             try
             {
                 VkBufferCreateInfo info{};
                 info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-                info.size = 384 * 256 * 4;
+                info.size = bytes_;
                 info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
                 info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
                 check(vkCreateBuffer(device_.handle(), &info, nullptr, &buffer));
@@ -89,7 +89,7 @@ namespace TextureGpuReview
 
         std::vector<uint8_t> pixels()
         {
-            std::vector<uint8_t> pixels(384 * 256 * 4);
+            std::vector<uint8_t> pixels(bytes_);
             void* mapped = nullptr;
             check(vkMapMemory(device_.handle(), memory_, 0, pixels.size(), 0, &mapped));
             std::memcpy(pixels.data(), mapped, pixels.size());
@@ -109,16 +109,17 @@ namespace TextureGpuReview
         }
 
         const VulkanDevice& device_;
+        size_t bytes_;
         VkDeviceMemory memory_ = VK_NULL_HANDLE;
     };
 
-    // 将一个受控的小型 mip 读取到现有复核缓冲区，再恢复图像采样布局。
+    // 按所读区域分配复核缓冲区，读取后恢复图像采样布局。
     inline std::vector<uint8_t> captureMip(const VulkanDevice& device, const VulkanImage& image,
                                             uint32_t level, VkExtent2D extent,
                                             VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT,
                                             VkOffset3D offset = {0, 0, 0})
     {
-        Readback readback(device);
+        Readback readback(device, size_t(extent.width) * extent.height * 4);
         device.executeImmediate([&](VkCommandBuffer commands) {
             VkImageMemoryBarrier2 toTransfer{};
             toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;

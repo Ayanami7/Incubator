@@ -12,7 +12,7 @@ namespace Incubator::Demo
     struct StartupConfig
     {
         DemoOptions options;
-        std::string startupScene = "assets/scenes/mixed.json";
+        std::string startupScene = "assets/scenes/shadows.json";
 
         StartupConfig();
     };

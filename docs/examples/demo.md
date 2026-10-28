@@ -1,7 +1,7 @@
 # 引擎模型 Demo
 
 `examples/demo` 是唯一的引擎展示程序，由示例内的 `DemoApp` 组织 Window、Renderer、FileIO、Loader 和 Scene。
-展示静态模型导入、GPU 资源准备、混合模型实例编辑及场景保存/加载。
+展示静态模型导入、GPU 资源准备、混合模型实例编辑、单方向光硬阴影及场景保存/加载。
 
 ## 构建与启动
 
@@ -13,7 +13,8 @@ Set-Location 'E:/Project/VScode/Incubator/build'
 ```
 
 工作目录必须是对应构建目录。目标依赖 `demo_shaders`、`demo_models`、`demo_scenes` 和 `demo_config`，
-复用 `<build>/assets/` 中的 SPIR-V、Avocado glTF/bin/PNG 和 Utah Teapot OBJ，以及展示场景 `assets/scenes/mixed.json`，不需要复制额外资产。
+复用 `<build>/assets/` 中的 SPIR-V、Avocado glTF/bin/PNG、Utah Teapot OBJ 和自有地面 OBJ/MTL。
+默认展示场景为 `assets/scenes/shadows.json`，原 `assets/scenes/mixed.json` 继续部署并可直接打开。
 Visual Studio 的目标调试工作目录也设为 `${CMAKE_BINARY_DIR}`。
 VS Code 唯一的 `Debug` 配置指向本示例，完成构建后按 F5 启动。
 
@@ -29,7 +30,7 @@ UI 使用 18 基础字号及统一控件间距，字体与样式随窗口 DPI �
 ```json
 {
   "window": {"title": "Incubator Engine Demo", "width": 1920, "height": 1080},
-  "startupScene": "assets/scenes/mixed.json"
+  "startupScene": "assets/scenes/shadows.json"
 }
 ```
 
@@ -38,9 +39,11 @@ UI 使用 18 基础字号及统一控件间距，字体与样式随窗口 DPI �
 配置路径和场景路径都按 cwd 解析，配置文件所在目录不改变场景路径的基准，加载期间不切换 cwd。
 配置由 Demo 消费层通过现有 FileIO 和私有 RapidJSON 依赖读取，不提供 Runtime 配置管理器或自动回写。
 
-默认启动场景为 `assets/scenes/mixed.json`，包含一个 Avocado 和一个 Teapot。
-Avocado 位于 `(-1.2, -0.78, 0)`、缩放为 24；Teapot 位于 `(1.65, 0, 0)`、缩放为 0.075。
-相机位于 `(0, 0, 6)`、朝向 −Z，垂直 FOV 45°，近/远裁面 0.1/100。
+默认启动场景 `assets/scenes/shadows.json` 包含 Avocado、Teapot 和中性灰色接收地面。
+地面位于 y=-0.85，长宽各 10 个世界单位；Avocado 位于 `(-1.2,-0.8488543,0)`、缩放 24，
+Teapot 位于 `(1.35,-0.259375,0)`、缩放 0.075，两者落在地面上。
+相机位于 `(4,2.5,5.5)` 并观察 `(0,-0.2,0)`，垂直 FOV 45°、近/远裁面 0.1/100。
+原 mixed.json 保留无地面的两个模型和 `(0,0,6)` 相机，兼容原文件编辑流程。
 启动时通过既有场景文件读取和重建接口恢复实体、Camera、Lighting 和背景，不再固定创建两个 Avocado。
 启动场景缺失、内容无效或模型准备失败时关闭会话并返回 1。
 模型保留源节点层级、基色纹理和单位；面板创建对象时使用上述展示缩放。
@@ -64,6 +67,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | F / Focus selected | 显式聚焦选中实体的世界包围体，保留朝向、FOV 和实体变换；F 受 UI 键盘捕获约束 |
 | Reset view | 恢复位置 `(0,0,6)`、默认朝向和投影的相机，不重建实体或改变选择 |
 | Background | 修改背景颜色 |
+| Shadows / Receiver depth bias | 开关阴影预览，调整接收偏移；仅本会话有效，不写入场景文件 |
 | Exit | 请求会话退出，也可直接关闭窗口 |
 
 启动时仅准备场景实际引用的模型；创建实体时按需准备所选模型。
@@ -75,11 +79,11 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 
 保存成功后当前文件关联更新为目标文件；待操作路径单独保存，编辑它不改变当前文件，取消或失败也不改变关联。
 多个场景使用不同文件路径分别保存，一次只打开一个 Scene。相对保存路径按 cwd 解析；
-运行目录中的 `assets/scenes/mixed.json` 是部署副本，保存它不会回写仓库资产。
+运行目录中的场景文件是部署副本，保存它不会回写仓库资产。
 需要长期维护的项目场景可显式保存到仓库 `assets/scenes/` 的绝对路径，并补充对应部署规则；临时内容可保存在构建目录。
 
 两种正式模型显式使用 Lambert 漫反射预览，继续采用 FullChain 和线性 min/mag/mip；
-源 Unlit 材质始终不受光。默认混合场景的传播方向为 `(-0.6,-0.8,-1)`、
+源 Unlit 材质始终不受光。默认阴影场景的传播方向为 `(-0.6,-1,-0.4)`、
 线性颜色 `(1,0.95,0.9)`、强度 1、环境系数 0.15；GPU 帧参数会归一化方向。
 Scene settings 折叠区提供 Light yaw/pitch、Color (linear)、Intensity 和 Ambient。
 角度产生非零方向，颜色控件显示 `[0,1]` 线性 RGB，强度范围为 `[0,4]`，环境系数为 `[0,1]`。
@@ -185,3 +189,21 @@ View 菜单提供场景视口开关与 Restore default layout。Objects 位于�
 输入位置转为相对图像原点的逻辑坐标，平移使用图像逻辑高度；聚焦使用当前场景目标像素尺寸。
 失焦、最小化、关闭或折叠视口、成功替换场景会取消手势，并等待队列排空、按钮和 F 释放后的中性批次，
 恢复时不重放旧位移。失败加载不改变当前手势状态。原始输入仍只参与取消和中性恢复，操作仅消费 ImGui 批次。
+
+
+## 阴影预览
+
+生产回调默认开启阴影，设置由 DemoApp 持有，通过 `shadowSettings()` 编辑，并在 UI 返回后与当前 Scene 一起提取。
+固定光源观察体中心为 `(0,0,0)`、横纵半尺寸为 `(6,6)`，近/远面距离为 0.1/20.1；图像固定 1024×1024。
+范围随当前 Lighting 方向转动，不随主相机或视口自动拟合；悬停 Shadows 控件可查看固定范围。
+阴影只作用于 Lambert 直接光，环境项、背景和 UI 保持原行为；范围外直接受光，边缘为未过滤的硬阴影。
+
+Demo 接收偏移默认 0.003，控件范围 `[0,0.01]`，单位为零到一光源深度；Runtime 的 ShadowSettings 默认值仍为 0.001。
+该展示预设用于抑制 Avocado/Teapot 上可见的自阴影斑点，不改变阴影深度绘制或叠加额外偏移机制。
+设置不写入 SceneDescription、JSON v1 或 incubator.json；打开或重新加载场景保留当前预览开关与偏移，
+光线方向取新 Scene 的原始 Lighting，不另存第二份方向。
+
+首次存在有效独立视口且启用阴影时，DemoApp 经原有 ShaderResource 路由加载 `shaders/shadow.vert.spv`，
+准备成功即释放 CPU Resource；失败报告 RENDER 并关闭会话。关闭或最小化视口不准备额外深度资源；
+恢复、调整视口及场景文件切换复用已准备的 Shader、帧槽阴影图和模型缓存。
+无布局回调的原直接绘制消费者默认不启用阴影，显式启用仍按 Renderer 约定被拒绝。
