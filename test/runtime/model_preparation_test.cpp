@@ -238,6 +238,46 @@ namespace
         std::ostringstream messages_, resourceMessages_;
     };
 
+    TEST_F(ModelPreparationTest, IndependentSceneTargetsFollowFrameSlotsAndExpireAfterResize)
+    {
+        auto native = window();
+        SceneOutput retained;
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            const auto model = Model::prepareModel(renderer, GLTF);
+            EXPECT_FALSE(renderer.prepareSceneTarget({0, 100}).valid());
+            for (uint32_t i = 0; i < 10; ++i)
+            {
+                native->pollEvents();
+                const auto windowExtent = renderer.beginUiFrame();
+                ASSERT_TRUE(windowExtent);
+                const FrameExtent extent{i < 4 ? 192u : 256u, 128};
+                auto output = renderer.prepareSceneTarget(extent);
+                ASSERT_TRUE(output.valid());
+                EXPECT_EQ(output.extent(), extent);
+                if (i == 0) retained = output;
+                if (i == 4) EXPECT_FALSE(retained.valid());
+                Scene::Scene scene;
+                scene.setCamera(Scene::Camera({0, 0, 3}));
+                if (i % 2) scene.createEntity(model);
+                const auto frame = Scene::extractSceneFrame(scene, extent);
+                renderer.imgui().endFrame();
+                renderer.drawSceneTarget(output, frame->input(), {0.2f, 0.3f, 0.4f, 1});
+                if (i == 9) retained = output;
+                Detail::RendererReviewAccess::withSceneOutput(renderer, output, [&](const auto& device, const auto& image) {
+                    const auto pixels = TextureGpuReview::captureMip(device,image,0,{extent.width,extent.height});
+                    EXPECT_NEAR(pixels[0],51,1);
+                    EXPECT_NEAR(pixels[1],77,1);
+                    EXPECT_NEAR(pixels[2],102,1);
+                    if (i % 2) EXPECT_TRUE(std::any_of(pixels.begin(),pixels.end(),[](auto value){return value != 51 && value != 77 && value != 102 && value != 255;}));
+                });
+            }
+        }
+        EXPECT_FALSE(retained.valid());
+        cleanValidation();
+    }
+
     TEST_F(ModelPreparationTest, LambertPreparationKeepsImportedUnlitAndSharesRepeatedGeometryAndWhite)
     {
         constexpr const char* path = "models/normals/folded.gltf";

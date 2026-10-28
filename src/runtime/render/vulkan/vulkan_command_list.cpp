@@ -27,12 +27,15 @@ namespace Incubator
             void VulkanCommandList::record(VkCommandBuffer commandBuffer, const VulkanSwapchain& swapchain,
                                            uint32_t imageIndex, const VkClearColorValue& clearColor, VkImage depthImage,
                                            VkImageView depthView,
-                                           const std::function<void(VkCommandBuffer)>& recordScene)
+                                           const std::function<void(VkCommandBuffer)>& recordScene,
+                                   const std::function<void(VkCommandBuffer)>& beforeScene)
             {
                 VkCommandBufferBeginInfo beginInfo{};
                 beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 checkVk(vkBeginCommandBuffer(commandBuffer, &beginInfo), "vkBeginCommandBuffer");
+
+                if (beforeScene) beforeScene(commandBuffer);
 
                 VkImageMemoryBarrier2 toColor{};
                 toColor.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;

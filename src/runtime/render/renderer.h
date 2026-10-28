@@ -1,5 +1,7 @@
 #pragma once
 
+#include "runtime/render/scene_output.h"
+
 #include <array>
 #include <functional>
 #include <memory>
@@ -97,6 +99,12 @@ namespace Incubator
             /// @note 回调参数是原生命令缓冲区，仅在本次回调期间有效。
             void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
                            const std::function<void(void*)>& recordUi = {});
+            /// @brief 等待当前帧槽后准备独立场景图像；零尺寸返回无效引用。
+            SceneOutput prepareSceneTarget(FrameExtent extent);
+            /// @brief 同帧先绘制独立场景，再在交换链渲染作用域中记录 UI。
+            void drawSceneTarget(const SceneOutput& output, const FrameInput& input,
+                                 const std::array<float, 4>& clearColor,
+                                 const std::function<void(void*)>& recordUi = {});
             Integration::ImGuiRenderer& imgui();
 
         private:

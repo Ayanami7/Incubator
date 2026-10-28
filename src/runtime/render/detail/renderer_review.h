@@ -10,6 +10,7 @@ namespace Incubator::Render::Vulkan
 {
     class VulkanDevice;
     class VulkanPipeline;
+    class VulkanImage;
 }  // namespace Incubator::Render::Vulkan
 
 namespace Incubator::Render::Detail
@@ -18,6 +19,8 @@ namespace Incubator::Render::Detail
     /// @note 回调借用 Renderer 实际持有的 GPU 资源；附件创建和回读由测试支持代码完成，不属于应用接口。
     struct RendererReviewAccess
     {
+        static void withSceneOutput(Renderer& renderer, const SceneOutput& output,
+            const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record);
         using Record = std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanPipeline&, VkDescriptorSet,
                                           std::span<const Vulkan::VulkanDrawItem>)>;
         /// @brief 使用指定帧和当前 Renderer 资源执行复核回调。

@@ -182,7 +182,8 @@ namespace Incubator
             bool VulkanFrameScheduler::renderAndPresent(const VulkanSwapchain& swapchain,
                                                         const VkClearColorValue& clearColor,
                                                         const std::function<void(VkCommandBuffer)>& recordScene,
-                                                        std::span<const std::shared_ptr<void>> inFlightResources)
+                                                        std::span<const std::shared_ptr<void>> inFlightResources,
+                                                        const std::function<void(VkCommandBuffer)>& beforeScene)
             {
                 FrameSlot& frame = frames_[frameIndex_];
                 checkVk(vkWaitForFences(device_.handle(), 1, &frame.completionFence, VK_TRUE,
@@ -226,7 +227,7 @@ namespace Incubator
 
                 checkVk(vkResetCommandPool(device_.handle(), frame.commandPool, 0), "vkResetCommandPool");
                 VulkanCommandList::record(frame.commandBuffer, swapchain, imageIndex, clearColor,
-                                          frame.depthAttachment->handle(), frame.depthAttachment->view(), recordScene);
+                                          frame.depthAttachment->handle(), frame.depthAttachment->view(), recordScene, beforeScene);
 
                 VkSemaphoreSubmitInfo waitInfo{};
                 waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;

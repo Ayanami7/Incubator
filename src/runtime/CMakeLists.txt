@@ -78,6 +78,8 @@ set(RESOURCE_SOURCES
 
 # render 模块头文件、源文件
 set(RENDER_HEADERS
+    render/scene_output.h
+    render/vulkan/vulkan_scene_target.h
     render/renderer.h
     render/detail/renderer_review.h
     render/frame_input.h
@@ -101,6 +103,7 @@ set(RENDER_HEADERS
     render/vulkan/vulkan_device.h
 )
 set(RENDER_SOURCES
+    render/vulkan/vulkan_scene_target.cpp
     render/renderer.cpp
     render/lighting.cpp
     render/integration/imgui_renderer.cpp

@@ -46,7 +46,8 @@ namespace Incubator
             public:
                 static void record(VkCommandBuffer commandBuffer, const VulkanSwapchain& swapchain, uint32_t imageIndex,
                                    const VkClearColorValue& clearColor, VkImage depthImage, VkImageView depthView,
-                                   const std::function<void(VkCommandBuffer)>& recordScene);
+                                   const std::function<void(VkCommandBuffer)>& recordScene,
+                                   const std::function<void(VkCommandBuffer)>& beforeScene = {});
 
                 static void drawIndexed(VkCommandBuffer commandBuffer, const VulkanPipeline& pipeline,
                                         VkDescriptorSet frameSet, std::span<const VulkanDrawItem> draws);

@@ -324,3 +324,15 @@ Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `test/
 列表。应用通过同一 FrameInput 提交，列表借用、在途持有和关闭后的引用校验沿用上述约定。
 
 当前支持共享相机与固定 Pipeline、逐物体 Mesh/Material/model 的不透明列表，以及帧级方向光和环境项驱动的 Unlit/Lambert 着色；应用控制模型与动画，可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供材质文件/Loader、模型文件解析、PBR、阴影、多光源、异步资产加载、热重载、显存池、多后端或多视口。
+
+## 独立场景目标
+
+`prepareSceneTarget(extent)` 等待当前帧槽完成，按场景像素尺寸复用或替换该槽的颜色及深度附件。
+零尺寸返回无效 `SceneOutput`。输出为非拥有引用，尺寸由 `extent()` 查询；尺寸重建或 Renderer 关闭后失效，
+只能交给所属 Renderer 的当前帧槽使用。图像在生产路径中不经过 CPU 回读。
+
+`drawSceneTarget(output, input, clearColor, recordUi)` 先在独立目标中绘制场景，再在交换链中记录 UI。
+场景目标使用 RGBA8 UNORM，保存生产片段着色器已编码的 sRGB 字节，背景同样为显示编码值；
+后续 UI 采样应沿用这些字节，避免再次编码。图像方向与当前直接绘制一致。
+旧附件在槽 Fence 完成后替换，稳定帧不分配目标或等待整个设备空闲；原 `drawFrame` 直接绘制入口继续可用。
+ImGui 图像注册及工作区布局由后续 Integration 接入。

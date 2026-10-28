@@ -37,7 +37,8 @@ namespace Incubator
                 uint32_t currentFrameIndex() const noexcept;
                 bool renderAndPresent(const VulkanSwapchain& swapchain, const VkClearColorValue& clearColor,
                                       const std::function<void(VkCommandBuffer)>& recordScene,
-                                      std::span<const std::shared_ptr<void>> inFlightResources = {});
+                                      std::span<const std::shared_ptr<void>> inFlightResources = {},
+                                      const std::function<void(VkCommandBuffer)>& beforeScene = {});
 
             private:
                 struct FrameSlot

@@ -24,6 +24,7 @@
 #include "runtime/render/vulkan/vulkan_device.h"
 #include "runtime/render/vulkan/vulkan_frame_scheduler.h"
 #include "runtime/render/vulkan/vulkan_image.h"
+#include "runtime/render/vulkan/vulkan_scene_target.h"
 #include "runtime/render/vulkan/vulkan_instance.h"
 #include "runtime/render/vulkan/vulkan_material_binding.h"
 #include "runtime/render/vulkan/vulkan_pipeline.h"
@@ -36,6 +37,11 @@ namespace Incubator
 {
     namespace Render
     {
+        struct SceneOutput::Impl
+        {
+            const Vulkan::VulkanDevice* owner;
+            std::unique_ptr<Vulkan::VulkanSceneTarget> target;
+        };
         namespace
         {
             Vulkan::VulkanObjectData objectData(const glm::mat4& model)
@@ -358,6 +364,50 @@ namespace Incubator
                     needsRebuild_ = true;
             }
 
+            void reviewOutput(const SceneOutput& output, const std::function<void(const Vulkan::VulkanDevice&,const Vulkan::VulkanImage&)>& record)
+            {
+                const auto target = output.impl_.lock();
+                if (!target || target->owner != &device_) throw Error::Exception(Error::Code::RENDER,"Invalid scene output");
+                scheduler_->waitForFrames();
+                record(device_,target->target->color());
+            }
+            SceneOutput prepareSceneTarget(FrameExtent extent)
+            {
+                SceneOutput output;
+                if (!extent.width || !extent.height) return output;
+                scheduler_->waitForCurrentFrame();
+                auto& slot = sceneTargets_[scheduler_->currentFrameIndex()];
+                if (!slot || slot->target->color().extent().width != extent.width || slot->target->color().extent().height != extent.height)
+                {
+                    auto next = std::make_shared<SceneOutput::Impl>();
+                    next->owner = &device_;
+                    next->target = std::make_unique<Vulkan::VulkanSceneTarget>(device_, VkExtent2D{extent.width,extent.height},depthFormat_);
+                    slot = std::move(next);
+                }
+                output.impl_ = slot; output.extent_ = extent; return output;
+            }
+            void drawSceneTarget(const SceneOutput& output, const FrameInput& input,
+                                 const std::array<float,4>& clearColor, const std::function<void(void*)>& ui)
+            {
+                auto target = output.impl_.lock();
+                const auto index = scheduler_->currentFrameIndex();
+                if (!target || target->owner != &device_ || target != sceneTargets_[index] || output.extent() != input.extent)
+                    throw Error::Exception(Error::Code::RENDER,"Invalid current scene output");
+                const auto frame = Vulkan::makeFrameUniform(input);
+                std::vector<std::shared_ptr<void>> resources;
+                const auto draws = resolveDraws(input,resources);
+                if (!draws.empty() && !bindingSet_) throw Error::Exception(Error::Code::RENDER,"Prepare scene shaders first");
+                if (!prepareFrame()) return;
+                scheduler_->waitForCurrentFrame();
+                if (bindingSet_) uniformBuffers_[index]->write(0,std::as_bytes(std::span(&frame,1)));
+                if (!draws.empty() && !scenePipeline_)
+                    scenePipeline_ = std::make_unique<Vulkan::VulkanPipeline>(device_,VK_FORMAT_R8G8B8A8_UNORM,depthFormat_,bindingSet_->layout(),bindingSet_->materialLayout(),vertexShader_,fragmentShader_);
+                resources.push_back(target);
+                VkClearColorValue clear{}; std::copy(clearColor.begin(),clearColor.end(),clear.float32);
+                if (!scheduler_->renderAndPresent(*swapchain_,clear,[&](VkCommandBuffer cmd){if(ui) ui(static_cast<void*>(cmd));},resources,
+                    [&](VkCommandBuffer cmd){target->target->record(cmd,clear,[&](VkCommandBuffer scene){if(!draws.empty()) Vulkan::VulkanCommandList::drawIndexed(scene,*scenePipeline_,bindingSet_->descriptorSet(index),draws);});})) needsRebuild_=true;
+            }
+
             Integration::ImGuiRenderer& imgui()
             {
                 return *imguiRenderer_;
@@ -422,6 +472,8 @@ namespace Incubator
             std::vector<std::shared_ptr<Material::Impl>> materials_;
             std::unique_ptr<Vulkan::VulkanSwapchain> swapchain_;
             std::unique_ptr<Vulkan::VulkanPipeline> pipeline_;
+            std::array<std::shared_ptr<SceneOutput::Impl>, Vulkan::VulkanFrameScheduler::FRAME_COUNT> sceneTargets_{};
+            std::unique_ptr<Vulkan::VulkanPipeline> scenePipeline_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
             std::unique_ptr<Integration::ImGuiRenderer> imguiRenderer_;
             VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
@@ -497,3 +549,11 @@ namespace Incubator
         }
     }  // namespace Render
 }  // namespace Incubator
+
+namespace Incubator::Render
+{
+    SceneOutput Renderer::prepareSceneTarget(FrameExtent extent) { return impl_->prepareSceneTarget(extent); }
+    void Renderer::drawSceneTarget(const SceneOutput& output,const FrameInput& input,const std::array<float,4>& color,const std::function<void(void*)>& ui) { impl_->drawSceneTarget(output,input,color,ui); }
+}
+
+void Incubator::Render::Detail::RendererReviewAccess::withSceneOutput(Renderer& renderer,const SceneOutput& output,const std::function<void(const Vulkan::VulkanDevice&,const Vulkan::VulkanImage&)>& record) { renderer.impl_->reviewOutput(output,record); }
