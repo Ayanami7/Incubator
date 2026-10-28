@@ -85,10 +85,13 @@ namespace
             ImGui::TextUnformatted("Scene / Inspector / Position / 0123456789");
             ImGui::TextUnformatted("场景/模型/测试.json");
             ImGui::Button("Save scene");
+            const Render::FrameExtent sceneExtent{256,128};
+            const auto output = renderer.prepareSceneTarget(sceneExtent);
+            ImGui::Image(static_cast<ImTextureID>(renderer.sceneImage(output)),{256,128});
             ImGui::End();
             renderer.imgui().endFrame();
             auto* data = renderer.imgui().drawData();
-            renderer.drawFrame({*extent, {}, {}}, {0.12f, 0.16f, 0.22f, 1},
+            renderer.drawSceneTarget(output,{sceneExtent, {}, {}}, {0.12f, 0.16f, 0.22f, 1},
                                [&](void* commands) { renderer.imgui().recordDrawData(data, commands); });
         }
 

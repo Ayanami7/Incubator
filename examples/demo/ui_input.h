@@ -16,6 +16,26 @@ namespace Incubator::Demo
         bool captureKeyboard = false;
     };
 
+    /// @brief 当前场景图像在 ImGui 屏幕逻辑坐标中的区域及交互状态。
+    struct ViewportRegion
+    {
+        Input::PointerValue origin, size;
+        bool hovered = false;
+        bool focused = false;
+    };
+
+    /// @brief 将已消费的输入批次映射到场景图像；已有手势仍由控制器持有。
+    inline UiInput viewportInput(UiInput input, const ViewportRegion& region, bool textInput)
+    {
+        input.position.x -= region.origin.x;
+        input.position.y -= region.origin.y;
+        input.captureMouse = !region.hovered;
+        input.captureKeyboard = !region.focused || textInput;
+        if (!region.hovered)
+            input.scroll = {};
+        return input;
+    }
+
     /// @brief 从 ImGui 读取 UI 消费后的输入批次。
     /// @note 原始输入仅用于取消或重新启用交互。
     class UiInputAdapter

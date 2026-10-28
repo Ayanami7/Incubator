@@ -231,7 +231,7 @@ Renderer 持有 Material 至关闭，Material 拥有自己的 Sampler 并在内�
 
 | 类型/字段 | 调用方责任 |
 |---|---|
-| `FrameExtent { width, height }` | 使用 `beginUiFrame()` 返回的非零实际交换链 extent，不用窗口逻辑尺寸代替 |
+| `FrameExtent { width, height }` | 直接绘制使用 `beginUiFrame()` 的交换链像素尺寸；独立目标使用视口换算的场景像素尺寸，均不使用未换算的逻辑尺寸 |
 | `CameraMatrices { view, projection }` | 提供最终 GLM 列主序矩阵；右手坐标，深度 0–1，应用对投影 Y 方向适配一次 |
 | `DrawItem { mesh, material, model }` | 每项独立指定同一 Renderer 创建的网格、材质和最终模型矩阵，网格和材质均可共享 |
 | `Lighting { direction, color, intensity, ambient }` | 世界空间光线传播方向、线性 RGB、直接光强度及标量环境系数，按值保存 |

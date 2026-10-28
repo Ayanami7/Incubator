@@ -241,6 +241,92 @@ namespace
         std::ostringstream renderLog_;
     };
 
+    TEST_F(DemoAppTest, FileAssociationIgnoresPendingPathAndFailedActions)
+    {
+        copyShowcaseModels();
+        Demo::DemoApp session(options());
+        session.run({[&](auto& app) {
+                         Demo::ModelScene demo;
+                         demo.initialize(app);
+                         const std::string original(demo.scenePath());
+                         demo.operationPath("unconfirmed.json");
+                         ASSERT_TRUE(demo.save(app));
+                         EXPECT_EQ(demo.scenePath(), original);
+                         EXPECT_FALSE(fs::exists("unconfirmed.json"));
+                         demo.beginSaveAs();
+                         demo.operationPath("cancelled.json");
+                         demo.cancelFileAction();
+                         EXPECT_FALSE(demo.confirmFileAction(app));
+                         EXPECT_EQ(demo.scenePath(), original);
+                         demo.beginSaveAs();
+                         demo.operationPath("missing-dir/file.json");
+                         EXPECT_FALSE(demo.confirmFileAction(app));
+                         EXPECT_EQ(demo.scenePath(), original);
+                         demo.operationPath("saved-copy.json");
+                         ASSERT_TRUE(demo.confirmFileAction(app));
+                         EXPECT_EQ(demo.scenePath(), "saved-copy.json");
+                         demo.beginOpen();
+                         demo.operationPath("missing.json");
+                         EXPECT_FALSE(demo.confirmFileAction(app));
+                         EXPECT_EQ(demo.scenePath(), "saved-copy.json");
+                         demo.operationPath(original);
+                         ASSERT_TRUE(demo.confirmFileAction(app));
+                         EXPECT_EQ(demo.scenePath(), original);
+                         demo.clear(app);
+                         EXPECT_EQ(demo.scenePath(), original);
+                         app.requestExit();
+                     },
+                     {},
+                     {}});
+        cleanValidation();
+    }
+
+    TEST_F(DemoAppTest, WorkspacePersistsDockingAndResetKeepsScene)
+    {
+        copyShowcaseModels();
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            auto config = options(true);
+            config.window.width = 1920;
+            config.window.height = 1080;
+            Demo::DemoApp session(config);
+            auto demo = std::make_shared<Demo::ModelScene>();
+            int frame = 0;
+            session.run({[demo](auto& app) { demo->initialize(app); },
+                         [&](auto& app, const auto&) {
+                             if (++frame == 6)
+                             {
+                                 const auto image = WindowCapture::capture(app.window());
+                                 WindowCapture::save(
+                                     image, pass ? "review/workspace-restored.ppm" : "review/workspace-default.ppm");
+                             }
+                             if (frame == 8)
+                                 app.requestExit();
+                         },
+                         [&, demo](auto& app) {
+                             demo->ui(app);
+                             for (const char* name : {"Files", "Objects", "Properties", "Status", "Scene"})
+                             {
+                                 const auto* panel = ImGui::FindWindowByName(name);
+                                 ASSERT_NE(panel, nullptr);
+                                 EXPECT_NE(panel->DockId, 0u) << name;
+                             }
+                             if (frame == 3)
+                             {
+                                 const auto count = app.scene().entities().size();
+                                 demo->restoreLayout();
+                                 EXPECT_EQ(app.scene().entities().size(), count);
+                                 ImGui::SaveIniSettingsToDisk("incubator-layout.ini");
+                             }
+                         },
+                         {},
+                         {},
+                         [demo](auto& app) { demo->layout(app); }});
+            EXPECT_TRUE(fs::exists("incubator-layout.ini"));
+        }
+        cleanValidation();
+    }
+
     TEST_F(DemoAppTest, StartupConfigOpensCustomSceneAndTracksSuccessfulFileOperations)
     {
         auto io = NativeIO::createPlatformFileIO();
@@ -876,6 +962,91 @@ namespace
         EXPECT_NE(camera.rotation(), canceled.rotation());
         mouse(handle, 1, GLFW_RELEASE, 0);
         EXPECT_TRUE(sample().rotate.released);
+    }
+
+    TEST_F(DemoAppTest, ViewportDragCrossesPanelsAndReplacementRequiresFreshPress)
+    {
+        Demo::DemoApp session(options());
+        Demo::ModelScene demo;
+        int frame = -1;
+        Demo::ViewportRegion region;
+        GLFWmousebuttonfun mouse = nullptr;
+        GLFWcursorposfun cursor = nullptr;
+        Scene::Camera replaced;
+        glm::quat moved;
+        session.run({[&](auto& app) {
+                         app.scene().setCamera(Scene::Camera({0, 0, 6}));
+                         auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                         mouse = glfwSetMouseButtonCallback(handle, nullptr);
+                         glfwSetMouseButtonCallback(handle, mouse);
+                         cursor = glfwSetCursorPosCallback(handle, nullptr);
+                         glfwSetCursorPosCallback(handle, cursor);
+                         auto focus = glfwSetWindowFocusCallback(handle, nullptr);
+                         glfwSetWindowFocusCallback(handle, focus);
+                         focus(handle, GLFW_TRUE);
+                     },
+                     [&](auto& app, const auto&) {
+                         auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                         switch (++frame)
+                         {
+                             case 1:
+                                 cursor(handle, region.origin.x + 40, region.origin.y + 40);
+                                 break;
+                             case 2:
+                                 mouse(handle, 1, GLFW_PRESS, 0);
+                                 break;
+                             case 3:
+                                 cursor(handle, region.origin.x + 60, region.origin.y + 40);
+                                 break;
+                             case 4:
+                                 EXPECT_NE(app.scene().camera().rotation(), glm::quat(1, 0, 0, 0));
+                                 moved = app.scene().camera().rotation();
+                                 cursor(handle, region.origin.x - 30, region.origin.y + 40);
+                                 break;
+                             case 5:
+                                 EXPECT_NE(app.scene().camera().rotation(), moved);
+                                 break;
+                             case 6: {
+                                 auto scene = std::make_unique<Scene::Scene>();
+                                 scene->setCamera(Scene::Camera({0, 0, 8}));
+                                 app.setScene(std::move(scene));
+                                 replaced = app.scene().camera();
+                                 break;
+                             }
+                             case 7:
+                                 cursor(handle, region.origin.x + 40, region.origin.y + 40);
+                                 break;
+                             case 8:
+                                 cursor(handle, region.origin.x + 80, region.origin.y + 50);
+                                 break;
+                             case 9:
+                                 EXPECT_EQ(app.scene().camera().rotation(), replaced.rotation());
+                                 mouse(handle, 1, GLFW_RELEASE, 0);
+                                 break;
+                             case 12:
+                                 mouse(handle, 1, GLFW_PRESS, 0);
+                                 break;
+                             case 13:
+                                 cursor(handle, region.origin.x + 100, region.origin.y + 50);
+                                 break;
+                             case 14:
+                                 EXPECT_NE(app.scene().camera().rotation(), replaced.rotation());
+                                 mouse(handle, 1, GLFW_RELEASE, 0);
+                                 break;
+                             case 15:
+                                 app.requestExit();
+                                 break;
+                         }
+                     },
+                     {},
+                     [&](auto&) { demo.cancelInteraction(); },
+                     [&](auto& app, auto extent, const auto& input) { demo.input(app, extent, input); },
+                     [&](auto& app) {
+                         app.sceneViewport("Scene");
+                         region = app.viewportRegion();
+                     }});
+        EXPECT_EQ(frame, 15);
+        cleanValidation();
     }
 
     TEST_F(DemoAppTest, RunForwardsPanAndRestartsRotationAfterFocusCancellation)

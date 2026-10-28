@@ -156,6 +156,11 @@ namespace Incubator
                 // 每次从相同的基础样式计算，避免 DPI 往返时累积缩放。
                 ImGuiStyle style;
                 ImGui::StyleColorsDark(&style);
+                // 统一蓝色强调选中、悬停及停靠状态，按基础样式随 DPI 重算。
+                style.Colors[ImGuiCol_Header] = {0.16f, 0.32f, 0.46f, 1};
+                style.Colors[ImGuiCol_HeaderHovered] = {0.2f, 0.45f, 0.65f, 1};
+                style.Colors[ImGuiCol_HeaderActive] = {0.22f, 0.52f, 0.76f, 1};
+                style.Colors[ImGuiCol_DockingPreview] = {0.22f, 0.52f, 0.76f, 0.7f};
                 style.WindowPadding = {12, 12};
                 style.FramePadding = {8, 6};
                 style.ItemSpacing = {8, 8};

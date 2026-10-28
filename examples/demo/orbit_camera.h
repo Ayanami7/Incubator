@@ -35,7 +35,7 @@ namespace Incubator::Demo
         /// @brief 根据 UI 输入更新轨道相机。
         /// @param camera 待更新的相机。
         /// @param input 本帧 UI 输入。
-        /// @param windowSize 窗口客户区尺寸，鼠标位移使用此窗口坐标系，而非帧缓冲尺寸。
+        /// @param windowSize 交互区域的逻辑尺寸；视口消费者传入图像逻辑尺寸，而非帧缓冲尺寸。
         /// @return 相机发生变化时返回 true。
         bool apply(Scene::Camera& camera, const UiInput& input, Input::PointerValue windowSize)
         {

@@ -76,6 +76,11 @@ namespace Incubator::Demo
         std::array<float, 4>& clearColor();
         /// @brief 在当前 UI 帧中显示独立场景视口；关闭或隐藏时只提交其他 UI。
         void sceneViewport(const char* title, bool* open = nullptr);
+        /// @brief 返回本轮布局确定的场景图像逻辑区域。
+        const ViewportRegion& viewportRegion() const
+        {
+            return viewportRegion_;
+        }
         Render::FrameExtent sceneExtent() const
         {
             return sceneExtent_;
@@ -92,6 +97,8 @@ namespace Incubator::Demo
         std::array<float, 4> clearColor_;
         Render::FrameExtent sceneExtent_{};
         Render::SceneOutput sceneOutput_;
+        ViewportRegion viewportRegion_;
+        bool sceneChanged_ = false;
         bool ownsRoutes_ = false;
         bool exitRequested_ = false;
     };

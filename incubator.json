@@ -1,8 +1,8 @@
 {
   "window": {
     "title": "Incubator Engine Demo",
-    "width": 1280,
-    "height": 720
+    "width": 1920,
+    "height": 1080
   },
   "startupScene": "assets/scenes/mixed.json"
 }

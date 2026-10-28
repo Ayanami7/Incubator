@@ -126,6 +126,7 @@ namespace Incubator::Demo
         if (!scene)
             throw Error::Exception(Error::Code::CONFIG, "DemoApp requires a Scene");
         scene_ = std::move(scene);
+        sceneChanged_ = true;
     }
 
     std::array<float, 4>& DemoApp::clearColor()
@@ -151,7 +152,12 @@ namespace Incubator::Demo
             if (sceneExtent_.width && sceneExtent_.height)
             {
                 sceneOutput_ = renderer_->prepareSceneTarget(sceneExtent_);
+                const auto origin = ImGui::GetCursorScreenPos();
                 ImGui::Image(static_cast<ImTextureID>(renderer_->sceneImage(sceneOutput_)), size);
+                const bool hovered = ImGui::IsItemHovered();
+                if (hovered && (ImGui::IsMouseClicked(0) || ImGui::IsMouseClicked(1) || ImGui::IsMouseClicked(2)))
+                    ImGui::SetWindowFocus();
+                viewportRegion_ = {{origin.x, origin.y}, {size.x, size.y}, hovered, ImGui::IsWindowFocused()};
             }
         }
         ImGui::End();
@@ -190,7 +196,9 @@ namespace Incubator::Demo
                 if (exitRequested_ || window_->shouldClose())
                     break;
                 const auto extent = renderer_->beginUiFrame();
-                const bool cancelInput = !extent || !window_->input().focused() || window_->input().focusLost();
+                const bool cancelInput = !extent || !window_->input().focused() || window_->input().focusLost() ||
+                                         (callbacks.layout && sceneChanged_);
+                sceneChanged_ = false;
                 if (cancelInput)
                 {
                     inputAdapter.cancel();
@@ -204,6 +212,7 @@ namespace Incubator::Demo
                 }
                 sceneExtent_ = {};
                 sceneOutput_ = {};
+                viewportRegion_ = {};
                 if (callbacks.layout)
                     callbacks.layout(*this);
                 const auto renderExtent = callbacks.layout ? sceneExtent_ : *extent;
@@ -213,7 +222,9 @@ namespace Incubator::Demo
                     if (callbacks.cancelInteraction)
                         callbacks.cancelInteraction(*this);
                 }
-                const auto input = inputAdapter.sample(window_->input());
+                auto input = inputAdapter.sample(window_->input());
+                if (callbacks.layout)
+                    input = viewportInput(input, viewportRegion_, ImGui::GetIO().WantTextInput);
                 if (!cancelInput && callbacks.input && renderExtent.width && renderExtent.height)
                     callbacks.input(*this, renderExtent, input);
                 if (callbacks.ui)

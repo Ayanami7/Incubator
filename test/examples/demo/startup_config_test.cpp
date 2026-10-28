@@ -16,8 +16,8 @@ namespace
     {
         const auto defaults = Demo::decodeStartupConfig("{}");
         EXPECT_EQ(defaults.options.window.title, "Incubator Engine Demo");
-        EXPECT_EQ(defaults.options.window.width, 1280);
-        EXPECT_EQ(defaults.options.window.height, 720);
+        EXPECT_EQ(defaults.options.window.width, 1920);
+        EXPECT_EQ(defaults.options.window.height, 1080);
         EXPECT_EQ(defaults.startupScene, "assets/scenes/mixed.json");
         const auto partial = Demo::decodeStartupConfig(R"({"window":{"width":900},"unknown":true})");
         EXPECT_EQ(partial.options.window.width, 900);

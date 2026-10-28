@@ -13,12 +13,13 @@
 #include "demo_app.h"
 #include "model_cache.h"
 #include "orbit_camera.h"
-#include "runtime/model/prepared_model.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
+#include "runtime/model/prepared_model.h"
 #include "runtime/scene/scene_file.h"
 #include "runtime/scene/scene_rebuild.h"
+#include "workspace.h"
 
 namespace Incubator::Demo
 {
@@ -39,9 +40,9 @@ namespace Incubator::Demo
             lighting.direction = {std::cos(p) * std::sin(y), std::sin(p), -std::cos(p) * std::cos(y)};
         }
         bool changed = directionChanged;
-        changed |= ImGui::ColorEdit3("Light color (linear)", &lighting.color.x, ImGuiColorEditFlags_Float);
-        changed |=
-            ImGui::SliderFloat("Light intensity", &lighting.intensity, 0, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        changed |= ImGui::ColorEdit3("Color (linear)", &lighting.color.x,
+                                     ImGuiColorEditFlags_Float | ImGuiColorEditFlags_NoInputs);
+        changed |= ImGui::SliderFloat("Intensity", &lighting.intensity, 0, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         changed |= ImGui::SliderFloat("Ambient", &lighting.ambient, 0, 1, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         if (changed)
             scene.setLighting(lighting);
@@ -78,16 +79,18 @@ namespace Incubator::Demo
         {
             try
             {
-                auto buffer = pathBuffer(path);
+                std::string target(path);
                 Scene::writeScene(app.fileIO(), path, Scene::captureScene(app.scene(), app.clearColor()));
+                messageError_ = false;
                 message_ = "Saved: " + std::string(path);
-                scenePath_ = std::move(buffer);
-                Log::Registry::get("demo").info("Saved scene '{}' ({} entities)", logPath(scenePath_.data()),
+                currentFile_ = std::move(target);
+                Log::Registry::get("demo").info("Saved scene '{}' ({} entities)", logPath(currentFile_),
                                                 app.scene().entities().size());
                 return true;
             }
             catch (const Error::Exception& error)
             {
+                messageError_ = true;
                 message_ = error.message();
                 Log::Registry::get("demo").error("Failed to save scene '{}': {}", path, error.message());
                 return false;
@@ -103,15 +106,65 @@ namespace Incubator::Demo
             }
             catch (const Error::Exception& error)
             {
+                messageError_ = true;
                 message_ = error.message();
                 Log::Registry::get("demo").error("Failed to load scene '{}': {}", path, error.message());
                 return false;
             }
         }
 
+        /// @brief 保存到当前文件；没有文件关联时进入另存确认。
+        bool save(Demo::DemoApp& app)
+        {
+            if (currentFile_.empty())
+            {
+                beginSaveAs();
+                return false;
+            }
+            return save(app, currentFile_);
+        }
+        void beginSaveAs()
+        {
+            fileAction_ = FileAction::SaveAs;
+        }
+        void beginOpen()
+        {
+            fileAction_ = FileAction::Open;
+        }
+        void cancelFileAction()
+        {
+            fileAction_ = FileAction::None;
+        }
+        void operationPath(std::string_view path)
+        {
+            scenePath_ = pathBuffer(path);
+        }
+        bool confirmFileAction(Demo::DemoApp& app)
+        {
+            const std::string path(scenePath_.data());
+            const bool success = fileAction_ == FileAction::Open     ? load(app, path)
+                                 : fileAction_ == FileAction::SaveAs ? save(app, path)
+                                                                     : false;
+            if (success)
+                fileAction_ = FileAction::None;
+            return success;
+        }
+        void layout(Demo::DemoApp& app)
+        {
+            workspace_.begin();
+            app.sceneViewport("Scene", &viewportOpen_);
+        }
+        void restoreLayout()
+        {
+            workspace_.reset();
+        }
+
         const std::string& message() const { return message_; }
         /// @brief 获取当前场景文件面板中的 UTF-8 路径。
-        std::string_view scenePath() const { return scenePath_.data(); }
+        std::string_view scenePath() const
+        {
+            return currentFile_;
+        }
 
         Scene::EntityId selected() const
         {
@@ -166,7 +219,11 @@ namespace Incubator::Demo
             int width, height;
             app.window().getWindowSize(width, height);
             auto camera = app.scene().camera();
-            if (orbit_.apply(camera, input, {double(width), double(height)}))
+            const auto& region = app.viewportRegion();
+            const auto logicalSize = region.size.x > 0 && region.size.y > 0
+                                         ? region.size
+                                         : Input::PointerValue{double(width), double(height)};
+            if (orbit_.apply(camera, input, logicalSize))
                 app.scene().setCamera(camera);
             if (input.focusPressed && !input.captureKeyboard)
                 focusSelected(app, extent);
@@ -200,32 +257,56 @@ namespace Incubator::Demo
 
         void ui(Demo::DemoApp& app)
         {
-            enum class FileAction { None, Save, Load };
-            FileAction action = FileAction::None;
-            ImGui::SetNextWindowPos({12, 12}, ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize({350, 600}, ImGuiCond_FirstUseEver);
-            ImGui::Begin("Incubator Scene Runtime");
-            ImGui::Text("Update: %.2f ms", deltaSeconds_ * 1000);
-            ImGui::InputText("Scene file", scenePath_.data(), scenePath_.size());
-            if (ImGui::Button("Save")) action = FileAction::Save;
+            bool saveCurrent = false;
+            bool confirm = false;
+            ImGui::Begin("Files");
+            ImGui::TextWrapped("Current file: %s", currentFile_.empty() ? "(unsaved)" : currentFile_.c_str());
+            if (ImGui::Button("Save"))
+                saveCurrent = true;
             ImGui::SameLine();
-            if (ImGui::Button("Load")) action = FileAction::Load;
-            if (!message_.empty()) ImGui::TextWrapped("%s", message_.c_str());
-            ImGui::ColorEdit3("Clear color", app.clearColor().data());
-            if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen))
-                lightingControls(app.scene());
+            if (ImGui::Button("Save As"))
+                beginSaveAs();
+            ImGui::SameLine();
+            if (ImGui::Button("Open"))
+                beginOpen();
+            ImGui::SameLine();
+            if (ImGui::Button("Restore layout"))
+                restoreLayout();
+            ImGui::SameLine();
+            ImGui::Checkbox("Scene viewport", &viewportOpen_);
+            if (fileAction_ != FileAction::None)
+            {
+                ImGui::InputText("Target path", scenePath_.data(), scenePath_.size());
+                if (ImGui::Button(fileAction_ == FileAction::Open ? "Open target" : "Save target"))
+                    confirm = true;
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel"))
+                    cancelFileAction();
+            }
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7);
             int modelIndex = useObj_ ? 1 : 0;
             if (ImGui::Combo("New model", &modelIndex, "Avocado\0Teapot\0")) useObj_ = modelIndex == 1;
+            ImGui::SameLine();
             if (ImGui::Button("Create entity"))
                 createEntity(app);
             ImGui::SameLine();
             if (ImGui::Button("Clear scene"))
                 clear(app);
+            ImGui::SameLine();
             if (ImGui::Button("Reset scene"))
                 switchScene(app, useObj_);
             ImGui::SameLine();
             if (ImGui::Button(useObj_ ? "Switch to glTF" : "Switch to OBJ"))
                 switchScene(app, !useObj_);
+            ImGui::SameLine();
+            if (ImGui::Button("Exit"))
+                app.requestExit();
+            ImGui::End();
+            ImGui::Begin("Properties");
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.42f);
+            ImGui::ColorEdit3("Clear color", app.clearColor().data(), ImGuiColorEditFlags_NoInputs);
+            if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen))
+                lightingControls(app.scene());
             if (ImGui::Button("Replace camera"))
                 replaceCamera(app);
             if (ImGui::Button("Reset camera"))
@@ -235,7 +316,10 @@ namespace Incubator::Demo
             {
                 focusSelected(app, extent_);
             }
-            ImGui::TextUnformatted("Camera distance alternates between 6 and 8.");
+            ImGui::TextWrapped("Camera distance alternates between 6 and 8.");
+            ImGui::PopItemWidth();
+            ImGui::End();
+            ImGui::Begin("Objects");
             ImGui::Text("Entities: %zu", app.scene().entities().size());
             if (ImGui::BeginListBox("##entities", {-1, 110}))
             {
@@ -247,6 +331,9 @@ namespace Incubator::Demo
                 }
                 ImGui::EndListBox();
             }
+            ImGui::End();
+            ImGui::Begin("Properties");
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.42f);
             if (const auto* entity = app.scene().find(selected_))
             {
                 auto transform = entity->transform;
@@ -277,11 +364,24 @@ namespace Incubator::Demo
                 if (ImGui::Button("Delete selected"))
                     deleteSelected(app);
             }
-            if (ImGui::Button("Exit"))
-                app.requestExit();
+            ImGui::PopItemWidth();
             ImGui::End();
-            if (action == FileAction::Save) save(app, scenePath_.data());
-            if (action == FileAction::Load) load(app, scenePath_.data());
+            ImGui::Begin("Status");
+            ImGui::Text("Scene: %u x %u | Update: %.2f ms", app.sceneExtent().width, app.sceneExtent().height,
+                        deltaSeconds_ * 1000);
+            if (messageError_)
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+            ImGui::TextWrapped("%s", message_.c_str());
+            if (messageError_)
+                ImGui::PopStyleColor();
+            ImGui::TextWrapped(
+                "Saving a deployed copy does not update source assets. Build cleanup deletes it; asset redeployment "
+                "may overwrite it.");
+            ImGui::End();
+            if (saveCurrent)
+                save(app);
+            if (confirm)
+                confirmFileAction(app);
         }
 
     private:
@@ -310,6 +410,8 @@ namespace Incubator::Demo
             selected_ = {};
             orbit_.synchronize(app.scene().camera());
             scenePath_ = std::move(buffer);
+            currentFile_ = scenePath_.data();
+            messageError_ = false;
             message_ = std::move(message);
             Log::Registry::get("demo").info("Loaded scene '{}' ({} entities)", logPath(scenePath_.data()),
                                             app.scene().entities().size());
@@ -338,12 +440,23 @@ namespace Incubator::Demo
             return Scene::Transform({x, -0.78f, 0}, {1, 0, 0, 0}, glm::vec3(initialScale(false)));
         }
 
+        enum class FileAction
+        {
+            None,
+            Open,
+            SaveAs
+        };
+        FileAction fileAction_ = FileAction::None;
+        std::string currentFile_;
+        Workspace workspace_;
+        bool viewportOpen_ = true;
         std::unique_ptr<ModelCache> cache_;
         Scene::EntityId selected_;
         bool useObj_ = false;
         bool alternateCamera_ = false;
         std::vector<char> scenePath_ = pathBuffer("");
         std::string message_;
+        bool messageError_ = false;
         double deltaSeconds_ = 0;
         OrbitCamera orbit_;
         Render::FrameExtent extent_{0, 0};
@@ -357,6 +470,6 @@ namespace Incubator::Demo
                 [demo](auto& app) { demo->ui(app); },
                 [demo](auto&) { demo->cancelInteraction(); },
                 [demo](auto& app, auto extent, const auto& input) { demo->input(app, extent, input); },
-                [](auto& app) { app.sceneViewport("Scene"); }};
+                [demo](auto& app) { demo->layout(app); }};
     }
 }  // namespace Incubator::Demo
