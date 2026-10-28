@@ -388,6 +388,8 @@ namespace Incubator
                 const uint32_t frameIndex = scheduler_->currentFrameIndex();
                 scheduler_->waitForCurrentFrame();
                 uniformBuffers_[frameIndex]->write(0, std::as_bytes(std::span(&frame, 1)));
+                if (bindingSet_)
+                    bindingSet_->setShadowImage(frameIndex);
 
                 VkClearColorValue color{};
                 color.float32[0] = clearColor[0];
@@ -515,6 +517,8 @@ namespace Incubator
                             VK_NULL_HANDLE, shadowVertexShader_, std::vector<uint32_t>{});
                     resources.push_back(shadow);
                 }
+                if (bindingSet_)
+                    bindingSet_->setShadowImage(index, shadow ? &shadow->image() : nullptr);
                 resources.push_back(target);
                 resources.push_back(uniformBuffers_[index]);
                 VkClearColorValue clear{};
@@ -602,14 +606,15 @@ namespace Incubator
             std::vector<std::shared_ptr<Texture::Impl>> textures_;
             std::array<std::shared_ptr<Vulkan::VulkanBuffer>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
                 uniformBuffers_{};
+            // 阴影图先声明，保证其存活至帧绑定描述符释放之后。
+            std::array<std::shared_ptr<Vulkan::VulkanShadowTarget>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
+                shadowTargets_{};
             std::unique_ptr<Vulkan::VulkanBindingSet> bindingSet_;
             std::vector<std::shared_ptr<Material::Impl>> materials_;
             std::unique_ptr<Vulkan::VulkanSwapchain> swapchain_;
             std::unique_ptr<Vulkan::VulkanPipeline> pipeline_;
             std::array<std::shared_ptr<SceneOutput::Impl>, Vulkan::VulkanFrameScheduler::FRAME_COUNT> sceneTargets_{};
             std::unique_ptr<Vulkan::VulkanPipeline> scenePipeline_;
-            std::array<std::shared_ptr<Vulkan::VulkanShadowTarget>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
-                shadowTargets_{};
             std::unique_ptr<Vulkan::VulkanPipeline> shadowPipeline_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
             std::unique_ptr<Integration::ImGuiRenderer> imguiRenderer_;

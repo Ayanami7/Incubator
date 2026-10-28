@@ -19,6 +19,7 @@ namespace Incubator
         {
             class VulkanBuffer;
             class VulkanDevice;
+            class VulkanImage;
 
             /// @brief 与场景和深度 Shader 的 std140 FrameData 对齐的帧参数。
             struct alignas(16) VulkanFrameUniform
@@ -57,6 +58,9 @@ namespace Incubator
                 VkDescriptorSetLayout layout() const noexcept;
                 VkDescriptorSetLayout materialLayout() const noexcept;
                 VkDescriptorSet descriptorSet(uint32_t frameIndex) const noexcept;
+                /// @brief 更新阴影绑定；空指针选择已初始化的全亮白图。
+                /// @note 调用前须完成对应帧槽的 GPU 工作；外部图像须存活至改绑或绑定集销毁。
+                void setShadowImage(uint32_t frameIndex, const VulkanImage* image = nullptr);
 
             private:
                 const VulkanDevice& device_;
@@ -64,6 +68,9 @@ namespace Incubator
                 VkDescriptorSetLayout materialLayout_ = VK_NULL_HANDLE;
                 VkDescriptorPool pool_ = VK_NULL_HANDLE;
                 std::vector<VkDescriptorSet> descriptorSets_;
+                std::unique_ptr<VulkanImage> shadowFallback_;
+                VkSampler shadowSampler_ = VK_NULL_HANDLE;
+                std::vector<VkImageView> shadowViews_;
             };
         }  // namespace Vulkan
     }  // namespace Render

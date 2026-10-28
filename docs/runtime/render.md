@@ -199,7 +199,7 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 Unlit 输出 `B`；Lambert 输出 `B * (ambient + lightColor * intensity * max(dot(N,-D),0))`。
 计算在线性空间进行，最后 clamp 至 `[0,1]` 并使用原有精确 sRGB 编码一次，alpha 固定 1。
 零法线没有直接光贡献，仍保留环境项；直接光强度与环境系数同时为零时为黑色。
-这是最小漫反射预览，不包含 PBR、源灯光、主场景阴影采样或背面法线翻转。
+这是最小漫反射预览，支持可选的单方向光硬阴影，不包含 PBR、源灯光或背面法线翻转。
 
 模型 Demo 显式选择 Lambert 并提供方向、线性颜色、强度与环境控件；Render 的默认材质和旧调用仍为 Unlit。
 
@@ -208,6 +208,7 @@ Unlit 输出 `B`；Lambert 输出 `B * (ambient + lightColor * intensity * max(d
 | 帧相机与光照 | set 0 / binding 0，240 字节 FrameData，对 vertex/fragment 可见；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
 | 材质纹理 | set 1 / binding 0，Combined Image Sampler；共享已有 Texture，不重复上传 |
 | 材质颜色与模式 | set 1 / binding 1，16 字节 fragment Uniform；仅创建时写入 |
+| 阴影深度图 | set 0 / binding 1，fragment Combined Image Sampler；内部 nearest/ClampToEdge、非比较采样，按帧槽更新 |
 | 物体 model 与法线变换 | 112 字节 vertex push constant；逐物体录制 |
 
 帧与材质布局由 Renderer 各创建一份；同一 Shader、附件格式和固定状态下，所有材质共用一份
@@ -325,7 +326,7 @@ Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `test/
 `ModelInstance` 共享准备结果，`makeModelDraws` 将实例整体变换左乘模型缓存的节点累计变换，返回普通 DrawItem
 列表。应用通过同一 FrameInput 提交，列表借用、在途持有和关闭后的引用校验沿用上述约定。
 
-当前支持共享相机与固定 Pipeline、逐物体 Mesh/Material/model 的不透明列表，以及帧级方向光和环境项驱动的 Unlit/Lambert 着色；应用控制模型与动画，可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供材质文件/Loader、模型文件解析、PBR、主场景阴影采样、多光源、异步资产加载、热重载、显存池、多后端或多视口。
+当前支持共享相机与固定 Pipeline、逐物体 Mesh/Material/model 的不透明列表，以及帧级方向光和环境项驱动的 Unlit/Lambert 着色与独立视口的可选硬阴影；应用控制模型与动画，可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供材质文件/Loader、模型文件解析、PBR、PCF/软阴影、级联阴影、多光源、异步资产加载、热重载、显存池、多后端或多视口。
 
 ## 独立场景目标
 
@@ -350,7 +351,7 @@ ImGui 纹理标识，生成图像命令。Integration 按帧槽持有描述符�
 ## 阴影帧参数
 
 `runtime/render/shadow.h` 提供消费者设置 `ShadowSettings`、值快照 `ShadowFrame` 和
-`makeShadowFrame(settings, direction)`。当前支持 CPU 光源投影、投射物快照及 GPU 深度绘制，主场景阴影采样尚未接入。
+`makeShadowFrame(settings, direction)`。当前支持 CPU 光源投影、独立投射物快照、GPU 深度绘制及主场景的 Lambert 阴影采样。
 
 | 设置 | 默认值 | 约定 |
 |---|---|---|
@@ -395,4 +396,26 @@ Synchronization2 在深度早/晚测试写入与片元采样之间建立依赖�
 内部 Review 可以在等待后借用实际深度图，受控测试复用回读及片元采样支持；这不是产品截图或调试视图接口。
 
 `drawFrame` 及直接帧 Review 不执行阴影流程，收到非空 shadow 时在录制和提交前抛 RENDER；
-原有无阴影调用保持兼容。主场景目前仍沿用原 Lambert 结果，完成深度绘制不表示已把阴影乘入直接光。
+原有无阴影调用保持兼容。独立目标使用本次提交的深度图对 Lambert 直接光执行下述比较。
+
+
+### 阴影采样与关闭绑定
+
+场景顶点 Shader 输出真实世界位置；片元用同一帧的光源矩阵执行投影、透视除法及唯一的 UV 映射。
+投影位于 XY 的 [-1,1] 或深度 [0,1] 之外时直接受光，不能依赖 ClampToEdge 把边缘深度重复到范围外。
+内部采样器使用 nearest min/mag/mip、ClampToEdge 和非比较模式，以 `textureLod(...,0)` 显式读取唯一基础层，
+使范围分支不依赖隐式导数（见 [GLSL 纹理函数约定](https://registry.khronos.org/OpenGL/specs/gl/GLSLangSpec.4.50.pdf)）。读取后执行：
+
+`V = receiverDepth - depthBias <= storedDepth ? 1 : 0`
+
+只有 Lambert 的直接光乘 V，公式为 `B * (ambient + lightColor * intensity * max(dot(N,-D),0) * V)`。
+环境项、Unlit、背景与 UI 保持原行为；Unlit 仍可出现在独立投射列表中。RGB 在线性空间计算并只编码一次 sRGB。
+
+沿用默认 depthBias=0.001，供 Demo 使用的可调范围确定为 [0,0.01]；范围约束属于 Demo 控件，Runtime 仍接受任意有限非负偏移。
+偏移单位为零到一光源深度；固定方向下对应的光线距离为 bias * (far-near)。精确夹具验证了 0.0005 深度差在
+bias=0、0.00025 时被遮挡，在 0.001 时受光，较大实际遮挡保持；生产模型外观还需由展示场景确定。
+
+每个帧绑定集持有内部 1×1 全亮白图和专用阴影采样器，所有阴影描述符创建时即有效；白图通过一次 GPU 清除初始化。
+关闭时使用白图，启用时在对应 Fence 完成后改绑当前槽的真实深度图，不延迟到下一帧；稳定绑定不重复更新。
+帧绑定集不拥有外部深度图，调用方须保证其存活至改绑或绑定集销毁；Renderer 在释放描述符之后才销毁阴影目标。
+资源准备失败继续报告 RENDER，白图仅用于明确关闭的路径，不替代启用时缺失的 Shader、格式或目标。

@@ -163,6 +163,35 @@ namespace
         return pixels[(128 * 384 + 192) * 4];
     }
 
+    Scene::Camera shadowReviewCamera(glm::vec3 eye = {0, -3, 3})
+    {
+        const auto view = glm::lookAtRH(eye, glm::vec3(0, 0.5f, 0), glm::vec3(0, 1, 0));
+        return Scene::Camera(eye, glm::quat_cast(glm::mat3(glm::inverse(view))));
+    }
+
+    void expectShadowPixel(const Scene::SceneFrame& frame, std::span<const uint8_t> pixels, glm::vec3 world,
+                           glm::vec3 linear)
+    {
+        ASSERT_EQ(pixels.size(), size_t(frame.extent.width) * frame.extent.height * 4);
+        const auto clip = frame.camera.projection * frame.camera.view * glm::vec4(world, 1);
+        ASSERT_GT(clip.w, 0);
+        const auto ndc = glm::vec3(clip) / clip.w;
+        const auto x = int((ndc.x * 0.5f + 0.5f) * frame.extent.width);
+        const auto y = int((ndc.y * 0.5f + 0.5f) * frame.extent.height);
+        ASSERT_GE(x, 0);
+        ASSERT_LT(x, int(frame.extent.width));
+        ASSERT_GE(y, 0);
+        ASSERT_LT(y, int(frame.extent.height));
+        const auto offset = (size_t(y) * frame.extent.width + size_t(x)) * 4;
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            const double value = std::clamp(double(linear[channel]), 0.0, 1.0);
+            const double encoded = value <= 0.0031308 ? value * 12.92 : 1.055 * std::pow(value, 1.0 / 2.4) - 0.055;
+            EXPECT_NEAR(pixels[offset + channel], encoded * 255, 2) << "channel=" << channel;
+        }
+        EXPECT_EQ(pixels[offset + 3], 255);
+    }
+
     class SharedModelLoader final : public LoaderBase
     {
     public:
@@ -267,6 +296,23 @@ namespace
             manager.release(id);
             released(ResourceType::SHADER, "shaders/shadow.vert.spv");
         }
+        std::vector<uint8_t> shadowScenePixels(Window::Window& native, Renderer& renderer,
+                                               const Scene::SceneFrame& frame)
+        {
+            native.pollEvents();
+            const auto extent = renderer.beginUiFrame();
+            EXPECT_TRUE(extent);
+            if (!extent)
+                return {};
+            const auto output = renderer.prepareSceneTarget(frame.extent);
+            renderer.imgui().endFrame();
+            renderer.drawSceneTarget(output, frame.input(), {0.12f, 0.16f, 0.22f, 1});
+            std::vector<uint8_t> pixels;
+            Detail::RendererReviewAccess::withSceneOutput(renderer, output, [&](const auto& device, const auto& image) {
+                pixels = TextureGpuReview::captureMip(device, image, 0, {frame.extent.width, frame.extent.height});
+            });
+            return pixels;
+        }
         void released(ResourceType type, std::string_view path)
         {
             const auto id = ResourceRegistry::instance().lookup(type, path);
@@ -300,6 +346,153 @@ namespace
         std::unique_ptr<FileIO::FileIO> fileIO_;
         std::ostringstream messages_, resourceMessages_;
     };
+
+    TEST_F(ModelPreparationTest, ShadowSamplingMatchesLightingAndPreservesUnlitAcrossEnableChanges)
+    {
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            Model::PrepareOptions options;
+            options.shading = ShadingMode::Lambert;
+            const auto receiver = Model::prepareModel(renderer, "models/shadows/receiver.obj", options);
+            const auto caster = Model::prepareModel(renderer, "models/shadows/caster.obj");
+            EXPECT_EQ(caster->source().options().shading, ShadingMode::Unlit);
+            ASSERT_FALSE(receiver->textures().empty());
+            const auto unlit = renderer.createMaterial(MaterialDesc{receiver->textures()[0]});
+            Scene::Scene scene;
+            scene.createEntity(receiver);
+            const auto casterId = scene.createEntity(caster, Scene::Transform({0, 0.75f, 5}));
+            ShadowSettings settings;
+            std::vector<uint8_t> baseline;
+            for (int i = 0; i < 13; ++i)
+            {
+                SCOPED_TRACE(i);
+                if (i == 1)
+                    shadowShader(renderer);
+                scene.setCamera(shadowReviewCamera(i == 10 ? glm::vec3(0.25f, -3, 3) : glm::vec3(0, -3, 3)));
+                Lighting lighting{{0, 0, -1}, {0.6f, 0.7f, 0.8f}, 0.8f, 0.2f};
+                if (i == 6)
+                    lighting.direction = {0, -1, -1};
+                if (i == 8 || i == 9)
+                    lighting.intensity = 0;
+                if (i == 9)
+                    lighting.ambient = 0;
+                scene.setLighting(lighting);
+                scene.setTransform(casterId, Scene::Transform({i == 5 ? 3.0f : 0.0f, 0.75f, 5}));
+                settings.enabled = i != 0 && i != 3 && i != 12;
+                auto frame = Scene::extractSceneFrame(scene, {384, 256}, true, settings);
+                ASSERT_TRUE(frame);
+                // 投射物完全在主相机外，但它仍应遮挡画面内的接收面。
+                ASSERT_EQ(frame->draws.size(), receiver->draws().size());
+                if (frame->shadow)
+                    EXPECT_GT(frame->shadowDraws.size(), frame->draws.size());
+                if (i == 2 || i == 11)
+                    frame->shadowDraws.clear();
+                if (i == 7)
+                    for (auto& draw : frame->draws)
+                        draw.material = unlit;
+                const auto pixels = shadowScenePixels(*native, renderer, *frame);
+                const auto diffuse = std::max(glm::normalize(-lighting.direction).z, 0.0f);
+                const auto lit = glm::vec3(lighting.ambient) + lighting.color * lighting.intensity * diffuse;
+                const bool occluded = i == 1 || i == 4 || i == 10;
+                expectShadowPixel(*frame, pixels, {0, 0.75f, 0},
+                                  i == 7     ? glm::vec3(1)
+                                  : occluded ? glm::vec3(lighting.ambient)
+                                             : lit);
+                expectShadowPixel(*frame, pixels, {0, -0.75f, 0}, i == 7 ? glm::vec3(1) : lit);
+                if (i == 0)
+                {
+                    baseline = pixels;
+                    const auto direct = TextureGpuReview::captureFrame(renderer, frame->input());
+                    expectShadowPixel(*frame, direct, {0, 0.75f, 0}, lit);
+                }
+                if (i == 12)
+                    EXPECT_EQ(pixels, baseline);
+                size_t clearPixels = 0;
+                for (size_t at = 0; at + 3 < pixels.size(); at += 4)
+                    if (std::abs(int(pixels[at]) - 31) <= 1 && std::abs(int(pixels[at + 1]) - 41) <= 1 &&
+                        std::abs(int(pixels[at + 2]) - 56) <= 1)
+                        ++clearPixels;
+                EXPECT_GT(clearPixels, 0u);
+            }
+            for (int i = 0; i < 4; ++i)
+            {
+                native->pollEvents();
+                ASSERT_TRUE(renderer.beginUiFrame());
+                const FrameExtent extent{i < 2 ? 384u : 256u, 256};
+                const auto output = renderer.prepareSceneTarget(extent);
+                settings.enabled = i != 2;
+                const auto frame = Scene::extractSceneFrame(scene, extent, true, settings);
+                ASSERT_TRUE(frame);
+                auto* ui = ImGui::GetBackgroundDrawList();
+                ui->AddImage(renderer.sceneImage(output), {0, 0}, {256, 256});
+                ui->AddRectFilled({8, 8}, {64, 64}, IM_COL32(255, 0, 255, 255));
+                renderer.imgui().endFrame();
+                renderer.drawSceneTarget(output, frame->input(), {0.12f, 0.16f, 0.22f, 1}, [&](void* commands) {
+                    renderer.imgui().recordDrawData(renderer.imgui().drawData(),
+                                                    static_cast<VkCommandBuffer>(commands));
+                });
+            }
+            // 不等待回读即关闭，覆盖阴影采样、视口重建、UI 合成和在途描述符的共同持有期。
+        }
+        EXPECT_EQ(occurrences(messages_.str(), "Created shadow target:"), 2u);
+        cleanValidation();
+    }
+
+    TEST_F(ModelPreparationTest, ShadowSamplingTreatsLightBoundsAsLitAndUsesReceiverDepthBias)
+    {
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            shadowShader(renderer);
+            Model::PrepareOptions options;
+            options.shading = ShadingMode::Lambert;
+            const auto receiver = Model::prepareModel(renderer, "models/shadows/receiver.obj", options);
+            Scene::Scene scene;
+            scene.createEntity(receiver);
+            scene.setCamera(shadowReviewCamera());
+            const Lighting lighting{{0, 0, -1}, {0.6f, 0.7f, 0.8f}, 0.8f, 0.2f};
+            scene.setLighting(lighting);
+            struct Sample
+            {
+                glm::vec3 center;
+                glm::vec2 halfExtent;
+                float nearPlane, farPlane, casterZ, bias;
+                bool occluded;
+            };
+            const std::array<Sample, 9> samples{{{{-4, 0.75f, 0}, {1, 1}, 1, 9, 2, 0.001f, false},
+                                                 {{4, 0.75f, 0}, {1, 1}, 1, 9, 2, 0.001f, false},
+                                                 {{0, 4.75f, 0}, {1, 1}, 1, 9, 2, 0.001f, false},
+                                                 {{0, -3.25f, 0}, {1, 1}, 1, 9, 2, 0.001f, false},
+                                                 {{0, 0.75f, 6}, {1, 1}, 1, 3, 6.5f, 0.001f, false},
+                                                 {{0, 0.75f, -6}, {1, 1}, 1, 3, -5.5f, 0.001f, false},
+                                                 {{0, 0, 0}, {4, 4}, 1, 9, 0.004f, 0, true},
+                                                 {{0, 0, 0}, {4, 4}, 1, 9, 0.004f, 0.00025f, true},
+                                                 {{0, 0, 0}, {4, 4}, 1, 9, 0.004f, 0.001f, false}}};
+            for (size_t i = 0; i < samples.size(); ++i)
+            {
+                SCOPED_TRACE(i);
+                const auto& sample = samples[i];
+                const ShadowSettings settings{
+                    true, sample.center, sample.halfExtent, sample.nearPlane, sample.farPlane, sample.bias};
+                auto frame = Scene::extractSceneFrame(scene, {384, 256}, true, settings);
+                ASSERT_TRUE(frame);
+                // 投射平面覆盖整张深度图，范围外若误用 ClampToEdge 会出现可判定的暗区。
+                const auto model =
+                    glm::translate(glm::mat4(1), glm::vec3(sample.center.x, sample.center.y, sample.casterZ)) *
+                    glm::scale(glm::mat4(1), glm::vec3(4, 4, 1));
+                frame->shadowDraws = {{receiver->meshes()[0], {}, model}};
+                const auto pixels = shadowScenePixels(*native, renderer, *frame);
+                const auto expected = sample.occluded
+                                          ? glm::vec3(lighting.ambient)
+                                          : glm::vec3(lighting.ambient) + lighting.color * lighting.intensity;
+                expectShadowPixel(*frame, pixels, {0, 0.75f, 0}, expected);
+            }
+        }
+        cleanValidation();
+    }
 
     TEST_F(ModelPreparationTest, ShadowDepthTargetsFollowSlotsAndKeepNearestSurfaceWithoutMaterials)
     {

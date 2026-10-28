@@ -106,7 +106,7 @@ namespace Incubator
             /// @brief 等待当前帧槽后准备独立场景图像；零尺寸返回无效引用。
             SceneOutput prepareSceneTarget(FrameExtent extent);
             /// @brief 同帧先绘制阴影深度（启用时）与独立场景，再记录交换链 UI。
-            /// @note 启用阴影前需准备深度 Shader；主场景阴影采样尚未接入。
+            /// @note 启用阴影前需准备深度 Shader；阴影只作用于 Lambert 直接光。
             void drawSceneTarget(const SceneOutput& output, const FrameInput& input,
                                  const std::array<float, 4>& clearColor,
                                  const std::function<void(void*)>& recordUi = {});

@@ -40,7 +40,7 @@ Transform 是实体整体变换的唯一真源，实体不另存 ModelInstance �
 `Render::Lighting` 是不含 Vulkan 类型的帧级值：`direction` 为世界空间光线传播方向，
 有限且非零，允许非单位输入；`color` 为有限的 `[0,1]` 线性 RGB，`intensity` 为有限非负数，
 `ambient` 为有限的 `[0,1]` 标量。默认分别为 `(0,0,-1)`、白色、1、0.1；强度 0 关闭直接光。
-Scene 保存输入方向原值，生成 GPU 帧参数时才归一化。新 Scene 使用默认光照，替换场景时由调用方
+Scene 保存输入方向原值，构造光源矩阵及 GPU 帧参数时只归一化计算副本。新 Scene 使用默认光照，替换场景时由调用方
 显式设置展示值；clear 不重置光照。不创建灯光实体，也不在材质中保存另一份光照。
 
 模型 Demo 的灯光控件直接编辑当前 Scene，UI 返回后主循环才提取 SceneFrame；

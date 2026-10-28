@@ -28,7 +28,9 @@ foreach(MODEL_FILE IN ITEMS
     normals/folded.gltf
     normals/folded.bin
     normals/folded.obj
-    normals/source.obj)
+    normals/source.obj
+    shadows/receiver.obj
+    shadows/caster.obj)
     set(MODEL_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/models/${MODEL_FILE}")
     set(MODEL_OUTPUT "${RUNTIME_TEST_ASSET_DIR}/models/${MODEL_FILE}")
     get_filename_component(MODEL_OUTPUT_DIRECTORY "${MODEL_OUTPUT}" DIRECTORY)
@@ -37,7 +39,7 @@ foreach(MODEL_FILE IN ITEMS
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${MODEL_OUTPUT_DIRECTORY}"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${MODEL_SOURCE}" "${MODEL_OUTPUT}"
         DEPENDS "${MODEL_SOURCE}"
-        COMMENT "Deploying model test fixture ${MODEL_FILE}"
+        COMMENT "部署模型测试夹具 ${MODEL_FILE}"
         VERBATIM
     )
     list(APPEND RUNTIME_TEST_FIXTURE_OUTPUTS "${MODEL_OUTPUT}")

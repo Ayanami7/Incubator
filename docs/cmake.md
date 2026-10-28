@@ -162,3 +162,7 @@ Runtime 私有链接，生成文件及库位于 `build/3rdparty/assimp`。
 Demo 的停靠布局保存在运行 cwd 的 `incubator-layout.ini`，由 ImGui 直接管理，不作为资产部署，
 不写入 `incubator.json` 或场景 JSON。默认启动窗口为 1920×1080，场景目标大小跟随中央图像区域，
 不与启动窗口尺寸绑定。Demo 的集成测试在隔离 cwd 保存布局及用户场景，不覆盖生产运行目录中的布局。
+
+
+阴影精确测试模型位于 `test/runtime/fixtures/models/shadows/`，通过 `runtime_test_fixtures`
+部署到独立测试资产根；接收面和投射面不进入 Demo 产品资产，也不依赖展示场景。
