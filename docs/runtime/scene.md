@@ -110,24 +110,24 @@ GPU 仍由 Renderer 持有到关闭；这与 [Model 持有期](./model.md#持有
 ## 场景帧提取
 
 ```cpp
-// Update Scene first; UI edits are also applied before extraction.
+// 先更新 Scene，UI 编辑同样在提取之前写回。
 if (const auto extent = renderer.beginUiFrame())
 {
-    // Build UI and apply its changes to scene.
+    // 构建 UI 并将编辑结果应用到场景。
     auto frame = Incubator::Scene::extractSceneFrame(scene, *extent);
     renderer.imgui().endFrame();
     if (frame)
         renderer.drawFrame(frame->input(), clearColor, recordUi);
-    // frame/draw storage may be modified or destroyed after drawFrame returns.
+    // drawFrame 返回后可以修改或释放帧及绘制存储。
 }
 ```
 
-`extractSceneFrame(const Scene&, Render::FrameExtent, bool frustumCulling = true)` 返回 `std::optional<SceneFrame>`。
+`extractSceneFrame(const Scene&, Render::FrameExtent, bool frustumCulling = true, const Render::ShadowSettings& shadows = {})` 返回 `std::optional<SceneFrame>`。
 宽高任一为零时返回 nullopt，不计算投影或遍历实体；通常直接使用 beginUiFrame 给出的有效 extent。
 提取期间不修改同一 Scene，不加载文件、解码、上传、创建材质或重新验证 GPU 引用。
 
 SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera`、`vector<Render::DrawItem> draws`
-和 `Render::Lighting lighting`：
+及 `Render::Lighting lighting`、可空的 `Render::ShadowFrame shadow` 和自有 `shadowDraws` 列表：
 
 - 读取当前 Camera，按实际 extent 生成一次最终相机矩阵，供视锥判断和返回结果共用；不再次翻转 Y。
 - 复制当前光照值；后续修改 Scene 光照或替换 Scene 不影响已提取帧，复制/移动后的帧也独立持有光照。
@@ -138,6 +138,12 @@ SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera`、`v
 - 两个结果可并存，默认复制/移动同时处理各自的值和 vector。Scene 更新、clear、下一次提取及 Scene 销毁
   不回写旧结果；快照不持有 Scene、Entity 或 PreparedModel 指针，绘制项只保存 GPU 引用和矩阵值。
 
+第四个参数默认关闭阴影，保持原有调用；启用时在主相机剔除之前从全部 visible 且有模型的实体收集投射物，
+沿用 `makeModelDraws` 展开顺序及矩阵乘法。主相机外、光源范围外及 Unlit 几何仍进入投射列表，
+隐藏和无模型实体不进入；不在 CPU 上另做光源裁剪。关闭时 shadow 为空，不展开第二份绘制列表。
+有效尺寸下，无效阴影参数抛 CONFIG；零尺寸仍优先跳过。固定范围与坐标规则见 [阴影帧参数](render.md#阴影帧参数)。
+阴影设置属于消费者预览状态，不进入 Scene、SceneDescription、场景 JSON v1 或启动配置。
+
 关闭 `frustumCulling` 时恢复原有可见实体的完整展开语义，隐藏及无模型过滤始终保留。
 裁剪仅发生在本提取入口；直接调用 `makeModelDraws` 或 Renderer 不自动裁剪。
 模型整体边界不可用、世界变换无法产生有限仿射边界或视锥不可用时保留原绘制路径。
@@ -146,8 +152,9 @@ SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera`、`v
 Transform、模型绑定、可见性、Camera 位姿/FOV、extent 或当前 Scene 改变，下一次提取立即生效；
 移出后移回的实体重新出现，最终模型矩阵仍只包含一次源根。
 
-`SceneFrame::input() const &` 在调用时构造 FrameInput，span 指向当前结果的 draws，相机与光照按值复制；结果本身不保存 span。
-只能从左值结果取得视图，直接对临时 SceneFrame 调用 input 被禁止。借用后不要移动/修改结果或重新分配 draws，
+`SceneFrame::input() const &` 在调用时构造 FrameInput，两份 span 分别指向当前结果的 draws 和 shadowDraws，
+相机、光照和可空阴影参数按值复制；结果本身不保存 span。
+只能从左值结果取得视图，直接对临时 SceneFrame 调用 input 被禁止。借用后不要移动/修改结果或重新分配任一绘制列表，
 保持其存储活到 drawFrame 返回；复制或移动后，从目标对象重新调用 input，不保留旧视图。
 drawFrame 返回后即可释放或改写 CPU 列表，在途 GPU 持有仍由 Renderer 保护。
 

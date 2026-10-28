@@ -8,23 +8,30 @@ namespace Incubator::Scene
 {
     Render::FrameInput SceneFrame::input() const&
     {
-        return {extent, camera, draws, lighting};
+        return {extent, camera, draws, lighting, shadow, shadowDraws};
     }
 
-    std::optional<SceneFrame> extractSceneFrame(const Scene& scene, Render::FrameExtent extent, bool frustumCulling)
+    std::optional<SceneFrame> extractSceneFrame(const Scene& scene, Render::FrameExtent extent, bool frustumCulling,
+                                                const Render::ShadowSettings& shadows)
     {
         if (extent.width == 0 || extent.height == 0)
             return std::nullopt;
 
         const auto camera = scene.camera().matrices(extent);
+        const auto shadow = Render::makeShadowFrame(shadows, scene.lighting().direction);
         const Frustum frustum(camera);
         std::vector<Model::ModelInstance> instances;
+        std::vector<Model::ModelInstance> casters;
         instances.reserve(scene.entities().size());
+        if (shadow)
+            casters.reserve(scene.entities().size());
         for (const auto& entity : scene.entities())
         {
             if (!entity.visible || !entity.model)
                 continue;
             const auto transform = entity.transform.matrix();
+            if (shadow)
+                casters.push_back({entity.model, transform});
             if (frustumCulling && entity.model->bounds())
             {
                 const auto worldBounds = entity.model->bounds()->transformed(transform);
@@ -33,6 +40,8 @@ namespace Incubator::Scene
             }
             instances.push_back({entity.model, transform});
         }
-        return SceneFrame{extent, camera, Model::makeModelDraws(instances), scene.lighting()};
+        return SceneFrame{
+            extent,           camera, Model::makeModelDraws(instances),
+            scene.lighting(), shadow, shadow ? Model::makeModelDraws(casters) : std::vector<Render::DrawItem>{}};
     }
 }  // namespace Incubator::Scene

@@ -343,3 +343,30 @@ ImGui 图像注册及工作区布局由后续 Integration 接入。
 ImGui 纹理标识，生成图像命令。Integration 按帧槽持有描述符及独立采样器；重建目标前先结束旧绑定。
 场景目标先写入，随后在同一提交中采样到 UI，不增加 CPU 回读。字体图集更新不改变场景图像绑定。
 若 UI 生成后窗口尺寸变化，提交跳过该帧，下一轮开始 UI 前重建后端，避免已生成命令引用旧描述符。
+
+
+## 阴影帧参数
+
+`runtime/render/shadow.h` 提供消费者设置 `ShadowSettings`、值快照 `ShadowFrame` 和
+`makeShadowFrame(settings, direction)`。当前支持 CPU 光源投影与投射物快照生成，GPU 阴影绘制与采样尚未接入。
+
+| 设置 | 默认值 | 约定 |
+|---|---|---|
+| enabled | false | 关闭时返回空快照，不校验未使用的范围或方向 |
+| center | (0,0,0) | 固定世界空间观察体中心 |
+| halfExtent | (6,6) | 光源观察平面横纵方向的有限正半尺寸 |
+| nearPlane / farPlane | 0.1 / 20.1 | 有限且满足 0 < near < far |
+| depthBias | 0.001 | 有限非负的接收深度偏移，单位为零到一光源深度 |
+
+计算时归一化世界空间光线传播方向 D，不修改 Scene 的原始 Lighting；方向必须有限非零。
+光源位置为 `center - D * (nearPlane + farPlane) / 2`，朝向 D，固定范围中心位于光源深度 0.5。
+光源使用右手观察矩阵及 `orthoRH_ZO` 正交投影；默认世界 Y 上轴，`abs(dot(D,Y)) > 0.99` 时改用世界 Z 上轴。
+计算与主 Camera、渲染尺寸和场景边界无关，不自动拟合。
+
+`ShadowFrame::viewProjection` 保存 projection × view，投影 Y 已翻转一次；深度绘制直接使用该矩阵。
+采样侧对光源裁剪位置执行透视除法，再使用 `uv = ndc.xy * 0.5 + 0.5`，不再翻转 Y，深度保持零到一。
+以 D=(0,0,-1) 为例，中心上方映射到较小的纹理 v；近面深度为 0，远面为 1。
+启用时无效参数或无法用有限 float 矩阵表示的结果抛 CONFIG。
+
+`FrameInput` 尾部增加默认空的 `shadow` 和 `shadowDraws`。前者按值复制光源矩阵与偏移，后者借用独立投射列表；
+旧聚合初始化仍默认无阴影，GPU 帧参数布局当前保持原样。列表所有权及复制、移动约定见 [场景帧提取](scene.md#场景帧提取)。

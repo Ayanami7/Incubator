@@ -1105,6 +1105,82 @@ namespace
     class SceneFrameTest : public ModelInstanceTest
     {};
 
+    TEST_F(SceneFrameTest, ShadowCastersIgnoreCameraCullingAndCopiedMovedFramesOwnBothLists)
+    {
+        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
+        auto native = window();
+        Scene::SceneFrame retained;
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            auto model = Model::prepareModel(renderer, "models/shadow-transforms.gltf");
+            ASSERT_EQ(model->draws().size(), 5u);
+            ASSERT_NE(model->nodes()[model->rootNode()].localTransform, glm::mat4(1));
+            Scene::Scene scene;
+            scene.setCamera(Scene::Camera({0, 0, 80}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 200}));
+            const std::array poses{Scene::Transform({1, 2, 0}, {1, 0, 0, 1}, {2, 3, 1}),
+                                   Scene::Transform({10000, 0, 0}),
+                                   Scene::Transform({-2, 1, 0}, {1, 0, 0, 0}, {-0.5f, 2, 0})};
+            const auto firstId = scene.createEntity(model, poses[0]);
+            scene.createEntity({}, Scene::Transform{});
+            scene.createEntity(model, Scene::Transform{}, false);
+            scene.createEntity(model, poses[1]);
+            scene.createEntity(model, poses[2]);
+            Render::ShadowSettings settings;
+            settings.enabled = true;
+            auto first = Scene::extractSceneFrame(scene, {800, 400}, true, settings);
+            ASSERT_TRUE(first && first->shadow);
+            ASSERT_EQ(first->draws.size(), 10u);
+            ASSERT_EQ(first->shadowDraws.size(), 15u);
+            for (size_t entity = 0; entity < poses.size(); ++entity)
+                for (size_t part = 0; part < model->draws().size(); ++part)
+                    EXPECT_EQ(first->shadowDraws[entity * 5 + part].model,
+                              poses[entity].matrix() * model->draws()[part].model);
+            // 夹具的根及子节点不与实体旋转、缩放交换，已知点可发现重复应用源根的问题。
+            point(first->shadowDraws[0].model, -2, 24);
+            const auto uncull = Scene::extractSceneFrame(scene, {800, 400}, false, settings);
+            ASSERT_EQ(uncull->draws.size(), 15u);
+            for (size_t i = 0; i < first->shadowDraws.size(); ++i)
+                EXPECT_EQ(uncull->draws[i].model, first->shadowDraws[i].model);
+            const auto disabled = Scene::extractSceneFrame(scene, {800, 400});
+            EXPECT_FALSE(disabled->shadow);
+            EXPECT_TRUE(disabled->shadowDraws.empty());
+            EXPECT_EQ(disabled->draws.size(), first->draws.size());
+
+            auto copied = *first;
+            EXPECT_NE(copied.draws.data(), first->draws.data());
+            EXPECT_NE(copied.shadowDraws.data(), first->shadowDraws.data());
+            auto moved = std::move(copied);
+            retained = moved;
+            Scene::SceneFrame moveAssigned;
+            moveAssigned = std::move(moved);
+            for (const auto* frame : {&retained, &moveAssigned})
+            {
+                EXPECT_EQ(frame->input().draws.data(), frame->draws.data());
+                EXPECT_EQ(frame->input().shadowDraws.data(), frame->shadowDraws.data());
+                EXPECT_NE(frame->shadowDraws.data(), first->shadowDraws.data());
+            }
+            const auto previousMatrix = first->shadow->viewProjection;
+            scene.setTransform(firstId, Scene::Transform({50, 0, 0}));
+            scene.setLighting({{0, 1, 0}, {1, 1, 1}, 1, 0.1f});
+            const auto changed = Scene::extractSceneFrame(scene, {400, 400}, true, settings);
+            EXPECT_NE(changed->shadowDraws[0].model, first->shadowDraws[0].model);
+            EXPECT_NE(changed->shadow->viewProjection, previousMatrix);
+            EXPECT_EQ(retained.shadow->viewProjection, previousMatrix);
+            scene.clear();
+            model.reset();
+            const auto empty = Scene::extractSceneFrame(scene, {400, 400}, true, settings);
+            EXPECT_TRUE(empty->shadow.has_value());
+            EXPECT_TRUE(empty->draws.empty());
+            EXPECT_TRUE(empty->shadowDraws.empty());
+            first.reset();
+            EXPECT_TRUE(retained.shadowDraws[0].mesh.valid());
+            point(retained.shadowDraws[0].model, -2, 24);
+        }
+        EXPECT_FALSE(retained.shadowDraws[0].mesh.valid());
+        cleanValidation();
+    }
+
     TEST_F(SceneFrameTest, CullingKeepsEntityOrderAndUsesCurrentWorldTransformBeforeExpansion)
     {
         ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());

@@ -7,6 +7,7 @@
 #include "runtime/render/lighting.h"
 #include "runtime/render/material.h"
 #include "runtime/render/mesh.h"
+#include "runtime/render/shadow.h"
 
 namespace Incubator
 {
@@ -35,13 +36,15 @@ namespace Incubator
         };
 
         /// @brief 提交一帧渲染所需的应用输入。
-        /// @note 绘制列表仅在 drawFrame 调用期间借用，也可以为空。
+        /// @note 两份绘制列表仅在渲染提交调用期间借用，均可以为空。
         struct FrameInput
         {
             FrameExtent extent;
             CameraMatrices camera;
             std::span<const DrawItem> draws;
             Lighting lighting{};
+            std::optional<ShadowFrame> shadow{};
+            std::span<const DrawItem> shadowDraws{};  ///< 独立于主相机裁剪的投射物列表。
         };
     }  // namespace Render
 }  // namespace Incubator
