@@ -4,6 +4,7 @@
 #include "examples/demo/demo_app.h"
 #include "examples/demo/model_scene.h"
 #include "runtime/scene/scene_description.h"
+#include "test/examples/demo/showcase_scene.h"
 
 int main(int argc, char** argv)
 {
@@ -22,9 +23,8 @@ int main(int argc, char** argv)
                      demo.initialize(session, mode == "read" ? argv[2] : "assets/scenes/mixed.json");
                      if (mode == "write")
                      {
-                         demo.switchScene(session, false);
-                         demo.update(session, {});
-                         demo.update(session, {});
+                         Incubator::DemoTest::setSharedModelScene(session, demo, false);
+
                          demo.selectModel(true);
                          const auto tea = demo.createEntity(session);
                          session.scene().setTransform(
@@ -53,13 +53,11 @@ int main(int argc, char** argv)
                              d.entities[2].model->path() != "models/utah_teapot/utah_teapot.obj" ||
                              d.entities[0].model->options() != expected || d.entities[2].model->options() != expected ||
                              d.entities[2].transform.scale() != glm::vec3(-0.1f, 0.2f, 0) ||
-                             d.camera.position() != glm::vec3(1, 2, 8) ||
-                             d.camera.perspective().verticalFov != 0.9f ||
+                             d.camera.position() != glm::vec3(1, 2, 8) || d.camera.perspective().verticalFov != 0.9f ||
                              d.camera.perspective().nearPlane != 0.2f || d.camera.perspective().farPlane != 90 ||
                              d.lighting.direction != glm::vec3(0, -2, -3) ||
                              d.lighting.color != glm::vec3(0.2f, 0.6f, 0.8f) || d.lighting.intensity != 2 ||
-                             d.lighting.ambient != 0.3f ||
-                             d.clearColor != std::array<float, 4>{0.2f, 0.3f, 0.4f, 0.5f})
+                             d.lighting.ambient != 0.3f || d.clearColor != std::array<float, 4>{0.2f, 0.3f, 0.4f, 0.5f})
                              result = 1;
                      }
                      else

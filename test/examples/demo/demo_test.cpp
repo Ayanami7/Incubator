@@ -1,5 +1,3 @@
-#include "examples/demo/demo_app.h"
-
 #include <gtest/gtest.h>
 #include <imgui.h>
 #include <spdlog/sinks/ostream_sink.h>
@@ -14,20 +12,22 @@
 #include <stdexcept>
 #include <vector>
 
-#include "runtime/core/utils/utf8.h"
+#include "examples/demo/demo_app.h"
 #include "examples/demo/model_scene.h"
 #include "examples/demo/startup_config.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
+#include "runtime/core/utils/utf8.h"
 #include "runtime/model/prepared_model.h"
+#include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/resource/loader/text_resource.h"
 #include "runtime/resource/loader/texture_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene_frame.h"
-#include "support/window_capture.h"
 #include "support/texture_gpu_review.h"
-#include "runtime/render/integration/imgui_renderer.h"
+#include "support/window_capture.h"
+#include "test/examples/demo/showcase_scene.h"
 
 namespace
 {
@@ -287,12 +287,15 @@ namespace
         for (int pass = 0; pass < 2; ++pass)
         {
             auto config = options(true);
-            config.window.width = 1920;
-            config.window.height = 1080;
+            config.window.width = pass ? 1280 : 1920;
+            config.window.height = pass ? 720 : 1080;
             Demo::DemoApp session(config);
             auto demo = std::make_shared<Demo::ModelScene>();
             int frame = 0;
-            session.run({[demo](auto& app) { demo->initialize(app); },
+            session.run({[demo](auto& app) {
+                             demo->initialize(app);
+                             demo->select(app.scene().entities()[0].id);
+                         },
                          [&](auto& app, const auto&) {
                              if (++frame == 6)
                              {
@@ -305,11 +308,19 @@ namespace
                          },
                          [&, demo](auto& app) {
                              demo->ui(app);
-                             for (const char* name : {"Files", "Objects", "Properties", "Status", "Scene"})
+                             for (const char* name : {"Objects", "Properties", "Scene"})
                              {
                                  const auto* panel = ImGui::FindWindowByName(name);
                                  ASSERT_NE(panel, nullptr);
                                  EXPECT_NE(panel->DockId, 0u) << name;
+                             }
+                             EXPECT_EQ(ImGui::FindWindowByName("Files"), nullptr);
+                             EXPECT_EQ(ImGui::FindWindowByName("Status"), nullptr);
+                             if (frame >= 5)
+                             {
+                                 const auto size = ImGui::GetMainViewport()->Size;
+                                 EXPECT_GT(app.viewportRegion().size.y, size.y * 0.7f);
+                                 EXPECT_GT(app.viewportRegion().size.x, size.x * 0.4f);
                              }
                              if (frame == 3)
                              {
@@ -318,6 +329,7 @@ namespace
                                  EXPECT_EQ(app.scene().entities().size(), count);
                                  ImGui::SaveIniSettingsToDisk("incubator-layout.ini");
                              }
+                             glfwWaitEventsTimeout(0.04);
                          },
                          {},
                          {},
@@ -361,8 +373,7 @@ namespace
             app.window().getWindowSize(width, height);
             EXPECT_EQ(width, 640);
             EXPECT_EQ(height, 480);
-            demo.update(app, {});
-            demo.update(app, {});
+
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, DEMO_GLTF).valid());
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, DEMO_OBJ).valid());
             demo.select(app.scene().entities()[0].id);
@@ -457,7 +468,7 @@ namespace
         session.run({[&](Demo::DemoApp& app) {
             Demo::ModelScene demo;
             demo.initialize(app);
-            demo.switchScene(app, false);
+            DemoTest::setSharedModelScene(app, demo, false);
             const auto id = demo.selected();
             const auto transform = app.scene().find(id)->transform.matrix();
             const auto opens = state->opens;
@@ -478,11 +489,11 @@ namespace
             EXPECT_EQ(app.scene().find(id)->transform.matrix(), transform);
             demo.resetCamera(app);
             EXPECT_EQ(app.scene().camera().position(), glm::vec3(0, 0, 6));
-            demo.replaceCamera(app);
+            app.scene().setCamera(Scene::Camera({0, 0, 8}));
             EXPECT_EQ(app.scene().camera().position(), glm::vec3(0, 0, 8));
             demo.input(app, {800, 600}, {});
             EXPECT_EQ(app.scene().camera().position(), glm::vec3(0, 0, 8));
-            demo.switchScene(app, false);
+            DemoTest::setSharedModelScene(app, demo, false);
             demo.input(app, {800, 600}, {});
             EXPECT_EQ(app.scene().camera().position(), glm::vec3(0, 0, 6));
             EXPECT_EQ(app.scene().find(id), nullptr);
@@ -802,7 +813,9 @@ namespace
     TEST_F(DemoAppTest, LightingWidgetsEditCurrentSceneAndSameFrameSnapshot)
     {
         auto state = std::make_shared<Lifetime>();
-        Demo::DemoApp session(options(true), std::make_unique<TrackedFileIO>(state));
+        auto config = options(true);
+        config.window.height = 1000;
+        Demo::DemoApp session(config, std::make_unique<TrackedFileIO>(state));
         const auto opens = state->opens;
         const Render::Lighting initial{{1, 2, -3}, {0.5f, 0.75f, 1}, 0.7f, 0.2f};
         const Render::Lighting external{{2, 1, -3}, {0.2f, 0.4f, 0.8f}, 0.4f, 0.3f};
@@ -842,15 +855,16 @@ namespace
                      },
                      [&](Demo::DemoApp& app) {
                          ImGui::SetNextWindowPos({12, 12}, ImGuiCond_Always);
-                         // 面板需容纳 DPI 缩放后的五行控件，避免把点击发到裁剪区。
-                         const auto height = 5 * ImGui::GetFrameHeightWithSpacing() + ImGui::GetFrameHeight() +
-                                             2 * ImGui::GetStyle().WindowPadding.y;
+                         // 面板需容纳 DPI 缩放后的五组标签和控件，避免把点击发到裁剪区。
+                         const auto row = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing();
+                         const auto height = 5 * row + ImGui::GetFrameHeight() + 2 * ImGui::GetStyle().WindowPadding.y;
                          ImGui::SetNextWindowSize({600, height}, ImGuiCond_Always);
                          ImGui::Begin("Lighting controls");
                          ImGui::PushItemWidth(200);
                          const auto origin = ImGui::GetCursorScreenPos();
-                         yawClick = {origin.x + 50, origin.y + ImGui::GetFrameHeight() * 0.5f};
-                         intensityClick = {origin.x + 150, yawClick.y + 3 * ImGui::GetFrameHeightWithSpacing()};
+                         yawClick = {origin.x + 50,
+                                     origin.y + ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeight() * 0.5f};
+                         intensityClick = {origin.x + 150, yawClick.y + 3 * row};
                          Demo::lightingControls(app.scene());
                          ImGui::PopItemWidth();
                          ImGui::End();
@@ -1159,15 +1173,14 @@ namespace
         };
         Demo::Callbacks callbacks{[&, demo](auto& app) {
                                       demo->initialize(app);
-                                      demo->switchScene(app, false);
+                                      DemoTest::setSharedModelScene(app, *demo, false);
                                       gltf = app.scene().entities()[0].model;
                                   },
-                                  [&, demo](auto& app, const auto& time) {
-                                      demo->update(app, time);
+                                  [&, demo](auto& app, const auto&) {
                                       if (frames == 2)
                                       {
                                           ASSERT_NO_FATAL_FAILURE(presented(app));
-                                          demo->switchScene(app, true);
+                                          DemoTest::setSharedModelScene(app, *demo, true);
                                           EXPECT_NE(app.scene().entities()[0].model, gltf);
                                           track(app, app.scene().entities()[0].model, state);
                                       }
@@ -1197,10 +1210,9 @@ namespace
         int updates = 0;
         Demo::Callbacks callbacks{[demo](auto& app) {
                                       demo->initialize(app);
-                                      demo->switchScene(app, false);
+                                      DemoTest::setSharedModelScene(app, *demo, false);
                                   },
-                                  [&, demo](auto& app, const auto& time) {
-                                      demo->update(app, time);
+                                  [&, demo](auto& app, const auto&) {
                                       if (++updates == 3)
                                           app.requestExit();
                                   },
@@ -1232,14 +1244,14 @@ namespace
                                       EXPECT_EQ(app.scene().lighting(), lighting);
                                       EXPECT_EQ(app.scene().camera().position(), camera.position());
                                       demo->createEntity(app);
-                                      demo->replaceCamera(app);
+                                      app.scene().setCamera(Scene::Camera({0, 0, 8}));
                                       EXPECT_EQ(app.scene().camera().position().z, 8);
-                                      demo->switchScene(app, true);
+                                      DemoTest::setSharedModelScene(app, *demo, true);
                                       const auto obj = app.scene().find(demo->selected())->model;
                                       EXPECT_NE(obj, gltf);
                                       EXPECT_EQ(app.scene().find(first), nullptr);
                                       EXPECT_EQ(app.scene().camera().position().z, 6);
-                                      demo->switchScene(app, false);
+                                      DemoTest::setSharedModelScene(app, *demo, false);
                                       EXPECT_EQ(app.scene().find(demo->selected())->model, gltf);
                                       EXPECT_EQ(state->opens, opens);
                                       track(app, gltf, state);
@@ -1258,9 +1270,8 @@ namespace
         session.run({[&](Demo::DemoApp& app) {
             Demo::ModelScene demo;
             demo.initialize(app);
-            demo.switchScene(app, false);
-            demo.update(app, {});
-            demo.update(app, {});
+            DemoTest::setSharedModelScene(app, demo, false);
+
             const auto original = app.scene().entities()[0].id;
             const auto avocado = app.scene().find(original)->model;
             demo.selectModel(true);
@@ -1337,7 +1348,7 @@ namespace
         auto demo = std::make_shared<Demo::ModelScene>();
         session.run({[demo](auto& app) {
             demo->initialize(app);
-            demo->switchScene(app, false);
+            DemoTest::setSharedModelScene(app, *demo, false);
         }, {}, [demo](auto& app) {
             demo->ui(app);
             const auto old = demo->selected();

@@ -32,18 +32,23 @@ namespace Incubator::Demo
         const auto direction = glm::dvec3(lighting.direction) / length;
         float yaw = glm::degrees(float(std::atan2(direction.x, -direction.z)));
         float pitch = glm::degrees(float(std::asin(std::clamp(direction.y, -1.0, 1.0))));
-        bool directionChanged = ImGui::SliderFloat("Light yaw", &yaw, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-        directionChanged |= ImGui::SliderFloat("Light pitch", &pitch, -89, 89, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::TextUnformatted("Light yaw");
+        bool directionChanged = ImGui::SliderFloat("##lightYaw", &yaw, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::TextUnformatted("Light pitch");
+        directionChanged |= ImGui::SliderFloat("##lightPitch", &pitch, -89, 89, "%.0f", ImGuiSliderFlags_AlwaysClamp);
         if (directionChanged)
         {
             const float y = glm::radians(yaw), p = glm::radians(pitch);
             lighting.direction = {std::cos(p) * std::sin(y), std::sin(p), -std::cos(p) * std::cos(y)};
         }
         bool changed = directionChanged;
-        changed |= ImGui::ColorEdit3("Color (linear)", &lighting.color.x,
+        ImGui::TextUnformatted("Color (linear)");
+        changed |= ImGui::ColorEdit3("##lightColor", &lighting.color.x,
                                      ImGuiColorEditFlags_Float | ImGuiColorEditFlags_NoInputs);
-        changed |= ImGui::SliderFloat("Intensity", &lighting.intensity, 0, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        changed |= ImGui::SliderFloat("Ambient", &lighting.ambient, 0, 1, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::TextUnformatted("Intensity");
+        changed |= ImGui::SliderFloat("##intensity", &lighting.intensity, 0, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::TextUnformatted("Ambient");
+        changed |= ImGui::SliderFloat("##ambient", &lighting.ambient, 0, 1, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         if (changed)
             scene.setLighting(lighting);
     }
@@ -59,14 +64,9 @@ namespace Incubator::Demo
             openScene(app, path);
         }
 
-        void update(Demo::DemoApp&, const Demo::FrameTime& time)
-        {
-            deltaSeconds_ = time.deltaSeconds();
-        }
-
         Scene::EntityId createEntity(Demo::DemoApp& app)
         {
-            selected_ = app.scene().createEntity(presetModel(useObj_), initialTransform(useObj_, 0));
+            selected_ = app.scene().createEntity(creationModel(useObj_), initialTransform(useObj_));
             return selected_;
         }
 
@@ -151,6 +151,8 @@ namespace Incubator::Demo
         }
         void layout(Demo::DemoApp& app)
         {
+            menu(app);
+            statusBar();
             workspace_.begin();
             app.sceneViewport("Scene", &viewportOpen_);
         }
@@ -159,8 +161,11 @@ namespace Incubator::Demo
             workspace_.reset();
         }
 
-        const std::string& message() const { return message_; }
-        /// @brief 获取当前场景文件面板中的 UTF-8 路径。
+        const std::string& message() const
+        {
+            return message_;
+        }
+        /// @brief 获取当前关联场景文件的 UTF-8 路径。
         std::string_view scenePath() const
         {
             return currentFile_;
@@ -185,13 +190,6 @@ namespace Incubator::Demo
         {
             app.scene().clear();
             selected_ = {};
-        }
-
-        void replaceCamera(Demo::DemoApp& app)
-        {
-            alternateCamera_ = !alternateCamera_;
-            app.scene().setCamera(Scene::Camera({0, 0, alternateCamera_ ? 8.0f : 6.0f}));
-            orbit_.synchronize(app.scene().camera());
         }
 
         void cancelInteraction()
@@ -233,95 +231,135 @@ namespace Incubator::Demo
         {
             app.scene().setCamera(Scene::Camera({0, 0, 6}));
             orbit_.synchronize(app.scene().camera());
-            alternateCamera_ = false;
-        }
-
-        /// @brief 替换当前模型展示场景。
-        /// @param app 当前 Demo 应用。
-        /// @param useObj 是否使用 OBJ 模型。
-        /// @note 按需准备展示模型，并在当前会话内复用。
-        void switchScene(Demo::DemoApp& app, bool useObj)
-        {
-            const auto model = presetModel(useObj);
-            auto scene = std::make_unique<Scene::Scene>();
-            scene->setCamera(Scene::Camera({0, 0, 6}));
-            scene->setLighting({{-0.6f, -0.8f, -1}, {1, 0.95f, 0.9f}, 1, 0.15f});
-            const float offset = useObj ? 1.65f : 1.2f;
-            selected_ = scene->createEntity(model, initialTransform(useObj, -offset));
-            scene->createEntity(model, initialTransform(useObj, offset));
-            app.setScene(std::move(scene));
-            useObj_ = useObj;
-            alternateCamera_ = false;
-            orbit_.synchronize(app.scene().camera());
         }
 
         void ui(Demo::DemoApp& app)
         {
-            bool saveCurrent = false;
+            objects(app);
+            properties(app);
             bool confirm = false;
-            ImGui::Begin("Files");
-            ImGui::TextWrapped("Current file: %s", currentFile_.empty() ? "(unsaved)" : currentFile_.c_str());
-            if (ImGui::Button("Save"))
-                saveCurrent = true;
-            ImGui::SameLine();
-            if (ImGui::Button("Save As"))
-                beginSaveAs();
-            ImGui::SameLine();
-            if (ImGui::Button("Open"))
-                beginOpen();
-            ImGui::SameLine();
-            if (ImGui::Button("Restore layout"))
-                restoreLayout();
-            ImGui::SameLine();
-            ImGui::Checkbox("Scene viewport", &viewportOpen_);
             if (fileAction_ != FileAction::None)
             {
-                ImGui::InputText("Target path", scenePath_.data(), scenePath_.size());
-                if (ImGui::Button(fileAction_ == FileAction::Open ? "Open target" : "Save target"))
+                bool open = true;
+                ImGui::SetNextWindowSize({ImGui::GetFontSize() * 30, 0}, ImGuiCond_Appearing);
+                ImGui::Begin(fileAction_ == FileAction::Open ? "Open scene" : "Save scene as", &open,
+                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
+                ImGui::TextWrapped("Current file: %s", currentFile_.empty() ? "(unsaved)" : currentFile_.c_str());
+                ImGui::TextUnformatted("Target path");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputText("##path", scenePath_.data(), scenePath_.size());
+                if (ImGui::Button(fileAction_ == FileAction::Open ? "Open" : "Save"))
                     confirm = true;
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel"))
+                    open = false;
+                ImGui::TextWrapped(
+                    "Saving a deployed copy does not update source assets. Build cleanup deletes it; "
+                    "asset redeployment may overwrite it.");
+                if (messageError_)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+                    ImGui::TextWrapped("%s", message_.c_str());
+                    ImGui::PopStyleColor();
+                }
+                ImGui::End();
+                if (!open)
+                {
                     cancelFileAction();
+                    confirm = false;
+                }
             }
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7);
-            int modelIndex = useObj_ ? 1 : 0;
-            if (ImGui::Combo("New model", &modelIndex, "Avocado\0Teapot\0")) useObj_ = modelIndex == 1;
-            ImGui::SameLine();
-            if (ImGui::Button("Create entity"))
-                createEntity(app);
-            ImGui::SameLine();
-            if (ImGui::Button("Clear scene"))
-                clear(app);
-            ImGui::SameLine();
-            if (ImGui::Button("Reset scene"))
-                switchScene(app, useObj_);
-            ImGui::SameLine();
-            if (ImGui::Button(useObj_ ? "Switch to glTF" : "Switch to OBJ"))
-                switchScene(app, !useObj_);
-            ImGui::SameLine();
-            if (ImGui::Button("Exit"))
-                app.requestExit();
-            ImGui::End();
-            ImGui::Begin("Properties");
-            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.42f);
-            ImGui::ColorEdit3("Clear color", app.clearColor().data(), ImGuiColorEditFlags_NoInputs);
-            if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen))
-                lightingControls(app.scene());
-            if (ImGui::Button("Replace camera"))
-                replaceCamera(app);
-            if (ImGui::Button("Reset camera"))
-                resetCamera(app);
-            ImGui::SameLine();
-            if (ImGui::Button("Focus selected"))
+            if (saveRequested_)
             {
-                focusSelected(app, extent_);
+                saveRequested_ = false;
+                save(app);
             }
-            ImGui::TextWrapped("Camera distance alternates between 6 and 8.");
-            ImGui::PopItemWidth();
+            if (confirm)
+                confirmFileAction(app);
+        }
+
+    private:
+        void menu(Demo::DemoApp& app)
+        {
+            if (!ImGui::BeginMainMenuBar())
+                return;
+            if (ImGui::BeginMenu("File"))
+            {
+                if (ImGui::MenuItem("Open..."))
+                    beginOpen();
+                if (ImGui::MenuItem("Save"))
+                    saveRequested_ = true;
+                if (ImGui::MenuItem("Save As..."))
+                    beginSaveAs();
+                ImGui::Separator();
+                if (ImGui::BeginMenu("About saved files"))
+                {
+                    ImGui::TextUnformatted("Saving a deployed copy does not update source assets.");
+                    ImGui::TextUnformatted("Build cleanup deletes it; asset redeployment may overwrite it.");
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Exit"))
+                    app.requestExit();
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("View"))
+            {
+                ImGui::MenuItem("Scene viewport", nullptr, &viewportOpen_);
+                if (ImGui::MenuItem("Restore default layout"))
+                    restoreLayout();
+                ImGui::EndMenu();
+            }
+            ImGui::EndMainMenuBar();
+        }
+
+        void statusBar()
+        {
+            const auto flags =
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImGui::GetStyle().FramePadding);
+            if (ImGui::BeginViewportSideBar("##status", ImGui::GetMainViewport(), ImGuiDir_Down,
+                                            ImGui::GetFrameHeight(), flags))
+            {
+                if (messageError_)
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+                ImGui::Text("%s | %s", currentFile_.empty() ? "(unsaved)" : currentFile_.c_str(), message_.c_str());
+                if (messageError_)
+                    ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35);
+                    ImGui::TextWrapped("%s\n%s", currentFile_.c_str(), message_.c_str());
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
+            }
             ImGui::End();
+            ImGui::PopStyleVar();
+        }
+
+        void objects(Demo::DemoApp& app)
+        {
             ImGui::Begin("Objects");
-            ImGui::Text("Entities: %zu", app.scene().entities().size());
-            if (ImGui::BeginListBox("##entities", {-1, 110}))
+            ImGui::TextUnformatted("New model");
+            ImGui::SetNextItemWidth(-1);
+            int modelIndex = useObj_ ? 1 : 0;
+            if (ImGui::Combo("##model", &modelIndex, "Avocado\0Teapot\0"))
+                useObj_ = modelIndex == 1;
+            if (ImGui::Button("Create object", {-1, 0}))
+                createEntity(app);
+            if (ImGui::Button("More..."))
+                ImGui::OpenPopup("Object actions");
+            if (ImGui::BeginPopup("Object actions"))
+            {
+                if (ImGui::MenuItem("Clear scene", nullptr, false, !app.scene().entities().empty()))
+                    clear(app);
+                ImGui::EndPopup();
+            }
+            ImGui::Separator();
+            ImGui::Text("Objects: %zu", app.scene().entities().size());
+            if (ImGui::BeginListBox("##entities", {-1, -1}))
             {
                 for (const auto& entity : app.scene().entities())
                 {
@@ -332,59 +370,67 @@ namespace Incubator::Demo
                 ImGui::EndListBox();
             }
             ImGui::End();
+        }
+
+        void properties(Demo::DemoApp& app)
+        {
             ImGui::Begin("Properties");
-            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.42f);
-            if (const auto* entity = app.scene().find(selected_))
+            ImGui::PushItemWidth(-1);
+            if (ImGui::CollapsingHeader("Selected object", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                auto transform = entity->transform;
-                auto position = transform.position();
-                auto scale = transform.scale();
-                auto degrees = glm::degrees(glm::eulerAngles(transform.rotation()));
-                bool visible = entity->visible;
-                if (ImGui::Checkbox("Visible", &visible))
-                    app.scene().setVisible(selected_, visible);
-                bool changed = false;
-                if (ImGui::DragFloat3("Position", &position.x, 0.05f))
+                if (const auto* entity = app.scene().find(selected_))
                 {
-                    transform.setPosition(position);
-                    changed = true;
+                    auto transform = entity->transform;
+                    auto position = transform.position();
+                    auto scale = transform.scale();
+                    auto degrees = glm::degrees(glm::eulerAngles(transform.rotation()));
+                    bool visible = entity->visible;
+                    if (ImGui::Checkbox("Visible", &visible))
+                        app.scene().setVisible(selected_, visible);
+                    bool changed = false;
+                    ImGui::TextUnformatted("Position");
+                    if (ImGui::DragFloat3("##position", &position.x, 0.05f))
+                    {
+                        transform.setPosition(position);
+                        changed = true;
+                    }
+                    ImGui::TextUnformatted("Rotation");
+                    if (ImGui::SliderFloat3("##rotation", &degrees.x, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp))
+                    {
+                        transform.setRotation(glm::quat(glm::radians(degrees)));
+                        changed = true;
+                    }
+                    ImGui::TextUnformatted("Scale");
+                    if (ImGui::DragFloat3("##scale", &scale.x, 0.05f))
+                    {
+                        transform.setScale(scale);
+                        changed = true;
+                    }
+                    if (changed)
+                        app.scene().setTransform(selected_, transform);
+                    if (ImGui::Button("Delete selected"))
+                        deleteSelected(app);
                 }
-                if (ImGui::SliderFloat3("Rotation", &degrees.x, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp))
-                {
-                    transform.setRotation(glm::quat(glm::radians(degrees)));
-                    changed = true;
-                }
-                if (ImGui::DragFloat3("Scale", &scale.x, 0.05f))
-                {
-                    transform.setScale(scale);
-                    changed = true;
-                }
-                if (changed)
-                    app.scene().setTransform(selected_, transform);
-                if (ImGui::Button("Delete selected"))
-                    deleteSelected(app);
+                else
+                    ImGui::TextWrapped("Select an object to edit.");
+            }
+            if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                if (ImGui::Button("Focus selected", {-1, 0}))
+                    focusSelected(app, extent_);
+                if (ImGui::Button("Reset view", {-1, 0}))
+                    resetCamera(app);
+            }
+            if (ImGui::CollapsingHeader("Scene settings", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                ImGui::TextUnformatted("Background");
+                ImGui::ColorEdit3("##background", app.clearColor().data(), ImGuiColorEditFlags_NoInputs);
+                lightingControls(app.scene());
             }
             ImGui::PopItemWidth();
             ImGui::End();
-            ImGui::Begin("Status");
-            ImGui::Text("Scene: %u x %u | Update: %.2f ms", app.sceneExtent().width, app.sceneExtent().height,
-                        deltaSeconds_ * 1000);
-            if (messageError_)
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
-            ImGui::TextWrapped("%s", message_.c_str());
-            if (messageError_)
-                ImGui::PopStyleColor();
-            ImGui::TextWrapped(
-                "Saving a deployed copy does not update source assets. Build cleanup deletes it; asset redeployment "
-                "may overwrite it.");
-            ImGui::End();
-            if (saveCurrent)
-                save(app);
-            if (confirm)
-                confirmFileAction(app);
         }
 
-    private:
         static std::string logPath(std::string_view path)
         {
             std::error_code error;
@@ -403,7 +449,8 @@ namespace Incubator::Demo
         {
             auto buffer = pathBuffer(path);
             const auto description = Scene::readScene(app.fileIO(), path);
-            auto rebuilt = Scene::rebuildScene(description, [this](const auto& source) { return cache_->resolve(source); });
+            auto rebuilt =
+                Scene::rebuildScene(description, [this](const auto& source) { return cache_->resolve(source); });
             auto message = "Loaded: " + std::string(path);
             app.setScene(std::move(rebuilt.scene));
             app.clearColor() = rebuilt.clearColor;
@@ -417,7 +464,7 @@ namespace Incubator::Demo
                                             app.scene().entities().size());
         }
 
-        std::shared_ptr<const Model::PreparedModel> presetModel(bool useObj)
+        std::shared_ptr<const Model::PreparedModel> creationModel(bool useObj)
         {
             return cache_->resolve(Model::ModelReference(
                 useObj ? "models/utah_teapot/utah_teapot.obj" : "models/avocado/glTF/Avocado.gltf", PREVIEW_OPTIONS));
@@ -428,16 +475,9 @@ namespace Incubator::Demo
             {Render::TextureFilter::Linear, Render::TextureFilter::Linear, Render::MipFilter::Linear},
             Render::ShadingMode::Lambert};
 
-        static float initialScale(bool useObj)
+        static Scene::Transform initialTransform(bool useObj)
         {
-            return useObj ? 0.075f : 24.0f;
-        }
-
-        static Scene::Transform initialTransform(bool useObj, float x)
-        {
-            if (useObj)
-                return Scene::Transform({x, 0, 0}, {1, 0, 0, 0}, glm::vec3(initialScale(true)));
-            return Scene::Transform({x, -0.78f, 0}, {1, 0, 0, 0}, glm::vec3(initialScale(false)));
+            return Scene::Transform({0, useObj ? 0.0f : -0.78f, 0}, {1, 0, 0, 0}, glm::vec3(useObj ? 0.075f : 24.0f));
         }
 
         enum class FileAction
@@ -453,11 +493,10 @@ namespace Incubator::Demo
         std::unique_ptr<ModelCache> cache_;
         Scene::EntityId selected_;
         bool useObj_ = false;
-        bool alternateCamera_ = false;
+        bool saveRequested_ = false;
         std::vector<char> scenePath_ = pathBuffer("");
         std::string message_;
         bool messageError_ = false;
-        double deltaSeconds_ = 0;
         OrbitCamera orbit_;
         Render::FrameExtent extent_{0, 0};
     };
@@ -466,7 +505,7 @@ namespace Incubator::Demo
     {
         auto demo = std::make_shared<ModelScene>();
         return {[demo, startupScene = std::move(startupScene)](auto& app) { demo->initialize(app, startupScene); },
-                [demo](auto& app, const auto& time) { demo->update(app, time); },
+                {},
                 [demo](auto& app) { demo->ui(app); },
                 [demo](auto&) { demo->cancelInteraction(); },
                 [demo](auto& app, auto extent, const auto& input) { demo->input(app, extent, input); },

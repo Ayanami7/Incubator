@@ -29,14 +29,10 @@ namespace Incubator::Demo
                 ImGui::DockBuilderAddNode(id, ImGuiDockNodeFlags_DockSpace);
                 ImGui::DockBuilderSetNodeSize(id, ImGui::GetMainViewport()->WorkSize);
                 auto center = id;
-                const auto top = ImGui::DockBuilderSplitNode(center, ImGuiDir_Up, 0.22f, nullptr, &center);
-                const auto bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.24f, nullptr, &center);
-                const auto left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.18f, nullptr, &center);
-                const auto right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.28f, nullptr, &center);
-                ImGui::DockBuilderDockWindow("Files", top);
+                const auto left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
+                const auto right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, nullptr, &center);
                 ImGui::DockBuilderDockWindow("Objects", left);
                 ImGui::DockBuilderDockWindow("Properties", right);
-                ImGui::DockBuilderDockWindow("Status", bottom);
                 ImGui::DockBuilderDockWindow("Scene", center);
                 ImGui::DockBuilderFinish(id);
                 reset_ = false;
