@@ -384,14 +384,21 @@ namespace Incubator
                 SceneOutput output;
                 if (!extent.width || !extent.height) return output;
                 scheduler_->waitForCurrentFrame();
-                auto& slot = sceneTargets_[scheduler_->currentFrameIndex()];
+                const auto frameIndex = scheduler_->currentFrameIndex();
+                auto& slot = sceneTargets_[frameIndex];
                 if (!slot || slot->target->color().extent().width != extent.width || slot->target->color().extent().height != extent.height)
                 {
+                    const auto oldExtent = slot ? slot->target->color().extent() : VkExtent2D{};
                     auto next = std::make_shared<SceneOutput::Impl>();
                     next->owner = &device_;
                     next->target = std::make_unique<Vulkan::VulkanSceneTarget>(device_, VkExtent2D{extent.width,extent.height},depthFormat_);
-                    imguiRenderer_->releaseSceneImage(scheduler_->currentFrameIndex());
+                    imguiRenderer_->releaseSceneImage(frameIndex);
                     slot = std::move(next);
+                    Log::Registry::get("render").debug(
+                        "Scene target {}: slot {}, {}x{} -> {}x{}, color format {}, depth format {}",
+                        oldExtent.width ? "resized" : "created", frameIndex, oldExtent.width, oldExtent.height,
+                        extent.width, extent.height, static_cast<int>(slot->target->color().format()),
+                        static_cast<int>(depthFormat_));
                 }
                 output.impl_ = slot; output.extent_ = extent; return output;
             }

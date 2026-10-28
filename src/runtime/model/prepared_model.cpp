@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
 #include "runtime/render/renderer.h"
 #include "runtime/resource/loader/texture_resource.h"
 #include "runtime/resource/resource_manager.h"
@@ -197,6 +198,16 @@ namespace Incubator::Model
         }
         if (!boundsAvailable)
             result->bounds_.reset();
+        Log::Registry::get("render").debug(
+            "Prepared model '{}': {} meshes, {} materials, {} textures; requested mip={}, min={}, mag={}, "
+            "mipFilter={}, shading={}",
+            result->source().path(), result->meshes_.size(), result->materials_.size(), result->textures_.size(),
+            options.mipMode == Render::TextureMipMode::FullChain ? "fullChain" : "baseLevel",
+            options.sampler.minFilter == Render::TextureFilter::Linear ? "linear" : "nearest",
+            options.sampler.magFilter == Render::TextureFilter::Linear ? "linear" : "nearest",
+            options.sampler.mipFilter == Render::MipFilter::BaseLevel ? "baseLevel" :
+                options.sampler.mipFilter == Render::MipFilter::Nearest ? "nearest" : "linear",
+            options.shading == Render::ShadingMode::Lambert ? "lambert" : "unlit");
         return result;
     }
 }  // namespace Incubator::Model

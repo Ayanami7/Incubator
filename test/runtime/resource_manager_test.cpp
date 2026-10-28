@@ -4,11 +4,14 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <spdlog/sinks/ostream_sink.h>
 
 #include <memory>
+#include <sstream>
 #include <string>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/log/logger.h"
 #include "runtime/resource/resource_registry.h"
 
 using namespace Incubator::Resource;
@@ -79,7 +82,12 @@ protected:
     {
         ResourceManager::instance().reset();
         ResourceRegistry::instance().clear();
+        Incubator::Log::Registry::reset();
+        Incubator::Log::Registry::get("resource").addSink(
+            std::make_shared<spdlog::sinks::ostream_sink_mt>(messages_));
     }
+    void TearDown() override { Incubator::Log::Registry::reset(); }
+    std::ostringstream messages_;
 };
 
 TEST_F(ResourceManagerTest, RegisterLoaderAndHasLoader)
@@ -126,6 +134,7 @@ TEST_F(ResourceManagerTest, LoadUnknownIdReturnsNull)
     ResourceId id = ResourceId::fromPath(ResourceType::TEXTURE, "textures/not_registered.png");
 
     EXPECT_EQ(manager.load(id), nullptr);
+    EXPECT_THAT(messages_.str(), ::testing::HasSubstr(fmt::format("{:#x}", id.value())));
 }
 
 TEST_F(ResourceManagerTest, LoadRegisteredWithoutLoaderReturnsNull)
@@ -135,6 +144,8 @@ TEST_F(ResourceManagerTest, LoadRegisteredWithoutLoaderReturnsNull)
     ASSERT_TRUE(id.valid());
 
     EXPECT_EQ(manager.load(id), nullptr);
+    EXPECT_THAT(messages_.str(), ::testing::HasSubstr("models/car.fbx"));
+    EXPECT_THAT(messages_.str(), ::testing::HasSubstr(fmt::format("type {:#x}", uint64_t(ResourceType::MODEL))));
 }
 
 TEST_F(ResourceManagerTest, LoadSuccessReturnsReadyObject)
@@ -277,6 +288,10 @@ TEST_F(ResourceManagerTest, LoadSwallowsLoaderException)
 
     EXPECT_EQ(manager.load(id), nullptr);
     EXPECT_EQ(ResourceRegistry::instance().getObject(id), nullptr);
+    EXPECT_THAT(messages_.str(), ::testing::HasSubstr("textures/boom.png"));
+    EXPECT_THAT(messages_.str(), ::testing::HasSubstr("simulated loader io failure"));
+    EXPECT_THAT(messages_.str(), ::testing::HasSubstr(fmt::format("type {:#x}, id {:#x}",
+                                                               uint64_t(ResourceType::TEXTURE), id.value())));
 }
 
 TEST_F(ResourceManagerTest, RegisterLoaderOverwrite)

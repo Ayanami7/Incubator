@@ -109,11 +109,38 @@ void logError(Logger& logger, const Error::Exception& err, Level level);
 | `demo` | Demo 启动、场景选择与关闭 |
 | `resource` | 资源登记、加载、解码与卸载 |
 | `platform.window` | 窗口创建参数与 GLFW 错误 |
-| `render` | Renderer 调度和 ImGui 集成 |
+| `render` | Renderer 调度、模型 GPU 准备和 ImGui 集成 |
 | `render.vulkan` | Vulkan Instance、Device、Pipeline、上传和帧同步 |
 
 `Registry::get()` 按完整名称区分大小写；点分隔仅用于分类，不自动继承父模块的级别或 sink。
 新增内置模块沿用上述命名，不混用 `render`、`Render` 或 `Renderer`。
+
+## 调用约定
+
+按有诊断价值的事件记录日志，不按函数数、代码行数或固定数量要求覆盖。优先复用现有模块名和日志接口，不为补充日志增加通用追踪、限流或统计框架。
+
+| 级别 | 使用约定 |
+|---|---|
+| Info | 用户可感知的操作结果及重要会话状态变化，例如场景保存/加载、设备选择和交换链重建 |
+| Debug | 加载、解码、模型准备、上传及目标资源创建/重建的摘要，避免同一成功路径逐层打印相同内容 |
+| Warn | 应用继续运行，但发生需要关注的降级或异常状态，例如可选 Validation 不可用 |
+| Error | 操作失败或必须处理的底层错误，包含失败对象、原因与可用上下文 |
+| Trace | 只用于有明确排查目的的细节追踪；高频调试输出应由实际需求驱动，不默认开启 |
+
+### 错误记录边界
+
+- 由决定如何处理失败的边界负责记录。仅补充异常上下文并继续抛出的底层代码不重复打印；清理后继续抛出的代码也不额外记录同一原因。
+- ResourceManager 将 Loader 异常转为 nullptr 时记录一次；Loader 直接抛出的读取/解析异常交给调用方处理。现有已诊断失败返回 nullptr 的约定继续有效，Manager 不重复打印。
+- 应用终止、用户打开/保存失败等边界负责记录操作结果。若低层已记录具体资源失败，高层摘要应补充不同的操作上下文，避免再次原样展开同一错误。
+- 涉及资源、文件或 GPU 时，使用已有的路径、资源类型/ID、尺寸、格式或底层错误码等相关信息；不为所有日志强制收集无关字段。可取得上下文时，不只输出“失败”或“未知错误”。
+- 合法的空场景、隐藏/离屏实体、零尺寸跳帧和普通缓存命中不属于警告或错误。
+
+### 频率与摘要
+
+- 正常逐帧、逐实体、逐输入事件不输出 Info；普通缓存命中不逐次打印日志。
+- 资源创建与重建摘要只在实际执行并成功后记录，复用已有结果时不打印。当前模型准备完成摘要使用 `render` Debug，包含规范化路径、实际 GPU 资源数量及请求的准备选项；源材质可能保留 Unlit，不能把请求选项当作每个实际材质的最终模式。
+- 视口目标摘要使用 `render` Debug，包含帧槽、旧/新尺寸和颜色/深度格式；稳定帧不输出，连续调整尺寸可按实际重建记录。
+- 持续状态优先在状态变化时记录，避免在正常循环中重复打印同一状态。保留 Vulkan Validation 等外部诊断回调的原始信息，不因应用侧的频率规则丢弃其报告。
 
 ## 使用示例
 
@@ -126,7 +153,7 @@ auto renderLog = Log::Registry::get("render");
 
 // 使用日志
 renderLog.info("Window created: {}x{}", width, height);
-renderLog.warn("Texture not found: {}", texturePath);
+renderLog.warn("Optional validation unavailable; continuing without validation");
 renderLog.error("Shader compilation failed: {}", shaderName);
 
 // 日志异常

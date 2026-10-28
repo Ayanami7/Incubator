@@ -62,7 +62,7 @@ namespace Incubator
             std::string virtualPath;
             if (!reg.lookup(id, type, virtualPath))
             {
-                Log::Registry::get("resource").error("load: unknown resource id");
+                Log::Registry::get("resource").error("load: unknown resource id {:#x}", id.value());
                 return nullptr;
             }
 
@@ -70,8 +70,8 @@ namespace Incubator
             auto it = loaders_.find(type);
             if (it == loaders_.end())
             {
-                Log::Registry::get("resource").error("load: no loader for type {:#x}",
-                                                     static_cast<uint64_t>(type));
+                Log::Registry::get("resource").error("load: no loader for type {:#x}, path '{}', id {:#x}",
+                                                     static_cast<uint64_t>(type), virtualPath, id.value());
                 return nullptr;
             }
 
@@ -85,12 +85,14 @@ namespace Incubator
             }
             catch (const std::exception& ex)
             {
-                Log::Registry::get("resource").error("load: loader threw: {}", ex.what());
+                Log::Registry::get("resource").error("load: loader threw: '{}' (type {:#x}, id {:#x}): {}",
+                                                     virtualPath, static_cast<uint64_t>(type), id.value(), ex.what());
                 return nullptr;
             }
             catch (...)
             {
-                Log::Registry::get("resource").error("load: loader threw unknown exception");
+                Log::Registry::get("resource").error("load: loader threw unknown exception for '{}' (type {:#x}, id {:#x})",
+                                                     virtualPath, static_cast<uint64_t>(type), id.value());
                 return nullptr;
             }
             if (!object)

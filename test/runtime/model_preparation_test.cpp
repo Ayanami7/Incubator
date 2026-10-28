@@ -275,6 +275,9 @@ namespace
             }
         }
         EXPECT_FALSE(retained.valid());
+        EXPECT_EQ(occurrences(messages_.str(), "Scene target created:"), 2u);
+        EXPECT_EQ(occurrences(messages_.str(), "Scene target resized:"), 2u);
+        EXPECT_NE(messages_.str().find("192x128 -> 256x128, color format"), std::string::npos);
         cleanValidation();
     }
 
@@ -381,6 +384,9 @@ namespace
                 models.push_back(shared);
             }
             EXPECT_EQ(models[0]->nodes()[models[0]->rootNode()].name, "SourceRoot");
+            EXPECT_EQ(occurrences(messages_.str(), "Prepared model '"), 2u);
+            EXPECT_NE(messages_.str().find("2 meshes, 2 materials, 2 textures; requested mip=baseLevel"),
+                      std::string::npos);
             EXPECT_FLOAT_EQ(models[0]->nodes()[models[0]->rootNode()].localTransform[3][0], 0.25f);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 4u);
@@ -847,6 +853,7 @@ namespace
             EXPECT_EQ(again.scene->entities()[0].model, first);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), uploads);
             const auto oldId = built.scene->entities()[0].id;
+            EXPECT_EQ(occurrences(messages_.str(), "Prepared model '"), 2u);
             auto missing = description;
             missing.entities[1].model = Model::ModelReference("models/missing.gltf");
             EXPECT_THROW(Scene::rebuildScene(missing, resolver), Error::Exception);
