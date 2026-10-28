@@ -414,7 +414,7 @@ namespace
             const auto scene = WindowCapture::capture(*window);
             const auto bounds = WindowCapture::bounds(scene);
             EXPECT_GT(bounds[2] - bounds[0], 100);
-            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture"), 1u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 1u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 1u);
             WindowCapture::save(scene, "review/resource-entry-prepared.ppm");
         }
@@ -522,7 +522,7 @@ namespace
             for (int channel = 0; channel < 3; ++channel)
                 EXPECT_GT(image.rgba[offset + channel], 220);  // 方向纹理以白色作为初始值。
             WindowCapture::save(image, "review/resource-entry-independent-textures.ppm");
-            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture"), 2u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 1u);
             EXPECT_EQ(firstAudit.textureOpens, 1u);
             EXPECT_EQ(secondAudit.textureOpens, 1u);
@@ -654,7 +654,7 @@ namespace
                         std::string("review/sampler-") + (minify ? "min-" : "mag-") + std::to_string(i) + ".ppm");
                 }
             }
-            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture:"), 1u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 1u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 1u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 5u);
         }
@@ -794,7 +794,7 @@ namespace
                     renderer.drawFrame({*extent, input.camera, draws}, {0.2f, 0.24f, 0.28f, 1});
                 }
             }
-            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture:"), 1u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 1u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 1u);
             texture = {};
             materials = {};
@@ -885,7 +885,7 @@ namespace
             EXPECT_GT(int(image.rgba[offset + 2]), int(image.rgba[offset + 1]) + 20);
             WindowCapture::save(image, "review/material-immutable-tint.ppm");
             EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 1u);
-            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture"), 2u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 3u);
             EXPECT_TRUE(textureObserver.valid());
             for (const auto& material : observers)
@@ -1005,7 +1005,7 @@ namespace
             }
             EXPECT_EQ(pixels[white + 3], 255);
             EXPECT_EQ(pixels[((16 + 2 * 64 + 32) * 384 + 16 + 2 * 64 + 32) * 4 + 3], 255);
-            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture:"), 1u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 1u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 2u);
             expectReleased(referenceSceneAssetPaths());
             WindowCapture::save({384, 256, pixels}, "review/material-format-rebuild-gpu.ppm");
@@ -1119,7 +1119,7 @@ namespace
             }
             for (const auto& material : observers)
                 EXPECT_TRUE(material.valid());
-            EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded RGBA8 texture"), 2u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Uploaded mesh:"), 2u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 3u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 1u);

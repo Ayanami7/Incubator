@@ -731,7 +731,7 @@ namespace
                 EXPECT_EQ(pixels[(115 * 384 + 249) * 4 + 3], 255);
             }
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 2u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }
         cleanValidation();
@@ -771,7 +771,7 @@ namespace
                       std::string::npos);
             EXPECT_FLOAT_EQ(models[0]->nodes()[models[0]->rootNode()].localTransform[3][0], 0.25f);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 4u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 4u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
             EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }
@@ -879,7 +879,7 @@ namespace
                 glfwWaitEventsTimeout(0.04);
             }
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), expectedMeshes);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), expectedTextures);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), expectedTextures);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), expectedMaterials);
             EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
             std::cout << "SHOWCASE_MODELS=2 SHARED_INSTANCES=4 CPU_ASSETS_RELEASED=1 FRAME_DRAWS=" << expectedDraws
@@ -958,7 +958,7 @@ namespace
                 EXPECT_NEAR(image.rgba[center + channel], 188, 12);
             WindowCapture::save(image, "review/prepared-solid-gray.ppm");
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 1u);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 2u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
             EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }
@@ -1047,7 +1047,7 @@ namespace
             }
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, "textures/unused.png").valid());
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 3u);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 6u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 6u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 12u);
             EXPECT_EQ(occurrences(messages_.str(), "2x2, format 43, 16 bytes, 2 mips"), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "2x2, format 43, 16 bytes, 1 mips"), 1u);
@@ -1103,7 +1103,7 @@ namespace
                 EXPECT_TRUE(manager.hasLoader(ResourceType::TEXTURE));
             }
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 0u);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 0u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 0u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 0u);
         }
         manager.release(modelId);
@@ -1130,7 +1130,7 @@ namespace
                 EXPECT_NE(error.message().find("Prepare scene shaders"), std::string::npos);
             }
             EXPECT_EQ(model, nullptr);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 2u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 0u);
             released(ResourceType::MODEL, GLTF);
             released(ResourceType::TEXTURE, PNG);
@@ -1140,7 +1140,7 @@ namespace
             released(ResourceType::TEXTURE, PNG);
             for (int frame = 0; frame < 3; ++frame)
                 draw(*native, renderer, *model);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 4u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 4u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }
@@ -1520,7 +1520,7 @@ namespace
             EXPECT_TRUE(texture.valid());
             EXPECT_EQ(resourceMessages_.str(), resourceLog);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 2u);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 2u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }
@@ -1868,7 +1868,7 @@ namespace
             EXPECT_TRUE(retained.draws[0].mesh.valid());
             EXPECT_EQ(resourceMessages_.str(), resourceLog);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 1u);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 1u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 1u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 3u);
             EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }
@@ -2181,7 +2181,7 @@ namespace
                 WindowCapture::save(displayed, std::string("review/") + label + "-window.ppm");
             }
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded RGBA8 texture:"), 4u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 4u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
             EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }

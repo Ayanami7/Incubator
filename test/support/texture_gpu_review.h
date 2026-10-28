@@ -6,6 +6,8 @@
 #include <functional>
 #include <glm/glm.hpp>
 #include <memory>
+#include <sstream>
+#include <string_view>
 #include <vector>
 
 #include "render_demo/scene_assets.h"
@@ -27,6 +29,18 @@ namespace TextureGpuReview
     using namespace Incubator;
     using namespace Incubator::Render;
     using namespace Incubator::Render::Vulkan;
+
+    /// @brief 统计场景 sRGB 纹理上传，避免将内部线性白图算作模型资源。
+    inline size_t countSceneTextureUploads(std::string_view messages)
+    {
+        std::istringstream lines{std::string(messages)};
+        const auto format = fmt::format("format {},", int(VK_FORMAT_R8G8B8A8_SRGB));
+        size_t count = 0;
+        for (std::string line; std::getline(lines, line);)
+            if (line.find("Uploaded RGBA8 texture:") != std::string::npos && line.find(format) != std::string::npos)
+                ++count;
+        return count;
+    }
 
     inline void check(VkResult result)
     {

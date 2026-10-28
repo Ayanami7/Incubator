@@ -68,7 +68,7 @@ namespace Incubator
                 VkDescriptorSetLayout materialLayout_ = VK_NULL_HANDLE;
                 VkDescriptorPool pool_ = VK_NULL_HANDLE;
                 std::vector<VkDescriptorSet> descriptorSets_;
-                std::unique_ptr<VulkanImage> shadowFallback_;
+                std::shared_ptr<VulkanImage> shadowFallback_;
                 VkSampler shadowSampler_ = VK_NULL_HANDLE;
                 std::vector<VkImageView> shadowViews_;
             };
