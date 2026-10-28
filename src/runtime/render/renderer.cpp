@@ -335,6 +335,14 @@ namespace Incubator
                 const auto frame = Vulkan::makeFrameUniform(input);
                 std::vector<std::shared_ptr<void>> inFlightResources;
                 const auto draws = resolveDraws(input, inFlightResources);
+                if (recordUi)
+                {
+                    int width, height;
+                    window_.getFramebufferSize(width, height);
+                    // UI 数据中的描述符只属于当前后端，重建延后到下一轮 UI 开始前。
+                    if (needsRebuild_ || width != requestedWidth_ || height != requestedHeight_)
+                        return;
+                }
                 if (!prepareFrame())
                     return;
                 const auto extent = swapchain_->extent();
@@ -382,9 +390,18 @@ namespace Incubator
                     auto next = std::make_shared<SceneOutput::Impl>();
                     next->owner = &device_;
                     next->target = std::make_unique<Vulkan::VulkanSceneTarget>(device_, VkExtent2D{extent.width,extent.height},depthFormat_);
+                    imguiRenderer_->releaseSceneImage(scheduler_->currentFrameIndex());
                     slot = std::move(next);
                 }
                 output.impl_ = slot; output.extent_ = extent; return output;
+            }
+            uint64_t sceneImage(const SceneOutput& output)
+            {
+                const auto target = output.impl_.lock();
+                const auto slot = scheduler_->currentFrameIndex();
+                if (!target || target->owner != &device_ || target != sceneTargets_[slot])
+                    throw Error::Exception(Error::Code::RENDER, "Invalid current scene output");
+                return imguiRenderer_->sceneImage(slot, target->target->color().view());
             }
             void drawSceneTarget(const SceneOutput& output, const FrameInput& input,
                                  const std::array<float,4>& clearColor, const std::function<void(void*)>& ui)
@@ -397,7 +414,11 @@ namespace Incubator
                 std::vector<std::shared_ptr<void>> resources;
                 const auto draws = resolveDraws(input,resources);
                 if (!draws.empty() && !bindingSet_) throw Error::Exception(Error::Code::RENDER,"Prepare scene shaders first");
-                if (!prepareFrame()) return;
+                int width, height;
+                window_.getFramebufferSize(width, height);
+                // UI 命令已生成；尺寸变化时丢弃本帧，下轮开始前再重建后端及绑定。
+                if (needsRebuild_ || width != requestedWidth_ || height != requestedHeight_)
+                    return;
                 scheduler_->waitForCurrentFrame();
                 if (bindingSet_) uniformBuffers_[index]->write(0,std::as_bytes(std::span(&frame,1)));
                 if (!draws.empty() && !scenePipeline_)
@@ -557,3 +578,8 @@ namespace Incubator::Render
 }
 
 void Incubator::Render::Detail::RendererReviewAccess::withSceneOutput(Renderer& renderer,const SceneOutput& output,const std::function<void(const Vulkan::VulkanDevice&,const Vulkan::VulkanImage&)>& record) { renderer.impl_->reviewOutput(output,record); }
+
+uint64_t Incubator::Render::Renderer::sceneImage(const SceneOutput& output)
+{
+    return impl_->sceneImage(output);
+}

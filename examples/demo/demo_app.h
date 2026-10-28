@@ -34,6 +34,8 @@ namespace Incubator::Demo
         std::function<void(DemoApp&)> ui;
         std::function<void(DemoApp&)> cancelInteraction;
         std::function<void(DemoApp&, Render::FrameExtent, const UiInput&)> input;
+        /// @brief 在输入和编辑之前建立当前帧视口布局。
+        std::function<void(DemoApp&)> layout;
     };
 
     /// @brief 管理单窗口、主线程的应用会话，并独占所有 Loader 路由。
@@ -72,6 +74,12 @@ namespace Incubator::Demo
         /// @param scene 新场景。
         void setScene(std::unique_ptr<Scene::Scene> scene);
         std::array<float, 4>& clearColor();
+        /// @brief 在当前 UI 帧中显示独立场景视口；关闭或隐藏时只提交其他 UI。
+        void sceneViewport(const char* title, bool* open = nullptr);
+        Render::FrameExtent sceneExtent() const
+        {
+            return sceneExtent_;
+        }
 
     private:
         void requireOpen() const;
@@ -82,6 +90,8 @@ namespace Incubator::Demo
         std::unique_ptr<Render::Renderer> renderer_;
         std::unique_ptr<Scene::Scene> scene_;
         std::array<float, 4> clearColor_;
+        Render::FrameExtent sceneExtent_{};
+        Render::SceneOutput sceneOutput_;
         bool ownsRoutes_ = false;
         bool exitRequested_ = false;
     };

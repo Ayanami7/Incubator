@@ -1,9 +1,11 @@
+#include "examples/demo/orbit_camera.h"
+
 #include <gtest/gtest.h>
 
 #include <cmath>
 #include <glm/ext/matrix_transform.hpp>
 
-#include "examples/demo/orbit_camera.h"
+#include "examples/demo/viewport.h"
 
 namespace
 {
@@ -200,3 +202,13 @@ namespace
     }
 
 }  // namespace
+
+TEST(ViewportExtentTest, UsesFramebufferRatioAndOneRoundingRule)
+{
+    using Incubator::Demo::viewportExtent;
+    EXPECT_EQ(viewportExtent(123.9, 80.4, 1, 1), (Incubator::Render::FrameExtent{123, 80}));
+    EXPECT_EQ(viewportExtent(123.9, 80.4, 1.5, 2), (Incubator::Render::FrameExtent{185, 160}));
+    EXPECT_EQ(viewportExtent(0.1, 0.1, 1, 1), (Incubator::Render::FrameExtent{1, 1}));
+    EXPECT_EQ(viewportExtent(0, 10, 1, 1), (Incubator::Render::FrameExtent{}));
+    EXPECT_EQ(viewportExtent(10, 10, 0, 1), (Incubator::Render::FrameExtent{}));
+}

@@ -175,6 +175,36 @@ namespace Incubator
                                                  io.Fonts->TexHeight);
             }
 
+            uint64_t ImGuiRenderer::sceneImage(uint32_t slot, VkImageView image)
+            {
+                if (!vulkanInitialized_ || slot >= sceneBindings_.size() || !image)
+                    throw Error::Exception(Error::Code::RENDER, "Invalid UI scene image");
+                if (!sceneSampler_)
+                {
+                    VkSamplerCreateInfo info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+                    info.magFilter = info.minFilter = VK_FILTER_LINEAR;
+                    info.addressModeU = info.addressModeV = info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+                    if (vkCreateSampler(device_, &info, nullptr, &sceneSampler_) != VK_SUCCESS)
+                        throw Error::Exception(Error::Code::RENDER, "Cannot create scene image sampler");
+                }
+                auto& binding = sceneBindings_[slot];
+                if (binding.image != image)
+                {
+                    releaseSceneImage(slot);
+                    binding.set =
+                        ImGui_ImplVulkan_AddTexture(sceneSampler_, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    binding.image = image;
+                }
+                return reinterpret_cast<uint64_t>(binding.set);
+            }
+            void ImGuiRenderer::releaseSceneImage(uint32_t slot)
+            {
+                auto& binding = sceneBindings_.at(slot);
+                if (binding.set)
+                    ImGui_ImplVulkan_RemoveTexture(binding.set);
+                binding = {};
+            }
+
             void ImGuiRenderer::endFrame()
             {
                 ImGui::Render();
@@ -202,6 +232,11 @@ namespace Incubator
                     if (idleResult != VK_SUCCESS)
                         Log::Registry::get("render").error("vkDeviceWaitIdle before ImGui shutdown failed: {}",
                                                              static_cast<int>(idleResult));
+                    for (uint32_t slot = 0; slot < sceneBindings_.size(); ++slot)
+                        releaseSceneImage(slot);
+                    if (sceneSampler_)
+                        vkDestroySampler(device_, sceneSampler_, nullptr);
+                    sceneSampler_ = VK_NULL_HANDLE;
                     ImGui_ImplVulkan_Shutdown();
                 }
                 vulkanInitialized_ = false;

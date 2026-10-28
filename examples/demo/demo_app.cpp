@@ -1,10 +1,12 @@
 #include "demo_app.h"
-#include "model_scene.h"
+
+#include <imgui.h>
 
 #include <chrono>
 #include <thread>
 #include <utility>
 
+#include "model_scene.h"
 #include "runtime/core/error/error.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/resource/loader/model_loader.h"
@@ -14,6 +16,7 @@
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene_frame.h"
+#include "viewport.h"
 
 namespace Incubator::Demo
 {
@@ -131,6 +134,29 @@ namespace Incubator::Demo
         return clearColor_;
     }
 
+    void DemoApp::sceneViewport(const char* title, bool* open)
+    {
+        requireOpen();
+        if (open && !*open)
+            return;
+        ImGui::SetNextWindowPos({380, 12}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({800, 600}, ImGuiCond_FirstUseEver);
+        if (ImGui::Begin(title, open))
+        {
+            const auto size = ImGui::GetContentRegionAvail();
+            int w, h, fw, fh;
+            window_->getWindowSize(w, h);
+            window_->getFramebufferSize(fw, fh);
+            sceneExtent_ = viewportExtent(size.x, size.y, w > 0 ? double(fw) / w : 0, h > 0 ? double(fh) / h : 0);
+            if (sceneExtent_.width && sceneExtent_.height)
+            {
+                sceneOutput_ = renderer_->prepareSceneTarget(sceneExtent_);
+                ImGui::Image(static_cast<ImTextureID>(renderer_->sceneImage(sceneOutput_)), size);
+            }
+        }
+        ImGui::End();
+    }
+
     void DemoApp::requestExit()
     {
         exitRequested_ = true;
@@ -176,9 +202,20 @@ namespace Incubator::Demo
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     continue;
                 }
+                sceneExtent_ = {};
+                sceneOutput_ = {};
+                if (callbacks.layout)
+                    callbacks.layout(*this);
+                const auto renderExtent = callbacks.layout ? sceneExtent_ : *extent;
+                if (callbacks.layout && (!renderExtent.width || !renderExtent.height))
+                {
+                    inputAdapter.cancel();
+                    if (callbacks.cancelInteraction)
+                        callbacks.cancelInteraction(*this);
+                }
                 const auto input = inputAdapter.sample(window_->input());
-                if (!cancelInput && callbacks.input)
-                    callbacks.input(*this, *extent, input);
+                if (!cancelInput && callbacks.input && renderExtent.width && renderExtent.height)
+                    callbacks.input(*this, renderExtent, input);
                 if (callbacks.ui)
                     callbacks.ui(*this);
                 if (exitRequested_ || window_->shouldClose())
@@ -186,11 +223,16 @@ namespace Incubator::Demo
                     renderer_->imgui().endFrame();
                     break;
                 }
-                const auto frame = Scene::extractSceneFrame(*scene_, *extent);
+                const auto frame = Scene::extractSceneFrame(*scene_, renderExtent);
                 renderer_->imgui().endFrame();
                 auto* data = renderer_->imgui().drawData();
-                renderer_->drawFrame(frame->input(), clearColor_,
-                                     [&](void* commands) { renderer_->imgui().recordDrawData(data, commands); });
+                const auto record = [&](void* commands) { renderer_->imgui().recordDrawData(data, commands); };
+                if (callbacks.layout && frame)
+                    renderer_->drawSceneTarget(sceneOutput_, frame->input(), clearColor_, record);
+                else if (callbacks.layout)
+                    renderer_->drawFrame({*extent, {}, {}}, clearColor_, record);
+                else
+                    renderer_->drawFrame(frame->input(), clearColor_, record);
             }
             callbacks = {};
             close();

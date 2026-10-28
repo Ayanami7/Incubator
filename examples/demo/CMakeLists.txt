@@ -12,6 +12,7 @@ add_executable(
     startup_config.cpp
     model_scene.h
     model_cache.h
+    viewport.h
     ui_input.h
     orbit_camera.h
     validation_mode.h

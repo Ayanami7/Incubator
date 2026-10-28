@@ -320,6 +320,49 @@ namespace
         cleanValidation();
     }
 
+    TEST_F(DemoAppTest, SceneViewportUsesCurrentLayoutAndSurvivesHiddenFrames)
+    {
+        Demo::DemoApp session(options());
+        int frame = 0;
+        bool open = true;
+        Render::FrameExtent first{};
+        session.run({[&](auto& app) {
+                         const auto model = Model::prepareModel(app.renderer(), GLTF);
+                         app.scene().createEntity(model);
+                         app.scene().setCamera(Scene::Camera({0, 0, 3}));
+                     },
+                     [&](auto& app, const auto&) {
+                         if (++frame == 8)
+                             app.requestExit();
+                     },
+                     [&](auto& app) {
+                         if (frame == 1)
+                             first = app.sceneExtent();
+                         if (frame == 2)
+                             EXPECT_NE(app.sceneExtent(), first);
+                         if (frame == 3 || frame == 4)
+                             EXPECT_EQ(app.sceneExtent(), Render::FrameExtent{});
+                         if (frame >= 5)
+                             EXPECT_GT(app.sceneExtent().width, 0u);
+                         const auto entity = app.scene().entities()[0].id;
+                         app.scene().setTransform(entity, Scene::Transform({float(frame) * 0.01f, 0, 0}));
+                         ImGui::Begin("Other UI");
+                         ImGui::Text("Frame %d", frame);
+                         ImGui::End();
+                     },
+                     {},
+                     {},
+                     [&](auto& app) {
+                         open = frame != 3;
+                         if (frame > 1)
+                             ImGui::SetWindowSize("Viewport", {float(400 + frame * 10), 300});
+                         ImGui::SetWindowCollapsed("Viewport", frame == 4);
+                         app.sceneViewport("Viewport", &open);
+                     }});
+        EXPECT_EQ(frame, 8);
+        cleanValidation();
+    }
+
     TEST_F(DemoAppTest, OrbitFocusCommandsKeepAssetsAndEntitiesAndSynchronizeReplacement)
     {
         copyShowcaseModels();

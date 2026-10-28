@@ -353,8 +353,10 @@ namespace Incubator::Demo
     {
         auto demo = std::make_shared<ModelScene>();
         return {[demo, startupScene = std::move(startupScene)](auto& app) { demo->initialize(app, startupScene); },
-                [demo](auto& app, const auto& time) { demo->update(app, time); }, [demo](auto& app) { demo->ui(app); },
+                [demo](auto& app, const auto& time) { demo->update(app, time); },
+                [demo](auto& app) { demo->ui(app); },
                 [demo](auto&) { demo->cancelInteraction(); },
-                [demo](auto& app, auto extent, const auto& input) { demo->input(app, extent, input); }};
+                [demo](auto& app, auto extent, const auto& input) { demo->input(app, extent, input); },
+                [](auto& app) { app.sceneViewport("Scene"); }};
     }
 }  // namespace Incubator::Demo

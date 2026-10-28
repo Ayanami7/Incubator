@@ -105,6 +105,8 @@ namespace Incubator
             void drawSceneTarget(const SceneOutput& output, const FrameInput& input,
                                  const std::array<float, 4>& clearColor,
                                  const std::function<void(void*)>& recordUi = {});
+            /// @brief 返回当前槽场景图像的 UI 纹理标识，供 Integration 消费。
+            uint64_t sceneImage(const SceneOutput& output);
             Integration::ImGuiRenderer& imgui();
 
         private:
