@@ -140,11 +140,15 @@ SceneFrame；应用在提交时借用其 input()，用法与快照持有期见 [
 - 相机和投影不参与实例展开，UV 与投影 Y 不再次适配。应用继续从 beginUiFrame 取得实际 extent 并生成相机；
   空列表也可交给 Renderer 清屏和绘制 UI。
 - 输出持有普通的 Mesh/Material 弱引用和矩阵副本，借用期遵循 [Render](./render.md)。返回后修改实例不影响
-  已生成列表；drawFrame 返回后可立即修改或销毁列表，在途 GPU 依赖由 Renderer 持有。
+  已生成列表；drawFrame 或 drawSceneTarget 返回后可立即修改或销毁列表，在途 GPU 依赖由 Renderer 持有。
 - 展开不逐帧检查 GPU 引用或重验模型结构。Renderer 关闭后，实例仍可保有元数据并生成列表，但其中 GPU
   引用已失效，再次提交由 Renderer 明确拒绝；实例不会延长设备寿命。
 
 最终 FrameInput、相机和 DrawItem 列表仍由应用提交；模型消费层不引入另一套帧同步。
+
+启用阴影时，Scene 使用同一展开入口另行生成投射物列表，保持实体矩阵与模型内部累计矩阵的组合顺序。
+PreparedModel 不保存阴影开关、光源范围或另一份几何；主相机外及 Unlit 模型也可投影。
+阴影深度绘制仅消费网格和模型矩阵，接收阴影只影响 Lambert 直接光，具体提交约定见 [Render](./render.md#阴影帧参数)。
 
 ## 持有期及失败
 
@@ -166,5 +170,5 @@ UV 方向、opaque 与其他显示约定见 [ModelLoader](./resource/loader/mode
 
 完整应用用法见 [模型 Demo](../examples/demo.md)：DemoApp 在 FileIO 生命周期内注册 Model/Texture Loader，准备 Shader 并将模型用于 Scene 实体。prepareModel 本身不清除全局路由。
 
-[Scene Runtime 示例](../examples/demo.md) 通过 示例内 DemoApp 持有 FileIO/Loader 到关闭，
-初次 CPU release 后在后续更新显式准备另一格式；两份准备结果供实体复用和 Scene 切换，不在普通帧重新上传。
+[Scene Runtime 示例](../examples/demo.md) 由 DemoApp 持有 FileIO/Loader 到关闭，
+使用会话模型缓存复用已准备的模型；创建实体或加载场景遇到新来源时准备，普通帧不重新上传。

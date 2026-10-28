@@ -155,8 +155,11 @@ Transform、模型绑定、可见性、Camera 位姿/FOV、extent 或当前 Scen
 `SceneFrame::input() const &` 在调用时构造 FrameInput，两份 span 分别指向当前结果的 draws 和 shadowDraws，
 相机、光照和可空阴影参数按值复制；结果本身不保存 span。
 只能从左值结果取得视图，直接对临时 SceneFrame 调用 input 被禁止。借用后不要移动/修改结果或重新分配任一绘制列表，
-保持其存储活到 drawFrame 返回；复制或移动后，从目标对象重新调用 input，不保留旧视图。
-drawFrame 返回后即可释放或改写 CPU 列表，在途 GPU 持有仍由 Renderer 保护。
+保持其存储活到 `drawFrame` 或 `drawSceneTarget` 返回；复制或移动后，从目标对象重新调用 input，不保留旧视图。
+提交调用返回后即可释放或改写 CPU 列表，在途 GPU 持有仍由 Renderer 保护。
+
+启用阴影的快照须通过 `drawSceneTarget` 提交，并事先准备深度 Shader；`drawFrame` 拒绝非空 shadow。
+关闭阴影时仍可使用原直接呈现入口，不需要准备深度 Shader。
 
 若提交前窗口 extent 改变，Renderer 跳过旧输入，下一轮使用新 extent 重新提取。
 Renderer 关闭后，Scene/快照仍可保留元数据，提取不会检查或修复过期引用；提交仍由现有 Renderer 边界抛 RENDER。
