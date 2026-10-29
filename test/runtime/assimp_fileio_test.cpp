@@ -86,6 +86,7 @@ namespace
         MOCK_METHOD(bool, remove, (const std::filesystem::path&), (override));
         MOCK_METHOD(std::unique_ptr<Fio::FileHandle>, open,
                     (const std::filesystem::path&, Fio::OpenMode, Fio::ShareMode), (override));
+        MOCK_METHOD(std::vector<Fio::DirectoryEntry>, listDirectory, (const std::filesystem::path&), (override));
         MOCK_METHOD(bool, directoryExists, (const std::filesystem::path&), (override));
         MOCK_METHOD(bool, createDirectory, (const std::filesystem::path&), (override));
         MOCK_METHOD(bool, removeDirectory, (const std::filesystem::path&), (override));
@@ -208,5 +209,17 @@ namespace
             EXPECT_EQ(io.Open(path), nullptr);
             EXPECT_FALSE(io.failure().empty());
         }
+    }
+    TEST(AssetDirectoryTest, FiltersReparseDirectoriesAndRejectsNestedEntryBeforeFollowingLink)
+    {
+        ::testing::StrictMock<MockFileIO> fileIO;
+        Resource::AssetSource source(fileIO);
+        EXPECT_CALL(fileIO, listDirectory(source.root()))
+            .WillRepeatedly(
+                Return(std::vector<Fio::DirectoryEntry>{{"linked", true, true}, {"ordinary", true, false}}));
+        const auto items = source.listDirectory();
+        ASSERT_EQ(items.size(), 1u);
+        EXPECT_EQ(items[0].name, "ordinary");
+        EXPECT_THROW(source.listDirectory("linked/child"), Error::Exception);
     }
 }  // namespace

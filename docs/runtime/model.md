@@ -152,8 +152,9 @@ PreparedModel 不保存阴影开关、光源范围或另一份几何；主相机
 
 ## 持有期及失败
 
-- 首次登记取得的 refCount=1 属于本次准备；已有登记通过 acquire 取得本次持有，包括此前计数为零的条目。
-  正常或异常退出均逐项 release，不消耗其他持有者的计数，不清除登记。
+- 模型及图片通过 ResourceManager::hold 取得只可移动的 CpuResource，首次与已有登记的引用由门面配对。
+  正常或异常退出均释放本次持有，不消耗其他持有者的计数，不清除登记。模型准备不直接访问 Registry。
+- CPU 加载失败的 RENDER 异常保留模型上下文、依赖虚拟路径及门面返回的具体原因；补充上下文不重复记录同一错误。
 - 准备结果仅包含自有元数据与 Render 的不透明 GPU 引用，不借用 ModelResource、TextureResource、ShaderResource
   或 Importer。CPU 载荷卸载、Loader 销毁之后仍可使用结果。
 - 已声明 PNG 缺失或解码失败使整个准备失败；不创建 GPU 对象，不以白纹理替代缺失的贴图。

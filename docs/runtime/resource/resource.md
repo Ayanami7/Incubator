@@ -86,7 +86,12 @@ ModelLoader 通过现有 FileIO 和固定 Assimp 导入外部 bin/PNG 的静态 
 resolve/open/exists 接收相对 UTF-8 文件路径；真实物理根不进入 ResourceId、ModelReference 或场景保存。
 Text/Shader/Texture/Model Loader 都借用同一源，Assimp 主文件及 bin/mtl 与后续 PNG 准备使用相同根。
 源保证非空相对文件路径的词法边界；根视为本地受信任目录，不承诺链接解析后的文件访问隔离。
-当前尚无目录浏览入口，目录枚举及重解析目录过滤由后续资源发现接口提供。
+`ResourceManager::listDirectory()` 列出根目录，传相对虚拟路径列出子目录；每次重新枚举直接子项并按规范化路径排序。
+目录链接和目录重解析点从结果中排除，直接请求其后代路径也被拒绝。空目录返回空列表，枚举失败抛 IO。
+OBJ/glTF、PNG、bin/mtl 分别标为模型、纹理和依赖候选，其他项为普通文件；分类不代表内容已验证。
+列表和 `query(type, path)` 不登记、不加载、不改变引用；CPU 已加载状态与文件发现、GPU 准备相互独立。
+普通消费者通过 `hold<T>(type, path)` 取得只可移动的 `CpuResource`，使用期间借用 `get<T>()`，析构或 reset 释放本次持有。
+失败值的 `failure()` 保存本次调用的虚拟路径及具体原因；后续调用不会覆盖它。详见 [ResourceManager](./resource_manager.md)。
 
 会话先构造 FileIO 和 AssetSource，再 bindAssetSource(&source) 并注册 Loader。
 结束时释放全部 CPU 持有和载荷，reset 清除路由，再 bindAssetSource(nullptr)，最后销毁源及 FileIO。

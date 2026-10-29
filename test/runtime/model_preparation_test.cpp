@@ -1143,6 +1143,8 @@ namespace
                     EXPECT_EQ(error.code(), Error::Code::RENDER);
                     EXPECT_NE(error.message().find(GLTF), std::string::npos);
                     EXPECT_NE(error.message().find(PNG), std::string::npos);
+                    EXPECT_NE(error.message().find(corrupt ? "Not a PNG" : "PNG file was not found"),
+                              std::string::npos);
                 }
                 EXPECT_EQ(result, nullptr);
                 released(ResourceType::TEXTURE, PNG);

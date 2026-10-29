@@ -64,67 +64,127 @@ namespace Incubator
             return ResourceRegistry::instance().registerResource(type, virtualPath);
         }
 
-        ResourceObject* ResourceManager::load(ResourceId id)
+        CpuResource::~CpuResource()
+        {
+            reset();
+        }
+        CpuResource::CpuResource(CpuResource&& other) noexcept
+            : id_(std::exchange(other.id_, {})),
+              object_(std::exchange(other.object_, nullptr)),
+              failure_(std::move(other.failure_))
+        {}
+        CpuResource& CpuResource::operator=(CpuResource&& other) noexcept
+        {
+            if (this != &other)
+            {
+                reset();
+                id_ = std::exchange(other.id_, {});
+                object_ = std::exchange(other.object_, nullptr);
+                failure_ = std::move(other.failure_);
+            }
+            return *this;
+        }
+        void CpuResource::reset() noexcept
+        {
+            if (id_.valid())
+                ResourceManager::instance().release(id_);
+            id_ = {};
+            object_ = nullptr;
+        }
+
+        std::vector<AssetEntry> ResourceManager::listDirectory(std::string_view directory) const
+        {
+            if (!source_)
+                throw Error::Exception(Error::Code::CONFIG, "Bind an asset source before listing directories");
+            return source_->listDirectory(directory);
+        }
+
+        std::optional<ResourceInfo> ResourceManager::query(ResourceType type, std::string_view path) const
+        {
+            const auto& registry = ResourceRegistry::instance();
+            const auto id = registry.lookup(type, path);
+            if (!id.valid())
+                return std::nullopt;
+            std::string key;
+            registry.lookup(id, type, key);
+            return ResourceInfo{id, type, std::move(key), registry.refCount(id), registry.getObject(id) != nullptr};
+        }
+
+        void ResourceManager::reportFailure(const ResourceFailure& failure)
+        {
+            Log::Registry::get("resource").error("load: '{}': {}", failure.path, failure.reason);
+        }
+
+        ResourceObject* ResourceManager::loadResource(ResourceId id, std::optional<ResourceFailure>& failure)
         {
             auto& reg = ResourceRegistry::instance();
-
-            // 已加载 → 直接返回
-            if (auto* obj = reg.getObject(id))
-            {
-                return obj;
-            }
-
-            // 未注册 → 日志 + nullptr
+            if (auto* object = reg.getObject(id))
+                return object;
             ResourceType type = ResourceType::INVALID;
-            std::string virtualPath;
-            if (!reg.lookup(id, type, virtualPath))
-            {
-                Log::Registry::get("resource").error("load: unknown resource id {:#x}", id.value());
+            std::string path;
+            const auto fail = [&](std::string reason, bool reported = false, bool threw = false) -> ResourceObject* {
+                failure =
+                    ResourceFailure{path, fmt::format("{} (type {:#x}, id {:#x})", reason, uint64_t(type), id.value())};
+                if (!reported)
+                {
+                    if (threw)
+                        Log::Registry::get("resource").error("load: loader threw: '{}': {}", path, failure->reason);
+                    else
+                        reportFailure(*failure);
+                }
                 return nullptr;
-            }
-
-            // 无对应 Loader → 日志 + nullptr
-            auto it = loaders_.find(type);
-            if (it == loaders_.end())
-            {
-                Log::Registry::get("resource")
-                    .error("load: no loader for type {:#x}, path '{}', id {:#x}", static_cast<uint64_t>(type),
-                           virtualPath, id.value());
-                return nullptr;
-            }
-
-            // 构建对象并挂载
-            // 异常边界：Loader 的 IO 错误（权限/设备等）是可恢复事件，统一在此转换为 nullptr，
-            // 保证 load() 不向外抛异常（"预期失败走返回值"由门面唯一实施）
-            std::unique_ptr<ResourceObject> object;
+            };
+            if (!reg.lookup(id, type, path))
+                return fail("unknown resource id " + id.toString());
+            const auto route = loaders_.find(type);
+            if (route == loaders_.end())
+                return fail("no loader for resource type");
             try
             {
-                object = it->second->load(id, virtualPath);
+                auto result = route->second->loadResult(id, path);
+                if (!result.object)
+                    return fail(std::move(result.failure), result.reported);
+                result.object->setState(ResourceState::READY);
+                if (!reg.attachObject(id, std::move(result.object)))
+                    return fail("Cannot mount CPU resource", true);
+                Log::Registry::get("resource").debug("Loaded CPU resource '{}' (type {:#x})", path, uint64_t(type));
+                return reg.getObject(id);
             }
-            catch (const std::exception& ex)
+            catch (const std::exception& error)
             {
-                Log::Registry::get("resource")
-                    .error("load: loader threw: '{}' (type {:#x}, id {:#x}): {}", virtualPath,
-                           static_cast<uint64_t>(type), id.value(), ex.what());
-                return nullptr;
+                return fail(error.what(), false, true);
             }
             catch (...)
             {
-                Log::Registry::get("resource")
-                    .error("load: loader threw unknown exception for '{}' (type {:#x}, id {:#x})", virtualPath,
-                           static_cast<uint64_t>(type), id.value());
-                return nullptr;
+                return fail("loader threw unknown exception", false, true);
             }
-            if (!object)
+        }
+
+        ResourceObject* ResourceManager::load(ResourceId id)
+        {
+            std::optional<ResourceFailure> failure;
+            return loadResource(id, failure);
+        }
+
+        CpuResource ResourceManager::holdResource(ResourceType type, std::string_view path)
+        {
+            CpuResource result;
+            auto& reg = ResourceRegistry::instance();
+            result.id_ = reg.lookup(type, path);
+            if (result.id_.valid())
+                acquire(result.id_);
+            else
+                result.id_ = registerResource(type, path);
+            if (!result.id_.valid())
             {
-                return nullptr;  // Loader 内部已记录失败
+                result.failure_ = ResourceFailure{std::string(path), "Cannot register CPU resource"};
+                // 登记失败由 Registry 记录。
+                return result;
             }
-            object->setState(ResourceState::READY);
-            if (!reg.attachObject(id, std::move(object)))
-                return nullptr;
-            Log::Registry::get("resource")
-                .debug("Loaded CPU resource '{}' (type {:#x})", virtualPath, static_cast<uint64_t>(type));
-            return reg.getObject(id);
+            result.object_ = loadResource(result.id_, result.failure_);
+            if (!result.object_)
+                result.reset();
+            return result;
         }
 
         void ResourceManager::acquire(ResourceId id)

@@ -14,38 +14,11 @@
 #include "runtime/resource/loader/shader_resource.h"
 #include "runtime/resource/loader/texture_loader.h"
 #include "runtime/resource/resource_manager.h"
-#include "runtime/resource/resource_registry.h"
 #include "runtime/scene/scene_frame.h"
 #include "viewport.h"
 
 namespace Incubator::Demo
 {
-    namespace
-    {
-        struct ShaderHold
-        {
-            explicit ShaderHold(std::string_view path)
-            {
-                auto& manager = Resource::ResourceManager::instance();
-                id = Resource::ResourceRegistry::instance().lookup(Resource::ResourceType::SHADER, path);
-                if (id.valid())
-                    manager.acquire(id);
-                else
-                    id = manager.registerResource(Resource::ResourceType::SHADER, path);
-            }
-
-            ~ShaderHold()
-            {
-                if (id.valid())
-                    Resource::ResourceManager::instance().release(id);
-            }
-
-            ShaderHold(const ShaderHold&) = delete;
-            ShaderHold& operator=(const ShaderHold&) = delete;
-            Resource::ResourceId id;
-        };
-    }  // namespace
-
     DemoApp::DemoApp(DemoOptions options, std::unique_ptr<FileIO::FileIO> fileIO)
         : fileIO_(std::move(fileIO)), clearColor_(options.clearColor)
     {
@@ -67,10 +40,12 @@ namespace Incubator::Demo
                                    std::make_unique<Resource::TextureLoader>(*assetSource_));
             manager.registerLoader(Resource::ResourceType::MODEL,
                                    std::make_unique<Resource::ModelLoader>(*assetSource_));
-            const ShaderHold vertex(options.vertexShader);
-            const ShaderHold fragment(options.fragmentShader);
-            const auto* vertexData = manager.get<Resource::ShaderResource>(vertex.id);
-            const auto* fragmentData = manager.get<Resource::ShaderResource>(fragment.id);
+            const auto vertex =
+                manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, options.vertexShader);
+            const auto fragment =
+                manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, options.fragmentShader);
+            const auto* vertexData = vertex.get<Resource::ShaderResource>();
+            const auto* fragmentData = fragment.get<Resource::ShaderResource>();
             if (!vertexData || !fragmentData)
                 throw Error::Exception(Error::Code::RENDER, "Cannot load application scene shaders");
             window_ = Window::createPlatformWindow(options.window);
@@ -249,8 +224,9 @@ namespace Incubator::Demo
                 renderer_->imgui().endFrame();
                 if (callbacks.layout && frame && frame->shadow && !shadowResourcesPrepared_)
                 {
-                    const ShaderHold depth("shaders/shadow.vert.spv");
-                    const auto* shader = Resource::ResourceManager::instance().get<Resource::ShaderResource>(depth.id);
+                    const auto depth = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
+                        Resource::ResourceType::SHADER, "shaders/shadow.vert.spv");
+                    const auto* shader = depth.get<Resource::ShaderResource>();
                     if (!shader)
                         throw Error::Exception(Error::Code::RENDER, "Cannot load application shadow shader");
                     renderer_->prepareShadowResources(*shader);

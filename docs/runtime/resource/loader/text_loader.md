@@ -24,6 +24,7 @@ class TextLoader final : public LoaderBase
 {
 public:
     explicit TextLoader(AssetSource& source);
+    LoaderResult loadResult(const ResourceId& id, std::string_view virtualPath) override;
     std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view virtualPath) override;
 };
 ```
@@ -43,6 +44,9 @@ public:
 - **空文件**：size 0 → 空字符串 `TextResource`（合法结果）
 - **权限/设备等可恢复错误**：`Error::Exception` 透传，由 Manager 门面统一捕获转 `nullptr`（本 Loader 不包 try/catch）
 - 返回 `nullptr` 时不会挂载任何对象，条目保持未加载态，可再次尝试
+
+`loadResult` 承担实际读取，缺失时返回自有原因且不记错，由 Manager 记录一次；直接 `load` 调用该入口并保留上述旧行为。
+通过 `manager.hold<TextResource>` 可取得带路径和具体原因的失败值，不必从日志中提取错误。
 
 ## 使用样例
 

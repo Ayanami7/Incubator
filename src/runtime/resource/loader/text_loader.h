@@ -21,6 +21,8 @@ namespace Incubator
 
             std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view virtualPath) override;
 
+            LoaderResult loadResult(const ResourceId& id, std::string_view virtualPath) override;
+
         private:
             AssetSource& source_;
         };

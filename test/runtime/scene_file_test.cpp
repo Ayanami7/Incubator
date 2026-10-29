@@ -194,6 +194,10 @@ namespace
         {
             return false;
         }
+        std::vector<Fio::DirectoryEntry> listDirectory(const std::filesystem::path&) override
+        {
+            throw Error::Exception(Error::Code::IO, "Memory scene IO does not enumerate directories");
+        }
         bool directoryExists(const std::filesystem::path&) override
         {
             return false;

@@ -14,6 +14,9 @@ class LoaderBase
 public:
     virtual ~LoaderBase() = default;
 
+    // 返回本次调用的自有结果；默认适配旧 load，异常继续透传。
+    virtual LoaderResult loadResult(const ResourceId& id, std::string_view virtualPath);
+
     // 加载并构建 ResourceObject；失败可返回 nullptr 或透传加载异常
     virtual std::unique_ptr<ResourceObject> load(const ResourceId& id,
                                                  std::string_view virtualPath) = 0;
@@ -29,6 +32,12 @@ public:
 - **返回 nullptr 表示预期失败**（文件缺失等），Loader 内部应记录 error 日志
 - **异常失败**：读取/解析异常可透传。经 ResourceManager 加载时，Manager 记录一次错误并转换为 nullptr，Loader 无需重复捕获或记录同一异常。
 - **直接调用**：调用方遵循 Loader 的可抛异常契约并处理失败。Manager 的不抛异常门面语义不改变 Loader 本身的契约。
+
+Manager 通过 `loadResult` 取得 `LoaderResult{object, failure, reported}`。失败原因字符串由结果拥有，
+reported 表示错误已记录；尚未记录时由 Manager 记录一次。默认适配器调用原 load，旧空返回仍视为已诊断，
+以保持已有扩展 Loader 的行为；需要在空返回时提供具体原因的 Loader 覆盖 loadResult。
+TextLoader 的新入口返回具体打开失败原因且不记错；其直接 load 保留原来的日志加 nullptr 行为。
+其他现有 Loader 透传具体读取或解析异常，Manager 保存原原因及虚拟路径，并通过 CpuResource 传递给消费者。
 
 ## 虚拟路径解析最小约定
 

@@ -24,12 +24,18 @@ public:
     ResourceObject* load(ResourceId id);          // 同步加载
     template <typename T> T* get(ResourceId id);  // load + dynamic_cast；类型不符返回 nullptr
 
+    std::vector<AssetEntry> listDirectory(std::string_view directory = {}) const;
+    std::optional<ResourceInfo> query(ResourceType type, std::string_view path) const;
+    template <class T = ResourceObject> CpuResource hold(ResourceType type, std::string_view path);
+
     void acquire(ResourceId id);                  // 额外持有者 +1
     void release(ResourceId id);                  // 归零时卸载对象（登记保留）
 };
 ```
 
 ## 引用计数所有权模型
+
+普通消费者优先使用 `hold<T>`，无需直接查询 Registry 或手工配对引用。
 
 - `registerResource` 首次登记即持有 refCount = 1；重复登记**幂等，不再 +1**
 - 额外的持有者必须显式调用 `acquire()`；`load()`/`get()` **不改变引用计数**
@@ -50,6 +56,45 @@ bindAssetSource 借用单个 AssetSource，同一指针重复绑定无操作。�
 并释放 Registry 中全部 CPU 持有及挂载对象，否则抛 CONFIG，原绑定与载荷不变。
 仅有零持有且无载荷的身份登记时可以解绑或换绑；新根中同路径沿用原 ResourceId，但重新加载载荷。
 源自身借用 FileIO，二者须存活至解除绑定。reset 仍只清除路由，不能代替 release 或解除源绑定。
+
+## 目录发现与状态查询
+
+`listDirectory()` 或 `listDirectory(".")` 列根，传子目录虚拟路径列直接子项；返回 `AssetEntry{name, path, kind}`。
+name 保留实际 UTF-8 名称，path 为规范化的小写 ASCII 虚拟路径，结果按 path 排序。每次调用都读取当前目录，
+因此手动刷新可以看到新增或删除的文件；空目录返回空列表，未绑定源抛 CONFIG，访问错误抛 IO。
+词法越根被拒绝，目录链接和目录重解析点不列出也不可进入；根仍为受信任目录，不承诺文件链接的物理隔离。
+
+`AssetKind` 包括 Directory、Model（OBJ/glTF）、Texture（PNG）、Dependency（bin/mtl）及 File。
+扩展名分类不解析内容、不代表可以成功导入；依赖及普通文件不能直接作为场景模型。
+
+`query(type, path)` 仅返回已有登记的 `ResourceInfo{id, type, path, references, loaded}`，不存在返回空 optional。
+loaded 表示当前挂载 CPU 对象，与文件存在或 GPU 准备无关。列表和查询均不登记、不取得引用、不调用 Loader，
+也不准备模型或上传 GPU。
+
+## CPU 持有与失败结果
+
+`CpuResource` 禁止复制，支持 noexcept 移动；移动转移一次持有，源不再持有，移动赋值先释放目标原有持有。
+首次登记的初始引用属于这次 hold；已有登记（包括零引用条目）额外 acquire。reset 或析构 release，
+最后引用归零时卸载 CPU 对象，登记保留。裸指针仅在持有期间借用；`get<T>()` 不加载，类型不符返回空指针。
+必须在会话解绑及 FileIO 销毁前释放持有，不能用 Manager 的 reset 代替。
+
+```cpp
+auto model = manager.hold<ModelResource>(ResourceType::MODEL, "models/example/model.gltf");
+if (model)
+{
+    const auto* data = model.get<ModelResource>();  // 仅在 model 持有期间借用
+    // 使用 CPU 数据完成同步准备。
+}
+else
+{
+    const ResourceFailure& error = *model.failure();  // 自有虚拟路径及具体原因，可供界面显示
+}
+```
+
+加载、缺失依赖、解析或类型错误返回空持有，失败不遗留本次引用。`failure()` 返回本次调用拥有的
+`optional<ResourceFailure>{path, reason}`，后续调用不覆盖；reset 保留失败信息。
+错误由原负责边界记录一次，展示或补充模型上下文不重复记错。旧 load/get 仍返回裸指针或 nullptr，
+Loader 异常仍在 Manager 转成一次错误日志；正常 Exists 探测不经过该失败入口。
 
 ## 同步加载语义（load）
 

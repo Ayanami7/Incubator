@@ -92,6 +92,10 @@ namespace
             ++state_->opens;
             return native_->open(path, mode, share);
         }
+        std::vector<NativeIO::DirectoryEntry> listDirectory(const std::filesystem::path& path) override
+        {
+            return native_->listDirectory(path);
+        }
         bool directoryExists(const fs::path& path) override
         {
             return native_->directoryExists(path);

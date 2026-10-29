@@ -9,59 +9,24 @@
 #include "runtime/render/renderer.h"
 #include "runtime/resource/loader/texture_resource.h"
 #include "runtime/resource/resource_manager.h"
-#include "runtime/resource/resource_registry.h"
 
 namespace Incubator::Model
 {
     namespace
     {
         constexpr uint32_t NO_INDEX = std::numeric_limits<uint32_t>::max();
-
-        // 登记过程持有首个引用；若条目已存在，则需额外持有一个引用，
-        // 即使此前的调用者已将引用计数释放至零也一样。此处不得修改 Loader 路由。
-        class CpuHold
-        {
-        public:
-            CpuHold(Resource::ResourceType type, std::string_view path)
-            {
-                auto& manager = Resource::ResourceManager::instance();
-                id_ = Resource::ResourceRegistry::instance().lookup(type, path);
-                if (id_.valid())
-                    manager.acquire(id_);
-                else
-                    id_ = manager.registerResource(type, path);
-                if (!id_.valid())
-                    throw Error::Exception(Error::Code::RENDER, fmt::format("Cannot register model asset: {}", path));
-            }
-            ~CpuHold()
-            {
-                if (id_.valid())
-                    Resource::ResourceManager::instance().release(id_);
-            }
-            CpuHold(const CpuHold&) = delete;
-            CpuHold& operator=(const CpuHold&) = delete;
-            CpuHold(CpuHold&& other) noexcept : id_(std::exchange(other.id_, {})) {}
-
-            template <typename T>
-            T* get() const
-            {
-                return Resource::ResourceManager::instance().get<T>(id_);
-            }
-
-        private:
-            Resource::ResourceId id_;
-        };
     }  // namespace
 
     std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer& renderer, std::string_view virtualPath,
                                                     PrepareOptions options)
     {
         ModelReference sourceReference(virtualPath, options);
-        CpuHold modelHold(Resource::ResourceType::MODEL, sourceReference.path());
+        auto modelHold = Resource::ResourceManager::instance().hold<Resource::ModelResource>(
+            Resource::ResourceType::MODEL, sourceReference.path());
         const auto* source = modelHold.get<Resource::ModelResource>();
         if (!source)
-            throw Error::Exception(Error::Code::RENDER,
-                                   fmt::format("Cannot prepare model '{}': model load failed", virtualPath));
+            throw Error::Exception(Error::Code::RENDER, fmt::format("Cannot prepare model '{}': {}", virtualPath,
+                                                                    modelHold.failure()->reason));
 
         auto result = std::shared_ptr<PreparedModel>(new PreparedModel(std::move(sourceReference)));
         result->nodes_ = source->nodes();
@@ -100,7 +65,7 @@ namespace Incubator::Model
 
         // 创建 GPU 资源前先解析所有实际使用的依赖项。源数据已由
         // ModelResource 验证；复制后的节点和部件使用结果内连续索引。
-        std::vector<CpuHold> textureHolds;
+        std::vector<Resource::CpuResource> textureHolds;
         std::vector<const Resource::TextureResource*> pixels;
         std::map<std::string, uint32_t> textureMap;
         std::vector<uint32_t> materialTextures;
@@ -116,12 +81,14 @@ namespace Incubator::Model
                 textureIndex = entry->second;
                 if (inserted)
                 {
-                    textureHolds.emplace_back(Resource::ResourceType::TEXTURE, *material.texturePath);
+                    textureHolds.push_back(Resource::ResourceManager::instance().hold<Resource::TextureResource>(
+                        Resource::ResourceType::TEXTURE, *material.texturePath));
                     const auto* texture = textureHolds.back().get<Resource::TextureResource>();
                     if (!texture)
-                        throw Error::Exception(Error::Code::RENDER,
-                                               fmt::format("Cannot prepare model '{}': texture '{}' failed",
-                                                           virtualPath, *material.texturePath));
+                        throw Error::Exception(
+                            Error::Code::RENDER,
+                            fmt::format("Cannot prepare model '{}': texture '{}': {}", virtualPath,
+                                        *material.texturePath, textureHolds.back().failure()->reason));
                     pixels.push_back(texture);
                 }
             }

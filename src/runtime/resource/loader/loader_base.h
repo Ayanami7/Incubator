@@ -1,7 +1,9 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <string_view>
+#include <utility>
 
 #include "runtime/resource/resource_id.h"
 #include "runtime/resource/resource_object.h"
@@ -10,6 +12,14 @@ namespace Incubator
 {
     namespace Resource
     {
+        /// @brief 一次 Loader 调用的自有结果；reported 表示旧加载入口已记录失败。
+        struct LoaderResult
+        {
+            std::unique_ptr<ResourceObject> object;
+            std::string failure;
+            bool reported = false;
+        };
+
         /// @brief 资源加载器抽象
         ///
         /// 负责把资源从磁盘加载并构建为 ResourceObject。
@@ -19,6 +29,16 @@ namespace Incubator
         {
         public:
             virtual ~LoaderBase() = default;
+
+            /// @brief 返回本次调用的具体失败原因；异常仍由 Manager 处理。
+            /// @note 默认适配旧 load 入口，其空结果视为已经记录；需传递具体原因时覆盖本入口。
+            virtual LoaderResult loadResult(const ResourceId& id, std::string_view path)
+            {
+                auto object = load(id, path);
+                if (!object)
+                    return {nullptr, "Loader returned no resource", true};
+                return {std::move(object), {}, false};
+            }
 
             /// @brief 加载并构建 ResourceObject
             /// @param id 资源 ID（Registry 已登记）

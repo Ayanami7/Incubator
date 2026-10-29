@@ -1,9 +1,9 @@
 #pragma once
 
-#include "runtime/platform/fileio/file_handle.h"
-
 #include <filesystem>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "runtime/platform/fileio/file_handle.h"
 
@@ -28,6 +28,14 @@ namespace Incubator
             Read = 1,
             Write = 2,
             ReadWrite = Read | Write  // 3
+        };
+
+        /// @brief 直接子项的物理元数据；名称为 UTF-8，重解析标志不表示可进入目录。
+        struct DirectoryEntry
+        {
+            std::string name;
+            bool directory = false;
+            bool reparsePoint = false;
         };
 
         /// @brief 文件 I/O 抽象基类
@@ -62,6 +70,9 @@ namespace Incubator
                 OpenMode mode,
                 ShareMode share = ShareMode::Exclusive
             ) = 0;
+
+            /// @brief 枚举直接子项，不递归；空目录返回空列表，访问失败抛 IO。
+            virtual std::vector<DirectoryEntry> listDirectory(const std::filesystem::path& path) = 0;
 
             // ---- 目录操作 ----
 

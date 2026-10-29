@@ -9,11 +9,11 @@
 |------|------|------|
 | **Core** | `Path` | 纯字符串路径操作（平台无关，可复用） |
 | **Platform** | `FileIO` | OS API 封装 + 最小文件操作抽象（可 Mock） |
-| **上层** | （待设计） | 高级功能：readAllBytes、目录遍历、VFS 等 |
+| **上层** | `AssetSource` / `ResourceManager` | 虚拟目录映射、排序、类别与资源持有 |
 
 本模块**不会**实现：
 - `readAllText` / `readAllBytes`（上层功能，本层只提供基础读写）
-- 目录遍历 API（可用本层的基础接口实现）
+- 递归目录索引（本层仅枚举直接子项）
 - 路径解析逻辑（由 `core/path` 提供）
 - 虚拟文件系统
 
@@ -122,6 +122,7 @@ public:
     ) = 0;  // 文件不存在返回 nullptr，其他错误抛出 Error::Exception
 
     // 目录操作
+    virtual std::vector<DirectoryEntry> listDirectory(const std::filesystem::path& path) = 0;
     virtual bool directoryExists(const std::filesystem::path& path) = 0;
     virtual bool createDirectory(const std::filesystem::path& path) = 0;  // 不递归创建父目录
     virtual bool removeDirectory(const std::filesystem::path& path) = 0;  // 仅删空目录
@@ -133,6 +134,11 @@ protected:
 // 工厂：创建平台特定实现
 std::unique_ptr<FileIO> createPlatformFileIO();
 ```
+
+`DirectoryEntry` 包含 UTF-8 `name`、`directory` 和 `reparsePoint`。`listDirectory` 仅返回直接子项，
+不递归、不保证顺序；空目录返回空列表，不存在、不是目录或访问失败抛 `Error::Exception(IO)`。
+Windows 实现用目录迭代器枚举，以 `GetFileAttributesW` 取得目录和重解析点标记；不读取文件内容。
+虚拟目录的排序及禁止进入目录链接由 AssetSource 处理，FileIO 不承担虚拟路径边界。
 
 ## 平台实现（Windows）
 

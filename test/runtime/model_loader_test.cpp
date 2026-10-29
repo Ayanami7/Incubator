@@ -142,6 +142,10 @@ namespace
                 std::move(file), counters,
                 !counters.failPath.empty() && utf8.find(counters.failPath) != std::string::npos);
         }
+        std::vector<Fio::DirectoryEntry> listDirectory(const std::filesystem::path& path) override
+        {
+            return inner_->listDirectory(path);
+        }
         bool directoryExists(const fs::path& path) override
         {
             return inner_->directoryExists(path);

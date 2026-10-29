@@ -335,6 +335,30 @@ namespace Incubator
                     return std::make_unique<Win32FileHandle>(h);
                 }
 
+                std::vector<DirectoryEntry> listDirectory(const std::filesystem::path& path) override
+                {
+                    try
+                    {
+                        std::vector<DirectoryEntry> result;
+                        for (const auto& item : std::filesystem::directory_iterator(path))
+                        {
+                            const auto attributes = GetFileAttributesW(item.path().c_str());
+                            if (attributes == INVALID_FILE_ATTRIBUTES)
+                                throw Error::Exception(
+                                    Error::Code::IO, formatWin32Error(GetLastError(), "Cannot inspect directory item"));
+                            result.push_back({Utils::Utf8::toUtf8String(item.path().filename()),
+                                              bool(attributes & FILE_ATTRIBUTE_DIRECTORY),
+                                              bool(attributes & FILE_ATTRIBUTE_REPARSE_POINT)});
+                        }
+                        return result;
+                    }
+                    catch (const std::filesystem::filesystem_error& error)
+                    {
+                        throw Error::Exception(Error::Code::IO, "Cannot enumerate '" + Utils::Utf8::toUtf8String(path) +
+                                                                    "': " + error.what());
+                    }
+                }
+
                 bool directoryExists(const std::filesystem::path& path) override
                 {
                     DWORD attrs = GetFileAttributesW(path.c_str());

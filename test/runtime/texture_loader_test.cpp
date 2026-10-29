@@ -457,6 +457,8 @@ namespace
         MOCK_METHOD(bool, remove, (const fs::path&), (override));
         MOCK_METHOD(std::unique_ptr<Incubator::FileIO::FileHandle>, open,
                     (const fs::path&, Incubator::FileIO::OpenMode, Incubator::FileIO::ShareMode), (override));
+        MOCK_METHOD(std::vector<Incubator::FileIO::DirectoryEntry>, listDirectory, (const std::filesystem::path&),
+                    (override));
         MOCK_METHOD(bool, directoryExists, (const fs::path&), (override));
         MOCK_METHOD(bool, createDirectory, (const fs::path&), (override));
         MOCK_METHOD(bool, removeDirectory, (const fs::path&), (override));

@@ -165,6 +165,10 @@ namespace
                 ++audit_.textureOpens;
             return inner_->open(path, mode, share);
         }
+        std::vector<Incubator::FileIO::DirectoryEntry> listDirectory(const std::filesystem::path& path) override
+        {
+            return inner_->listDirectory(path);
+        }
         bool directoryExists(const std::filesystem::path& path) override
         {
             return inner_->directoryExists(path);

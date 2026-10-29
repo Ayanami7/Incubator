@@ -2,8 +2,12 @@
 
 #include <map>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <utility>
 
+#include "runtime/resource/asset_source.h"
 #include "runtime/resource/loader/loader_base.h"
 #include "runtime/resource/resource_id.h"
 #include "runtime/resource/resource_type.h"
@@ -12,7 +16,59 @@ namespace Incubator
 {
     namespace Resource
     {
-        class AssetSource;
+        /// @brief 本次加载失败的自有值；后续加载不会覆盖路径和原因。
+        struct ResourceFailure
+        {
+            std::string path;
+            std::string reason;
+        };
+        /// @brief 按值返回登记状态；查询不加载或增加持有。
+        struct ResourceInfo
+        {
+            ResourceId id;
+            ResourceType type;
+            std::string path;
+            uint32_t references;
+            bool loaded;
+        };
+        class ResourceManager;
+        /// @brief 只可移动的单次 CPU 持有；指针仅在持有存活时借用，须在会话解绑前释放。
+        class CpuResource
+        {
+        public:
+            CpuResource() = default;
+            ~CpuResource();
+            CpuResource(const CpuResource&) = delete;
+            CpuResource& operator=(const CpuResource&) = delete;
+            CpuResource(CpuResource&& other) noexcept;
+            CpuResource& operator=(CpuResource&& other) noexcept;
+            /// @brief 释放本次持有；失败信息仍随返回值保留。
+            void reset() noexcept;
+            ResourceId id() const noexcept
+            {
+                return id_;
+            }
+            explicit operator bool() const noexcept
+            {
+                return object_ != nullptr;
+            }
+            /// @brief 借用已加载对象；空持有或类型不匹配时返回空指针，不触发加载。
+            template <class T>
+            T* get() const noexcept
+            {
+                return dynamic_cast<T*>(object_);
+            }
+            const std::optional<ResourceFailure>& failure() const noexcept
+            {
+                return failure_;
+            }
+
+        private:
+            friend class ResourceManager;
+            ResourceId id_;
+            ResourceObject* object_ = nullptr;
+            std::optional<ResourceFailure> failure_;
+        };
 
         /// @brief 资源门面：Loader 路由 + 生命周期驱动
         ///
@@ -74,6 +130,25 @@ namespace Incubator
             template <typename T>
             T* get(ResourceId id);
 
+            /// @brief 列出当前资产源目录；不登记、不加载；未绑定或访问失败抛异常。
+            std::vector<AssetEntry> listDirectory(std::string_view directory = {}) const;
+            /// @brief 查询既有登记，未登记返回空值；不加载或改变计数。
+            std::optional<ResourceInfo> query(ResourceType type, std::string_view path) const;
+            /// @brief 取得恰好一次 CPU 持有；失败值保存路径和原因，且不保留引用。
+            /// @note 失败只由此边界记录一次；复制禁止，移动转移持有，reset 或析构时释放。
+            template <class T = ResourceObject>
+            CpuResource hold(ResourceType type, std::string_view path)
+            {
+                auto result = holdResource(type, path);
+                if (result && !result.get<T>())
+                {
+                    result.reset();
+                    result.failure_ = ResourceFailure{std::string(path), "CPU resource type mismatch"};
+                    reportFailure(*result.failure_);
+                }
+                return result;
+            }
+
             /// @brief 增加引用（额外持有者使用；未注册 ID 记录错误日志）
             void acquire(ResourceId id);
 
@@ -82,7 +157,9 @@ namespace Incubator
 
         private:
             ResourceManager() = default;
-
+            CpuResource holdResource(ResourceType type, std::string_view path);
+            ResourceObject* loadResource(ResourceId id, std::optional<ResourceFailure>& failure);
+            static void reportFailure(const ResourceFailure& failure);
             AssetSource* source_ = nullptr;
             std::map<ResourceType, std::unique_ptr<LoaderBase>> loaders_;
         };
