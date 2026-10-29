@@ -30,14 +30,14 @@ ModelLoader 为同步 `final LoaderBase`，借用构造时注入的 FileIO。每
 
 ## 文件与路径
 
-资源根为启动工作目录下的 `assets/`，虚拟路径不带该前缀。模型、bin、mtl 均经私有
-Assimp IOSystem/IOStream 适配进入 FileIO/FileHandle；不使用第三方默认文件读取路径。
+ModelLoader 借用 AssetSource；默认根为构造时 cwd/assets，也可显式指定，虚拟路径不带 assets 前缀。
+模型、bin、mtl 均经私有 Assimp IOSystem/IOStream 适配，以根相对路径进入同一 AssetSource 和 FileIO/FileHandle；不使用第三方默认文件读取路径。
 IOStream 累积短读，保留完整元素计数、seek/tell/size 语义；提前 EOF 或读取异常使本次导入失败。
 适配器支持只读输入，句柄由流独占，Importer 拥有适配器。
 
 - glTF 的 bin 和图片 URI 相对 glTF 文件目录解析，百分号编码只在 URI 部分解码一次。
 - OBJ 的 mtl 相对 OBJ 文件目录解析，map_Kd 相对声明它的 MTL 目录解析；沿用 Assimp 的目录前缀转换。
-- 允许在 assets 根内使用 `..`。拒绝越出资源根、盘符、UNC 和网络依赖，不访问根外文件。
+- 允许在资产根内使用 `..`，拒绝绝对、盘符、UNC、网络和词法越根依赖。只保证词法边界，不对文件链接的最终物理位置提供隔离承诺。
 - 中文、空格和 Emoji 路径经 UTF-8 工具转换进入原生 FileIO。
 - 必需 bin/mtl 缺失、读取失败或请求了不存在的命名材质均使模型导入失败；正常 Exists 探测不记为加载失败。
 - PNG 只保留规范化虚拟路径，不由 ModelLoader 读取、登记或持有。PNG 缺失/解码失败属于后续准备入口的错误。

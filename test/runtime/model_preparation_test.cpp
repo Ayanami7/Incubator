@@ -243,15 +243,17 @@ namespace
             }
             Log::Registry::get("resource").addSink(std::make_shared<spdlog::sinks::ostream_sink_mt>(resourceMessages_));
             fileIO_ = FileIO::createPlatformFileIO();
+            source_ = std::make_unique<AssetSource>(*fileIO_);
             auto& manager = ResourceManager::instance();
-            manager.registerLoader(ResourceType::MODEL, std::make_unique<ModelLoader>(*fileIO_));
-            manager.registerLoader(ResourceType::TEXTURE, std::make_unique<TextureLoader>(*fileIO_));
-            manager.registerLoader(ResourceType::SHADER, std::make_unique<ShaderLoader>(*fileIO_));
+            manager.registerLoader(ResourceType::MODEL, std::make_unique<ModelLoader>(*source_));
+            manager.registerLoader(ResourceType::TEXTURE, std::make_unique<TextureLoader>(*source_));
+            manager.registerLoader(ResourceType::SHADER, std::make_unique<ShaderLoader>(*source_));
         }
         void TearDown() override
         {
             ResourceManager::instance().reset();
             ResourceRegistry::instance().clear();
+            source_.reset();
             fileIO_.reset();
             Log::Registry::reset();
             fs::current_path(previous_);
@@ -344,8 +346,48 @@ namespace
         }
         fs::path previous_, sandbox_;
         std::unique_ptr<FileIO::FileIO> fileIO_;
+        std::unique_ptr<AssetSource> source_;
         std::ostringstream messages_, resourceMessages_;
     };
+
+    TEST_F(ModelPreparationTest, SpecifiedAssetRootPreparesBothFormatsWithoutFallbackToDefaultDirectory)
+    {
+        const auto root = sandbox_ / Utils::Utf8::toFsPath("独立 资产根");
+        fs::rename(sandbox_ / "assets", root);
+        fs::create_directories(sandbox_ / "assets");
+        fs::copy(root / "fonts", sandbox_ / "assets/fonts", fs::copy_options::recursive);
+        auto& manager = ResourceManager::instance();
+        manager.reset();
+        source_ = std::make_unique<AssetSource>(*fileIO_, root);
+        manager.bindAssetSource(source_.get());
+        manager.registerLoader(ResourceType::MODEL, std::make_unique<ModelLoader>(*source_));
+        manager.registerLoader(ResourceType::TEXTURE, std::make_unique<TextureLoader>(*source_));
+        manager.registerLoader(ResourceType::SHADER, std::make_unique<ShaderLoader>(*source_));
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            const auto gltf = Model::prepareModel(renderer, GLTF);
+            const auto obj = Model::prepareModel(renderer, OBJ);
+            ASSERT_FALSE(gltf->textures().empty());
+            ASSERT_FALSE(obj->textures().empty());
+            EXPECT_EQ(gltf->source().path(), GLTF);
+            EXPECT_EQ(obj->source().path(), OBJ);
+            draw(*native, renderer, *gltf);
+            draw(*native, renderer, *obj);
+            fs::remove(root / "models/minimal_gltf/geometry/mesh.bin");
+            EXPECT_THROW(Model::prepareModel(renderer, GLTF), Error::Exception);
+            fs::remove(root / "models/minimal_obj/materials/model.mtl");
+            EXPECT_THROW(Model::prepareModel(renderer, OBJ), Error::Exception);
+        }
+        EXPECT_EQ(fs::current_path(), sandbox_);
+        EXPECT_FALSE(fs::exists(sandbox_ / "assets/models"));
+        EXPECT_FALSE(fs::exists(sandbox_ / "assets/textures"));
+        EXPECT_FALSE(fs::exists(sandbox_ / "assets/shaders"));
+        manager.reset();
+        manager.bindAssetSource(nullptr);
+        cleanValidation();
+    }
 
     TEST_F(ModelPreparationTest, ShadowSamplingMatchesLightingAndPreservesUnlitAcrossEnableChanges)
     {
@@ -707,6 +749,7 @@ namespace
             EXPECT_EQ(lambert->source().path(), path);
             EXPECT_EQ(lambert->source().options().shading, ShadingMode::Lambert);
             released(ResourceType::MODEL, path);
+            source_.reset();
             fileIO_.reset();
             for (const auto& prepared : {legacy, lambert})
             {
@@ -1484,6 +1527,7 @@ namespace
             released(ResourceType::MODEL, GLTF);
             released(ResourceType::TEXTURE, PNG);
             ResourceManager::instance().reset();
+            source_.reset();
             fileIO_.reset();
             const auto resourceLog = resourceMessages_.str();
 
@@ -1621,6 +1665,7 @@ namespace
             ASSERT_EQ(model->draws().size(), 5u);
             released(ResourceType::MODEL, "models/culling.gltf");
             ResourceManager::instance().reset();
+            source_.reset();
             fileIO_.reset();
             const auto resourceLog = resourceMessages_.str();
             const auto renderLog = messages_.str();
@@ -1708,6 +1753,7 @@ namespace
             released(ResourceType::MODEL, "models/centered.gltf");
             released(ResourceType::TEXTURE, PNG);
             manager.reset();
+            source_.reset();
             fileIO_.reset();
             const auto resourceLog = resourceMessages_.str();
             const auto renderLog = messages_.str();
@@ -1780,6 +1826,7 @@ namespace
             ASSERT_EQ(model->draws().size(), 5u);
             const std::weak_ptr<const Model::PreparedModel> weak = model;
             ResourceManager::instance().reset();
+            source_.reset();
             fileIO_.reset();
             const auto resourceLog = resourceMessages_.str();
             Scene::Scene scene;
@@ -1899,6 +1946,7 @@ namespace
             released(ResourceType::MODEL, OBJ);
             released(ResourceType::TEXTURE, PNG);
             ResourceManager::instance().reset();
+            source_.reset();
             fileIO_.reset();
 
             native->pollEvents();
@@ -2118,6 +2166,7 @@ namespace
             released(ResourceType::TEXTURE, pngPath);
             released(ResourceType::SHADER, "shaders/cube.vert.spv");
             released(ResourceType::SHADER, "shaders/cube.frag.spv");
+            source_.reset();
             fileIO_.reset();
 
             const std::array<std::array<int, 4>, 12> direction = {{{255, 255, 255, 255},

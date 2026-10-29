@@ -1,8 +1,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <spdlog/sinks/ostream_sink.h>
-
 #include <algorithm>
+
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -17,8 +17,8 @@
 #include <tuple>
 #include <utility>
 #include <vector>
-
 #include "runtime/core/error/error.h"
+
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
@@ -221,8 +221,9 @@ namespace
             fs::create_directories(testDirectory_ / "assets");
             fs::current_path(testDirectory_);
             fileIO_ = FileIO::createPlatformFileIO();
-            ResourceManager::instance().registerLoader(
-                ResourceType::TEXTURE, std::make_unique<TextureLoader>(*fileIO_));
+            source_ = std::make_unique<AssetSource>(*fileIO_);
+            ResourceManager::instance().registerLoader(ResourceType::TEXTURE,
+                                                       std::make_unique<TextureLoader>(*source_));
             id_ = ResourceManager::instance().registerResource(ResourceType::TEXTURE, "纹理/测试.png");
             ASSERT_TRUE(id_.valid());
         }
@@ -233,6 +234,7 @@ namespace
             ResourceManager::instance().reset();
             ResourceRegistry::instance().clear();
             Log::Registry::reset();
+            source_.reset();
             fileIO_.reset();
             fs::current_path(previousDirectory_);
             fs::remove_all(testDirectory_);
@@ -256,6 +258,7 @@ namespace
         fs::path previousDirectory_;
         fs::path testDirectory_;
         std::unique_ptr<FileIO::FileIO> fileIO_;
+        std::unique_ptr<AssetSource> source_;
         ResourceId id_;
         std::ostringstream messages_;
     };
@@ -303,7 +306,7 @@ namespace
 
     TEST_F(TextureLoaderTest, DirectFailureThrowsWithoutLoggingAndManagerLogsMissingPathOnce)
     {
-        TextureLoader direct(*fileIO_);
+        TextureLoader direct(*source_);
         EXPECT_THROW(direct.load(id_, "纹理/测试.png"), Error::Exception);
         EXPECT_TRUE(messages_.str().empty());
         EXPECT_EQ(ResourceManager::instance().load(id_), nullptr);
@@ -473,7 +476,9 @@ namespace
             ResourceRegistry::instance().clear();
             Log::Registry::reset();
             Log::Registry::get("resource").addSink(std::make_shared<spdlog::sinks::ostream_sink_mt>(messages_));
-            ResourceManager::instance().registerLoader(ResourceType::TEXTURE, std::make_unique<TextureLoader>(fileIO_));
+            source_ = std::make_unique<AssetSource>(fileIO_);
+            ResourceManager::instance().registerLoader(ResourceType::TEXTURE,
+                                                       std::make_unique<TextureLoader>(*source_));
             id_ = ResourceManager::instance().registerResource(ResourceType::TEXTURE, "纹理/短读.png");
         }
 
@@ -490,8 +495,8 @@ namespace
             auto handle = std::make_unique<::testing::StrictMock<MockFileHandle>>();
             auto* raw = handle.get();
             EXPECT_CALL(*raw, size()).WillOnce(Return(size));
-            EXPECT_CALL(fileIO_, open(Utils::Utf8::toFsPath("assets/纹理/短读.png"),
-                                     FileIO::OpenMode::Read, FileIO::ShareMode::Read))
+            EXPECT_CALL(fileIO_,
+                        open(source_->resolve("纹理/短读.png"), FileIO::OpenMode::Read, FileIO::ShareMode::Read))
                 .WillOnce(Return(ByMove(std::move(handle))));
             return raw;
         }
@@ -504,6 +509,7 @@ namespace
         }
 
         ::testing::StrictMock<MockFileIO> fileIO_;
+        std::unique_ptr<AssetSource> source_;
         ResourceId id_;
         std::ostringstream messages_;
     };

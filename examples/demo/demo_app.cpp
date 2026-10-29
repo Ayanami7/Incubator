@@ -52,17 +52,21 @@ namespace Incubator::Demo
         shadowSettings_.depthBias = 0.003f;
         auto& manager = Resource::ResourceManager::instance();
         // 注册任何路由或启用路由清理前，先检查完整路由表。
-        if (!manager.loadersEmpty())
+        if (!manager.loadersEmpty() || manager.assetSource())
             throw Error::Exception(Error::Code::CONFIG, "DemoApp requires an empty Loader route table");
         if (!fileIO_)
             throw Error::Exception(Error::Code::CONFIG, "DemoApp requires FileIO");
+        assetSource_ = std::make_unique<Resource::AssetSource>(*fileIO_);
+        manager.bindAssetSource(assetSource_.get());
         ownsRoutes_ = true;
         try
         {
-            manager.registerLoader(Resource::ResourceType::SHADER, std::make_unique<Resource::ShaderLoader>(*fileIO_));
+            manager.registerLoader(Resource::ResourceType::SHADER,
+                                   std::make_unique<Resource::ShaderLoader>(*assetSource_));
             manager.registerLoader(Resource::ResourceType::TEXTURE,
-                                   std::make_unique<Resource::TextureLoader>(*fileIO_));
-            manager.registerLoader(Resource::ResourceType::MODEL, std::make_unique<Resource::ModelLoader>(*fileIO_));
+                                   std::make_unique<Resource::TextureLoader>(*assetSource_));
+            manager.registerLoader(Resource::ResourceType::MODEL,
+                                   std::make_unique<Resource::ModelLoader>(*assetSource_));
             const ShaderHold vertex(options.vertexShader);
             const ShaderHold fragment(options.fragmentShader);
             const auto* vertexData = manager.get<Resource::ShaderResource>(vertex.id);
@@ -278,10 +282,12 @@ namespace Incubator::Demo
         if (ownsRoutes_)
         {
             Resource::ResourceManager::instance().reset();
+            Resource::ResourceManager::instance().bindAssetSource(nullptr);
             ownsRoutes_ = false;
         }
         renderer_.reset();
         window_.reset();
+        assetSource_.reset();
         fileIO_.reset();
     }
 }  // namespace Incubator::Demo

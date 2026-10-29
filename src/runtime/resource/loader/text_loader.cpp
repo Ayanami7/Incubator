@@ -14,16 +14,16 @@ namespace Incubator
 {
     namespace Resource
     {
-        TextLoader::TextLoader(Incubator::FileIO::FileIO& fileio) : fileio_(fileio) {}
+        TextLoader::TextLoader(AssetSource& source) : source_(source) {}
 
         std::unique_ptr<ResourceObject> TextLoader::load(const ResourceId& id,
                                                          std::string_view virtualPath)
         {
-            const std::string realPathUtf8 = Incubator::Path::join("assets", virtualPath);
-            const auto realPath = Incubator::Utils::Utf8::toFsPath(realPathUtf8);
+            const auto realPath = source_.resolve(virtualPath);
+            const auto realPathUtf8 = Utils::Utf8::toUtf8String(realPath);
 
-            uint64_t size = fileio_.getFileSize(realPath);
-            auto handle = fileio_.open(realPath, Incubator::FileIO::OpenMode::Read);
+            uint64_t size = source_.fileIO().getFileSize(realPath);
+            auto handle = source_.open(virtualPath, FileIO::ShareMode::Exclusive);
             if (!handle)
             {
                 Log::Registry::get("resource").error("TextLoader: cannot open '{}'", realPathUtf8);

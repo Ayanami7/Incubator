@@ -1,6 +1,6 @@
 #pragma once
 
-#include "runtime/platform/fileio/fileio.h"
+#include "runtime/resource/asset_source.h"
 #include "runtime/resource/loader/loader_base.h"
 
 namespace Incubator
@@ -12,12 +12,12 @@ namespace Incubator
         class TextureLoader final : public LoaderBase
         {
         public:
-            explicit TextureLoader(FileIO::FileIO& fileIO);
+            explicit TextureLoader(AssetSource& source);
 
             std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view virtualPath) override;
 
         private:
-            FileIO::FileIO& fileIO_;
+            AssetSource& source_;
         };
     }  // namespace Resource
 }  // namespace Incubator

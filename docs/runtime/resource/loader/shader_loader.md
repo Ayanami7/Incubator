@@ -7,9 +7,9 @@
 
 ## 资源路径与读取
 
-调用方将 SPIR-V 虚拟路径注册为 `ResourceType::SHADER`。Loader 按 `Path::join("assets", virtualPath)` 得到相对路径，通过 `Utils::Utf8::toFsPath` 转换后交给 FileIO。SPIR-V 长度、字对齐和 magic 检查只在 `readSpirv` 二进制读取入口执行；ShaderLoader 不复制读文件或格式验证逻辑。`readSpirv` 的异常诊断使用 `Utils::Utf8::toUtf8String` 输出物理路径。运行时不调用编译器，调用方应预先提供编译产物。
+调用方将 SPIR-V 虚拟路径注册为 `ResourceType::SHADER`。ShaderLoader 借用 AssetSource，通过 resolve 得到绝对物理路径，再借用同一源的 FileIO 交给 readSpirv。SPIR-V 长度、字对齐和 magic 检查只在 `readSpirv` 二进制读取入口执行；ShaderLoader 不复制读文件或格式验证逻辑。`readSpirv` 的异常诊断使用 `Utils::Utf8::toUtf8String` 输出物理路径。运行时不调用编译器，调用方应预先提供编译产物。
 
-资源根是启动工作目录下的 `assets/`。调用方负责部署文件并在有效持有或缓存对象存在期间保持工作目录稳定。
+资源根由 AssetSource 构造时捕获，默认 cwd/assets；同一源统一用于模型、纹理和 Shader，之后不随 cwd 改变。
 
 ## CPU 与 GPU 所有权
 

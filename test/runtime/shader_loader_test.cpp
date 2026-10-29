@@ -1,14 +1,14 @@
 #include <gtest/gtest.h>
 #include <spdlog/sinks/ostream_sink.h>
-
 #include <chrono>
+
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string_view>
 #include <vector>
-
 #include "runtime/core/error/error.h"
+
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
@@ -37,6 +37,7 @@ namespace
             fs::create_directories(testDirectory_ / "assets");
             fs::current_path(testDirectory_);
             fileIO_ = FileIO::createPlatformFileIO();
+            source_ = std::make_unique<AssetSource>(*fileIO_);
             Log::Registry::reset();
             Log::Registry::get("resource").addSink(std::make_shared<spdlog::sinks::ostream_sink_mt>(messages_));
         }
@@ -46,6 +47,7 @@ namespace
             ResourceManager::instance().reset();
             ResourceRegistry::instance().clear();
             Log::Registry::reset();
+            source_.reset();
             fileIO_.reset();
             fs::current_path(previousDirectory_);
             fs::remove_all(testDirectory_);
@@ -64,13 +66,14 @@ namespace
         ResourceId registerShader(std::string_view virtualPath = "shaders/test.spv")
         {
             auto& manager = ResourceManager::instance();
-            manager.registerLoader(ResourceType::SHADER, std::make_unique<ShaderLoader>(*fileIO_));
+            manager.registerLoader(ResourceType::SHADER, std::make_unique<ShaderLoader>(*source_));
             return manager.registerResource(ResourceType::SHADER, virtualPath);
         }
 
         fs::path previousDirectory_;
         fs::path testDirectory_;
         std::unique_ptr<FileIO::FileIO> fileIO_;
+        std::unique_ptr<AssetSource> source_;
         std::ostringstream messages_;
     };
 
@@ -102,7 +105,7 @@ namespace
     TEST_F(ShaderLoaderTest, DirectExceptionIsLoggedOnceByManagerAndConvertedToNull)
     {
         const auto id = registerShader();
-        ShaderLoader directLoader(*fileIO_);
+        ShaderLoader directLoader(*source_);
         EXPECT_THROW(directLoader.load(id, "shaders/test.spv"), Error::Exception);
         EXPECT_TRUE(messages_.str().empty());
         EXPECT_EQ(ResourceManager::instance().load(id), nullptr);
@@ -146,4 +149,4 @@ namespace
         EXPECT_NE(messages_.str().find("assets/着色器/坏数据.spv"), std::string::npos);
         EXPECT_NE(messages_.str().find("Invalid SPIR-V magic number"), std::string::npos);
     }
-}
+}  // namespace

@@ -100,7 +100,7 @@ namespace Incubator::Resource::Detail
                 if (reached != nodes->Size())
                     throw Error::Exception(Error::Code::IO, "Invalid glTF hierarchy cycle");
             }
-            const auto directory = Path::getParentPath(path.substr(7));  // 去除 assets/ 前缀。
+            const auto directory = Path::getParentPath(path);
             for (const char* name : {"buffers", "images"})
             {
                 if (const auto* items = arrayMember(source, name))

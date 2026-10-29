@@ -6,7 +6,7 @@
 #include <string>
 #include <unordered_set>
 
-#include "runtime/platform/fileio/fileio.h"
+#include "runtime/resource/asset_source.h"
 
 namespace Incubator::Resource::Detail
 {
@@ -37,7 +37,7 @@ namespace Incubator::Resource::Detail
     class AssimpFileIO final : public Assimp::IOSystem
     {
     public:
-        AssimpFileIO(FileIO::FileIO& fileIO, std::string modelPath, bool gltf);
+        AssimpFileIO(AssetSource& source, std::string modelPath, bool gltf);
         bool Exists(const char* path) const override;
         char getOsSeparator() const override;
         Assimp::IOStream* Open(const char* path, const char* mode = "rb") override;
@@ -46,9 +46,9 @@ namespace Incubator::Resource::Detail
         bool hasObjDiffuseColor(std::string_view material) const;
 
     private:
-        std::string physicalPath(std::string_view path) const;
+        std::string virtualPath(std::string_view path) const;
 
-        FileIO::FileIO& fileIO_;
+        AssetSource& source_;
         std::string modelPath_;
         bool gltf_;
         mutable ImportIoState state_;

@@ -143,23 +143,24 @@ namespace Incubator::Resource
         }
     }  // namespace
 
-    ModelLoader::ModelLoader(FileIO::FileIO& fileIO) : fileIO_(fileIO) {}
+    ModelLoader::ModelLoader(AssetSource& source) : source_(source) {}
 
     std::unique_ptr<ResourceObject> ModelLoader::load(const ResourceId& id, std::string_view virtualPath)
     {
         try
         {
+            source_.resolve(virtualPath);
             const auto key = canonicalizeResourceKey(virtualPath);
             const bool gltf = Path::hasExtension(key, "gltf");
             if (key.empty() || (!gltf && !Path::hasExtension(key, "obj")))
             {
                 throw Error::Exception(Error::Code::IO, "Only static .gltf 2.0 and .obj models are supported");
             }
-            const auto path = Path::join("assets", key);
+            const auto& path = key;
             ImportDiagnostics diagnostics;
             Assimp::Importer importer;
-            auto* io = new Detail::AssimpFileIO(fileIO_, path, gltf);
-            importer.SetIOHandler(io);  // Importer 持有该数据；FileIO 仅在本次调用期间借用。
+            auto* io = new Detail::AssimpFileIO(source_, path, gltf);
+            importer.SetIOHandler(io);  // Importer 持有该数据；AssetSource 仅在本次调用期间借用。
             importer.SetPropertyFloat(AI_CONFIG_PP_GSN_MAX_SMOOTHING_ANGLE, 80.0f);
             const unsigned normalProcess = gltf ? aiProcess_GenNormals : aiProcess_GenSmoothNormals;
             const auto* scene =
@@ -282,13 +283,11 @@ namespace Incubator::Resource
         }
         catch (const Error::Exception& error)
         {
-            throw Error::Exception(Error::Code::IO,
-                                   fmt::format("ModelLoader 'assets/{}': {}", virtualPath, error.message()));
+            throw Error::Exception(Error::Code::IO, fmt::format("ModelLoader '{}': {}", virtualPath, error.message()));
         }
         catch (const std::exception& error)
         {
-            throw Error::Exception(Error::Code::IO,
-                                   fmt::format("ModelLoader 'assets/{}': {}", virtualPath, error.what()));
+            throw Error::Exception(Error::Code::IO, fmt::format("ModelLoader '{}': {}", virtualPath, error.what()));
         }
     }
 }  // namespace Incubator::Resource

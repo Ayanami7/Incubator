@@ -133,7 +133,7 @@ namespace
         }
         std::unique_ptr<Fio::FileHandle> open(const fs::path& path, Fio::OpenMode mode, Fio::ShareMode share) override
         {
-            const auto utf8 = Utils::Utf8::toUtf8String(path);
+            const auto utf8 = Utils::Utf8::toUtf8String(path.lexically_normal().generic_wstring());
             counters.paths.push_back(utf8);
             auto file = inner_->open(path, mode, share);
             if (!file)
@@ -178,7 +178,8 @@ namespace
             ResourceRegistry::instance().clear();
             Log::Registry::reset();
             Log::Registry::get("resource").addSink(std::make_shared<spdlog::sinks::ostream_sink_mt>(messages_));
-            ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<ModelLoader>(fileIO_));
+            source_ = std::make_unique<AssetSource>(fileIO_);
+            ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<ModelLoader>(*source_));
         }
         void copyDemoModel(std::string_view directory)
         {
@@ -248,6 +249,7 @@ namespace
         fs::path previous_;
         fs::path temporary_;
         TrackedFileIO fileIO_;
+        std::unique_ptr<AssetSource> source_;
         ResourceId id_;
         std::ostringstream messages_;
     };
@@ -471,7 +473,7 @@ namespace
             EXPECT_EQ(obj->geometries()[0].vertices[i].uv, expected[i]);
             EXPECT_EQ(gltf->geometries()[0].vertices[i].position, obj->geometries()[0].vertices[i].position);
         }
-        ResourceManager::instance().registerLoader(ResourceType::TEXTURE, std::make_unique<TextureLoader>(fileIO_));
+        ResourceManager::instance().registerLoader(ResourceType::TEXTURE, std::make_unique<TextureLoader>(*source_));
         const auto textureId =
             ResourceManager::instance().registerResource(ResourceType::TEXTURE, "textures/direction_rgba.png");
         const auto* texture = ResourceManager::instance().get<TextureResource>(textureId);
@@ -536,7 +538,7 @@ namespace
 
     TEST_F(ModelLoaderTest, DirectFailureDoesNotLogAndManagerLogsOnceWithoutPartialMount)
     {
-        ModelLoader direct(fileIO_);
+        ModelLoader direct(*source_);
         const auto id = ResourceId::fromPath(ResourceType::MODEL, "模型😀/missing.gltf");
         EXPECT_THROW(direct.load(id, "模型😀/missing.gltf"), Error::Exception);
         EXPECT_TRUE(messages_.str().empty());
@@ -832,7 +834,7 @@ namespace
         text.replace(text.find("materials/model.mtl"), std::strlen("materials/model.mtl"), "../../../outside.mtl");
         write(OBJ, text);
         std::ofstream("outside.mtl") << "newmtl Direction\nKd 1 1 1\n";
-        expectFailure(OBJ, "escapes assets root");
+        expectFailure(OBJ, "escapes root");
     }
     TEST_F(ModelLoaderTest, UnsupportedFileExtensionAndBrokenObjFail)
     {

@@ -111,7 +111,7 @@ DemoApp 向回调消费者提供基于单调 Clock 的 FrameTime；生产 Demo �
 最小化时仍处理事件/更新，跳过 UI、投影、提取及提交；恢复使用新的实际 extent。
 应用不手工缓存 FrameInput 或第二份实体 model 矩阵，帧数据持有及借用规则见 [Scene](../runtime/scene.md)。
 
-回调共享的 ModelScene 在 run 收尾时释放，随后 DemoApp 清理 Scene、独占 Loader 路由、Renderer、Window 和 FileIO。
+回调共享的 ModelScene 在 run 收尾时释放，随后 DemoApp 清理 Scene、独占 Loader 路由和源绑定，再销毁 Renderer、Window、AssetSource 和 FileIO。
 删除实体、清空或切换 Scene 不即时回收显存；GPU 资源由 Renderer 持有到关闭。
 Shader、模型依赖或回调失败时 DemoApp 先清理，再由 main 记录异常并返回 1，不继续提交不完整帧。
 
@@ -137,7 +137,7 @@ Demo 消费层测试位于 `test/examples/demo/demo_test.cpp`，目标为 `demo_
 原程序几何和精确纹理辅助代码位于 test/support/render_demo，供渲染测试使用。
 
 Demo 关闭前保持 Loader 和 FileIO 存活，允许初次准备后继续加载模型。
-正常退出和异常退出均先释放回调/场景持有，再清理路由、Renderer、Window 和 FileIO。
+正常退出和异常退出均先释放回调/场景及 CPU 持有，再清理路由和源绑定，最后销毁 Renderer、Window、AssetSource 和 FileIO。外部 CPU 持有必须在会话结束前释放。
 
 ## 轨道相机与聚焦
 

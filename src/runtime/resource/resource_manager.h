@@ -12,6 +12,8 @@ namespace Incubator
 {
     namespace Resource
     {
+        class AssetSource;
+
         /// @brief 资源门面：Loader 路由 + 生命周期驱动
         ///
         /// 单例。存储层委托 ResourceRegistry；Loader 路由表在本类。
@@ -31,6 +33,17 @@ namespace Incubator
         public:
             /// @brief 全局单例
             static ResourceManager& instance();
+
+            /// @brief 绑定或解除单个借用资产源；空指针解除绑定，同一源重复绑定无操作。
+            /// @note 换绑或解除前须清除 Loader，并释放全部 CPU 持有及挂载对象；失败保留原状态。
+            /// 源须存活至解除绑定，reset() 仅清除路由，不解除源或销毁 CPU 对象。
+            /// @throws Error::Exception 尚有路由、CPU 持有或挂载对象时抛 CONFIG。
+            void bindAssetSource(AssetSource* source);
+            /// @brief 返回当前借用源；尚未绑定时为空。
+            AssetSource* assetSource() const noexcept
+            {
+                return source_;
+            }
 
             /// @brief 注册 Loader（按类型路由；同类型重复注册覆盖）
             /// @param type 资源类型
@@ -70,6 +83,7 @@ namespace Incubator
         private:
             ResourceManager() = default;
 
+            AssetSource* source_ = nullptr;
             std::map<ResourceType, std::unique_ptr<LoaderBase>> loaders_;
         };
 

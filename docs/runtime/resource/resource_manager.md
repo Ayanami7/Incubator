@@ -11,6 +11,8 @@ class ResourceManager
 {
 public:
     static ResourceManager& instance();
+    void bindAssetSource(AssetSource* source);    // 空指针解除绑定
+    AssetSource* assetSource() const noexcept;   // 当前借用源
 
     void registerLoader(ResourceType type, std::unique_ptr<LoaderBase> loader);
     bool hasLoader(ResourceType type) const;
@@ -35,12 +37,19 @@ public:
 - `load()`/`get()` 返回的裸指针**仅在对应持有期（登记持有 + acquire）内有效**，持有期满后不得再访问
 - 已有 refCount=0 的登记条目重新使用前需 `acquire()`；重复登记不会恢复持有。
 - `reset()` 只移除 Loader，不释放 CPU 对象、不清空 Registry，也不使已挂载缓存失效。
-  调用方须在正常或异常结束时先 release 本次持有，再移除借用 FileIO 的 Loader，最后销毁 FileIO；
+  调用方须在正常或异常结束时先 release 本次持有，再移除借用 AssetSource 的 Loader、解除源绑定，最后销毁 AssetSource 和 FileIO；
   具体资源的 GPU 使用期由 Render 另行管理。
 
 [DemoApp 示例](../../examples/demo.md) 在首次注册前通过 loadersEmpty() 确认整个路由表为空，
-取得独占权后注册 Shader/Texture/Model Loader；已有任意路由即拒绝接管并保留原路由。
+同时确认没有既有资产源绑定，再绑定会话源并注册 Shader/Texture/Model Loader；已有任意路由或绑定即拒绝接管并保留原状态。
 DemoApp 运行期间路由及 FileIO 保持有效，CPU release、Scene clear/switch 不调用 reset，关闭时才清理已接管路由。
+
+## 资产源绑定
+
+bindAssetSource 借用单个 AssetSource，同一指针重复绑定无操作。更换或解除绑定前须先清空 Loader 路由，
+并释放 Registry 中全部 CPU 持有及挂载对象，否则抛 CONFIG，原绑定与载荷不变。
+仅有零持有且无载荷的身份登记时可以解绑或换绑；新根中同路径沿用原 ResourceId，但重新加载载荷。
+源自身借用 FileIO，二者须存活至解除绑定。reset 仍只清除路由，不能代替 release 或解除源绑定。
 
 ## 同步加载语义（load）
 

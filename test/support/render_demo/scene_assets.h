@@ -72,18 +72,19 @@ namespace Incubator
             }
 
             std::unique_ptr<FileIO::FileIO> fileIO_;
+            Resource::AssetSource source_;
             Cleanup cleanup_;
 
         public:
             explicit SceneAssets(SceneAssetPaths paths = {},
                                  std::unique_ptr<FileIO::FileIO> fileIO = FileIO::createPlatformFileIO())
-                : fileIO_(std::move(fileIO))
+                : fileIO_(std::move(fileIO)), source_(*fileIO_)
             {
                 auto& manager = Resource::ResourceManager::instance();
                 manager.registerLoader(Resource::ResourceType::SHADER,
-                                       std::make_unique<Resource::ShaderLoader>(*fileIO_));
+                                       std::make_unique<Resource::ShaderLoader>(source_));
                 manager.registerLoader(Resource::ResourceType::TEXTURE,
-                                       std::make_unique<Resource::TextureLoader>(*fileIO_));
+                                       std::make_unique<Resource::TextureLoader>(source_));
                 vertex = load<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.vertex);
                 fragment = load<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.fragment);
                 texture = load<Resource::TextureResource>(Resource::ResourceType::TEXTURE, paths.texture);

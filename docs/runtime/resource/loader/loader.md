@@ -4,7 +4,7 @@
 
 把磁盘数据**解析并构建为 ResourceObject**。Loader 是资源层的"桥"：
 `AssetInfo → Loader::load → ResourceObject`，按 `ResourceType` 路由（封闭枚举的用处）。
-Loader 直接站在已有的 `FileIO`（OS 抽象）+ `Path`（字符串操作）之上组合，**不新建文件系统层**。
+Loader 借用同一具体目录 `AssetSource`，由它将虚拟文件路径映射到绝对物理根，再通过已有 FileIO 读取；不建立挂载后端或第二套文件系统。
 
 ## LoaderBase 接口
 
@@ -32,19 +32,19 @@ public:
 
 ## 虚拟路径解析最小约定
 
-- Loader 内 `Path::join("assets", virtualPath)` 得到真实相对路径，**不建 VFS**；相对进程工作目录解析
-- 引擎路径字符串按 UTF-8 处理。把 `Path::join` 的结果交给 FileIO 前，必须通过 `Utils::Utf8::toFsPath` 构造 `std::filesystem::path`；诊断输出物理路径时使用 `Utils::Utf8::toUtf8String`。不得依赖 `std::string` 到 `filesystem::path` 的隐式转换或 `generic_string()`。
+- Loader 通过 AssetSource::resolve/open 访问根内文件，不再自行拼接 assets 前缀。
+- 引擎路径字符串按 UTF-8 处理；AssetSource 校验非空相对文件路径、拒绝绝对/网络/词法越根路径，物理路径经 UTF-8 工具转换。不承诺文件链接解析后的物理隔离。
 - 虚拟路径已在登记边界规范化（拒绝盘符/UNC/越界 `..`），Loader 端无需重复处理文本逃逸
 - 模型内新声明的 sidecar/纹理路径属于新的输入边界，由 ModelLoader 按声明文件目录解析并检查根内范围；不继承模型登记路径的合法性保证。
-- 资源根固定为进程启动工作目录下的 `assets/`；调用方负责部署资源，并在资源被持有或缓存对象存在期间保持工作目录稳定。
+- AssetSource 构造时捕获绝对根，默认由当时 cwd/assets 解析，也可显式指定目录；后续文件访问不依赖 cwd。Demo 的场景、配置、布局和字体仍按原 cwd 约定处理。
 - **VFS 触发条件**：出现多资源根、`.pak` 打包、归档需求时，在 Loader 与 FileIO 之间插入 VFS 层（增量扩展，当前 YAGNI）
 
 ## FileIO 注入
 
-Loader 通过构造函数注入 `Incubator::FileIO::FileIO&`（如 `TextLoader(FileIO&)`），而非内部自建实例：
+Loader 构造函数注入 `AssetSource&`（例如 `TextLoader(source)`）；源借用消费者的 FileIO：
 
 - 生产与测试共用同一套真实 FileIO（`createPlatformFileIO()`）
-- FileIO 必须活到所有借用它的 Loader 销毁之后；调用方应覆盖注册、加载与后续初始化的异常路径，释放本次取得的资源持有，再移除 Loader，最后销毁 FileIO。`ResourceManager::reset()` 仅清除 Loader，不替代资源引用的 release。
+- 顺序为释放全部 CPU 持有及载荷 → reset 清除 Loader → bindAssetSource(nullptr) 解除绑定 → 销毁源 → 销毁 FileIO。reset 不替代 release；未清理完毕时更换或解除绑定抛 CONFIG，并保留原绑定及对象。
 - Demo 模型模式在此作用域内完成 ModelLoader 导入及 Model::prepareModel 的 PNG 依赖加载，返回的 PreparedModel 不借用 Loader 或 FileIO；最终用法见 [Demo](../../../examples/demo.md#启动时选择模型)。
 - 文件定位测试用临时目录替换工作目录（虚拟路径 join 后落在临时目录）；短读、提前 EOF、读取异常与输入长度上限测试通过受控 FileIO/FileHandle 注入，不实际分配巨量文件。
 

@@ -58,6 +58,9 @@ namespace Incubator
             /// @brief 减少引用计数（不会减到负数）
             void release(ResourceId id);
 
+            /// @brief 是否仍有 CPU 持有或挂载对象；用于资产源换绑检查。
+            bool hasLiveResources() const;
+
             /// @brief 查询引用计数
             /// @return 未注册 ID 返回 0
             uint32_t refCount(ResourceId id) const;

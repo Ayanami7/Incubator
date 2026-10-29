@@ -4,7 +4,10 @@
 #include <exception>
 #include <utility>
 
+#include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
+#include "runtime/core/utils/utf8.h"
+#include "runtime/resource/asset_source.h"
 #include "runtime/resource/resource_registry.h"
 #include "runtime/resource/resource_state.h"
 
@@ -16,6 +19,20 @@ namespace Incubator
         {
             static ResourceManager s_instance;
             return s_instance;
+        }
+
+        void ResourceManager::bindAssetSource(AssetSource* source)
+        {
+            if (source == source_)
+                return;
+            if (!loaders_.empty() || ResourceRegistry::instance().hasLiveResources())
+                throw Error::Exception(Error::Code::CONFIG,
+                                       "Release CPU resources and clear Loader routes before changing asset source");
+            source_ = source;
+            if (source)
+                Log::Registry::get("resource").debug("Bound asset root '{}'", Utils::Utf8::toUtf8String(source->root()));
+            else
+                Log::Registry::get("resource").debug("Unbound asset root");
         }
 
         void ResourceManager::registerLoader(ResourceType type, std::unique_ptr<LoaderBase> loader)

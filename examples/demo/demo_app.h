@@ -9,6 +9,7 @@
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
 #include "runtime/render/renderer.h"
+#include "runtime/resource/asset_source.h"
 #include "runtime/scene/scene.h"
 #include "ui_input.h"
 
@@ -56,6 +57,7 @@ namespace Incubator::Demo
         /// @param callbacks 应用初始化、更新、输入和 UI 回调。
         /// @note run
         /// 仅允许执行一次且不可重入。正常返回或回调失败都会结束会话；错误交由调用方记录日志，且关闭前会先释放回调对象。
+        /// 外部 CPU 资源持有须在会话结束前释放，随后才能解除资产源绑定并销毁源及文件服务。
         void run(Callbacks callbacks);
         void requestExit();
         bool isOpen() const;
@@ -95,6 +97,7 @@ namespace Incubator::Demo
         void close() noexcept;
 
         std::unique_ptr<FileIO::FileIO> fileIO_;
+        std::unique_ptr<Resource::AssetSource> assetSource_;
         std::unique_ptr<Window::Window> window_;
         std::unique_ptr<Render::Renderer> renderer_;
         std::unique_ptr<Scene::Scene> scene_;

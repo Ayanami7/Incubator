@@ -930,15 +930,16 @@ namespace
                  EXPECT_EQ(ResourceRegistry::instance().getObject(otherPng), otherPixels);
                  track(app, model, state);
                  unloaded(ResourceType::MODEL, OBJ);
+                 // 会话中的其他 CPU 使用者不被模型准备释放；结束会话前须结束其持有，才能解绑资产源。
+                 ResourceManager::instance().release(otherPng);
+                 unloaded(ResourceType::TEXTURE, PNG);
                  app.requestExit();
              },
              {}});
         EXPECT_FALSE(session.isOpen());
         closed(state);
-        EXPECT_EQ(ResourceRegistry::instance().refCount(otherPng), 1u);
-        EXPECT_EQ(ResourceManager::instance().get<TextureResource>(otherPng), otherPixels);
-        ResourceManager::instance().release(otherPng);
         unloaded(ResourceType::TEXTURE, PNG);
+        EXPECT_EQ(ResourceManager::instance().assetSource(), nullptr);
         cleanValidation();
     }
 

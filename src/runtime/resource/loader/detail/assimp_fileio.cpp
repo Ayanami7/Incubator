@@ -134,11 +134,11 @@ namespace Incubator::Resource::Detail
 
     void AssimpFileStream::Flush() {}
 
-    AssimpFileIO::AssimpFileIO(FileIO::FileIO& fileIO, std::string modelPath, bool gltf)
-        : fileIO_(fileIO), modelPath_(std::move(modelPath)), gltf_(gltf)
+    AssimpFileIO::AssimpFileIO(AssetSource& source, std::string modelPath, bool gltf)
+        : source_(source), modelPath_(std::move(modelPath)), gltf_(gltf)
     {}
 
-    std::string AssimpFileIO::physicalPath(std::string_view path) const
+    std::string AssimpFileIO::virtualPath(std::string_view path) const
     {
         std::string decoded(path);
         if (gltf_ && path != modelPath_)
@@ -154,10 +154,7 @@ namespace Incubator::Resource::Detail
             throw Error::Exception(Error::Code::IO, "Absolute or network model dependency is unsupported");
         }
         auto normalized = Path::normalize(decoded);
-        if (!normalized.starts_with("assets/"))
-        {
-            throw Error::Exception(Error::Code::IO, "Model dependency escapes assets root");
-        }
+        source_.resolve(normalized);
         return normalized;
     }
 
@@ -165,7 +162,7 @@ namespace Incubator::Resource::Detail
     {
         try
         {
-            return fileIO_.exists(Utils::Utf8::toFsPath(physicalPath(path)));
+            return source_.exists(virtualPath(path));
         }
         catch (const std::exception& error)
         {
@@ -187,8 +184,8 @@ namespace Incubator::Resource::Detail
             {
                 throw Error::Exception(Error::Code::IO, "Model input is read-only");
             }
-            const auto resolved = physicalPath(path);
-            auto file = fileIO_.open(Utils::Utf8::toFsPath(resolved), FileIO::OpenMode::Read, FileIO::ShareMode::Read);
+            const auto resolved = virtualPath(path);
+            auto file = source_.open(resolved);
             if (!file)
             {
                 throw Error::Exception(Error::Code::IO, "Required model file was not found");

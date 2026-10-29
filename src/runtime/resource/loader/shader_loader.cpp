@@ -12,14 +12,13 @@ namespace Incubator
 {
     namespace Resource
     {
-        ShaderLoader::ShaderLoader(FileIO::FileIO& fileIO) : fileIO_(fileIO) {}
+        ShaderLoader::ShaderLoader(AssetSource& source) : source_(source) {}
 
         std::unique_ptr<ResourceObject> ShaderLoader::load(const ResourceId& id,
                                                            std::string_view virtualPath)
         {
-            const std::string assetPathUtf8 = Path::join("assets", virtualPath);
-            const auto assetPath = Utils::Utf8::toFsPath(assetPathUtf8);
-            auto words = Loader::readSpirv(fileIO_, assetPath);
+            const auto assetPath = source_.resolve(virtualPath);
+            auto words = Loader::readSpirv(source_.fileIO(), assetPath);
             return std::make_unique<ShaderResource>(id, std::move(words));
         }
     }  // namespace Resource

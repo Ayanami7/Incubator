@@ -174,23 +174,25 @@ namespace
     TEST(AssimpFileIOTest, MissingExistenceProbeDoesNotBecomeImportFailure)
     {
         ::testing::StrictMock<MockFileIO> fileIO;
-        AssimpFileIO io(fileIO, "assets/models/model.obj", false);
+        Resource::AssetSource source(fileIO);
+        AssimpFileIO io(source, "models/model.obj", false);
         EXPECT_CALL(fileIO, exists(_)).WillOnce(Return(false));
-        EXPECT_FALSE(io.Exists("assets/models/optional.mtl"));
+        EXPECT_FALSE(io.Exists("models/optional.mtl"));
         EXPECT_TRUE(io.failure().empty());
     }
     TEST(AssimpFileIOTest, RequiredOpenFailureIsRecordedAndCloseDestroysHandle)
     {
         ::testing::StrictMock<MockFileIO> fileIO;
-        AssimpFileIO io(fileIO, "assets/models/model.obj", false);
+        Resource::AssetSource source(fileIO);
+        AssimpFileIO io(source, "models/model.obj", false);
         EXPECT_CALL(fileIO, open(_, Fio::OpenMode::Read, Fio::ShareMode::Read)).WillOnce(Return(nullptr));
-        EXPECT_EQ(io.Open("assets/models/missing.mtl"), nullptr);
+        EXPECT_EQ(io.Open("models/missing.mtl"), nullptr);
         EXPECT_NE(io.failure().find("Required model file"), std::string::npos);
         size_t destroyed = 0;
         EXPECT_CALL(fileIO, open(_, Fio::OpenMode::Read, Fio::ShareMode::Read)).WillOnce([&](const auto&, auto, auto) {
             return std::make_unique<MemoryHandle>(destroyed);
         });
-        auto* stream = io.Open("assets/models/mesh.bin");
+        auto* stream = io.Open("models/mesh.bin");
         ASSERT_NE(stream, nullptr);
         io.Close(stream);
         EXPECT_EQ(destroyed, 1u);
@@ -198,10 +200,11 @@ namespace
     TEST(AssimpFileIOTest, RejectsEscapingOrNetworkPathsBeforeNativeOpen)
     {
         ::testing::StrictMock<MockFileIO> fileIO;
-        for (const char* path : {"assets/models/../../../outside.bin", "assets/models/C:/outside.bin",
-                                 "assets/models/https://example.invalid/bin", "//server/file.bin"})
+        Resource::AssetSource source(fileIO);
+        for (const char* path : {"models/../../../outside.bin", "models/C:/outside.bin",
+                                 "models/https://example.invalid/bin", "//server/file.bin"})
         {
-            AssimpFileIO io(fileIO, "assets/models/model.obj", false);
+            AssimpFileIO io(source, "models/model.obj", false);
             EXPECT_EQ(io.Open(path), nullptr);
             EXPECT_FALSE(io.failure().empty());
         }

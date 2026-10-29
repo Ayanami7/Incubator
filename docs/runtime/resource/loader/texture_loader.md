@@ -12,8 +12,8 @@ RGB 为 sRGB 编码字节，alpha 为线性 straight alpha，透明 RGB 保留�
 
 ## 路径与读取
 
-TextureLoader 借用 FileIO，按 `Path::join("assets", virtualPath)` 和
-`Utils::Utf8::toFsPath` 定位启动 CWD 下的资源。虚拟路径规范化继续由 Registry 负责。
+TextureLoader 借用 AssetSource，经固定目录根打开虚拟路径；默认根由构造时 cwd/assets 解析，
+也支持指定根。资源身份规范化继续由 Registry 负责，源检查只读文件路径的词法边界。
 Loader 只使用已打开 FileHandle 的 `size()`，检查 `0 < size <= 64 MiB` 后分配输入。
 编译期断言保证该上限可由 `int` 与 `size_t` 表示，不重复检查已被上限覆盖的范围。
 循环累积短读；未读满遇到 read=0 就报告 expected/actual，

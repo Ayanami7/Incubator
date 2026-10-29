@@ -34,11 +34,11 @@ protected:
         fs::remove_all(testDir_);
         fs::create_directories(testDir_);
 
-        // TextLoader 将虚拟路径 join 为相对 "assets/..." 路径，真实 FileIO 相对进程工作目录解析，
-        // 因此测试期间把工作目录切换到临时目录，让 join 后的路径落在临时目录下。
+        // 在隔离目录中构造资产源，使默认根固定在该测试目录下。
         fs::current_path(testDir_);
 
         fileIO_ = Incubator::FileIO::createPlatformFileIO();
+        source_ = std::make_unique<AssetSource>(*fileIO_);
         ASSERT_NE(fileIO_, nullptr);
 
         ResourceManager::instance().reset();
@@ -54,6 +54,7 @@ protected:
         ResourceRegistry::instance().clear();
         Incubator::Log::Registry::reset();
 
+        source_.reset();
         fileIO_.reset();
         fs::current_path(originalCwd_);
 
@@ -71,13 +72,13 @@ protected:
 
     void registerTextLoader()
     {
-        ResourceManager::instance().registerLoader(
-            ResourceType::TEXT, std::make_unique<TextLoader>(*fileIO_));
+        ResourceManager::instance().registerLoader(ResourceType::TEXT, std::make_unique<TextLoader>(*source_));
     }
 
     fs::path originalCwd_;
     fs::path testDir_;
     std::unique_ptr<Incubator::FileIO::FileIO> fileIO_;
+    std::unique_ptr<AssetSource> source_;
     std::ostringstream messages_;
 };
 

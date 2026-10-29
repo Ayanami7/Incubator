@@ -110,15 +110,14 @@ namespace Incubator
             }
         }  // namespace
 
-        TextureLoader::TextureLoader(FileIO::FileIO& fileIO) : fileIO_(fileIO) {}
+        TextureLoader::TextureLoader(AssetSource& source) : source_(source) {}
 
         std::unique_ptr<ResourceObject> TextureLoader::load(const ResourceId& id, std::string_view virtualPath)
         {
-            const std::string pathUtf8 = Path::join("assets", virtualPath);
+            const std::string pathUtf8 = Utils::Utf8::toUtf8String(source_.resolve(virtualPath));
             try
             {
-                const auto path = Utils::Utf8::toFsPath(pathUtf8);
-                auto file = fileIO_.open(path, FileIO::OpenMode::Read, FileIO::ShareMode::Read);
+                auto file = source_.open(virtualPath);
                 if (!file)
                 {
                     throw Error::Exception(Error::Code::IO, "PNG file was not found");

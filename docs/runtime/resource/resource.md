@@ -22,9 +22,9 @@ ResourceId ──► ResourceRegistry ──► ResourceManager ──► Loader
 
 ## 组件索引
 
-[DemoApp 示例](../../examples/demo.md) 沿用这些全局组件，独占 Loader 路由并持有 FileIO 至关闭；
+[DemoApp 示例](../../examples/demo.md) 沿用这些全局组件，独占 Loader 路由及资产源绑定，并持有 AssetSource/FileIO 至关闭；
 CPU 资产 release 与路由销毁分别管理，运行期间可再次显式准备模型，不将 Manager 改为私有实例。
-[Scene Runtime 示例](../../examples/demo.md) 在初始化 glTF 后的更新中准备 OBJ，随后复用准备结果操作实体和切换 Scene。
+[Scene Runtime 示例](../../examples/demo.md) 在打开场景或创建实体时准备所需模型，随后通过会话缓存复用结果。
 
 | 组件 | 文档 | 状态 |
 |---|---|---|
@@ -71,7 +71,7 @@ ShaderLoader 复用共享的 `Loader::readSpirv` 二进制入口，不引入 Vul
 
 TextureLoader 经 FileIO 完整读取并在内存解码 PNG，TextureResource 拥有固定 sRGB RGBA8 像素。
 应用将其借给 `Renderer::createTexture` 同步上传，调用成功后可 release 到零；GPU Texture 与在途资源由 Render
-独立持有。资源根为启动 CWD 下的 `assets/`，资源持有期间保持工作目录稳定。
+独立持有。资产源构造时捕获绝对根，默认 cwd/assets，读取本身不依赖后续 cwd。
 
 ModelResource 使用 MODEL 类型，拥有独立的 MeshData（含局部法线）、线性基色/外部纹理路径及源 Unlit 描述、几何与材质关联，
 以及显式源根和节点局部矩阵。构造时校验几何和单根树结构，之后只读访问；多个节点可复用同一几何。
@@ -79,6 +79,21 @@ ModelLoader 通过现有 FileIO 和固定 Assimp 导入外部 bin/PNG 的静态 
 返回自有 CPU 资产，图片仅保留路径。GPU 资源准备和实例绘制由 [Model 消费层](../model.md)
 基于 Resource 与 Render 完成，Resource 本身仍负责 CPU 资源。数据及矩阵约定见
 [ModelResource](./model_resource.md)，格式与材质支持范围见 [ModelLoader](./loader/model_loader.md)。
+
+## 单目录资产源
+
+`AssetSource(FileIO&, root = "assets")` 是具体目录源，借用文件服务并在构造时捕获绝对根。
+resolve/open/exists 接收相对 UTF-8 文件路径；真实物理根不进入 ResourceId、ModelReference 或场景保存。
+Text/Shader/Texture/Model Loader 都借用同一源，Assimp 主文件及 bin/mtl 与后续 PNG 准备使用相同根。
+源保证非空相对文件路径的词法边界；根视为本地受信任目录，不承诺链接解析后的文件访问隔离。
+当前尚无目录浏览入口，目录枚举及重解析目录过滤由后续资源发现接口提供。
+
+会话先构造 FileIO 和 AssetSource，再 bindAssetSource(&source) 并注册 Loader。
+结束时释放全部 CPU 持有和载荷，reset 清除路由，再 bindAssetSource(nullptr)，最后销毁源及 FileIO。
+换绑或解绑时仍有路由、CPU 持有或挂载对象会抛 CONFIG，原状态保持；零持有、无载荷的身份登记可以保留。
+同一进程后续绑定其他根时，旧登记仍使用相同 ID，但载荷必须重新从新根读取。
+Registry::hasLiveResources 检查持有或挂载状态，不强制销毁外部对象；reset 仍只清路由。
+场景文件、启动配置、布局和字体的现有 FileIO/cwd 规则保持不变。
 
 ## 演进路线（未实现项触发条件）
 

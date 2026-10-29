@@ -8,6 +8,14 @@ namespace Incubator
 {
     namespace Resource
     {
+        bool ResourceRegistry::hasLiveResources() const
+        {
+            for (const auto& [id, entry] : idToEntry_)
+                if (entry.refCount != 0 || entry.object)
+                    return true;
+            return false;
+        }
+
         ResourceRegistry& ResourceRegistry::instance()
         {
             static ResourceRegistry s_instance;
