@@ -1,18 +1,19 @@
+#include "runtime/resource/loader/shader_loader.h"
+
 #include <gtest/gtest.h>
 #include <spdlog/sinks/ostream_sink.h>
-#include <chrono>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string_view>
 #include <vector>
-#include "runtime/core/error/error.h"
 
+#include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
-#include "runtime/resource/loader/shader_loader.h"
 #include "runtime/resource/loader/shader_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
@@ -31,9 +32,9 @@ namespace
             ResourceManager::instance().reset();
             ResourceRegistry::instance().clear();
             previousDirectory_ = fs::current_path();
-            testDirectory_ = fs::temp_directory_path() /
-                             ("incubator-shader-" + std::to_string(
-                                 std::chrono::steady_clock::now().time_since_epoch().count()));
+            testDirectory_ =
+                fs::temp_directory_path() /
+                ("incubator-shader-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
             fs::create_directories(testDirectory_ / "assets");
             fs::current_path(testDirectory_);
             fileIO_ = FileIO::createPlatformFileIO();

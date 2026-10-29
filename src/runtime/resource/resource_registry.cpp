@@ -55,8 +55,7 @@ namespace Incubator
 
         bool ResourceRegistry::injectEntry(ResourceType type, const std::string& key, ResourceId id)
         {
-            if (!id.valid() || type == ResourceType::INVALID || key.empty() ||
-                key != canonicalizeResourceKey(key))
+            if (!id.valid() || type == ResourceType::INVALID || key.empty() || key != canonicalizeResourceKey(key))
             {
                 return false;
             }
@@ -147,11 +146,10 @@ namespace Incubator
         bool ResourceRegistry::attachObject(ResourceId id, std::unique_ptr<ResourceObject> object)
         {
             auto it = idToEntry_.find(id.value());
-            if (it == idToEntry_.end() || !object || it->second.object ||
-                object->id() != it->second.info.id || object->type() != it->second.info.type)
+            if (it == idToEntry_.end() || !object || it->second.object || object->id() != it->second.info.id ||
+                object->type() != it->second.info.type)
             {
-                Log::Registry::get("resource").error("attachObject: invalid object for id '{}'",
-                                                     id.toString());
+                Log::Registry::get("resource").error("attachObject: invalid object for id '{}'", id.toString());
                 return false;
             }
             it->second.object = std::move(object);
@@ -175,10 +173,9 @@ namespace Incubator
             if (it != idToEntry_.end() && it->second.object)
             {
                 it->second.object.reset();
-                Log::Registry::get("resource").debug("Unloaded CPU resource '{}' (type {:#x}, references {})",
-                                                      it->second.info.virtualPath,
-                                                      static_cast<uint64_t>(it->second.info.type),
-                                                      it->second.refCount);
+                Log::Registry::get("resource")
+                    .debug("Unloaded CPU resource '{}' (type {:#x}, references {})", it->second.info.virtualPath,
+                           static_cast<uint64_t>(it->second.info.type), it->second.refCount);
             }
         }
     }  // namespace Resource

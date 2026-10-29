@@ -194,8 +194,7 @@ namespace Incubator::Resource
                 const auto& mesh = *scene->mMeshes[i];
                 if (mesh.HasBones() || mesh.mNumAnimMeshes != 0)
                 {
-                    throw Error::Exception(
-                        Error::Code::IO, fmt::format("Model geometry {} uses skin/Morph", i));
+                    throw Error::Exception(Error::Code::IO, fmt::format("Model geometry {} uses skin/Morph", i));
                 }
                 if (mesh.mMaterialIndex >= materials.size())
                 {
@@ -243,8 +242,8 @@ namespace Incubator::Resource
                         const unsigned index = face.mIndices[corner];
                         if (index >= mesh.mNumVertices)
                         {
-                            throw Error::Exception(
-                                Error::Code::IO, fmt::format("Model geometry {} index exceeds vertex range", i));
+                            throw Error::Exception(Error::Code::IO,
+                                                   fmt::format("Model geometry {} index exceeds vertex range", i));
                         }
                         geometry.indices.push_back(static_cast<uint32_t>(index));
                     }

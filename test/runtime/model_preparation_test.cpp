@@ -19,6 +19,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "../../examples/demo/model_cache.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
@@ -40,9 +41,8 @@
 #include "runtime/scene/scene.h"
 #include "runtime/scene/scene_description.h"
 #include "runtime/scene/scene_file.h"
-#include "runtime/scene/scene_rebuild.h"
-#include "../../examples/demo/model_cache.h"
 #include "runtime/scene/scene_frame.h"
+#include "runtime/scene/scene_rebuild.h"
 #include "support/texture_gpu_review.h"
 #include "support/window_capture.h"
 
@@ -58,7 +58,8 @@ namespace
 
     static_assert(
         std::is_same_v<decltype(std::declval<Model::PreparedModel&>().bounds()), const std::optional<Math::Aabb>&>);
-    static_assert(std::is_same_v<decltype(std::declval<Model::PreparedModel&>().source()), const Model::ModelReference&>);
+    static_assert(
+        std::is_same_v<decltype(std::declval<Model::PreparedModel&>().source()), const Model::ModelReference&>);
 
     TEST(ModelReferenceTest, NormalizesAndComparesEveryOptionAndRejectsInvalidValues)
     {
@@ -688,14 +689,20 @@ namespace
                 const auto frame = Scene::extractSceneFrame(scene, extent);
                 renderer.imgui().endFrame();
                 renderer.drawSceneTarget(output, frame->input(), {0.2f, 0.3f, 0.4f, 1});
-                if (i == 9) retained = output;
-                Detail::RendererReviewAccess::withSceneOutput(renderer, output, [&](const auto& device, const auto& image) {
-                    const auto pixels = TextureGpuReview::captureMip(device,image,0,{extent.width,extent.height});
-                    EXPECT_NEAR(pixels[0],51,1);
-                    EXPECT_NEAR(pixels[1],77,1);
-                    EXPECT_NEAR(pixels[2],102,1);
-                    if (i % 2) EXPECT_TRUE(std::any_of(pixels.begin(),pixels.end(),[](auto value){return value != 51 && value != 77 && value != 102 && value != 255;}));
-                });
+                if (i == 9)
+                    retained = output;
+                Detail::RendererReviewAccess::withSceneOutput(
+                    renderer, output, [&](const auto& device, const auto& image) {
+                        const auto pixels =
+                            TextureGpuReview::captureMip(device, image, 0, {extent.width, extent.height});
+                        EXPECT_NEAR(pixels[0], 51, 1);
+                        EXPECT_NEAR(pixels[1], 77, 1);
+                        EXPECT_NEAR(pixels[2], 102, 1);
+                        if (i % 2)
+                            EXPECT_TRUE(std::any_of(pixels.begin(), pixels.end(), [](auto value) {
+                                return value != 51 && value != 77 && value != 102 && value != 255;
+                            }));
+                    });
             }
         }
         EXPECT_FALSE(retained.valid());
@@ -958,7 +965,8 @@ namespace
             shaders(renderer);
             model = Model::prepareModel(renderer, "models/shared.gltf");
             Scene::Scene scene;
-            const auto hidden = scene.createEntity(model, Scene::Transform({1000, 0, 0}, {1, 0, 0, 0}, {-2, 0, 3}), false);
+            const auto hidden =
+                scene.createEntity(model, Scene::Transform({1000, 0, 0}, {1, 0, 0, 0}, {-2, 0, 3}), false);
             scene.createEntity();
             const auto snapshot = Scene::captureScene(scene, {0.2f, 0.3f, 0.4f, 1});
             ASSERT_EQ(snapshot.entities.size(), 2u);
@@ -1270,7 +1278,8 @@ namespace
             EXPECT_EQ(captured.entities[0].model, description.entities[0].model);
             EXPECT_EQ(captured.entities[1].model, description.entities[1].model);
             fs::create_directories(sandbox_ / "outside");
-            const auto scenePath = Utils::Utf8::toUtf8String(sandbox_ / "outside" / Utils::Utf8::toFsPath("场景😀.json"));
+            const auto scenePath =
+                Utils::Utf8::toUtf8String(sandbox_ / "outside" / Utils::Utf8::toFsPath("场景😀.json"));
             Scene::writeScene(*fileIO_, scenePath, captured);
             const auto loaded = Scene::readScene(*fileIO_, scenePath);
             EXPECT_EQ(Scene::rebuildScene(loaded, resolver).scene->entities()[0].model, first);
@@ -1299,13 +1308,17 @@ namespace
             Model::PrepareOptions option;
             option.mipMode = TextureMipMode::FullChain;
             EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
-            option = {}; option.sampler.minFilter = TextureFilter::Linear;
+            option = {};
+            option.sampler.minFilter = TextureFilter::Linear;
             EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
-            option = {}; option.sampler.magFilter = TextureFilter::Linear;
+            option = {};
+            option.sampler.magFilter = TextureFilter::Linear;
             EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
-            option = {}; option.sampler.mipFilter = MipFilter::Nearest;
+            option = {};
+            option.sampler.mipFilter = MipFilter::Nearest;
             EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
-            option = {}; option.shading = ShadingMode::Lambert;
+            option = {};
+            option.shading = ShadingMode::Lambert;
             EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
             released(ResourceType::MODEL, gltf.path());
             EXPECT_TRUE(ResourceManager::instance().hasLoader(ResourceType::MODEL));

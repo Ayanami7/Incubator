@@ -139,8 +139,8 @@ namespace Incubator::Resource::Detail
                                 if (count && count->IsUint64() &&
                                     count->GetUint64() > std::numeric_limits<unsigned>::max())
                                 {
-                                    throw Error::Exception(
-                                        Error::Code::IO, "Model source geometry exceeds Assimp vertex count range");
+                                    throw Error::Exception(Error::Code::IO,
+                                                           "Model source geometry exceeds Assimp vertex count range");
                                 }
                             }
                             const auto* targets = arrayMember(primitive, "targets");

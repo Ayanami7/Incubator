@@ -44,9 +44,8 @@ namespace Incubator
                     const size_t read = file.read(std::span<uint8_t>(bytes).subspan(offset));
                     if (read == 0)
                     {
-                        throw Error::Exception(Error::Code::IO,
-                                               fmt::format("Incomplete PNG read: expected {}, actual {}",
-                                                           size, offset));
+                        throw Error::Exception(
+                            Error::Code::IO, fmt::format("Incomplete PNG read: expected {}, actual {}", size, offset));
                     }
                     offset += read;
                 }
@@ -78,8 +77,7 @@ namespace Incubator
                     throw Error::Exception(Error::Code::IO, "Incomplete PNG IHDR");
                 }
                 constexpr std::array<uint8_t, 4> IHDR = {'I', 'H', 'D', 'R'};
-                if (readBigEndian(bytes.data() + 8) != 13 ||
-                    !std::equal(IHDR.begin(), IHDR.end(), bytes.begin() + 12))
+                if (readBigEndian(bytes.data() + 8) != 13 || !std::equal(IHDR.begin(), IHDR.end(), bytes.begin() + 12))
                 {
                     throw Error::Exception(Error::Code::IO, "Invalid PNG IHDR (must be the first chunk)");
                 }
@@ -87,11 +85,10 @@ namespace Incubator
                 if (bytes[24] != 8 || (colorType != 0 && colorType != 2 && colorType != 4 && colorType != 6) ||
                     bytes[26] != 0 || bytes[27] != 0 || bytes[28] != 0)
                 {
-                    throw Error::Exception(
-                        Error::Code::IO,
-                        fmt::format("Unsupported PNG input: depth {}, color {}, "
-                                    "compression {}, filter {}, interlace {}",
-                                    bytes[24], colorType, bytes[26], bytes[27], bytes[28]));
+                    throw Error::Exception(Error::Code::IO,
+                                           fmt::format("Unsupported PNG input: depth {}, color {}, "
+                                                       "compression {}, filter {}, interlace {}",
+                                                       bytes[24], colorType, bytes[26], bytes[27], bytes[28]));
                 }
                 const uint32_t width = readBigEndian(bytes.data() + 16);
                 const uint32_t height = readBigEndian(bytes.data() + 20);
@@ -141,9 +138,9 @@ namespace Incubator
                     throw Error::Exception(Error::Code::IO, "PNG decoded dimensions do not match IHDR");
                 }
                 std::vector<uint8_t> pixels(decoded.get(), decoded.get() + header.pixelBytes);
-                Log::Registry::get("resource").debug("Decoded PNG '{}': {}x{}, {} input bytes, {} RGBA8 bytes",
-                                                      pathUtf8, header.width, header.height, bytes.size(),
-                                                      header.pixelBytes);
+                Log::Registry::get("resource")
+                    .debug("Decoded PNG '{}': {}x{}, {} input bytes, {} RGBA8 bytes", pathUtf8, header.width,
+                           header.height, bytes.size(), header.pixelBytes);
                 return std::make_unique<TextureResource>(id, header.width, header.height, std::move(pixels));
             }
             catch (const Error::Exception& ex)

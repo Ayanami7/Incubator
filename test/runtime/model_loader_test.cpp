@@ -281,9 +281,11 @@ namespace
     TEST_F(ModelLoaderTest, SourceNormalsAndUnlitSurviveGltfAndObjImport)
     {
         constexpr const char* sourcePath = "models/normals/folded.gltf";
-        editGltf([](auto& source) {
-            source["meshes"][0]["primitives"][0]["attributes"].AddMember("NORMAL", 3, source.GetAllocator());
-        }, sourcePath);
+        editGltf(
+            [](auto& source) {
+                source["meshes"][0]["primitives"][0]["attributes"].AddMember("NORMAL", 3, source.GetAllocator());
+            },
+            sourcePath);
         write("models/normals/required.gltf", read(sourcePath));
         editGltf(
             [](auto& source) {
@@ -852,8 +854,8 @@ namespace
         std::string bytes(positionBytes + indexBytes, '\0');
         for (uint32_t vertex = 0; vertex < vertexCount; ++vertex)
         {
-            const std::array<float, 3> position = {static_cast<float>(vertex % 257),
-                                                   static_cast<float>(vertex / 257), 0.0f};
+            const std::array<float, 3> position = {static_cast<float>(vertex % 257), static_cast<float>(vertex / 257),
+                                                   0.0f};
             std::memcpy(bytes.data() + static_cast<size_t>(vertex) * sizeof(position), position.data(),
                         sizeof(position));
         }
@@ -898,8 +900,7 @@ namespace
     TEST_F(ModelLoaderTest, RejectsVertexCountBeyondAssimpRepresentation)
     {
         editGltf([](auto& source) {
-            source["accessors"][0]["count"].SetUint64(
-                static_cast<uint64_t>(std::numeric_limits<unsigned>::max()) + 1);
+            source["accessors"][0]["count"].SetUint64(static_cast<uint64_t>(std::numeric_limits<unsigned>::max()) + 1);
         });
         expectFailure(GLTF, "Assimp vertex count range");
     }

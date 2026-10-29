@@ -14,8 +14,7 @@ namespace Incubator
     {
         ShaderLoader::ShaderLoader(AssetSource& source) : source_(source) {}
 
-        std::unique_ptr<ResourceObject> ShaderLoader::load(const ResourceId& id,
-                                                           std::string_view virtualPath)
+        std::unique_ptr<ResourceObject> ShaderLoader::load(const ResourceId& id, std::string_view virtualPath)
         {
             const auto assetPath = source_.resolve(virtualPath);
             auto words = Loader::readSpirv(source_.fileIO(), assetPath);

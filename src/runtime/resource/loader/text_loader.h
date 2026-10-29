@@ -19,8 +19,7 @@ namespace Incubator
         public:
             explicit TextLoader(AssetSource& source);
 
-            std::unique_ptr<ResourceObject> load(const ResourceId& id,
-                                                 std::string_view virtualPath) override;
+            std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view virtualPath) override;
 
         private:
             AssetSource& source_;

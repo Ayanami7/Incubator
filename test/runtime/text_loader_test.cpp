@@ -44,8 +44,7 @@ protected:
         ResourceManager::instance().reset();
         ResourceRegistry::instance().clear();
         Incubator::Log::Registry::reset();
-        Incubator::Log::Registry::get("resource").addSink(
-            std::make_shared<spdlog::sinks::ostream_sink_mt>(messages_));
+        Incubator::Log::Registry::get("resource").addSink(std::make_shared<spdlog::sinks::ostream_sink_mt>(messages_));
     }
 
     void TearDown() override

@@ -16,8 +16,7 @@ namespace Incubator
     {
         TextLoader::TextLoader(AssetSource& source) : source_(source) {}
 
-        std::unique_ptr<ResourceObject> TextLoader::load(const ResourceId& id,
-                                                         std::string_view virtualPath)
+        std::unique_ptr<ResourceObject> TextLoader::load(const ResourceId& id, std::string_view virtualPath)
         {
             const auto realPath = source_.resolve(virtualPath);
             const auto realPathUtf8 = Utils::Utf8::toUtf8String(realPath);
@@ -31,8 +30,7 @@ namespace Incubator
             }
 
             std::string text(static_cast<size_t>(size), '\0');
-            size_t read = handle->read(
-                std::span<uint8_t>(reinterpret_cast<uint8_t*>(text.data()), text.size()));
+            size_t read = handle->read(std::span<uint8_t>(reinterpret_cast<uint8_t*>(text.data()), text.size()));
             text.resize(read);
 
             return std::make_unique<TextResource>(id, std::move(text));

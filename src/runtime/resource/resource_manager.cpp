@@ -87,8 +87,9 @@ namespace Incubator
             auto it = loaders_.find(type);
             if (it == loaders_.end())
             {
-                Log::Registry::get("resource").error("load: no loader for type {:#x}, path '{}', id {:#x}",
-                                                     static_cast<uint64_t>(type), virtualPath, id.value());
+                Log::Registry::get("resource")
+                    .error("load: no loader for type {:#x}, path '{}', id {:#x}", static_cast<uint64_t>(type),
+                           virtualPath, id.value());
                 return nullptr;
             }
 
@@ -102,14 +103,16 @@ namespace Incubator
             }
             catch (const std::exception& ex)
             {
-                Log::Registry::get("resource").error("load: loader threw: '{}' (type {:#x}, id {:#x}): {}",
-                                                     virtualPath, static_cast<uint64_t>(type), id.value(), ex.what());
+                Log::Registry::get("resource")
+                    .error("load: loader threw: '{}' (type {:#x}, id {:#x}): {}", virtualPath,
+                           static_cast<uint64_t>(type), id.value(), ex.what());
                 return nullptr;
             }
             catch (...)
             {
-                Log::Registry::get("resource").error("load: loader threw unknown exception for '{}' (type {:#x}, id {:#x})",
-                                                     virtualPath, static_cast<uint64_t>(type), id.value());
+                Log::Registry::get("resource")
+                    .error("load: loader threw unknown exception for '{}' (type {:#x}, id {:#x})", virtualPath,
+                           static_cast<uint64_t>(type), id.value());
                 return nullptr;
             }
             if (!object)
@@ -119,8 +122,8 @@ namespace Incubator
             object->setState(ResourceState::READY);
             if (!reg.attachObject(id, std::move(object)))
                 return nullptr;
-            Log::Registry::get("resource").debug("Loaded CPU resource '{}' (type {:#x})", virtualPath,
-                                                  static_cast<uint64_t>(type));
+            Log::Registry::get("resource")
+                .debug("Loaded CPU resource '{}' (type {:#x})", virtualPath, static_cast<uint64_t>(type));
             return reg.getObject(id);
         }
 

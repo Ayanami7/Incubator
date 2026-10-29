@@ -1,28 +1,29 @@
+#include "runtime/resource/loader/texture_loader.h"
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <spdlog/sinks/ostream_sink.h>
-#include <algorithm>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
-#include <sstream>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
-#include "runtime/core/error/error.h"
 
+#include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
-#include "runtime/resource/loader/texture_loader.h"
 #include "runtime/resource/loader/texture_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
@@ -37,9 +38,9 @@ namespace
     using ::testing::Return;
 
     const std::vector<uint8_t> REFERENCE_PIXELS = {
-        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
-        0, 255, 255, 255, 255, 0, 255, 255, 128, 128, 128, 255, 255, 255, 255, 255,
-        255, 128, 0, 255, 128, 0, 255, 128, 17, 34, 51, 0, 0, 0, 0, 255,
+        255, 0,   0,   255, 0,   255, 0,   255, 0,   0,   255, 255, 255, 255, 0,   255,
+        0,   255, 255, 255, 255, 0,   255, 255, 128, 128, 128, 255, 255, 255, 255, 255,
+        255, 128, 0,   255, 128, 0,   255, 128, 17,  34,  51,  0,   0,   0,   0,   255,
     };
 
     std::vector<uint8_t> readBytes(const fs::path& path)
@@ -99,8 +100,8 @@ namespace
         if (name == "rgb_trns" || name == "gray_trns")
         {
             auto bytes = storedFixture(name == "rgb_trns" ? "rgb8" : "gray8");
-            const std::vector<uint8_t> key = name == "rgb_trns" ? std::vector<uint8_t>{0, 255, 0, 0, 0, 0}
-                                                             : std::vector<uint8_t>{0, 128};
+            const std::vector<uint8_t> key =
+                name == "rgb_trns" ? std::vector<uint8_t>{0, 255, 0, 0, 0, 0} : std::vector<uint8_t>{0, 128};
             const auto chunk = pngChunk("tRNS", key);
             bytes.insert(bytes.begin() + 33, chunk.begin(), chunk.end());
             return bytes;
@@ -215,9 +216,9 @@ namespace
             Log::Registry::reset();
             Log::Registry::get("resource").addSink(std::make_shared<spdlog::sinks::ostream_sink_mt>(messages_));
             previousDirectory_ = fs::current_path();
-            testDirectory_ = fs::temp_directory_path() /
-                             ("incubator-texture-" + std::to_string(
-                                 std::chrono::steady_clock::now().time_since_epoch().count()));
+            testDirectory_ =
+                fs::temp_directory_path() /
+                ("incubator-texture-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
             fs::create_directories(testDirectory_ / "assets");
             fs::current_path(testDirectory_);
             fileIO_ = FileIO::createPlatformFileIO();
@@ -337,15 +338,13 @@ namespace
         EXPECT_EQ(texture->pixels(), std::get<1>(GetParam()));
     }
 
-    INSTANTIATE_TEST_SUITE_P(
-        SupportedPng, TextureChannelTest,
-        ::testing::Values(
-            ChannelCase{"gray8", {0, 0, 0, 255, 128, 128, 128, 255}},
-            ChannelCase{"gray_alpha8", {128, 128, 128, 64, 255, 255, 255, 0}},
-            ChannelCase{"rgb8", {255, 0, 0, 255, 128, 128, 128, 255}},
-            ChannelCase{"rgb_trns", {255, 0, 0, 0, 128, 128, 128, 255}},
-            ChannelCase{"gray_trns", {0, 0, 0, 255, 128, 128, 128, 0}}),
-        [](const auto& info) { return std::get<0>(info.param); });
+    INSTANTIATE_TEST_SUITE_P(SupportedPng, TextureChannelTest,
+                             ::testing::Values(ChannelCase{"gray8", {0, 0, 0, 255, 128, 128, 128, 255}},
+                                               ChannelCase{"gray_alpha8", {128, 128, 128, 64, 255, 255, 255, 0}},
+                                               ChannelCase{"rgb8", {255, 0, 0, 255, 128, 128, 128, 255}},
+                                               ChannelCase{"rgb_trns", {255, 0, 0, 0, 128, 128, 128, 255}},
+                                               ChannelCase{"gray_trns", {0, 0, 0, 255, 128, 128, 128, 0}}),
+                             [](const auto& info) { return std::get<0>(info.param); });
 
     class TextureCompatibleInputTest : public TextureLoaderTest, public ::testing::WithParamInterface<std::string>
     {};
@@ -357,10 +356,10 @@ namespace
         EXPECT_EQ(texture->pixels(), REFERENCE_PIXELS);
     }
 
-    INSTANTIATE_TEST_SUITE_P(
-        CompatiblePng, TextureCompatibleInputTest,
-        ::testing::Values("color_metadata", "icc_metadata", "crc_only", "missing_iend_crc", "trailing_bytes"),
-        [](const auto& info) { return info.param; });
+    INSTANTIATE_TEST_SUITE_P(CompatiblePng, TextureCompatibleInputTest,
+                             ::testing::Values("color_metadata", "icc_metadata", "crc_only", "missing_iend_crc",
+                                               "trailing_bytes"),
+                             [](const auto& info) { return info.param; });
 
     using FailureCase = std::tuple<std::string, std::string>;
     class TextureFailureTest : public TextureLoaderTest, public ::testing::WithParamInterface<FailureCase>
@@ -375,30 +374,26 @@ namespace
 
     INSTANTIATE_TEST_SUITE_P(
         InvalidPng, TextureFailureTest,
-        ::testing::Values(
-            FailureCase{"truncated_signature", "incomplete PNG signature"},
-            FailureCase{"truncated_ihdr", "Incomplete PNG IHDR"},
-            FailureCase{"truncated_idat", "PNG decode failed (outofdata)"},
-            FailureCase{"invalid_signature", "Not a PNG"},
-            FailureCase{"invalid_zlib_header", "PNG decode failed (bad compression)"},
-            FailureCase{"missing_iend", "PNG decode failed (decoder supplied no reason)"},
-            FailureCase{"palette8", "Unsupported PNG input"},
-            FailureCase{"gray1", "Unsupported PNG input"},
-            FailureCase{"gray2", "Unsupported PNG input"},
-            FailureCase{"gray4", "Unsupported PNG input"},
-            FailureCase{"rgb16", "Unsupported PNG input"},
-            FailureCase{"rgba16", "Unsupported PNG input"},
-            FailureCase{"adam7", "Unsupported PNG input"},
-            FailureCase{"cgbi", "Invalid PNG IHDR"},
-            FailureCase{"zero_width", "Invalid PNG dimensions: 0x3"},
-            FailureCase{"zero_height", "Invalid PNG dimensions: 4x0"},
-            FailureCase{"oversize_width", "Invalid PNG dimensions: 4097x3"},
-            FailureCase{"oversize_height", "Invalid PNG dimensions: 4x4097"},
-            FailureCase{"huge_dimensions", "Invalid PNG dimensions"},
-            FailureCase{"invalid_compression", "Unsupported PNG input"},
-            FailureCase{"invalid_filter", "Unsupported PNG input"},
-            FailureCase{"invalid_ihdr_length", "Invalid PNG IHDR"},
-            FailureCase{"not_ihdr_first", "Invalid PNG IHDR"}),
+        ::testing::Values(FailureCase{"truncated_signature", "incomplete PNG signature"},
+                          FailureCase{"truncated_ihdr", "Incomplete PNG IHDR"},
+                          FailureCase{"truncated_idat", "PNG decode failed (outofdata)"},
+                          FailureCase{"invalid_signature", "Not a PNG"},
+                          FailureCase{"invalid_zlib_header", "PNG decode failed (bad compression)"},
+                          FailureCase{"missing_iend", "PNG decode failed (decoder supplied no reason)"},
+                          FailureCase{"palette8", "Unsupported PNG input"},
+                          FailureCase{"gray1", "Unsupported PNG input"}, FailureCase{"gray2", "Unsupported PNG input"},
+                          FailureCase{"gray4", "Unsupported PNG input"}, FailureCase{"rgb16", "Unsupported PNG input"},
+                          FailureCase{"rgba16", "Unsupported PNG input"}, FailureCase{"adam7", "Unsupported PNG input"},
+                          FailureCase{"cgbi", "Invalid PNG IHDR"},
+                          FailureCase{"zero_width", "Invalid PNG dimensions: 0x3"},
+                          FailureCase{"zero_height", "Invalid PNG dimensions: 4x0"},
+                          FailureCase{"oversize_width", "Invalid PNG dimensions: 4097x3"},
+                          FailureCase{"oversize_height", "Invalid PNG dimensions: 4x4097"},
+                          FailureCase{"huge_dimensions", "Invalid PNG dimensions"},
+                          FailureCase{"invalid_compression", "Unsupported PNG input"},
+                          FailureCase{"invalid_filter", "Unsupported PNG input"},
+                          FailureCase{"invalid_ihdr_length", "Invalid PNG IHDR"},
+                          FailureCase{"not_ihdr_first", "Invalid PNG IHDR"}),
         [](const auto& info) { return std::get<0>(info.param); });
 
     TEST_F(TextureLoaderTest, AcceptsMaximumWidthOrHeightWithSmallPayloads)
@@ -553,11 +548,9 @@ namespace
         auto* handle = prepareHandle(119);
         if (GetParam())
         {
-            EXPECT_CALL(*handle, read(_))
-                .WillOnce(Return(7))
-                .WillOnce([](std::span<uint8_t>) -> size_t {
-                    throw Error::Exception(Error::Code::IO, "injected read failure");
-                });
+            EXPECT_CALL(*handle, read(_)).WillOnce(Return(7)).WillOnce([](std::span<uint8_t>) -> size_t {
+                throw Error::Exception(Error::Code::IO, "injected read failure");
+            });
         }
         else
         {
@@ -572,10 +565,10 @@ namespace
 
     TEST_F(TextureReadTest, OpenExceptionPreservesChinesePathAndOriginalCause)
     {
-        EXPECT_CALL(fileIO_, open(_, _, _)).WillOnce([](const fs::path&, FileIO::OpenMode, FileIO::ShareMode)
-                                                       -> std::unique_ptr<FileIO::FileHandle> {
-            throw Error::Exception(Error::Code::IO, "injected permission failure");
-        });
+        EXPECT_CALL(fileIO_, open(_, _, _))
+            .WillOnce([](const fs::path&, FileIO::OpenMode, FileIO::ShareMode) -> std::unique_ptr<FileIO::FileHandle> {
+                throw Error::Exception(Error::Code::IO, "injected permission failure");
+            });
         expectFailure("injected permission failure");
     }
 
@@ -599,7 +592,6 @@ namespace
         expectFailure("Invalid PNG input size");
     }
 
-    INSTANTIATE_TEST_SUITE_P(
-        InputBoundaries, TextureInputLimitTest,
-        ::testing::Values(uint64_t{0}, uint64_t{64u * 1024u * 1024u + 1u}));
+    INSTANTIATE_TEST_SUITE_P(InputBoundaries, TextureInputLimitTest,
+                             ::testing::Values(uint64_t{0}, uint64_t{64u * 1024u * 1024u + 1u}));
 }  // namespace
