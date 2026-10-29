@@ -21,7 +21,7 @@ namespace Incubator
         static_assert(offsetof(MeshVertex, normal) == 5 * sizeof(float));
 
         /// @brief 可复制的网格上传资源引用。
-        /// @note 资源由 Renderer 持有，直到 Renderer 销毁；持有此引用不会延长 Renderer 或设备的生命周期。
+        /// @note 非拥有引用；实际对象由 Renderer 或 GpuResources 及在途帧持有，不延长设备生命周期。
         class Mesh
         {
         public:

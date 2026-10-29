@@ -13,7 +13,7 @@ namespace Incubator
         };
 
         /// @brief 可复制的同步纹理上传资源引用。
-        /// @note 资源由 Renderer 持有，直到 Renderer 销毁；持有此引用不会延长 Renderer 或设备的生命周期。
+        /// @note 非拥有引用；实际对象由 Renderer、GpuResources、材质依赖或在途帧持有，不延长设备生命周期。
         class Texture
         {
         public:

@@ -37,9 +37,10 @@ Renderer 不依赖 Scene；旧 extent 跳帧、提交内借用及过期/跨 Rend
 | 对象 | 职责与所有权 |
 |---|---|
 | `Renderer` | 由应用创建和持有；借用 `Window`；组合并拥有本次渲染所需内部对象；提供初始化、完整帧绘制和关闭入口。 |
-| `Mesh` | 应用可复制的网格引用；其 GPU 顶点/索引由创建它的 Renderer 持有至关闭，引用本身不延长设备寿命。 |
-| `Texture` | 应用可复制的不透明纹理引用；Image 由创建它的 Renderer 持有至关闭，引用不保留 CPU 资源或延长设备寿命。 |
-| `Material` | 应用可复制的不透明材质引用；创建时复制颜色、采样参数，拥有 Sampler 并保持 Texture 依赖，材质参数与 Descriptor 不可变，由 Renderer 持有至关闭。 |
+| `GpuResources` | 只可移动的可释放资源组，保持本组创建的对象；关闭时由 Renderer 清空并使其失效，不延长设备寿命。 |
+| `Mesh` | 应用可复制的非拥有网格引用；实际顶点/索引对象由资源组、在途帧或 Renderer 保留。 |
+| `Texture` | 应用可复制的非拥有纹理引用；实际 Image 由资源组、材质、在途帧或 Renderer 保留，不借用 CPU 资源。 |
+| `Material` | 应用可复制的非拥有材质引用；实际对象复制颜色和采样参数，拥有 Sampler 并保持 Texture 依赖，参数与 Descriptor 不可变，由资源组、在途帧或 Renderer 保留。 |
 | `VulkanInstance` | 创建并拥有 Vulkan Instance 和可选 debug messenger；查询并启用 GLFW 所需实例扩展；销毁晚于 Surface。 |
 | Surface | `GlfwSurface` 由 Render 通过 GLFW 从借用的 Window 创建和销毁；依赖 Instance，Window 必须活到 Surface 销毁之后。 |
 | `VulkanDevice` | 选择支持图形、呈现、Swapchain、Dynamic Rendering 和 Synchronization2 的首个物理设备；创建逻辑设备和队列，查询内存类型并执行有 Fence 的一次性上传提交；销毁前先清理设备子对象。 |
@@ -145,9 +146,10 @@ auto otherMaterial = renderer.createMaterial({sharedTexture, {0.5f, 1.0f, 0.5f}}
 准备过程先在局部创建副本、Descriptor 和可用 extent 下的 Pipeline，全部成功后才安装；
 失败不留下部分准备状态，Renderer 仍可提交空帧或重新准备。Render 不通过 FileIO 或 Loader 读取资产。
 
-Renderer 持有所有已创建纹理至关闭。复制/丢弃 Texture 引用不重复上传或提前回收；再次显式
-调用 `createTexture` 则独立上传，不自动按路径或内容去重。`Texture::valid()` 表示所属
-Renderer 仍持有资源，空引用及关闭后的引用无效；移动 Renderer 后引用随其内部设备保持有效。
+直接 `createTexture` 由 Renderer 持有至关闭，传入 GpuResources 的重载由资源组持有。复制/丢弃 Texture
+引用不影响持有；再次显式调用 `createTexture` 独立上传，不自动按路径或内容去重。
+`Texture::valid()` 表示实际对象尚被资源组、材质、在途帧或 Renderer 保留，空引用、最后持有结束或关闭后无效；
+移动 Renderer 后引用随其内部设备保持有效。
 Texture 仅标识 GPU 上传结果，与 CPU ResourceId 分别管理，也不使 Renderer 或设备延迟销毁。
 
 ## 最小材质与绑定
@@ -217,10 +219,10 @@ Pipeline。新增材质只分配自己的 Sampler、参数 Buffer、DescriptorPo
 Pipeline；材质不绑定某个帧槽，可以被多帧同时读取。交换链格式变化仅重建兼容 Pipeline，
 不会重建材质或重新上传资源。
 
-Renderer 持有 Material 至关闭，Material 拥有自己的 Sampler 并在内部强持有 Texture；在途帧保留所用 Material，
+直接创建的 Material 由 Renderer 保留至关闭，资源组创建的 Material 可随组释放。材质拥有自己的 Sampler 并在内部强持有 Texture；在途帧保留所用 Material，
 连带保持参数、Descriptor、Image/Sampler 有效。复制/放下应用 Material 引用不重新创建或
 提前销毁 GPU 资源；`valid()`、移动及关闭后失效语义与 Mesh/Texture 一致。
-关闭先等待提交和呈现，再销毁 Pipeline、材质绑定、共享布局和纹理，最后销毁设备。
+关闭先等待提交和呈现并撤销资源组，再按依赖顺序释放剩余 Pipeline、材质绑定、共享布局和纹理，最后销毁设备。
 
 每个 DrawItem 显式携带一份 Material；同一 Mesh 可搭配不同材质，不同 Mesh 可共享材质，
 多个材质可共享 Texture。切换材质只需在下一帧的绘制项中选择另一份已创建引用，不改写
@@ -307,17 +309,54 @@ RENDER 错误，不创建默认网格。法线的各分量必须有限，非有�
 零法线合法，位置和 UV 的具体内容由应用提供。
 
 上传复用 VulkanBuffer 的同步 staging 路径；成功后不保留 CPU 数组或指针。Renderer
-持有所有已创建网格至关闭，复制/丢弃应用的 `Mesh` 引用不重新上传或提前回收 GPU Buffer。
+持有直接创建的网格至关闭；资源组重载创建的网格可在组及在途持有结束后回收。复制/丢弃应用的 `Mesh` 引用不改变持有或重新上传。
 提交帧另持有本次各绘制项的 GPU 网格、材质及材质的纹理/参数/Descriptor 依赖至 Fence 完成；
 提交调用内复制原生绑定和模型矩阵，返回后可修改或释放原 CPU 列表及材质描述。关闭时先等待提交和呈现，再释放网格，
 最后销毁设备。变换更新和交换链重建只复用上传结果。
 
-`Mesh::valid()` 表示创建它的 Renderer 仍持有该网格；空引用、已关闭 Renderer 的引用无效。
+`Mesh::valid()` 表示实际对象仍被保留；空引用、最后资源组及在途持有结束或 Renderer 关闭后的引用无效。
 网格只能交回创建它的 Renderer，跨 Renderer 提交明确失败；移动 Renderer 后，网格随其内部
 设备继续有效。应用可以保留过期引用，但不能用它绘制，引用不使设备延迟销毁。
 Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `test/support/render_demo/scene_mesh.h`。
 应用集成示例见 [多物体 Demo](../examples/demo.md)：先创建两种网格，再构建 ImGui 控件，
 根据本轮编辑后的状态生成相机矩阵与 0/1/2 项绘制列表；控件隐藏物体时保留已上传网格。
+
+## 显式可释放的 GPU 资源组
+
+`gpu_resources.h` 的 `GpuResources` 由 `Renderer::createResources()` 创建，只可移动、禁止复制。
+`createMesh`、`createTexture`、`createMaterial` 均有首参为 `GpuResources&` 的重载，输入和上传实现与直接创建一致。
+组及创建材质时的 Texture 必须属于当前 Renderer；默认空组、已 reset、已关闭或外来组抛 RENDER。
+
+```cpp
+auto resources = renderer.createResources();
+auto mesh = renderer.createMesh(resources, vertices, indices);
+auto texture = renderer.createTexture(resources, cpuTexture);
+auto material = renderer.createMaterial(resources, MaterialDesc{texture});
+// 保留 resources，构造并提交使用上述引用的 DrawItem。
+// 最后使用者结束后 reset；也可将 resources 移入一个共享的上层资产对象。
+resources.reset();
+```
+
+组内对象独立于 CPU 的 CpuResource，上传返回后即可释放 CPU 载荷。reset 或析构撤销整组持有；移动赋值先撤销目标原有组，
+随后接管源组，源变为空组。组不保存回调或裸 Renderer，Renderer 关闭先沿原有等待路径完成工作，再清空存活组并使其失效，
+外部组晚析构不会触碰设备。材质强持有实际 Texture，因此可先释放纹理所在组，直到材质及相关在途帧结束才销毁纹理。
+
+| 状态 | 所需持有与回收 |
+|---|---|
+| 直接创建 | Renderer 强持有至关闭，资源组清理不撤销直接创建的对象 |
+| 创建中途失败 | 用局部组接收本次创建；异常展开时撤销整组，已有对象不受影响 |
+| 已准备、尚未提交 | 上层使用者保留组；DrawItem、FrameInput 和 SceneFrame 的副本均不拥有 GPU 资源 |
+| 主场景或阴影已提交 | 帧槽保留实际 Mesh/Material 及纹理依赖至对应 Fence 完成，随后可销毁已无其他持有的对象 |
+| 缓存先释放 | 外部共享的上层资产及已提交帧各自继续保留对象，最后使用结束后才回收 |
+| Renderer 先关闭 | 先完成工作，再清空组和设备对象；全部公开引用失效，外部组可安全晚析构 |
+
+必须在提取绘制列表至提交返回期间保留相关组，不能把保存快照误当成 GPU 持有；清理后提交过期引用会被拒绝。
+reset 不等待 Fence 或整个设备，释放后的在途对象在对应帧槽等待完成并清除持有时回收。
+资源记录仅弱引用资源组创建的对象，不延长其实际寿命；内部帧目标、Shader/Pipeline、白图及字体继续按原生命周期管理。
+现有 Model::prepareModel 仍走直接创建，模型层的资源组接入由后续模型生命周期任务完成。
+
+内部 `RendererReviewAccess::resourceCounts` 统计实际存活的 Mesh/Texture/Material，包含直接创建、组、材质依赖及在途保留，
+排除上述内部资源，不因条目仍登记就报存活；`waitForFrames` 供复核等待已提交 Fence 并清除帧槽持有，不等待整个设备空闲。
 
 ## 功能边界
 
@@ -332,6 +371,7 @@ Runtime 不生成立方体或平面，也不依赖 Demo；生成样本见 `test/
 ## 独立场景目标
 
 `prepareSceneTarget(extent)` 等待当前帧槽完成，按场景像素尺寸复用或替换该槽的颜色及深度附件。
+`prepareSceneTarget`、`drawSceneTarget` 和 `sceneImage` 在 moved-from Renderer 上均抛 RENDER，移动后的目标继续可用。
 零尺寸返回无效 `SceneOutput`。输出为非拥有引用，尺寸由 `extent()` 查询；尺寸重建或 Renderer 关闭后失效，
 只能交给所属 Renderer 的当前帧槽使用。图像在生产路径中不经过 CPU 回读。
 

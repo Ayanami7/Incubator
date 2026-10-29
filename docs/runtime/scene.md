@@ -157,6 +157,8 @@ Transform、模型绑定、可见性、Camera 位姿/FOV、extent 或当前 Scen
 只能从左值结果取得视图，直接对临时 SceneFrame 调用 input 被禁止。借用后不要移动/修改结果或重新分配任一绘制列表，
 保持其存储活到 `drawFrame` 或 `drawSceneTarget` 返回；复制或移动后，从目标对象重新调用 input，不保留旧视图。
 提交调用返回后即可释放或改写 CPU 列表，在途 GPU 持有仍由 Renderer 保护。
+绘制项中的 GPU 引用为非拥有引用。若使用显式 GpuResources，提取至提交期间须保留其对应上层资产或资源组；
+快照的自有 vector 和复制语义不会延长 GPU 对象寿命，不能在提取与提交之间回收所用组。组的完整持有约定见 [Render](./render.md#显式可释放的-gpu-资源组)。
 
 启用阴影的快照须通过 `drawSceneTarget` 提交，并事先准备深度 Shader；`drawFrame` 拒绝非空 shadow。
 关闭阴影时仍可使用原直接呈现入口，不需要准备深度 Shader。

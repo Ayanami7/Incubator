@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <span>
 
@@ -19,6 +20,17 @@ namespace Incubator::Render::Detail
     /// @note 回调借用 Renderer 实际持有的 GPU 资源；附件创建和回读由测试支持代码完成，不属于应用接口。
     struct RendererReviewAccess
     {
+        struct ResourceCounts
+        {
+            size_t meshes;
+            size_t textures;
+            size_t materials;
+        };
+        /// @brief 统计实际存活对象，包含直接创建、资源组、材质依赖和在途持有；不等待或回收。
+        /// @note 不包含内部帧目标、白图、字体、Shader 或 Pipeline。
+        static ResourceCounts resourceCounts(Renderer& renderer);
+        /// @brief 等待全部已提交帧的 Fence 并释放帧槽持有，不等待整个设备空闲。
+        static void waitForFrames(Renderer& renderer);
         static void withSceneOutput(
             Renderer& renderer, const SceneOutput& output,
             const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record);

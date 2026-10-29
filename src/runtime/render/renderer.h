@@ -7,6 +7,7 @@
 #include <span>
 
 #include "runtime/render/frame_input.h"
+#include "runtime/render/gpu_resources.h"
 #include "runtime/render/material.h"
 #include "runtime/render/mesh.h"
 #include "runtime/render/scene_output.h"
@@ -56,6 +57,10 @@ namespace Incubator
             Renderer(Renderer&&) noexcept;
             Renderer& operator=(Renderer&&) noexcept;
 
+            /// @brief 创建本 Renderer 的空资源组；组内对象可在最后使用结束后回收。
+            /// @note Renderer 关闭会清空并使组失效，组可以晚于 Renderer 析构。
+            GpuResources createResources();
+
             /// @brief 同步复制非空的三角形列表数据。
             /// @param vertices 顶点数据，仅在本次调用期间借用。
             /// @param indices 索引数据，仅在本次调用期间借用。
@@ -65,6 +70,11 @@ namespace Incubator
             /// @throws Error::Exception 法线非有限或顶点/索引不满足三角形列表约定。
             Mesh createMesh(std::span<const MeshVertex> vertices, std::span<const uint32_t> indices);
 
+            /// @brief 与直接创建共用上传路径，由指定资源组代替 Renderer 保留本次创建。
+            /// @note 组须有效且属于本 Renderer；输入约定与直接 createMesh 相同。
+            Mesh createMesh(GpuResources& resources, std::span<const MeshVertex> vertices,
+                            std::span<const uint32_t> indices);
+
             /// @brief 同步上传 RGBA8 sRGB 像素。
             /// @param texture CPU 纹理，仅在本次调用期间借用。
             /// @param mipMode mip 链生成方式。
@@ -72,6 +82,10 @@ namespace Incubator
             /// @note FullChain 会在返回前生成完整 GPU mip 链；默认只上传第 0 级。
             /// 返回的 Texture 仅可用于此 Renderer。
             Texture createTexture(const Resource::TextureResource& texture,
+                                  TextureMipMode mipMode = TextureMipMode::BaseLevel);
+
+            /// @brief 同步上传并由指定资源组持有纹理；组须有效且属于本 Renderer。
+            Texture createTexture(GpuResources& resources, const Resource::TextureResource& texture,
                                   TextureMipMode mipMode = TextureMipMode::BaseLevel);
 
             /// @brief 准备共享场景着色器以及帧和材质布局。
@@ -91,6 +105,10 @@ namespace Incubator
             /// @return 由此 Renderer 持有的材质引用。
             /// @note 需要先准备场景着色器，并传入由此 Renderer 创建的有效 Texture；参数会被复制。
             Material createMaterial(const MaterialDesc& desc);
+
+            /// @brief 由指定资源组持有材质；材质另外持有所用纹理，与纹理所在组无关。
+            /// @note 组及纹理均须有效且属于本 Renderer；其余约定与直接 createMaterial 相同。
+            Material createMaterial(GpuResources& resources, const MaterialDesc& desc);
 
             /// @brief 准备交换链和后端，并开始 UI 帧。
             /// @return 实际渲染尺寸；无可用尺寸时返回空值并跳过本帧。

@@ -15,8 +15,10 @@
 #include <limits>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include "runtime/core/error/error.h"
@@ -902,6 +904,205 @@ namespace
         expectCleanValidation();
     }
 
+    static_assert(!std::is_copy_constructible_v<GpuResources>);
+    static_assert(std::is_nothrow_move_constructible_v<GpuResources>);
+
+    TEST_F(VulkanReviewTest, ScopedResourcesPreserveDependenciesAndRollbackWithoutTouchingDirectAssets)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const auto geometry = Demo::makeCubeMesh();
+            const auto directMesh = renderer.createMesh(geometry.vertices, geometry.indices);
+            const auto directTexture = renderer.createTexture(*assets.texture);
+            const auto directMaterial = renderer.createMaterial({directTexture});
+            const auto expectCounts = [&](size_t meshes, size_t textures, size_t materials) {
+                const auto counts = Detail::RendererReviewAccess::resourceCounts(renderer);
+                EXPECT_EQ(counts.meshes, meshes);
+                EXPECT_EQ(counts.textures, textures);
+                EXPECT_EQ(counts.materials, materials);
+            };
+            expectCounts(1, 1, 1);
+            GpuResources invalid;
+            EXPECT_THROW(renderer.createMesh(invalid, geometry.vertices, geometry.indices), Error::Exception);
+            EXPECT_THROW(renderer.createTexture(invalid, *assets.texture), Error::Exception);
+            EXPECT_THROW(renderer.createMaterial(invalid, {directTexture}), Error::Exception);
+            {
+                auto textures = renderer.createResources();
+                auto bindings = renderer.createResources();
+                const auto texture = renderer.createTexture(textures, *assets.texture);
+                const auto material = renderer.createMaterial(bindings, {texture});
+                const auto mesh = renderer.createMesh(bindings, geometry.vertices, geometry.indices);
+                textures.reset();
+                EXPECT_TRUE(texture.valid());  // 材质独立持有所用纹理。
+                expectCounts(2, 2, 2);
+                auto moved = std::move(bindings);
+                EXPECT_FALSE(bindings.valid());
+                auto assigned = renderer.createResources();
+                const auto discarded = renderer.createMesh(assigned, geometry.vertices, geometry.indices);
+                assigned = std::move(moved);
+                EXPECT_FALSE(discarded.valid());
+                EXPECT_FALSE(moved.valid());
+                EXPECT_TRUE(mesh.valid());
+                EXPECT_TRUE(material.valid());
+                const std::array unsubmitted{DrawItem{mesh, material, glm::mat4(1)}};
+                assigned.reset();
+                EXPECT_FALSE(mesh.valid());
+                EXPECT_FALSE(material.valid());
+                EXPECT_FALSE(texture.valid());
+                EXPECT_THROW(renderer.drawFrame(controlledFrame({640, 360}, unsubmitted), {0, 0, 0, 1}),
+                             Error::Exception);
+            }
+            expectCounts(1, 1, 1);
+            // 在不同创建进度中断；不靠生产故障注入模拟 Vulkan 分配失败。
+            for (int stage = 0; stage != 3; ++stage)
+            {
+                Mesh interruptedMesh;
+                Texture interruptedTexture;
+                Material interruptedMaterial;
+                EXPECT_THROW(
+                    {
+                        auto attempt = renderer.createResources();
+                        interruptedMesh = renderer.createMesh(attempt, geometry.vertices, geometry.indices);
+                        if (stage >= 1)
+                            interruptedTexture = renderer.createTexture(attempt, *assets.texture);
+                        if (stage >= 2)
+                            interruptedMaterial = renderer.createMaterial(attempt, {interruptedTexture});
+                        throw std::runtime_error("controlled preparation interruption");
+                    },
+                    std::runtime_error);
+                EXPECT_FALSE(interruptedMesh.valid());
+                EXPECT_FALSE(interruptedTexture.valid());
+                EXPECT_FALSE(interruptedMaterial.valid());
+                expectCounts(1, 1, 1);
+            }
+            releaseCpuAssets(assets);
+            EXPECT_TRUE(directTexture.valid());
+            EXPECT_GT(drawUiFrame(*window, renderer, directMesh, directMaterial), 0);
+        }
+        expectReleased({});
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, ScopedMainAndShadowResourcesStayUntilTheirFrameFencesComplete)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            auto depth = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
+                Resource::ResourceType::SHADER, "shaders/shadow.vert.spv");
+            ASSERT_TRUE(depth);
+            renderer.prepareShadowResources(*depth.get<Resource::ShaderResource>());
+            depth.reset();
+            const auto geometry = Demo::makeCubeMesh();
+            for (const bool shadow : {false, true})
+            {
+                auto resources = renderer.createResources();
+                const auto texture = renderer.createTexture(resources, *assets.texture);
+                const auto mesh = renderer.createMesh(resources, geometry.vertices, geometry.indices);
+                const auto material = renderer.createMaterial(resources, {texture, {0, 1, 0}});
+                Mesh caster;
+                if (shadow)
+                    caster = renderer.createMesh(resources, geometry.vertices, geometry.indices);
+                const std::array draws{DrawItem{mesh, material, glm::mat4(1)}};
+                const std::array casters{DrawItem{caster, {}, glm::mat4(1)}};
+                SceneOutput output;
+                for (int slot = 0; slot != 2; ++slot)
+                {
+                    const auto extent = renderer.beginUiFrame();
+                    ASSERT_TRUE(extent);
+                    renderer.imgui().endFrame();
+                    if (shadow)
+                    {
+                        output = renderer.prepareSceneTarget({384, 256});
+                        auto frame = controlledFrame(output.extent(), draws);
+                        ShadowSettings settings;
+                        settings.enabled = true;
+                        frame.shadow = makeShadowFrame(settings, frame.lighting.direction);
+                        frame.shadowDraws = casters;
+                        renderer.drawSceneTarget(output, frame, {0.2f, 0.24f, 0.28f, 1});
+                    }
+                    else
+                        renderer.drawFrame(controlledFrame(*extent, draws), {0.2f, 0.24f, 0.28f, 1});
+                }
+                resources.reset();
+                EXPECT_TRUE(mesh.valid());
+                EXPECT_TRUE(texture.valid());
+                EXPECT_TRUE(material.valid());
+                auto counts = Detail::RendererReviewAccess::resourceCounts(renderer);
+                EXPECT_EQ(counts.meshes, shadow ? 2u : 1u);
+                EXPECT_EQ(counts.textures, 1u);
+                EXPECT_EQ(counts.materials, 1u);
+                // 只复用一个槽不会撤销另一槽的保护；帧数据本身仅保存弱引用。
+                renderer.prepareSceneTarget({384, 256});
+                EXPECT_TRUE(mesh.valid());
+                if (shadow)
+                {
+                    EXPECT_TRUE(caster.valid());
+                    Detail::RendererReviewAccess::withSceneOutput(
+                        renderer, output, [&](const auto& device, const auto& image) {
+                            const auto pixels = TextureGpuReview::captureMip(device, image, 0, {384, 256});
+                            ASSERT_EQ(pixels.size(), 384u * 256u * 4u);
+                            EXPECT_LT(pixels[(128u * 384u + 192u) * 4u], 5u);
+                        });
+                }
+                else
+                    Detail::RendererReviewAccess::waitForFrames(renderer);
+                EXPECT_FALSE(mesh.valid());
+                EXPECT_FALSE(material.valid());
+                EXPECT_FALSE(texture.valid());
+                EXPECT_FALSE(caster.valid());
+                counts = Detail::RendererReviewAccess::resourceCounts(renderer);
+                EXPECT_EQ(counts.meshes, 0u);
+                EXPECT_EQ(counts.textures, 0u);
+                EXPECT_EQ(counts.materials, 0u);
+                EXPECT_THROW(renderer.createMaterial({texture}), Error::Exception);
+            }
+            releaseCpuAssets(assets);
+        }
+        expectReleased({});
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, SharedScopedOwnerSurvivesCacheRemovalAndBecomesSafeEmptyAfterRendererClose)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        std::shared_ptr<GpuResources> external;
+        Mesh mesh;
+        Texture texture;
+        Material material;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            auto cache = std::make_shared<GpuResources>(renderer.createResources());
+            external = cache;
+            const auto geometry = Demo::makeCubeMesh();
+            mesh = renderer.createMesh(*cache, geometry.vertices, geometry.indices);
+            texture = renderer.createTexture(*cache, *assets.texture);
+            material = renderer.createMaterial(*cache, {texture});
+            cache.reset();
+            EXPECT_TRUE(external->valid());
+            EXPECT_TRUE(mesh.valid());
+            EXPECT_GT(drawUiFrame(*window, renderer, mesh, material), 0);
+            Renderer moved(std::move(renderer));
+            EXPECT_TRUE(external->valid());
+            EXPECT_GT(drawUiFrame(*window, moved, mesh, material), 0);
+            releaseCpuAssets(assets);
+        }
+        EXPECT_FALSE(external->valid());
+        EXPECT_FALSE(mesh.valid());
+        EXPECT_FALSE(texture.valid());
+        EXPECT_FALSE(material.valid());
+        external.reset();  // 晚析构的组不调用已销毁 Renderer 或设备。
+        expectReleased({});
+        expectCleanValidation();
+    }
+
     TEST_F(VulkanReviewTest, SubmissionRejectsEmptyExpiredResourcesAndMovedFromRenderer)
     {
         auto window = createWindow();
@@ -922,6 +1123,24 @@ namespace
             MaterialDesc desc{renderer.createTexture(*assets.texture)};
             observer = renderer.createMaterial(desc);
             Renderer moved(std::move(renderer));
+            const auto output = moved.prepareSceneTarget({320, 240});
+            const auto expectMovedFrom = [](const auto& operation) {
+                try
+                {
+                    operation();
+                    FAIL() << "Accepted moved-from Renderer";
+                }
+                catch (const Error::Exception& error)
+                {
+                    EXPECT_EQ(error.code(), Error::Code::RENDER);
+                }
+            };
+            expectMovedFrom([&] { renderer.prepareSceneTarget({320, 240}); });
+            expectMovedFrom([&] { renderer.drawSceneTarget(output, {}, {0, 0, 0, 1}); });
+            expectMovedFrom([&] { renderer.sceneImage(output); });
+            expectMovedFrom([&] { renderer.createResources(); });
+            EXPECT_NE(moved.sceneImage(output), 0u);
+            moved.drawSceneTarget(output, controlledFrame(output.extent(), {}), {0, 0, 0, 1});
             EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
             EXPECT_THROW(renderer.prepareSceneResources(*assets.vertex, *assets.fragment), Error::Exception);
             EXPECT_TRUE(moved.createMaterial(desc).valid());
@@ -1671,6 +1890,11 @@ namespace
                 ImGui::SetCurrentContext(nullptr);
                 Renderer second(*secondWindow, RendererValidationMode::Required);
                 second.prepareSceneResources(*assets.vertex, *assets.fragment);
+                auto foreignGroup = first.createResources();
+                const auto geometry = Demo::makeCubeMesh();
+                EXPECT_THROW(second.createMesh(foreignGroup, geometry.vertices, geometry.indices), Error::Exception);
+                EXPECT_THROW(second.createTexture(foreignGroup, *assets.texture), Error::Exception);
+                EXPECT_THROW(second.createMaterial(foreignGroup, {firstTexture}), Error::Exception);
                 EXPECT_THROW(second.createMaterial({firstTexture}), Error::Exception);
                 const auto secondMaterial = second.createMaterial({second.createTexture(*assets.texture)});
                 const auto ownMesh = createCubeMesh(second);

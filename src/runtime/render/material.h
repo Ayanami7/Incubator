@@ -27,7 +27,7 @@ namespace Incubator
             ShadingMode shading = ShadingMode::Unlit;
         };
 
-        /// @brief 不可变材质引用，副本共享同一份由 Renderer 持有的资源。
+        /// @brief 不可变材质的非拥有引用，副本指向同一份实际对象。
         /// @note 持有此引用不会延长 Renderer 或设备的生命周期。
         class Material
         {

@@ -84,6 +84,7 @@ set(RENDER_HEADERS
     render/vulkan/vulkan_scene_target.h
     render/vulkan/vulkan_shadow_target.h
     render/renderer.h
+    render/gpu_resources.h
     render/detail/renderer_review.h
     render/frame_input.h
     render/lighting.h

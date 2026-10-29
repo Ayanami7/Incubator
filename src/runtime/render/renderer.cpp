@@ -96,6 +96,25 @@ namespace Incubator
             }
         }  // namespace
 
+        struct GpuResources::Impl
+        {
+            const Vulkan::VulkanDevice* owner;
+            std::vector<std::shared_ptr<void>> objects;
+        };
+
+        bool GpuResources::valid() const noexcept
+        {
+            return impl_ && impl_->owner;
+        }
+
+        // 直接创建保留强持有；资源组创建仅登记弱引用，供真实存活数量复核。
+        template <class T>
+        struct ResourceEntry
+        {
+            std::weak_ptr<T> object;
+            std::shared_ptr<T> retained;
+        };
+
         struct Mesh::Impl
         {
             Impl(const Vulkan::VulkanDevice& device, std::span<const MeshVertex> vertices,
@@ -174,6 +193,50 @@ namespace Incubator
                     rebuild(width, height, "initialization");
             }
 
+            ~Impl()
+            {
+                // 先沿原有关闭路径完成 GPU 工作，再撤销外部组；设备和材质布局此时仍有效。
+                imguiRenderer_.reset();
+                scheduler_.reset();
+                for (auto& entry : resourceGroups_)
+                    if (auto group = entry.lock())
+                    {
+                        group->objects.clear();
+                        group->owner = nullptr;
+                    }
+            }
+
+            GpuResources createResources()
+            {
+                auto group = std::make_shared<GpuResources::Impl>();
+                group->owner = &device_;
+                std::erase_if(resourceGroups_, [](const auto& value) { return value.expired(); });
+                resourceGroups_.push_back(group);
+                return GpuResources(std::move(group));
+            }
+
+            const std::shared_ptr<GpuResources::Impl>& checkResources(const GpuResources& resources) const
+            {
+                if (!resources.impl_ || resources.impl_->owner != &device_)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "GPU resources are invalid or belong to another Renderer");
+                return resources.impl_;
+            }
+
+            Detail::RendererReviewAccess::ResourceCounts resourceCounts() const
+            {
+                const auto live = [](const auto& entries) {
+                    return size_t(
+                        std::ranges::count_if(entries, [](const auto& entry) { return !entry.object.expired(); }));
+                };
+                return {live(meshes_), live(textures_), live(materials_)};
+            }
+
+            void waitForFrames()
+            {
+                scheduler_->waitForFrames();
+            }
+
             bool prepareFrame()
             {
                 int width = 0;
@@ -191,7 +254,8 @@ namespace Incubator
                 return swapchain_ && swapchain_->handle() != VK_NULL_HANDLE;
             }
 
-            Mesh createMesh(std::span<const MeshVertex> vertices, std::span<const uint32_t> indices)
+            Mesh createMesh(std::span<const MeshVertex> vertices, std::span<const uint32_t> indices,
+                            const std::shared_ptr<GpuResources::Impl>& resources = {})
             {
                 if (vertices.empty() || indices.empty() || indices.size() % 3 != 0 ||
                     indices.size() > std::numeric_limits<uint32_t>::max())
@@ -214,17 +278,24 @@ namespace Incubator
                             value = static_cast<float>(value / length);
                 }
                 auto mesh = std::make_shared<Mesh::Impl>(device_, uploadVertices, indices);
-                meshes_.push_back(mesh);
+                std::erase_if(meshes_, [](const auto& entry) { return entry.object.expired(); });
+                meshes_.push_back({mesh, resources ? nullptr : mesh});
+                if (resources)
+                    resources->objects.push_back(mesh);
                 Log::Registry::get("render").debug("Uploaded mesh: {} vertices ({} bytes), {} indices ({} bytes)",
                                                    vertices.size(), vertices.size_bytes(), indices.size(),
                                                    indices.size_bytes());
                 return Mesh(mesh);
             }
 
-            Texture createTexture(const Resource::TextureResource& texture, TextureMipMode mipMode)
+            Texture createTexture(const Resource::TextureResource& texture, TextureMipMode mipMode,
+                                  const std::shared_ptr<GpuResources::Impl>& resources = {})
             {
                 auto gpuTexture = std::make_shared<Texture::Impl>(device_, texture, mipMode);
-                textures_.push_back(gpuTexture);
+                std::erase_if(textures_, [](const auto& entry) { return entry.object.expired(); });
+                textures_.push_back({gpuTexture, resources ? nullptr : gpuTexture});
+                if (resources)
+                    resources->objects.push_back(gpuTexture);
                 return Texture(gpuTexture);
             }
 
@@ -262,7 +333,7 @@ namespace Incubator
                 shadowVertexShader_ = vertexShader.words();
             }
 
-            Material createMaterial(const MaterialDesc& desc)
+            Material createMaterial(const MaterialDesc& desc, const std::shared_ptr<GpuResources::Impl>& resources = {})
             {
                 if (!bindingSet_)
                     throw Error::Exception(Error::Code::RENDER, "Prepare scene shaders before creating materials");
@@ -287,7 +358,10 @@ namespace Incubator
                 }
                 auto material = std::make_shared<Material::Impl>(
                     device_, std::move(texture), bindingSet_->materialLayout(), desc.color, desc.sampler, desc.shading);
-                materials_.push_back(material);
+                std::erase_if(materials_, [](const auto& entry) { return entry.object.expired(); });
+                materials_.push_back({material, resources ? nullptr : material});
+                if (resources)
+                    resources->objects.push_back(material);
                 Log::Registry::get("render").debug("Created material: linear RGB ({}, {}, {})", desc.color[0],
                                                    desc.color[1], desc.color[2]);
                 return Material(material);
@@ -602,15 +676,16 @@ namespace Incubator
             std::vector<uint32_t> vertexShader_;
             std::vector<uint32_t> fragmentShader_;
             std::vector<uint32_t> shadowVertexShader_;
-            std::vector<std::shared_ptr<Mesh::Impl>> meshes_;
-            std::vector<std::shared_ptr<Texture::Impl>> textures_;
+            std::vector<ResourceEntry<Mesh::Impl>> meshes_;
+            std::vector<ResourceEntry<Texture::Impl>> textures_;
             std::array<std::shared_ptr<Vulkan::VulkanBuffer>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
                 uniformBuffers_{};
             // 阴影图先声明，保证其存活至帧绑定描述符释放之后。
             std::array<std::shared_ptr<Vulkan::VulkanShadowTarget>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
                 shadowTargets_{};
             std::unique_ptr<Vulkan::VulkanBindingSet> bindingSet_;
-            std::vector<std::shared_ptr<Material::Impl>> materials_;
+            std::vector<ResourceEntry<Material::Impl>> materials_;
+            std::vector<std::weak_ptr<GpuResources::Impl>> resourceGroups_;
             std::unique_ptr<Vulkan::VulkanSwapchain> swapchain_;
             std::unique_ptr<Vulkan::VulkanPipeline> pipeline_;
             std::array<std::shared_ptr<SceneOutput::Impl>, Vulkan::VulkanFrameScheduler::FRAME_COUNT> sceneTargets_{};
@@ -633,6 +708,46 @@ namespace Incubator
         Renderer::Renderer(Renderer&&) noexcept = default;
 
         Renderer& Renderer::operator=(Renderer&&) noexcept = default;
+
+        GpuResources Renderer::createResources()
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            return impl_->createResources();
+        }
+
+        Mesh Renderer::createMesh(GpuResources& resources, std::span<const MeshVertex> vertices,
+                                  std::span<const uint32_t> indices)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            return impl_->createMesh(vertices, indices, impl_->checkResources(resources));
+        }
+
+        Texture Renderer::createTexture(GpuResources& resources, const Resource::TextureResource& texture,
+                                        TextureMipMode mipMode)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            return impl_->createTexture(texture, mipMode, impl_->checkResources(resources));
+        }
+
+        Material Renderer::createMaterial(GpuResources& resources, const MaterialDesc& desc)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            return impl_->createMaterial(desc, impl_->checkResources(resources));
+        }
+
+        Detail::RendererReviewAccess::ResourceCounts Detail::RendererReviewAccess::resourceCounts(Renderer& renderer)
+        {
+            return renderer.impl_->resourceCounts();
+        }
+
+        void Detail::RendererReviewAccess::waitForFrames(Renderer& renderer)
+        {
+            renderer.impl_->waitForFrames();
+        }
 
         Mesh Renderer::createMesh(std::span<const MeshVertex> vertices, std::span<const uint32_t> indices)
         {
@@ -703,11 +818,15 @@ namespace Incubator::Render
 {
     SceneOutput Renderer::prepareSceneTarget(FrameExtent extent)
     {
+        if (!impl_)
+            throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
         return impl_->prepareSceneTarget(extent);
     }
     void Renderer::drawSceneTarget(const SceneOutput& output, const FrameInput& input,
                                    const std::array<float, 4>& color, const std::function<void(void*)>& ui)
     {
+        if (!impl_)
+            throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
         impl_->drawSceneTarget(output, input, color, ui);
     }
 }  // namespace Incubator::Render
@@ -721,6 +840,8 @@ void Incubator::Render::Detail::RendererReviewAccess::withSceneOutput(
 
 uint64_t Incubator::Render::Renderer::sceneImage(const SceneOutput& output)
 {
+    if (!impl_)
+        throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
     return impl_->sceneImage(output);
 }
 
