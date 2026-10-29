@@ -1,10 +1,10 @@
 #include <iostream>
 #include <string_view>
 
-#include "examples/demo/demo_app.h"
-#include "examples/demo/model_scene.h"
+#include "app/editor/editor_app.h"
+#include "app/editor/editor_scene.h"
 #include "runtime/scene/scene_description.h"
-#include "test/examples/demo/showcase_scene.h"
+#include "test/app/editor/showcase_scene.h"
 
 int main(int argc, char** argv)
 {
@@ -14,16 +14,16 @@ int main(int argc, char** argv)
     int result = 0;
     try
     {
-        Incubator::Demo::DemoOptions options;
+        Incubator::App::SessionOptions options;
         options.window.visible = false;
         options.validation = Incubator::Render::RendererValidationMode::Required;
-        Incubator::Demo::DemoApp app(options);
+        Incubator::Editor::EditorApp app(options);
         app.run({[&](auto& session) {
-                     Incubator::Demo::ModelScene demo;
+                     Incubator::Editor::EditorScene demo;
                      demo.initialize(session, mode == "read" ? argv[2] : "assets/scenes/mixed.json");
                      if (mode == "write")
                      {
-                         Incubator::DemoTest::setSharedModelScene(session, demo, false);
+                         Incubator::EditorTest::setSharedEditorScene(session, demo, false);
 
                          demo.selectModel(true);
                          const auto tea = demo.createEntity(session);

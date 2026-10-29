@@ -6,7 +6,7 @@
 #include <thread>
 #include <utility>
 
-#include "model_scene.h"
+#include "app/common/viewport.h"
 #include "runtime/core/error/error.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/resource/loader/model_loader.h"
@@ -15,11 +15,11 @@
 #include "runtime/resource/loader/texture_loader.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/scene/scene_frame.h"
-#include "viewport.h"
+#include "showcase.h"
 
 namespace Incubator::Demo
 {
-    DemoApp::DemoApp(DemoOptions options, std::unique_ptr<FileIO::FileIO> fileIO)
+    DemoApp::DemoApp(App::SessionOptions options, std::unique_ptr<FileIO::FileIO> fileIO)
         : fileIO_(std::move(fileIO)), clearColor_(options.clearColor)
     {
         shadowSettings_.depthBias = 0.003f;
@@ -126,15 +126,13 @@ namespace Incubator::Demo
         requireOpen();
         if (open && !*open)
             return;
-        ImGui::SetNextWindowPos({380, 12}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({800, 600}, ImGuiCond_FirstUseEver);
-        if (ImGui::Begin(title, open))
+        if (ImGui::Begin(title, open, ImGuiWindowFlags_NoDocking))
         {
             const auto size = ImGui::GetContentRegionAvail();
             int w, h, fw, fh;
             window_->getWindowSize(w, h);
             window_->getFramebufferSize(fw, fh);
-            sceneExtent_ = viewportExtent(size.x, size.y, w > 0 ? double(fw) / w : 0, h > 0 ? double(fh) / h : 0);
+            sceneExtent_ = App::viewportExtent(size.x, size.y, w > 0 ? double(fw) / w : 0, h > 0 ? double(fh) / h : 0);
             if (sceneExtent_.width && sceneExtent_.height)
             {
                 sceneOutput_ = renderer_->prepareSceneTarget(sceneExtent_);
@@ -167,7 +165,7 @@ namespace Incubator::Demo
             if (!exitRequested_ && !window_->shouldClose() && callbacks.initialize)
                 callbacks.initialize(*this);
             auto previous = Clock::now();
-            UiInputAdapter inputAdapter;
+            App::UiInputAdapter inputAdapter;
             while (!exitRequested_ && !window_->shouldClose())
             {
                 window_->beginInputFrame();
@@ -210,7 +208,7 @@ namespace Incubator::Demo
                 }
                 auto input = inputAdapter.sample(window_->input());
                 if (callbacks.layout)
-                    input = viewportInput(input, viewportRegion_, ImGui::GetIO().WantTextInput);
+                    input = App::viewportInput(input, viewportRegion_, ImGui::GetIO().WantTextInput);
                 if (!cancelInput && callbacks.input && renderExtent.width && renderExtent.height)
                     callbacks.input(*this, renderExtent, input);
                 if (callbacks.ui)

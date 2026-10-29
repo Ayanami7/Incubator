@@ -89,6 +89,6 @@ Assimp 矩阵字段 a/b/c/d 表示行，转换时逐元素写入 GLM 列；局�
 固定版本先把 glTF 的 V 翻到 Assimp 的左下约定。转换层对 glTF 和 OBJ 输出统一使用 `(u, 1-v)`，
 恢复引擎 `(0,0)` 指向 PNG 左上；图片解码、上传和 Shader 不再翻转。投影 Y 适配不属于模型导入。
 
-`demo_models` 将展示模型和 sidecar 部署到构建资产目录；
+`incubator_models` 将展示模型和 sidecar 部署到构建资产目录；
 本接口只交付 CPU 资产，GPU 依赖与资源由
 Runtime 的 [模型准备入口](../../model.md) 处理，实例展开由模型消费层组织。

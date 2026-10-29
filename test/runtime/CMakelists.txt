@@ -74,7 +74,7 @@ foreach(SHADER_FILE IN ITEMS cube.vert.spv cube.frag.spv shadow.vert.spv)
     list(APPEND RUNTIME_TEST_SHADER_OUTPUTS "${SHADER_OUTPUT}")
 endforeach()
 add_custom_target(runtime_test_shaders DEPENDS ${RUNTIME_TEST_SHADER_OUTPUTS})
-add_dependencies(runtime_test_shaders demo_shaders)
+add_dependencies(runtime_test_shaders incubator_shaders)
 
 # Create test source file list.
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS "*.cpp")
@@ -109,7 +109,7 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
         add_dependencies(${TEST_NAME} runtime_test_fixtures runtime_test_shaders)
         target_compile_definitions(${TEST_NAME} PRIVATE RUNTIME_TEST_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}")
         if(TEST_NAME STREQUAL "model_preparation_test")
-            add_dependencies(${TEST_NAME} demo_models)
+            add_dependencies(${TEST_NAME} incubator_models)
         endif()
         if(TEST_NAME STREQUAL "vulkan_review_test" OR TEST_NAME STREQUAL "imgui_integration_test")
             gtest_discover_tests(${TEST_NAME}
@@ -133,7 +133,7 @@ foreach(TEST_SOURCE ${TEST_SOURCES})
             target_compile_definitions(${TEST_NAME} PRIVATE
                 MODEL_BUILD_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}"
                 MODEL_DEMO_ASSET_DIR="${CMAKE_BINARY_DIR}/assets")
-            add_dependencies(${TEST_NAME} runtime_test_fixtures demo_models)
+            add_dependencies(${TEST_NAME} runtime_test_fixtures incubator_models)
         endif()
         if(TEST_NAME STREQUAL "texture_loader_test")
             target_compile_definitions(${TEST_NAME} PRIVATE

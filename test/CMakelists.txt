@@ -1,5 +1,5 @@
-# test CMakelists.txt
-
-# runtime 模块测试
+# Runtime、正式 Editor、应用共用组件与示例分别组织测试。
 add_subdirectory(runtime)
+add_subdirectory(app/common)
+add_subdirectory(app/editor)
 add_subdirectory(examples/demo)

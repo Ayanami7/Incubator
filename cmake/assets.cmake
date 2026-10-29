@@ -1,5 +1,5 @@
-# 部署 Demo 使用的模型、场景和默认启动配置；精确测试样本由 test/runtime 单独部署。
-set(DEMO_MODEL_OUTPUTS)
+# 部署应用使用的模型、场景和默认启动配置；精确测试样本由 test/runtime 单独部署。
+set(APP_MODEL_OUTPUTS)
 foreach(MODEL_FILE IN ITEMS
     README.md
     utah_teapot/utah_teapot.obj
@@ -21,11 +21,11 @@ foreach(MODEL_FILE IN ITEMS
         COMMENT "部署示例模型 ${MODEL_FILE}"
         VERBATIM
     )
-    list(APPEND DEMO_MODEL_OUTPUTS "${MODEL_OUTPUT}")
+    list(APPEND APP_MODEL_OUTPUTS "${MODEL_OUTPUT}")
 endforeach()
-add_custom_target(demo_models DEPENDS ${DEMO_MODEL_OUTPUTS})
+add_custom_target(incubator_models DEPENDS ${APP_MODEL_OUTPUTS})
 
-set(DEMO_SCENE_OUTPUTS)
+set(APP_SCENE_OUTPUTS)
 foreach(SCENE_FILE IN ITEMS mixed.json shadows.json)
     set(SCENE_OUTPUT "${CMAKE_BINARY_DIR}/assets/scenes/${SCENE_FILE}")
     add_custom_command(OUTPUT "${SCENE_OUTPUT}"
@@ -34,17 +34,17 @@ foreach(SCENE_FILE IN ITEMS mixed.json shadows.json)
         DEPENDS "${ASSETS_DIR}/scenes/${SCENE_FILE}"
         COMMENT "部署示例场景 ${SCENE_FILE}"
         VERBATIM)
-    list(APPEND DEMO_SCENE_OUTPUTS "${SCENE_OUTPUT}")
+    list(APPEND APP_SCENE_OUTPUTS "${SCENE_OUTPUT}")
 endforeach()
-add_custom_target(demo_scenes DEPENDS ${DEMO_SCENE_OUTPUTS})
+add_custom_target(incubator_scenes DEPENDS ${APP_SCENE_OUTPUTS})
 
-set(DEMO_CONFIG_OUTPUT "${CMAKE_BINARY_DIR}/incubator.json")
-add_custom_command(OUTPUT "${DEMO_CONFIG_OUTPUT}"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${INCUBATOR_ROOT_DIR}/incubator.json" "${DEMO_CONFIG_OUTPUT}"
+set(APP_CONFIG_OUTPUT "${CMAKE_BINARY_DIR}/incubator.json")
+add_custom_command(OUTPUT "${APP_CONFIG_OUTPUT}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${INCUBATOR_ROOT_DIR}/incubator.json" "${APP_CONFIG_OUTPUT}"
     DEPENDS "${INCUBATOR_ROOT_DIR}/incubator.json"
     COMMENT "部署默认启动配置"
     VERBATIM)
-add_custom_target(demo_config DEPENDS "${DEMO_CONFIG_OUTPUT}")
+add_custom_target(incubator_config DEPENDS "${APP_CONFIG_OUTPUT}")
 
 # 运行界面使用仓库内字体，许可随字体一并部署。
 set(UI_FONT_OUTPUTS)
@@ -59,3 +59,7 @@ foreach(FONT_FILE IN ITEMS NotoSansSC-Regular.otf OFL.txt)
     list(APPEND UI_FONT_OUTPUTS "${FONT_OUTPUT}")
 endforeach()
 add_custom_target(runtime_ui_fonts DEPENDS ${UI_FONT_OUTPUTS})
+
+# 应用直接依赖共同资源，单独构建 Editor 不需要构建 Demo。
+add_custom_target(incubator_assets)
+add_dependencies(incubator_assets incubator_models incubator_scenes incubator_config incubator_shaders runtime_ui_fonts)

@@ -22,9 +22,9 @@ ResourceId ──► ResourceRegistry ──► ResourceManager ──► Loader
 
 ## 组件索引
 
-[DemoApp 示例](../../examples/demo.md) 沿用这些全局组件，独占 Loader 路由及资产源绑定，并持有 AssetSource/FileIO 至关闭；
+[EditorApp](../../app/editor.md) 沿用这些全局组件，独占 Loader 路由及资产源绑定，并持有 AssetSource/FileIO 至关闭；
 CPU 资产 release 与路由销毁分别管理，运行期间可再次显式准备模型，不将 Manager 改为私有实例。
-[Scene Runtime 示例](../../examples/demo.md) 在打开场景或创建实体时准备所需模型，随后通过会话缓存复用结果。
+[Scene Runtime Editor](../../app/editor.md) 在打开场景或创建实体时准备所需模型，随后通过会话缓存复用结果。
 
 | 组件 | 文档 | 状态 |
 |---|---|---|

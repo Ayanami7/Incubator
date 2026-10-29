@@ -44,7 +44,7 @@ auto filtered = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Av
 不导入源 glTF/OBJ sampler，也不向 ModelResource 或 Loader 引入 Render 类型。
 
 Runtime 的 `ModelManager` 借用单个 Renderer，会话内按 `ModelReference` 的规范化路径和完整选项复用
-`PreparedModel`，不同选项独立准备。Demo 的创建和场景重建共用该入口。
+`PreparedModel`，不同选项独立准备。Editor 的创建和场景重建共用该入口。
 
 ```cpp
 Incubator::Model::ModelManager models(renderer);
@@ -187,7 +187,7 @@ RGB 使用源材质的线性 0–1 参数，白纹理采样后保持该颜色；
 UV 方向、opaque 与其他显示约定见 [ModelLoader](./resource/loader/model_loader.md)
 和 [Render 材质](./render.md)。
 
-完整应用用法见 [模型 Demo](../examples/demo.md)：DemoApp 在 FileIO 生命周期内注册 Model/Texture Loader，准备 Shader 并将模型用于 Scene 实体。prepareModel 本身不清除全局路由。
+完整编辑应用用法见 [Editor](../app/editor.md)：EditorApp 在 FileIO 生命周期内注册 Model/Texture Loader，准备 Shader 并将模型用于 Scene 实体。prepareModel 本身不清除全局路由。
 
-[Scene Runtime 示例](../examples/demo.md) 由 DemoApp 持有 FileIO/Loader 到关闭，
+[Scene Runtime Editor](../app/editor.md) 由 EditorApp 持有 FileIO/Loader 到关闭，
 使用会话模型缓存复用已准备的模型；创建实体或加载场景遇到新来源时准备，普通帧不重新上传。

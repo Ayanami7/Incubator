@@ -1,11 +1,11 @@
 #pragma once
 
-#include "examples/demo/model_scene.h"
+#include "app/editor/editor_scene.h"
 
-namespace Incubator::DemoTest
+namespace Incubator::EditorTest
 {
     /// @brief 为共享实例、场景替换及持久化测试构造双实例场景。
-    inline void setSharedModelScene(Demo::DemoApp& app, Demo::ModelScene& demo, bool useObj)
+    inline void setSharedEditorScene(Editor::EditorApp& app, Editor::EditorScene& demo, bool useObj)
     {
         demo.selectModel(useObj);
         const auto model = app.scene().find(demo.createEntity(app))->model;
@@ -21,4 +21,4 @@ namespace Incubator::DemoTest
         app.setScene(std::move(scene));
         demo.select(first);
     }
-}  // namespace Incubator::DemoTest
+}  // namespace Incubator::EditorTest

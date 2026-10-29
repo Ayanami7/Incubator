@@ -3,15 +3,15 @@
 #include <string>
 #include <string_view>
 
-#include "demo_options.h"
 #include "runtime/platform/fileio/fileio.h"
+#include "session_options.h"
 
-namespace Incubator::Demo
+namespace Incubator::App
 {
     /// @brief 应用启动参数；场景内容由独立的场景文件保存。
     struct StartupConfig
     {
-        DemoOptions options;
+        SessionOptions options;
         std::string startupScene = "assets/scenes/shadows.json";
 
         StartupConfig();
@@ -25,4 +25,4 @@ namespace Incubator::Demo
     /// @note 相对配置路径及其场景路径均按当前工作目录解析，不切换目录。
     /// @throws Error::Exception 读取失败时抛出 IO，配置无效时抛出 CONFIG；消息包含文件路径。
     StartupConfig readStartupConfig(FileIO::FileIO& fileIO, std::string_view path = "incubator.json");
-}  // namespace Incubator::Demo
+}  // namespace Incubator::App

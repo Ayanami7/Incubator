@@ -10,8 +10,9 @@
 #include <string>
 #include <vector>
 
-#include "demo_app.h"
-#include "orbit_camera.h"
+#include "app/common/lighting_controls.h"
+#include "app/common/orbit_camera.h"
+#include "editor_app.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
@@ -21,50 +22,20 @@
 #include "runtime/scene/scene_rebuild.h"
 #include "workspace.h"
 
-namespace Incubator::Demo
+namespace Incubator::Editor
 {
-    /// @brief 编辑 Scene 当前光照；角度及颜色只在本次 UI 构建期间暂存。
-    inline void lightingControls(Scene::Scene& scene)
-    {
-        auto lighting = scene.lighting();
-        const double length =
-            std::hypot(double(lighting.direction.x), double(lighting.direction.y), double(lighting.direction.z));
-        const auto direction = glm::dvec3(lighting.direction) / length;
-        float yaw = glm::degrees(float(std::atan2(direction.x, -direction.z)));
-        float pitch = glm::degrees(float(std::asin(std::clamp(direction.y, -1.0, 1.0))));
-        ImGui::TextUnformatted("Light yaw");
-        bool directionChanged = ImGui::SliderFloat("##lightYaw", &yaw, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::TextUnformatted("Light pitch");
-        directionChanged |= ImGui::SliderFloat("##lightPitch", &pitch, -89, 89, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-        if (directionChanged)
-        {
-            const float y = glm::radians(yaw), p = glm::radians(pitch);
-            lighting.direction = {std::cos(p) * std::sin(y), std::sin(p), -std::cos(p) * std::cos(y)};
-        }
-        bool changed = directionChanged;
-        ImGui::TextUnformatted("Color (linear)");
-        changed |= ImGui::ColorEdit3("##lightColor", &lighting.color.x,
-                                     ImGuiColorEditFlags_Float | ImGuiColorEditFlags_NoInputs);
-        ImGui::TextUnformatted("Intensity");
-        changed |= ImGui::SliderFloat("##intensity", &lighting.intensity, 0, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::TextUnformatted("Ambient");
-        changed |= ImGui::SliderFloat("##ambient", &lighting.ambient, 0, 1, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        if (changed)
-            scene.setLighting(lighting);
-    }
-
-    /// @brief 实现 Demo 中的模型场景交互和 UI。
+    /// @brief 实现 Editor 中的模型场景交互和 UI。
     /// @note 此类只保存使用方状态；实体 Transform、Camera 和光照值由 Runtime Scene 持有。
-    class ModelScene
+    class EditorScene
     {
     public:
-        void initialize(Demo::DemoApp& app, std::string_view path = "assets/scenes/mixed.json")
+        void initialize(Editor::EditorApp& app, std::string_view path = "assets/scenes/mixed.json")
         {
             cache_ = std::make_unique<Model::ModelManager>(app.renderer());
             openScene(app, path);
         }
 
-        Scene::EntityId createEntity(Demo::DemoApp& app)
+        Scene::EntityId createEntity(Editor::EditorApp& app)
         {
             selected_ = app.scene().createEntity(creationModel(useObj_), initialTransform(useObj_));
             return selected_;
@@ -75,7 +46,7 @@ namespace Incubator::Demo
             useObj_ = useObj;
         }
 
-        bool save(Demo::DemoApp& app, std::string_view path)
+        bool save(Editor::EditorApp& app, std::string_view path)
         {
             try
             {
@@ -84,20 +55,20 @@ namespace Incubator::Demo
                 messageError_ = false;
                 message_ = "Saved: " + std::string(path);
                 currentFile_ = std::move(target);
-                Log::Registry::get("demo").info("Saved scene '{}' ({} entities)", logPath(currentFile_),
-                                                app.scene().entities().size());
+                Log::Registry::get("editor").info("Saved scene '{}' ({} entities)", logPath(currentFile_),
+                                                  app.scene().entities().size());
                 return true;
             }
             catch (const Error::Exception& error)
             {
                 messageError_ = true;
                 message_ = error.message();
-                Log::Registry::get("demo").error("Failed to save scene '{}': {}", path, error.message());
+                Log::Registry::get("editor").error("Failed to save scene '{}': {}", path, error.message());
                 return false;
             }
         }
 
-        bool load(Demo::DemoApp& app, std::string_view path)
+        bool load(Editor::EditorApp& app, std::string_view path)
         {
             try
             {
@@ -109,13 +80,13 @@ namespace Incubator::Demo
                 messageError_ = true;
                 message_ = error.message();
                 if (!dynamic_cast<const Model::LoadError*>(&error))
-                    Log::Registry::get("demo").error("Failed to load scene '{}': {}", path, error.message());
+                    Log::Registry::get("editor").error("Failed to load scene '{}': {}", path, error.message());
                 return false;
             }
         }
 
         /// @brief 保存到当前文件；没有文件关联时进入另存确认。
-        bool save(Demo::DemoApp& app)
+        bool save(Editor::EditorApp& app)
         {
             if (currentFile_.empty())
             {
@@ -140,7 +111,7 @@ namespace Incubator::Demo
         {
             scenePath_ = pathBuffer(path);
         }
-        bool confirmFileAction(Demo::DemoApp& app)
+        bool confirmFileAction(Editor::EditorApp& app)
         {
             const std::string path(scenePath_.data());
             const bool success = fileAction_ == FileAction::Open     ? load(app, path)
@@ -150,7 +121,7 @@ namespace Incubator::Demo
                 fileAction_ = FileAction::None;
             return success;
         }
-        void layout(Demo::DemoApp& app)
+        void layout(Editor::EditorApp& app)
         {
             menu(app);
             statusBar();
@@ -181,13 +152,13 @@ namespace Incubator::Demo
             selected_ = id;
         }
 
-        void deleteSelected(Demo::DemoApp& app)
+        void deleteSelected(Editor::EditorApp& app)
         {
             app.scene().destroyEntity(selected_);
             selected_ = {};
         }
 
-        void clear(Demo::DemoApp& app)
+        void clear(Editor::EditorApp& app)
         {
             app.scene().clear();
             selected_ = {};
@@ -199,7 +170,7 @@ namespace Incubator::Demo
             extent_ = {0, 0};
         }
 
-        bool focusSelected(Demo::DemoApp& app, Render::FrameExtent extent)
+        bool focusSelected(Editor::EditorApp& app, Render::FrameExtent extent)
         {
             const auto* entity = app.scene().find(selected_);
             if (!entity || !entity->model || !entity->model->bounds())
@@ -212,7 +183,7 @@ namespace Incubator::Demo
             return true;
         }
 
-        void input(Demo::DemoApp& app, Render::FrameExtent extent, const UiInput& input)
+        void input(Editor::EditorApp& app, Render::FrameExtent extent, const App::UiInput& input)
         {
             extent_ = extent;
             int width, height;
@@ -228,13 +199,13 @@ namespace Incubator::Demo
                 focusSelected(app, extent);
         }
 
-        void resetCamera(Demo::DemoApp& app)
+        void resetCamera(Editor::EditorApp& app)
         {
             app.scene().setCamera(Scene::Camera({0, 0, 6}));
             orbit_.synchronize(app.scene().camera());
         }
 
-        void ui(Demo::DemoApp& app)
+        void ui(Editor::EditorApp& app)
         {
             objects(app);
             properties(app);
@@ -280,7 +251,7 @@ namespace Incubator::Demo
         }
 
     private:
-        void menu(Demo::DemoApp& app)
+        void menu(Editor::EditorApp& app)
         {
             if (!ImGui::BeginMainMenuBar())
                 return;
@@ -340,7 +311,7 @@ namespace Incubator::Demo
             ImGui::PopStyleVar();
         }
 
-        void objects(Demo::DemoApp& app)
+        void objects(Editor::EditorApp& app)
         {
             ImGui::Begin("Objects");
             ImGui::TextUnformatted("New model");
@@ -373,7 +344,7 @@ namespace Incubator::Demo
             ImGui::End();
         }
 
-        void properties(Demo::DemoApp& app)
+        void properties(Editor::EditorApp& app)
         {
             ImGui::Begin("Properties");
             ImGui::PushItemWidth(-1);
@@ -438,7 +409,7 @@ namespace Incubator::Demo
                 ImGui::SliderFloat("##shadowBias", &shadows.depthBias, 0, 0.01f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
                 ImGui::TextWrapped("Shadow preview settings are not saved in scene files.");
                 ImGui::Separator();
-                lightingControls(app.scene());
+                App::lightingControls(app.scene());
             }
             ImGui::PopItemWidth();
             ImGui::End();
@@ -458,7 +429,7 @@ namespace Incubator::Demo
             return buffer;
         }
 
-        void openScene(Demo::DemoApp& app, std::string_view path)
+        void openScene(Editor::EditorApp& app, std::string_view path)
         {
             auto buffer = pathBuffer(path);
             const auto description = Scene::readScene(app.fileIO(), path);
@@ -473,8 +444,8 @@ namespace Incubator::Demo
             currentFile_ = scenePath_.data();
             messageError_ = false;
             message_ = std::move(message);
-            Log::Registry::get("demo").info("Loaded scene '{}' ({} entities)", logPath(scenePath_.data()),
-                                            app.scene().entities().size());
+            Log::Registry::get("editor").info("Loaded scene '{}' ({} entities)", logPath(scenePath_.data()),
+                                              app.scene().entities().size());
         }
 
         std::shared_ptr<const Model::PreparedModel> creationModel(bool useObj)
@@ -510,13 +481,13 @@ namespace Incubator::Demo
         std::vector<char> scenePath_ = pathBuffer("");
         std::string message_;
         bool messageError_ = false;
-        OrbitCamera orbit_;
+        App::OrbitCamera orbit_;
         Render::FrameExtent extent_{0, 0};
     };
 
-    inline Demo::Callbacks makeCallbacks(std::string startupScene = "assets/scenes/shadows.json")
+    inline Editor::Callbacks makeCallbacks(std::string startupScene = "assets/scenes/shadows.json")
     {
-        auto demo = std::make_shared<ModelScene>();
+        auto demo = std::make_shared<EditorScene>();
         return {[demo, startupScene = std::move(startupScene)](auto& app) {
                     demo->initialize(app, startupScene);
                     app.shadowSettings().enabled = true;
@@ -527,4 +498,4 @@ namespace Incubator::Demo
                 [demo](auto& app, auto extent, const auto& input) { demo->input(app, extent, input); },
                 [demo](auto& app) { demo->layout(app); }};
     }
-}  // namespace Incubator::Demo
+}  // namespace Incubator::Editor

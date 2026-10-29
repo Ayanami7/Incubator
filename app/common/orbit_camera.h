@@ -10,7 +10,7 @@
 #include "runtime/scene/camera.h"
 #include "ui_input.h"
 
-namespace Incubator::Demo
+namespace Incubator::App
 {
     class OrbitCamera
     {
@@ -150,4 +150,4 @@ namespace Incubator::Demo
         float distance_ = 6, yaw_ = 0, pitch_ = 0;
         bool synchronized_ = false;
     };
-}  // namespace Incubator::Demo
+}  // namespace Incubator::App

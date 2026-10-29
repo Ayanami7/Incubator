@@ -1,4 +1,4 @@
-#include "examples/demo/startup_config.h"
+#include "app/common/startup_config.h"
 
 #include <gtest/gtest.h>
 
@@ -14,12 +14,12 @@ namespace
 
     TEST(StartupConfigTest, DefaultsAndPartialFieldsLeaveOtherOptionsUnchanged)
     {
-        const auto defaults = Demo::decodeStartupConfig("{}");
+        const auto defaults = App::decodeStartupConfig("{}");
         EXPECT_EQ(defaults.options.window.title, "Incubator Engine Demo");
         EXPECT_EQ(defaults.options.window.width, 1920);
         EXPECT_EQ(defaults.options.window.height, 1080);
         EXPECT_EQ(defaults.startupScene, "assets/scenes/shadows.json");
-        const auto partial = Demo::decodeStartupConfig(R"({"window":{"width":900},"unknown":true})");
+        const auto partial = App::decodeStartupConfig(R"({"window":{"width":900},"unknown":true})");
         EXPECT_EQ(partial.options.window.width, 900);
         EXPECT_EQ(partial.options.window.height, defaults.options.window.height);
         EXPECT_EQ(partial.options.vertexShader, defaults.options.vertexShader);
@@ -29,7 +29,7 @@ namespace
 
     TEST(StartupConfigTest, ReadsUtf8TitleAndScenePathWithoutRebasing)
     {
-        const auto config = Demo::decodeStartupConfig(
+        const auto config = App::decodeStartupConfig(
             R"({"window":{"title":"场景编辑","width":960,"height":540},"startupScene":"场景/主场景.json"})");
         EXPECT_EQ(config.options.window.title, "场景编辑");
         EXPECT_EQ(config.options.window.width, 960);
@@ -55,7 +55,7 @@ namespace
             SCOPED_TRACE(json);
             try
             {
-                Demo::decodeStartupConfig(json);
+                App::decodeStartupConfig(json);
                 FAIL() << "accepted invalid config";
             }
             catch (const Error::Exception& error)
@@ -76,19 +76,19 @@ namespace
         const auto utf8 = Utils::Utf8::toUtf8String(path);
         auto io = FileIO::createPlatformFileIO();
         fs::remove(path);
-        EXPECT_EQ(Demo::readStartupConfig(*io, utf8).startupScene, "assets/scenes/shadows.json");
+        EXPECT_EQ(App::readStartupConfig(*io, utf8).startupScene, "assets/scenes/shadows.json");
         {
             std::ofstream file(path, std::ios::binary);
             file << R"({"startupScene":"assets/scenes/主场景.json"})";
         }
-        EXPECT_EQ(Demo::readStartupConfig(*io, utf8).startupScene, "assets/scenes/主场景.json");
+        EXPECT_EQ(App::readStartupConfig(*io, utf8).startupScene, "assets/scenes/主场景.json");
         {
             std::ofstream file(path, std::ios::binary);
             file << R"({"window":{"width":0}})";
         }
         try
         {
-            Demo::readStartupConfig(*io, utf8);
+            App::readStartupConfig(*io, utf8);
             FAIL() << "accepted invalid config file";
         }
         catch (const Error::Exception& error)
@@ -97,7 +97,7 @@ namespace
             EXPECT_NE(error.message().find(utf8), std::string::npos);
             EXPECT_NE(error.message().find("window.width"), std::string::npos);
         }
-        EXPECT_THROW(Demo::readStartupConfig(*io, Utils::Utf8::toUtf8String(directory)), Error::Exception);
+        EXPECT_THROW(App::readStartupConfig(*io, Utils::Utf8::toUtf8String(directory)), Error::Exception);
         EXPECT_EQ(fs::current_path(), cwd);
         fs::remove(path);
     }

@@ -54,7 +54,7 @@ Loader 构造函数注入 `AssetSource&`（例如 `TextLoader(source)`）；源�
 
 - 生产与测试共用同一套真实 FileIO（`createPlatformFileIO()`）
 - 顺序为释放全部 CPU 持有及载荷 → reset 清除 Loader → bindAssetSource(nullptr) 解除绑定 → 销毁源 → 销毁 FileIO。reset 不替代 release；未清理完毕时更换或解除绑定抛 CONFIG，并保留原绑定及对象。
-- Demo 模型模式在此作用域内完成 ModelLoader 导入及 Model::prepareModel 的 PNG 依赖加载，返回的 PreparedModel 不借用 Loader 或 FileIO；最终用法见 [Demo](../../../examples/demo.md#启动时选择模型)。
+- Editor 模型准备在此作用域内完成 ModelLoader 导入及 Model::prepareModel 的 PNG 依赖加载，返回的 PreparedModel 不借用 Loader 或 FileIO；最终用法见 [Editor](../../../app/editor.md)。
 - 文件定位测试用临时目录替换工作目录（虚拟路径 join 后落在临时目录）；短读、提前 EOF、读取异常与输入长度上限测试通过受控 FileIO/FileHandle 注入，不实际分配巨量文件。
 
 ## 新增一个 Loader 的模板

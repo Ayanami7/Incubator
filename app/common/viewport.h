@@ -4,7 +4,7 @@
 #include <limits>
 
 #include "runtime/render/frame_input.h"
-namespace Incubator::Demo
+namespace Incubator::App
 {
     /// @brief 逻辑区域按两轴 framebuffer 比例换算，向下取整，正尺寸至少为一个像素。
     inline Render::FrameExtent viewportExtent(double width, double height, double scaleX, double scaleY)
@@ -16,4 +16,4 @@ namespace Incubator::Demo
         return {static_cast<uint32_t>(std::max(1.0, std::floor(w))),
                 static_cast<uint32_t>(std::max(1.0, std::floor(h)))};
     }
-}  // namespace Incubator::Demo
+}  // namespace Incubator::App

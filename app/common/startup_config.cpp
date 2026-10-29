@@ -9,7 +9,7 @@
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
 
-namespace Incubator::Demo
+namespace Incubator::App
 {
     namespace
     {
@@ -79,7 +79,7 @@ namespace Incubator::Demo
             auto file = fileIO.open(Utils::Utf8::toFsPath(path), FileIO::OpenMode::Read);
             if (!file)
             {
-                Log::Registry::get("demo").debug("Startup config '{}' not found; using defaults", path);
+                Log::Registry::get("app").debug("Startup config '{}' not found; using defaults", path);
                 return {};
             }
             const auto size = file->size();
@@ -96,7 +96,7 @@ namespace Incubator::Demo
                 position += count;
             }
             auto config = decodeStartupConfig(json);
-            Log::Registry::get("demo").info("Loaded startup config: {}", path);
+            Log::Registry::get("app").info("Loaded startup config: {}", path);
             return config;
         }
         catch (const Error::Exception& error)
@@ -104,4 +104,4 @@ namespace Incubator::Demo
             throw Error::Exception(error.code(), fmt::format("Startup config '{}': {}", path, error.message()));
         }
     }
-}  // namespace Incubator::Demo
+}  // namespace Incubator::App

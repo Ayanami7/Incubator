@@ -3,7 +3,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
-namespace Incubator::Demo
+namespace Incubator::Editor
 {
     /// @brief 使用 ImGui 自带配置保存单窗口工作区布局。
     class Workspace
@@ -17,11 +17,11 @@ namespace Incubator::Demo
         {
             if (!initialized_)
             {
-                ImGui::GetIO().IniFilename = "incubator-layout.ini";
+                ImGui::GetIO().IniFilename = "incubator-editor-layout.ini";
                 ImGui::LoadIniSettingsFromDisk(ImGui::GetIO().IniFilename);
                 initialized_ = true;
             }
-            const auto id = ImGui::GetID("IncubatorWorkspace");
+            const auto id = ImGui::GetID("IncubatorEditorWorkspace");
             const bool build = reset_ || !ImGui::DockBuilderGetNode(id);
             if (build)
             {
@@ -44,4 +44,4 @@ namespace Incubator::Demo
         bool initialized_ = false;
         bool reset_ = false;
     };
-}  // namespace Incubator::Demo
+}  // namespace Incubator::Editor

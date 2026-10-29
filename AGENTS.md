@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-Incubator 是一个 C++ 图形渲染器/游戏引擎项目。当前以 Windows、Vulkan 1.3、单窗口和主线程同步调用为基础，核心能力集中在 `IncubatorRuntime` 静态库，`examples/demo/` 是当前的示例消费者。
+Incubator 是一个 C++ 图形渲染器/游戏引擎项目。当前以 Windows、Vulkan 1.3、单窗口和主线程同步调用为基础，核心能力集中在 `IncubatorRuntime` 静态库；`app/editor/` 是正式编辑工具，`examples/demo/` 是最小展示消费者。
 
 ## 技术栈
 
@@ -24,6 +24,9 @@ Incubator/
 │   └── runtime/        # Core、Platform、Resource、Model、Scene、Render 逻辑模块
 ├── examples/
 │   └── demo/           # 引擎能力展示程序
+├── app/
+│   ├── editor/         # 场景编辑工具，目标 incubator_editor
+│   └── common/         # 两个应用实际共用的输入、相机、配置等小组件
 ├── test/               # 单元测试、集成测试与精确 fixture
 ├── docs/               # 构建、模块接口与使用说明
 ├── .agents/specs/      # 可选方向、当前任务与任务归档
@@ -34,14 +37,14 @@ Incubator/
 └── README.md           # 项目说明
 ```
 
-`apps/incubator/` 是正式应用的候选目录，目前尚未创建；规划见 [TO_DO.md](./.agents/specs/TO_DO.md)，构建约定见 [CMake 结构](./docs/cmake.md#正式应用目标apps-下规划尚未实施)。不要将规划目录或接口当作已实现能力。
+正式目录为 `app/editor/`，独立目标为 `incubator_editor`，不创建 `apps/`。资产浏览及清理面板尚未接入；当前范围以[任务索引](./.agents/specs/tasks/README.md)为准，构建约定见 [CMake 结构](./docs/cmake.md#正式应用目标appeditor)。候选方向不是实施承诺。
 
 ## 工作约定
 
 - 无明确要求时，不读写 `archived/` 目录下的文件。
 - 构建与测试命令遵循 [WORKFLOW.md](./WORKFLOW.md)，配置和构建统一使用 UTF-8 代码页。
 - 测试入口分工遵循 [WORKFLOW.md](./WORKFLOW.md#6-运行测试)：编辑器使用 TestMate 快速反馈，正式复核与阶段验收使用 CTest，原有任务验收条件继续有效；CTest 默认串行，cwd、串行约束与超时以 CMake 注册属性为准。
-- Demo 的运行 cwd 必须为对应构建目录（本工作区为 `E:/Project/VScode/Incubator/build`），资产从 `<cwd>/assets/` 读取；可执行文件所在目录与 cwd 分别约定。
+- Editor 和 Demo 的运行 cwd 必须为对应构建目录（本工作区为 `E:/Project/VScode/Incubator/build`），资产从 `<cwd>/assets/` 读取；可执行文件所在目录与 cwd 分别约定。Editor 独立使用 `incubator-editor-layout.ini`，Demo 不持久化布局。
 - `.agents/` 下的文件一律不允许跟踪进入 Git。没有明确要求时，不修改 `README.md`。
 - 遵循**不要过度设计和防御性编程**：以实际需求和现有职责为依据，复用现有实现，保留必要校验，不提前引入通用框架或额外机制。
 - 日志遵循[调用约定](./docs/runtime/log.md#调用约定)：记录有诊断价值的事件，错误在承担处理责任的边界记录，带上必要上下文；稳定帧和高频操作不刷日志，不以日志数量作为覆盖指标。
@@ -55,7 +58,7 @@ Incubator/
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 当前架构、模块依赖、数据流、所有权与设计原则；不维护演进规划或完成清单 |
 | [当前任务](./.agents/specs/tasks/README.md) | 已明确的阶段范围、子任务、验收条件与完成简记 |
 | [CMake 结构](./docs/cmake.md) | 构建目标、依赖、资产部署与运行 cwd；规划内容明确标注 |
-| [模块文档](./docs/runtime/)与 [Demo 说明](./docs/examples/demo.md) | 公开接口、具体支持范围与使用方式，不存放阶段验收报告 |
+| [模块文档](./docs/runtime/)、[Editor 说明](./docs/app/editor.md)与 [Demo 说明](./docs/examples/demo.md) | 公开接口、具体支持范围与使用方式，不存放阶段验收报告 |
 | [WORKFLOW.md](./WORKFLOW.md)与[代码风格](./.agents/rules/code_style.md) | 构建、测试、提交及编码规范 |
 | [TO_DO.md](./.agents/specs/TO_DO.md) | 宽泛的可选开发方向，不区分近期与远期，不记录完成状态 |
 
@@ -68,7 +71,7 @@ Incubator/
 1. 阅读本文件、[开发工作流](./WORKFLOW.md)和[代码风格](./.agents/rules/code_style.md)，明确本机开发约束。
 2. 阅读 [ARCHITECTURE.md](./ARCHITECTURE.md)，了解当前分层与所有权；涉及构建时查阅 [CMake 结构](./docs/cmake.md)。
 3. 阅读[当前任务](./.agents/specs/tasks/README.md)，确定本次工作的范围和验收要求；讨论后续方向时查阅 [TO_DO.md](./.agents/specs/TO_DO.md)。
-4. 阅读 [Demo 使用说明](./docs/examples/demo.md)、[main.cpp](./examples/demo/main.cpp)和 [DemoApp](./examples/demo/demo_app.h)，串起会话初始化、更新、交互、帧提取与关闭。
+4. 阅读 [Editor 使用说明](./docs/app/editor.md)、[main.cpp](./app/editor/main.cpp)和 [EditorApp](./app/editor/editor_app.h)，串起编辑会话、工作区、帧提取与关闭；最小展示见 [Demo 使用说明](./docs/examples/demo.md)。
 5. 根据任务查阅 [Resource](./docs/runtime/resource/resource.md)、[Model](./docs/runtime/model.md)、[Scene](./docs/runtime/scene.md)和 [Render](./docs/runtime/render.md)，对照对应公开头文件确认资源持有、实体状态及帧数据借用期。
 6. 补读受影响的实现与测试，复用已有入口和 fixture，按修改范围执行必要验证。
 

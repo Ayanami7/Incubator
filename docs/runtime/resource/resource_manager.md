@@ -46,9 +46,9 @@ public:
   调用方须在正常或异常结束时先 release 本次持有，再移除借用 AssetSource 的 Loader、解除源绑定，最后销毁 AssetSource 和 FileIO；
   具体资源的 GPU 使用期由 Render 另行管理。
 
-[DemoApp 示例](../../examples/demo.md) 在首次注册前通过 loadersEmpty() 确认整个路由表为空，
+[EditorApp](../../app/editor.md) 在首次注册前通过 loadersEmpty() 确认整个路由表为空，
 同时确认没有既有资产源绑定，再绑定会话源并注册 Shader/Texture/Model Loader；已有任意路由或绑定即拒绝接管并保留原状态。
-DemoApp 运行期间路由及 FileIO 保持有效，CPU release、Scene clear/switch 不调用 reset，关闭时才清理已接管路由。
+EditorApp 运行期间路由及 FileIO 保持有效，CPU release、Scene clear/switch 不调用 reset，关闭时才清理已接管路由。
 
 ## 资产源绑定
 

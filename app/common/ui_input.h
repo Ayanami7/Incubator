@@ -5,7 +5,7 @@
 
 #include "runtime/platform/input/input_state.h"
 
-namespace Incubator::Demo
+namespace Incubator::App
 {
     struct UiInput
     {
@@ -76,4 +76,4 @@ namespace Incubator::Demo
     private:
         bool suspended_ = false;
     };
-}  // namespace Incubator::Demo
+}  // namespace Incubator::App

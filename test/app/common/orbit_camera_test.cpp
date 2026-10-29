@@ -1,11 +1,11 @@
-#include "examples/demo/orbit_camera.h"
+#include "app/common/orbit_camera.h"
 
 #include <gtest/gtest.h>
 
 #include <cmath>
 #include <glm/ext/matrix_transform.hpp>
 
-#include "examples/demo/viewport.h"
+#include "app/common/viewport.h"
 
 namespace
 {
@@ -13,9 +13,9 @@ namespace
 
     TEST(OrbitCameraTest, GesturesStartOnlyOnScenePressAndCancelWithoutRestartingHeldButtons)
     {
-        Demo::OrbitCamera orbit;
+        App::OrbitCamera orbit;
         Scene::Camera camera({0, 0, 6});
-        Demo::UiInput input;
+        App::UiInput input;
         input.rotate = {true, true, false};
         input.delta = {100, 100};
         input.captureMouse = true;
@@ -59,9 +59,9 @@ namespace
         for (const bool captured : {false, true})
         {
             SCOPED_TRACE(captured);
-            Demo::OrbitCamera orbit;
+            App::OrbitCamera orbit;
             Scene::Camera camera({0, 0, 6}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 100});
-            Demo::UiInput input;
+            App::UiInput input;
             input.rotate = {true, true, false};
             ASSERT_FALSE(orbit.apply(camera, input, {800, 600}));
 
@@ -92,9 +92,9 @@ namespace
         for (const bool captured : {false, true})
         {
             SCOPED_TRACE(captured);
-            Demo::OrbitCamera orbit;
+            App::OrbitCamera orbit;
             Scene::Camera camera({0, 0, 6}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 100});
-            Demo::UiInput input;
+            App::UiInput input;
             input.pan = {true, true, false};
             ASSERT_FALSE(orbit.apply(camera, input, {800, 600}));
 
@@ -123,9 +123,9 @@ namespace
 
     TEST(OrbitCameraTest, PanUsesWindowCoordinatesAndZoomIsIndependentOfFrameTime)
     {
-        Demo::OrbitCamera orbit;
+        App::OrbitCamera orbit;
         Scene::Camera camera({0, 0, 6}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 100});
-        Demo::UiInput input;
+        App::UiInput input;
         input.pan = {true, true, false};
         EXPECT_FALSE(orbit.apply(camera, input, {800, 600}));
         input.pan.pressed = false;
@@ -161,7 +161,7 @@ namespace
         ASSERT_TRUE(world);
         for (const Render::FrameExtent extent : {Render::FrameExtent{1600, 400}, {400, 1600}})
         {
-            Demo::OrbitCamera orbit;
+            App::OrbitCamera orbit;
             Scene::Camera camera({0, 0, 6}, glm::quat(glm::vec3(0.2f, 0.4f, 0)), {glm::radians(45.0f), 1, 2});
             const auto rotation = camera.rotation();
             ASSERT_TRUE(orbit.focus(camera, world, extent));
@@ -185,9 +185,9 @@ namespace
 
     TEST(OrbitCameraTest, UnavailableFocusPreservesGestureAndPointBoundsProduceValidCamera)
     {
-        Demo::OrbitCamera orbit;
+        App::OrbitCamera orbit;
         Scene::Camera camera({0, 0, 6});
-        Demo::UiInput input;
+        App::UiInput input;
         input.rotate = {true, true, false};
         orbit.apply(camera, input, {800, 600});
         EXPECT_FALSE(orbit.focus(camera, std::nullopt, {800, 600}));
@@ -205,7 +205,7 @@ namespace
 
 TEST(ViewportExtentTest, UsesFramebufferRatioAndOneRoundingRule)
 {
-    using Incubator::Demo::viewportExtent;
+    using Incubator::App::viewportExtent;
     EXPECT_EQ(viewportExtent(123.9, 80.4, 1, 1), (Incubator::Render::FrameExtent{123, 80}));
     EXPECT_EQ(viewportExtent(123.9, 80.4, 1.5, 2), (Incubator::Render::FrameExtent{185, 160}));
     EXPECT_EQ(viewportExtent(0.1, 0.1, 1, 1), (Incubator::Render::FrameExtent{1, 1}));
@@ -216,61 +216,61 @@ TEST(ViewportExtentTest, UsesFramebufferRatioAndOneRoundingRule)
 TEST(ViewportInputTest, StartsInsideAndKeepsDragOwnershipAcrossPanels)
 {
     using namespace Incubator;
-    Demo::ViewportRegion region{{100, 50}, {800, 400}, false, false};
-    Demo::OrbitCamera orbit;
+    App::ViewportRegion region{{100, 50}, {800, 400}, false, false};
+    App::OrbitCamera orbit;
     Scene::Camera camera({0, 0, 6});
-    Demo::UiInput raw;
+    App::UiInput raw;
     raw.position = {110, 70};
     raw.rotate = {true, true, false};
-    EXPECT_FALSE(orbit.apply(camera, Demo::viewportInput(raw, region, false), region.size));
+    EXPECT_FALSE(orbit.apply(camera, App::viewportInput(raw, region, false), region.size));
     region.hovered = true;
     raw.rotate.pressed = false;
     raw.delta = {20, 0};
-    EXPECT_FALSE(orbit.apply(camera, Demo::viewportInput(raw, region, false), region.size));
+    EXPECT_FALSE(orbit.apply(camera, App::viewportInput(raw, region, false), region.size));
     raw.rotate.pressed = true;
-    EXPECT_FALSE(orbit.apply(camera, Demo::viewportInput(raw, region, false), region.size));
+    EXPECT_FALSE(orbit.apply(camera, App::viewportInput(raw, region, false), region.size));
     region.hovered = false;
     raw.rotate.pressed = false;
-    EXPECT_TRUE(orbit.apply(camera, Demo::viewportInput(raw, region, false), region.size));
+    EXPECT_TRUE(orbit.apply(camera, App::viewportInput(raw, region, false), region.size));
     const auto moved = camera.position();
     raw.rotate = {false, false, true};
     raw.delta = {10, 0};
-    EXPECT_TRUE(orbit.apply(camera, Demo::viewportInput(raw, region, false), region.size));
+    EXPECT_TRUE(orbit.apply(camera, App::viewportInput(raw, region, false), region.size));
     EXPECT_NE(camera.position(), moved);
     const auto released = camera.position();
     raw.delta = {50, 0};
     raw.rotate = {};
-    EXPECT_FALSE(orbit.apply(camera, Demo::viewportInput(raw, region, false), region.size));
+    EXPECT_FALSE(orbit.apply(camera, App::viewportInput(raw, region, false), region.size));
     EXPECT_EQ(camera.position(), released);
 }
 TEST(ViewportInputTest, WheelFocusAndCoordinatesFollowImageNotGlobalCapture)
 {
     using namespace Incubator;
-    Demo::ViewportRegion region{{100, 50}, {400, 600}, true, true};
-    Demo::UiInput raw;
+    App::ViewportRegion region{{100, 50}, {400, 600}, true, true};
+    App::UiInput raw;
     raw.position = {120, 80};
     raw.captureMouse = true;
     raw.captureKeyboard = true;
     raw.scroll = {0, 1};
     raw.focusPressed = true;
-    const auto inside = Demo::viewportInput(raw, region, false);
+    const auto inside = App::viewportInput(raw, region, false);
     EXPECT_FALSE(inside.captureMouse);
     EXPECT_FALSE(inside.captureKeyboard);
     EXPECT_EQ(inside.position.x, 20);
     EXPECT_EQ(inside.position.y, 30);
     EXPECT_EQ(inside.scroll.y, 1);
-    EXPECT_TRUE(Demo::viewportInput(raw, region, true).captureKeyboard);
+    EXPECT_TRUE(App::viewportInput(raw, region, true).captureKeyboard);
     region.focused = false;
-    EXPECT_TRUE(Demo::viewportInput(raw, region, false).captureKeyboard);
-    Demo::OrbitCamera orbit;
+    EXPECT_TRUE(App::viewportInput(raw, region, false).captureKeyboard);
+    App::OrbitCamera orbit;
     Scene::Camera camera({0, 0, 6});
     raw.rotate = {true, true, false};
-    orbit.apply(camera, Demo::viewportInput(raw, region, false), region.size);
+    orbit.apply(camera, App::viewportInput(raw, region, false), region.size);
     region.hovered = false;
     raw.rotate.pressed = false;
     raw.delta = {};
     const auto before = camera.position();
-    EXPECT_FALSE(orbit.apply(camera, Demo::viewportInput(raw, region, false), region.size));
+    EXPECT_FALSE(orbit.apply(camera, App::viewportInput(raw, region, false), region.size));
     EXPECT_EQ(camera.position(), before);
 }
 TEST(ViewportInputTest, PanUsesLogicalHeightAcrossDpiAndAspectRatios)
@@ -278,18 +278,18 @@ TEST(ViewportInputTest, PanUsesLogicalHeightAcrossDpiAndAspectRatios)
     using namespace Incubator;
     for (const double dpi : {1.0, 1.5, 2.0})
     {
-        Demo::OrbitCamera orbit;
+        App::OrbitCamera orbit;
         Scene::Camera camera({0, 0, 6}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 100});
-        Demo::ViewportRegion region{{0, 0}, {800, 400}, true, true};
-        Demo::UiInput raw;
+        App::ViewportRegion region{{0, 0}, {800, 400}, true, true};
+        App::UiInput raw;
         raw.pan = {true, true, false};
-        orbit.apply(camera, Demo::viewportInput(raw, region, false), region.size);
+        orbit.apply(camera, App::viewportInput(raw, region, false), region.size);
         raw.pan.pressed = false;
         raw.delta = {20, 10};
-        ASSERT_TRUE(orbit.apply(camera, Demo::viewportInput(raw, region, false), region.size));
+        ASSERT_TRUE(orbit.apply(camera, App::viewportInput(raw, region, false), region.size));
         EXPECT_NEAR(camera.position().x, -0.6, 1e-5);
         EXPECT_NEAR(camera.position().y, 0.3, 1e-5);
-        const auto pixels = Demo::viewportExtent(800, 400, dpi, dpi);
+        const auto pixels = App::viewportExtent(800, 400, dpi, dpi);
         EXPECT_NEAR(double(pixels.width) / pixels.height, 2, 1e-6);
     }
 }

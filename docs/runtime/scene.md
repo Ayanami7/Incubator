@@ -1,7 +1,7 @@
 # Scene：实体、Transform 与 Camera
 
-[Scene Runtime 示例](../examples/demo.md) 展示共享模型实体的创建、独立 TRS、可见性、删除、清空，
-以及 DemoApp 内的 Scene/Camera 替换；所有实体变换直接保存在 Runtime Transform 中。
+[Scene Runtime Editor](../app/editor.md) 展示共享模型实体的创建、独立 TRS、可见性、删除、清空，
+以及 EditorApp 内的 Scene/Camera 替换；所有实体变换直接保存在 Runtime Transform 中。
 
 `runtime/scene/transform.h` 和 `camera.h` 提供自有值类型，归入现有 `IncubatorRuntime`。
 二者使用 GLM，不依赖 Demo、ImGui 或输入控制；Camera 的输出类型复用 Render::CameraMatrices。
@@ -44,7 +44,7 @@ Scene 保存输入方向原值，构造光源矩阵及 GPU 帧参数时只归一
 显式设置展示值；clear 不重置光照。不创建灯光实体，也不在材质中保存另一份光照。
 
 模型 Demo 的灯光控件直接编辑当前 Scene，UI 返回后主循环才提取 SceneFrame；
-打开场景成功后使用文件中的光照，普通相机操作、聚焦与实体编辑保留当前光照；阴影预览设置由 DemoApp 独立持有，不写入 Scene。
+打开场景成功后使用文件中的光照，普通相机操作、聚焦与实体编辑保留当前光照；阴影预览设置由 EditorApp 独立持有，不写入 Scene。
 
 EntityId 是独立的 uint64 包装，默认 0 无效，只有 Scene 分配非零标识；value() 可用于诊断、operator== 用于比较。
 所有 Scene 共用进程内单调序号，删除、clear 或 Scene 销毁后不复用旧值，其他 Scene 的 ID 不会命中本 Scene。
@@ -166,7 +166,7 @@ Transform、模型绑定、可见性、Camera 位姿/FOV、extent 或当前 Scen
 
 若提交前窗口 extent 改变，Renderer 跳过旧输入，下一轮使用新 extent 重新提取。
 Renderer 关闭后，Scene/快照仍可保留元数据，提取不会检查或修复过期引用；提交仍由现有 Renderer 边界抛 RENDER。
-[DemoApp 示例](../examples/demo.md) 已提供事件→更新→UI→提取→提交的驱动，持有当前 Scene 并支持
+[EditorApp 示例](../app/editor.md) 已提供事件→更新→UI→提取→提交的驱动，持有当前 Scene 并支持
 在下一次提取前 setScene 替换。替换只改变逻辑场景及相机，不清除 Loader 或即时回收 GPU。
 提取接口可由应用独立调用。
 
@@ -223,7 +223,7 @@ near 映射为 0、far 映射为 1；最终 projection 的 Y 只在此处适配�
 没有可绘制 extent 时，上层跳过投影、提取与提交，不用零尺寸求宽高比。
 
 Demo 的 target/yaw/pitch/distance 仍为轨道控件状态，转换为相机世界位置及 quaternion 后交给此类型。
-Runtime Camera 不提供通用控制器、正交投影或多视口；示例层轨道操作和世界包围体聚焦见 [Demo](../examples/demo.md#轨道相机与聚焦)，原始输入由 Platform Input/Window 提供。
+Runtime Camera 不提供通用控制器、正交投影或多视口；示例层轨道操作和世界包围体聚焦见 [Demo](../app/editor.md#轨道相机与聚焦)，原始输入由 Platform Input/Window 提供。
 
 ## 视锥与 AABB 判断
 

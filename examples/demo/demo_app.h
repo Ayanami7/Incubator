@@ -4,14 +4,14 @@
 #include <functional>
 #include <memory>
 
-#include "demo_options.h"
+#include "app/common/session_options.h"
+#include "app/common/ui_input.h"
 #include "runtime/core/clock/clock.h"
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
 #include "runtime/render/renderer.h"
 #include "runtime/resource/asset_source.h"
 #include "runtime/scene/scene.h"
-#include "ui_input.h"
 
 namespace Incubator::Demo
 {
@@ -34,7 +34,7 @@ namespace Incubator::Demo
         std::function<void(DemoApp&, const FrameTime&)> update;
         std::function<void(DemoApp&)> ui;
         std::function<void(DemoApp&)> cancelInteraction;
-        std::function<void(DemoApp&, Render::FrameExtent, const UiInput&)> input;
+        std::function<void(DemoApp&, Render::FrameExtent, const App::UiInput&)> input;
         /// @brief 在输入和编辑之前建立当前帧视口布局。
         std::function<void(DemoApp&)> layout;
     };
@@ -43,7 +43,7 @@ namespace Incubator::Demo
     class DemoApp
     {
     public:
-        explicit DemoApp(DemoOptions options = {},
+        explicit DemoApp(App::SessionOptions options = {},
                          std::unique_ptr<FileIO::FileIO> fileIO = FileIO::createPlatformFileIO());
         ~DemoApp();
         DemoApp(const DemoApp&) = delete;
@@ -83,7 +83,7 @@ namespace Incubator::Demo
         /// @brief 在当前 UI 帧中显示独立场景视口；关闭或隐藏时只提交其他 UI。
         void sceneViewport(const char* title, bool* open = nullptr);
         /// @brief 返回本轮布局确定的场景图像逻辑区域。
-        const ViewportRegion& viewportRegion() const
+        const App::ViewportRegion& viewportRegion() const
         {
             return viewportRegion_;
         }
@@ -106,7 +106,7 @@ namespace Incubator::Demo
         bool shadowResourcesPrepared_ = false;
         Render::FrameExtent sceneExtent_{};
         Render::SceneOutput sceneOutput_;
-        ViewportRegion viewportRegion_;
+        App::ViewportRegion viewportRegion_;
         bool sceneChanged_ = false;
         bool ownsRoutes_ = false;
         bool exitRequested_ = false;
