@@ -11,11 +11,11 @@
 #include <vector>
 
 #include "demo_app.h"
-#include "model_cache.h"
 #include "orbit_camera.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
+#include "runtime/model/model_manager.h"
 #include "runtime/model/prepared_model.h"
 #include "runtime/scene/scene_file.h"
 #include "runtime/scene/scene_rebuild.h"
@@ -60,7 +60,7 @@ namespace Incubator::Demo
     public:
         void initialize(Demo::DemoApp& app, std::string_view path = "assets/scenes/mixed.json")
         {
-            cache_ = std::make_unique<ModelCache>(app.renderer());
+            cache_ = std::make_unique<Model::ModelManager>(app.renderer());
             openScene(app, path);
         }
 
@@ -108,7 +108,8 @@ namespace Incubator::Demo
             {
                 messageError_ = true;
                 message_ = error.message();
-                Log::Registry::get("demo").error("Failed to load scene '{}': {}", path, error.message());
+                if (!dynamic_cast<const Model::LoadError*>(&error))
+                    Log::Registry::get("demo").error("Failed to load scene '{}': {}", path, error.message());
                 return false;
             }
         }
@@ -502,7 +503,7 @@ namespace Incubator::Demo
         std::string currentFile_;
         Workspace workspace_;
         bool viewportOpen_ = true;
-        std::unique_ptr<ModelCache> cache_;
+        std::unique_ptr<Model::ModelManager> cache_;
         Scene::EntityId selected_;
         bool useObj_ = false;
         bool saveRequested_ = false;

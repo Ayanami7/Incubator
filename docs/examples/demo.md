@@ -72,6 +72,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 
 启动时仅准备场景实际引用的模型；创建实体时按需准备所选模型。
 相同规范化来源与完整准备选项在当前会话内复用；不同选项分别准备。
+创建及场景重建共用 Runtime ModelManager；Demo 不再维护单独的模型缓存实现。
 准备后 CPU 模型和 PNG 持有已释放，Loader/FileIO 继续存活，因此后续操作仍走原有资源服务。
 场景及阴影 Shader 同样通过 ResourceManager::hold 取得只可移动的 CPU 持有，准备结束后自动释放，不直接配对 Registry 引用。
 调整姿态和可见性复用现有 GPU 引用。
@@ -113,8 +114,10 @@ DemoApp 向回调消费者提供基于单调 Clock 的 FrameTime；生产 Demo �
 应用不手工缓存 FrameInput 或第二份实体 model 矩阵，帧数据持有及借用规则见 [Scene](../runtime/scene.md)。
 
 回调共享的 ModelScene 在 run 收尾时释放，随后 DemoApp 清理 Scene、独占 Loader 路由和源绑定，再销毁 Renderer、Window、AssetSource 和 FileIO。
-删除实体、清空或切换 Scene 不即时回收显存；GPU 资源由 Renderer 持有到关闭。
-Shader、模型依赖或回调失败时 DemoApp 先清理，再由 main 记录异常并返回 1，不继续提交不完整帧。
+删除实体、清空或切换 Scene 后，ModelManager 继续保留缓存；显式 collectUnused 才移除没有外部使用者的模型，
+在途资源待 Fence 完成后回收。当前 Demo 未增加清理按钮；会话结束释放缓存，独立 Renderer 先关闭时模型晚析构也安全。
+Shader、模型依赖或回调失败时 DemoApp 先清理并返回失败；模型 CPU 加载失败已由 ResourceManager 记录，
+面板展示其具体原因，main 不重复记录 Model::LoadError，其余异常由原处理边界记录，不继续提交不完整帧。
 
 Debug 示例沿用 Optional Validation，Release 为 Disabled；需要强制验证的 GPU 测试使用 Required。
 支持的模型、纹理、材质和同步边界分别见 [Model](../runtime/model.md)、[Resource](../runtime/resource/resource.md)

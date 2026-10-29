@@ -1477,6 +1477,7 @@ namespace
     TEST_F(DemoAppTest, MixedSceneSaveLoadPreservesStateAndRenderedPixels)
     {
         copyShowcaseModels();
+        std::ostringstream failures;
         Demo::DemoApp session(options());
         session.run({[&](Demo::DemoApp& app) {
             Demo::ModelScene demo;
@@ -1507,7 +1508,18 @@ namespace
             auto invalidModel = Scene::captureScene(app.scene(), app.clearColor());
             invalidModel.entities[2].model = Model::ModelReference("models/missing.gltf");
             Scene::writeScene(app.fileIO(), "missing-model.json", invalidModel);
+            auto failureSink = std::make_shared<spdlog::sinks::ostream_sink_mt>(failures);
+            failureSink->set_pattern("%l|%v");
+            Log::Registry::get("resource").addSink(failureSink);
+            Log::Registry::get("demo").addSink(failureSink);
+            const std::string associatedFile(demo.scenePath());
             EXPECT_FALSE(demo.load(app, "missing-model.json"));
+            EXPECT_EQ(demo.scenePath(), associatedFile);
+            EXPECT_NE(demo.message().find("models/missing.gltf"), std::string::npos);
+            const auto recordedFailure = failures.str();
+            const auto firstFailure = recordedFailure.find("error|");
+            ASSERT_NE(firstFailure, std::string::npos);
+            EXPECT_EQ(recordedFailure.find("error|", firstFailure + 6), std::string::npos);
             EXPECT_NE(app.scene().find(tea), nullptr);
             EXPECT_EQ(demo.selected(), tea);
             EXPECT_EQ(app.scene().camera().position(), camera.position());

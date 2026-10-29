@@ -56,8 +56,8 @@ valid() 只表示曾分配过非零值，实体是否仍存活须由所属 Scene
 Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Transform/Camera 沿用自身的校验契约。
 
 多个实体直接共享同一 PreparedModel，不复制几何、像素或 GPU 对象。模型绑定/实体操作不加载文件、不准备资源；
-删除、解除模型或 clear 只结束对应逻辑持有，其他实体不受影响。即使 PreparedModel 的最后一个逻辑持有结束，
-GPU 仍由 Renderer 持有到关闭；这与 [Model 持有期](./model.md#持有期及失败) 一致。
+删除、解除模型或 clear 只结束对应模型持有，其他实体不受影响。模型缓存按显式清理策略保留，
+最后模型持有结束后撤销其 GPU 资源组，在途对象待对应 Fence 完成才回收；见 [Model 持有期](./model.md#持有期及失败)。
 
 ## 场景内容快照
 
@@ -105,7 +105,8 @@ GPU 仍由 Renderer 持有到关闭；这与 [Model 持有期](./model.md#持有
 `runtime/scene/scene_rebuild.h` 的 `rebuildScene(description, resolver)` 先校验内容，按实体顺序通过
 调用方解析器取得模型并构造新 Scene，返回新场景及背景；空模型不调用解析器。新实体分配新 ID，
 真实 Transform、Camera 和 Lighting 原样恢复，不重复应用模型源根或展示缩放。解析失败或返回空模型时抛出异常，
-不返回部分场景；调用方应在成功后替换当前场景。解析期间已创建的 GPU 对象仍由 Renderer 持有至关闭。
+不返回部分场景；调用方应在成功后替换当前场景。单个模型准备失败会清理本次未发布资源，
+解析期间已成功加入 ModelManager 的模型按缓存的显式清理策略保留，不改变原场景。
 
 ## 场景帧提取
 

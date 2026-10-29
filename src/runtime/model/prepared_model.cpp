@@ -25,8 +25,7 @@ namespace Incubator::Model
             Resource::ResourceType::MODEL, sourceReference.path());
         const auto* source = modelHold.get<Resource::ModelResource>();
         if (!source)
-            throw Error::Exception(Error::Code::RENDER, fmt::format("Cannot prepare model '{}': {}", virtualPath,
-                                                                    modelHold.failure()->reason));
+            throw LoadError(fmt::format("Cannot prepare model '{}': {}", virtualPath, modelHold.failure()->reason));
 
         auto result = std::shared_ptr<PreparedModel>(new PreparedModel(std::move(sourceReference)));
         result->nodes_ = source->nodes();
@@ -85,10 +84,8 @@ namespace Incubator::Model
                         Resource::ResourceType::TEXTURE, *material.texturePath));
                     const auto* texture = textureHolds.back().get<Resource::TextureResource>();
                     if (!texture)
-                        throw Error::Exception(
-                            Error::Code::RENDER,
-                            fmt::format("Cannot prepare model '{}': texture '{}': {}", virtualPath,
-                                        *material.texturePath, textureHolds.back().failure()->reason));
+                        throw LoadError(fmt::format("Cannot prepare model '{}': texture '{}': {}", virtualPath,
+                                                    *material.texturePath, textureHolds.back().failure()->reason));
                     pixels.push_back(texture);
                 }
             }
@@ -104,14 +101,15 @@ namespace Incubator::Model
             materialTextures.push_back(textureIndex);
         }
 
+        result->resources_ = renderer.createResources();
         for (const auto* texture : pixels)
         {
             if (texture)
-                result->textures_.push_back(renderer.createTexture(*texture, options.mipMode));
+                result->textures_.push_back(renderer.createTexture(result->resources_, *texture, options.mipMode));
             else
             {
                 Resource::TextureResource white({}, 1, 1, {255, 255, 255, 255});
-                result->textures_.push_back(renderer.createTexture(white, options.mipMode));
+                result->textures_.push_back(renderer.createTexture(result->resources_, white, options.mipMode));
             }
         }
         for (uint32_t index : geometries)
@@ -123,10 +121,11 @@ namespace Incubator::Model
                 vertices.push_back({{vertex.position[0], vertex.position[1], vertex.position[2]},
                                     {vertex.uv[0], vertex.uv[1]},
                                     {vertex.normal[0], vertex.normal[1], vertex.normal[2]}});
-            result->meshes_.push_back(renderer.createMesh(vertices, geometry.indices));
+            result->meshes_.push_back(renderer.createMesh(result->resources_, vertices, geometry.indices));
         }
         for (size_t i = 0; i < materials.size(); ++i)
             result->materials_.push_back(renderer.createMaterial(
+                result->resources_,
                 {result->textures_[materialTextures[i]], source->materials()[materials[i]].color, options.sampler,
                  source->materials()[materials[i]].unlit ? Render::ShadingMode::Unlit : options.shading}));
 

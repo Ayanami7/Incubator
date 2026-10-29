@@ -19,11 +19,11 @@
 #include <type_traits>
 #include <utility>
 
-#include "../../examples/demo/model_cache.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/model/model_instance.h"
+#include "runtime/model/model_manager.h"
 #include "runtime/model/prepared_model.h"
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
@@ -1185,6 +1185,10 @@ namespace
             EXPECT_EQ(model, nullptr);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 0u);
+            const auto failedCounts = Detail::RendererReviewAccess::resourceCounts(renderer);
+            EXPECT_EQ(failedCounts.meshes, 0u);
+            EXPECT_EQ(failedCounts.textures, 0u);
+            EXPECT_EQ(failedCounts.materials, 0u);
             released(ResourceType::MODEL, GLTF);
             released(ResourceType::TEXTURE, PNG);
             shaders(renderer);
@@ -1248,19 +1252,20 @@ namespace
 
     TEST_F(ModelPreparationTest, SceneRebuildReusesSessionModelsAndPreservesFailures)
     {
-        using Demo::ModelCache;
+        using Model::ModelManager;
         auto native = window();
         std::weak_ptr<const Model::PreparedModel> firstSession;
         {
             Renderer renderer(*native, RendererValidationMode::Required);
             shaders(renderer);
-            ModelCache cache(renderer);
+            ModelManager cache(renderer);
             const Model::ModelReference gltf("models/minimal_gltf/model.gltf");
             const Model::ModelReference obj("models/minimal_obj/model.obj");
             const auto first = cache.resolve(gltf);
             firstSession = first;
             EXPECT_EQ(first, cache.resolve(Model::ModelReference("MODELS/minimal_gltf/../minimal_gltf/MODEL.gltf")));
             const auto second = cache.resolve(obj);
+            EXPECT_EQ(cache.size(), 2u);
             Scene::SceneDescription description;
             description.entities = {{gltf, Scene::Transform({1, 2, 3}, {1, 0, 0, 0}, {-2, 0, 3}), false},
                                     {obj, Scene::Transform({-1, 0, 0}), true},
@@ -1296,6 +1301,33 @@ namespace
             EXPECT_NE(built.scene->find(oldId), nullptr);
             EXPECT_EQ(Scene::rebuildScene(description, resolver).scene->entities()[0].model, first);
 
+            const auto sourcePath = fs::path("assets") / gltf.path();
+            std::ifstream input(sourcePath, std::ios::binary);
+            const std::string sourceText{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+            input.close();
+            {
+                std::ofstream broken(sourcePath);
+                broken << "{";
+            }
+            Model::PrepareOptions parseOptions;
+            parseOptions.shading = ShadingMode::Lambert;
+            try
+            {
+                cache.resolve(Model::ModelReference(gltf.path(), parseOptions));
+                FAIL() << "Accepted invalid glTF JSON";
+            }
+            catch (const Model::LoadError& error)
+            {
+                EXPECT_NE(error.message().find(gltf.path()), std::string::npos);
+                EXPECT_NE(error.message().find("Invalid glTF JSON"), std::string::npos);
+            }
+            EXPECT_EQ(cache.size(), 2u);
+            draw(*native, renderer, *first);
+            {
+                std::ofstream restored(sourcePath);
+                restored << sourceText;
+            }
+
             const auto texturePath = fs::path("assets") / PNG;
             fs::remove(texturePath);
             Model::PrepareOptions missingTextureOptions;
@@ -1323,19 +1355,145 @@ namespace
             option.shading = ShadingMode::Lambert;
             EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
             released(ResourceType::MODEL, gltf.path());
+            EXPECT_EQ(cache.size(), 8u);
+            EXPECT_EQ(cache.collectUnused(), 6u);
+            EXPECT_EQ(cache.size(), 2u);
+            EXPECT_EQ(occurrences(resourceMessages_.str(), "load:"), 3u);
+            draw(*native, renderer, *first);
             EXPECT_TRUE(ResourceManager::instance().hasLoader(ResourceType::MODEL));
         }
         EXPECT_TRUE(firstSession.expired());
         {
             Renderer renderer(*native, RendererValidationMode::Required);
             shaders(renderer);
-            ModelCache nextSession(renderer);
+            ModelManager nextSession(renderer);
             const auto next = nextSession.resolve(Model::ModelReference(GLTF));
             EXPECT_TRUE(next->meshes()[0].valid());
             EXPECT_TRUE(firstSession.expired());
         }
         cleanValidation();
     }
+    TEST_F(ModelPreparationTest, CachedModelsCollectAfterLastSceneUseAndProtectMainAndShadowSubmissions)
+    {
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            shadowShader(renderer);
+            Model::ModelManager models(renderer);
+            auto model = models.resolve(Model::ModelReference(GLTF));
+            const auto mesh = model->meshes()[0];
+            const auto texture = model->textures()[0];
+            const auto material = model->materials()[0];
+            const auto meshes = model->meshes().size();
+            const auto textures = model->textures().size();
+            const auto materials = model->materials().size();
+            std::weak_ptr<const Model::PreparedModel> weak = model;
+            Scene::Scene scene;
+            scene.createEntity(model);
+            scene.createEntity(model, Scene::Transform({0.5f, 0, 0}));
+            model.reset();
+            EXPECT_EQ(models.collectUnused(), 0u);
+            EXPECT_EQ(models.size(), 1u);
+            ShadowSettings settings;
+            settings.enabled = true;
+            const auto frame = Scene::extractSceneFrame(scene, {384, 256}, false, settings);
+            ASSERT_TRUE(frame);
+            ASSERT_FALSE(frame->draws.empty());
+            ASSERT_EQ(frame->draws.size(), frame->shadowDraws.size());
+            SceneOutput output;
+            for (int slot = 0; slot != 2; ++slot)
+            {
+                ASSERT_TRUE(renderer.beginUiFrame());
+                output = renderer.prepareSceneTarget(frame->extent);
+                renderer.imgui().endFrame();
+                renderer.drawSceneTarget(output, frame->input(), {0.2f, 0.24f, 0.28f, 1});
+            }
+            scene.clear();
+            EXPECT_EQ(models.collectUnused(), 1u);
+            EXPECT_EQ(models.size(), 0u);
+            EXPECT_TRUE(weak.expired());
+            EXPECT_TRUE(mesh.valid());
+            EXPECT_TRUE(texture.valid());
+            EXPECT_TRUE(material.valid());
+            auto counts = Detail::RendererReviewAccess::resourceCounts(renderer);
+            EXPECT_EQ(counts.meshes, meshes);
+            EXPECT_EQ(counts.textures, textures);
+            EXPECT_EQ(counts.materials, materials);
+            renderer.prepareSceneTarget(frame->extent);
+            EXPECT_TRUE(mesh.valid());  // 第二个帧槽仍保留本次实际对象。
+            Detail::RendererReviewAccess::withSceneOutput(renderer, output, [&](const auto& device, const auto& image) {
+                EXPECT_EQ(TextureGpuReview::captureMip(device, image, 0, {384, 256}).size(), 384u * 256u * 4u);
+            });
+            EXPECT_FALSE(mesh.valid());
+            EXPECT_FALSE(texture.valid());
+            EXPECT_FALSE(material.valid());
+            counts = Detail::RendererReviewAccess::resourceCounts(renderer);
+            EXPECT_EQ(counts.meshes, 0u);
+            EXPECT_EQ(counts.textures, 0u);
+            EXPECT_EQ(counts.materials, 0u);
+
+            // 显式切换并清理；缓存只保留当前场景使用的模型，不逐轮积累。
+            std::unique_ptr<Scene::Scene> switched;
+            for (int cycle = 0; cycle != 6; ++cycle)
+            {
+                const char* path = cycle % 2 ? OBJ : GLTF;
+                auto nextModel = models.resolve(Model::ModelReference(path));
+                EXPECT_EQ(nextModel, models.resolve(Model::ModelReference(path)));
+                auto next = std::make_unique<Scene::Scene>();
+                next->createEntity(nextModel);
+                next->createEntity(nextModel);
+                switched = std::move(next);
+                const auto expectedMeshes = nextModel->meshes().size();
+                const auto expectedTextures = nextModel->textures().size();
+                const auto expectedMaterials = nextModel->materials().size();
+                nextModel.reset();
+                EXPECT_EQ(models.collectUnused(), cycle ? 1u : 0u);
+                EXPECT_EQ(models.size(), 1u);
+                counts = Detail::RendererReviewAccess::resourceCounts(renderer);
+                EXPECT_EQ(counts.meshes, expectedMeshes);
+                EXPECT_EQ(counts.textures, expectedTextures);
+                EXPECT_EQ(counts.materials, expectedMaterials);
+                released(ResourceType::MODEL, path);
+                released(ResourceType::TEXTURE, PNG);
+            }
+            switched.reset();
+            EXPECT_EQ(models.collectUnused(), 1u);
+            counts = Detail::RendererReviewAccess::resourceCounts(renderer);
+            EXPECT_EQ(counts.meshes, 0u);
+            EXPECT_EQ(counts.textures, 0u);
+            EXPECT_EQ(counts.materials, 0u);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(ModelPreparationTest, ModelManagerCanCloseBeforeUsersOrAfterRenderer)
+    {
+        auto native = window();
+        std::unique_ptr<Model::ModelManager> lateCache;
+        std::shared_ptr<const Model::PreparedModel> external;
+        Mesh lateMesh;
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            auto cache = std::make_unique<Model::ModelManager>(renderer);
+            external = cache->resolve(Model::ModelReference(GLTF));
+            cache.reset();
+            EXPECT_TRUE(external->meshes()[0].valid());
+            draw(*native, renderer, *external);
+            lateCache = std::make_unique<Model::ModelManager>(renderer);
+            lateMesh = lateCache->resolve(Model::ModelReference(OBJ))->meshes()[0];
+            EXPECT_TRUE(lateMesh.valid());
+        }
+        EXPECT_FALSE(external->meshes()[0].valid());
+        EXPECT_FALSE(lateMesh.valid());
+        external.reset();
+        EXPECT_EQ(lateCache->size(), 1u);
+        EXPECT_EQ(lateCache->collectUnused(), 1u);
+        lateCache.reset();
+        cleanValidation();
+    }
+
     TEST(ModelInstanceInputTest, EmptyInputIsEmptyAndNullModelIsRejected)
     {
         EXPECT_TRUE(Model::makeModelDraws({}).empty());
@@ -1521,7 +1679,7 @@ namespace
     class SceneEntityTest : public ModelInstanceTest
     {};
 
-    TEST_F(SceneEntityTest, SharedModelEntitiesKeepGpuAssetsUntilRendererShutdown)
+    TEST_F(SceneEntityTest, SharedModelEntitiesReleaseGpuAssetsAfterLastModelUse)
     {
         auto native = window(true);
         Mesh mesh;
@@ -1574,9 +1732,9 @@ namespace
 
             scene.clear();
             EXPECT_TRUE(weak.expired());
-            EXPECT_TRUE(mesh.valid());
-            EXPECT_TRUE(material.valid());
-            EXPECT_TRUE(texture.valid());
+            EXPECT_FALSE(mesh.valid());
+            EXPECT_FALSE(material.valid());
+            EXPECT_FALSE(texture.valid());
             EXPECT_EQ(resourceMessages_.str(), resourceLog);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 2u);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
@@ -1662,7 +1820,7 @@ namespace
             EXPECT_TRUE(empty->draws.empty());
             EXPECT_TRUE(empty->shadowDraws.empty());
             first.reset();
-            EXPECT_TRUE(retained.shadowDraws[0].mesh.valid());
+            EXPECT_FALSE(retained.shadowDraws[0].mesh.valid());
             point(retained.shadowDraws[0].model, -2, 24);
         }
         EXPECT_FALSE(retained.shadowDraws[0].mesh.valid());
@@ -1927,7 +2085,7 @@ namespace
             first.reset();
             point(retained.draws[0].model, -2, 24);
             EXPECT_EQ(retained.input().draws.data(), retained.draws.data());
-            EXPECT_TRUE(retained.draws[0].mesh.valid());
+            EXPECT_FALSE(retained.draws[0].mesh.valid());
             EXPECT_EQ(resourceMessages_.str(), resourceLog);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 1u);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 1u);

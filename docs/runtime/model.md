@@ -1,16 +1,16 @@
 # Model 模型准备与实例
 
-`runtime/model/prepared_model.h` 与 `model_instance.h` 提供模型消费层，依赖 Resource 和 Render，归入 `IncubatorRuntime`。
-Resource 交付 CPU 数据，Renderer 创建并持有 GPU 对象，模型层负责依赖准备及可共享的只读结果。
+`runtime/model/prepared_model.h`、`model_instance.h` 与 `model_manager.h` 提供模型消费层，依赖 Resource 和 Render，归入 `IncubatorRuntime`。
+Resource 交付 CPU 数据，Render 创建实际 GPU 对象并处理在途同步，模型层负责依赖准备、资源组持有及共享结果复用。
 
 ## 准备入口
 
 ```cpp
-// The application registers MODEL/TEXTURE loaders and keeps their FileIO alive.
-// Shared scene shaders are prepared explicitly once on this Renderer.
+// 应用注册 MODEL/TEXTURE Loader，并保持其 FileIO 存活。
+// 在此 Renderer 上显式准备一次共享场景 Shader。
 renderer.prepareSceneResources(vertexShader, fragmentShader);
 auto model = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Avocado.gltf");
-auto sharedModel = model; // Shares immutable metadata and the same GPU references.
+auto sharedModel = model; // 共享不可变元数据和同一 GPU 资源组。
 ```
 
 `prepareModel(Render::Renderer&, std::string_view, PrepareOptions = {})` 同步返回
@@ -43,8 +43,26 @@ auto filtered = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Av
 参数在创建时复制，之后修改 options 不影响已有准备结果。它是消费者的预览策略，
 不导入源 glTF/OBJ sampler，也不向 ModelResource 或 Loader 引入 Render 类型。
 
-Demo 的会话级 `ModelCache` 借用该会话的 Renderer，按 `ModelReference` 的规范化路径和完整选项复用
-`PreparedModel`；不同选项独立准备。缓存由 Demo 回调持有，并在 Renderer 关闭前释放，不跨会话共享。
+Runtime 的 `ModelManager` 借用单个 Renderer，会话内按 `ModelReference` 的规范化路径和完整选项复用
+`PreparedModel`，不同选项独立准备。Demo 的创建和场景重建共用该入口。
+
+```cpp
+Incubator::Model::ModelManager models(renderer);
+auto model = models.resolve(Incubator::Model::ModelReference("models/avocado/glTF/Avocado.gltf", options));
+scene.createEntity(model);
+model.reset();
+const size_t removed = models.collectUnused(); // 场景仍持有模型时不会移除它。
+const size_t cached = models.size();            // 缓存条目数，不是 GPU 存活对象数。
+```
+
+缓存保留强引用；`collectUnused()` 只移除引用计数为 1、仅由缓存持有的条目，返回移除条目数，
+不等于实际释放的 GPU 对象数。Scene、ModelInstance 或其他消费者仍持有的模型保留；提交后的帧槽另保留实际对象至 Fence 完成。
+没有自动逐帧清理或文件监听，清理后再次请求会重新读取源文件并准备。同一模型多个实体共享同一组对象，
+不同模型不做几何或纹理去重。`resolve` 失败不缓存部分模型，之前完成的缓存条目保持；场景重建失败前已成功缓存的模型按同一显式清理策略处理。
+
+`resolve` 调用期间借用的原 Renderer 对象须存活且未移动，不跨 Renderer 会话复用管理器。
+可以先销毁缓存，外部模型及在途帧继续保持对象；也可先关闭 Renderer，此后只允许查询缓存数量、清理及析构，不能再 resolve。
+关闭会使所有 GPU 引用失效，缓存及模型晚析构不会访问已销毁设备。清理摘要使用 model 的 Debug 日志，缓存命中不刷日志。
 
 路径相对资产根，经现有 ResourceManager/Registry 规范化和查找；应用须提前注册 MODEL 和 TEXTURE 的 Loader。
 函数不安装或替换 Loader，不准备 Shader，不修改全局 Manager 的路由。线程安全仍由调用方保证，
@@ -140,7 +158,7 @@ SceneFrame；应用在提交时借用其 input()，用法与快照持有期见 [
 - 相机和投影不参与实例展开，UV 与投影 Y 不再次适配。应用继续从 beginUiFrame 取得实际 extent 并生成相机；
   空列表也可交给 Renderer 清屏和绘制 UI。
 - 输出持有普通的 Mesh/Material 弱引用和矩阵副本，借用期遵循 [Render](./render.md)。返回后修改实例不影响
-  已生成列表；drawFrame 或 drawSceneTarget 返回后可立即修改或销毁列表，在途 GPU 依赖由 Renderer 持有。
+  已生成列表；提取至提交返回期间须保留模型，不在此期间清理所用资源。提交返回后可立即修改或销毁列表，在途 GPU 依赖由 Renderer 持有。
 - 展开不逐帧检查 GPU 引用或重验模型结构。Renderer 关闭后，实例仍可保有元数据并生成列表，但其中 GPU
   引用已失效，再次提交由 Renderer 明确拒绝；实例不会延长设备寿命。
 
@@ -154,15 +172,15 @@ PreparedModel 不保存阴影开关、光源范围或另一份几何；主相机
 
 - 模型及图片通过 ResourceManager::hold 取得只可移动的 CpuResource，首次与已有登记的引用由门面配对。
   正常或异常退出均释放本次持有，不消耗其他持有者的计数，不清除登记。模型准备不直接访问 Registry。
-- CPU 加载失败的 RENDER 异常保留模型上下文、依赖虚拟路径及门面返回的具体原因；补充上下文不重复记录同一错误。
-- 准备结果仅包含自有元数据与 Render 的不透明 GPU 引用，不借用 ModelResource、TextureResource、ShaderResource
+- CPU 加载失败抛 `Model::LoadError`（继承 Error::Exception，代码为 RENDER），保留模型上下文、依赖虚拟路径和具体原因。
+  该失败已由资源门面记录，准备层、缓存及消费者仅传递或展示，不重复记错；其他 GPU/配置异常由承担处理责任的消费者记录。
+- 准备结果拥有元数据与一个 GpuResources，公开 Mesh/Material/Texture 访问器返回非拥有引用，不借用 ModelResource、TextureResource、ShaderResource
   或 Importer。CPU 载荷卸载、Loader 销毁之后仍可使用结果。
 - 已声明 PNG 缺失或解码失败使整个准备失败；不创建 GPU 对象，不以白纹理替代缺失的贴图。
   Manager 保留其既有日志 + nullptr 门面，准备入口抛出含模型/依赖路径的 RENDER 错误，不重复记录日志。
-- GPU 创建错误直接沿用 Renderer 的异常。结果仅在全部创建成功后返回；失败前创建的 GPU 对象仍由
-  Renderer 持有至关闭，不提供即时回收或 GPU 事务回滚。
-- Mesh、Texture、Material 引用不延长 Renderer/设备寿命；共享或释放 PreparedModel 也不改变此约定。
-  Renderer 关闭后引用失效，提交旧引用由 Renderer 的既有边界拒绝。
+- GPU 创建错误沿用 Renderer 异常，结果只在全部创建成功后返回；准备中途失败会析构本次未发布资源组，清理已创建对象，已有模型不受影响。
+- 最后 PreparedModel 持有结束时撤销其 GPU 资源组；对应在途对象在 Fence 完成并清除帧槽持有后回收，未提交的快照不保留它们。
+  Mesh、Texture、Material 和 PreparedModel 不延长设备寿命；Renderer 关闭后引用失效，提交旧引用由既有边界拒绝。
 
 RGB 使用源材质的线性 0–1 参数，白纹理采样后保持该颜色；PNG 沿用 sRGB 采样后乘线性 RGB，输出 alpha=1。
 默认最近邻、repeat、LOD=0；显式 PrepareOptions 可改变过滤及 mip 策略。

@@ -24,6 +24,11 @@ int main()
         Demo::DemoApp app(config.options, std::move(fileIO));
         app.run(Demo::makeCallbacks(config.startupScene));
     }
+    catch (const Model::LoadError&)
+    {
+        // 资源门面已经记录模型或依赖的具体加载原因。
+        return 1;
+    }
     catch (const std::exception& error)
     {
         log.error("Demo failed: {}", error.what());

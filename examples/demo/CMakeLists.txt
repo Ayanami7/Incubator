@@ -11,7 +11,6 @@ add_executable(
     startup_config.h
     startup_config.cpp
     model_scene.h
-    model_cache.h
     workspace.h
     viewport.h
     ui_input.h

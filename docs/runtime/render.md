@@ -353,7 +353,8 @@ resources.reset();
 必须在提取绘制列表至提交返回期间保留相关组，不能把保存快照误当成 GPU 持有；清理后提交过期引用会被拒绝。
 reset 不等待 Fence 或整个设备，释放后的在途对象在对应帧槽等待完成并清除持有时回收。
 资源记录仅弱引用资源组创建的对象，不延长其实际寿命；内部帧目标、Shader/Pipeline、白图及字体继续按原生命周期管理。
-现有 Model::prepareModel 仍走直接创建，模型层的资源组接入由后续模型生命周期任务完成。
+Model::prepareModel 为每次准备创建资源组，由 PreparedModel 保存；失败释放本次未发布对象，模型管理器显式清理未使用缓存。
+模型持有、缓存计数和在途回收的关系见 [Model](./model.md)。
 
 内部 `RendererReviewAccess::resourceCounts` 统计实际存活的 Mesh/Texture/Material，包含直接创建、组、材质依赖及在途保留，
 排除上述内部资源，不因条目仍登记就报存活；`waitForFrames` 供复核等待已提交 Fence 并清除帧槽持有，不等待整个设备空闲。

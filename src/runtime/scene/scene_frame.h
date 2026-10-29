@@ -11,6 +11,7 @@ namespace Incubator::Scene
 
     /// @brief 从 Scene 提取的一帧渲染数据。
     /// @note 复制或移动时不会保存指向其他帧 vector 的 span。
+    /// 不持有 PreparedModel 或 GPU 对象；从提取到提交返回期间须由消费者保留对应模型。
     struct SceneFrame
     {
         Render::FrameExtent extent{0, 0};
