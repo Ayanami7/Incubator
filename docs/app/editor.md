@@ -1,6 +1,6 @@
 # Editor 场景编辑工具
 
-`app/editor/` 是独立消费 IncubatorRuntime 的正式工具，目标为 `incubator_editor`。EditorApp 组织会话，EditorScene 承接工作区、实体编辑、文件和轨道交互；资产浏览及清理面板尚未接入。
+`app/editor/` 是独立消费 IncubatorRuntime 的正式工具，目标为 `incubator_editor`。EditorApp 组织会话，EditorScene 承接工作区、实体编辑、资产浏览、文件和轨道交互。
 
 ## 构建与启动
 
@@ -20,7 +20,7 @@ VS Code 选择 `Editor` 调试项，cwd 为 build；原 `Debug` 项继续启动�
 Editor 还显式依赖 `runtime_ui_fonts`，部署 Noto Sans SC Regular 和原始 SIL Open Font License。
 UI 使用 18 基础字号及统一控件间距，字体与样式随窗口 DPI 更新；窗口移动到不同缩放比例的显示器时，
 在下一 UI 帧前同步重建字体，不逐帧缩放旧样式。字体覆盖英文和常用简体中文路径，完整范围见
-`assets/fonts/SOURCE.md`。Docking 工作区在单操作系统窗口内提供对象、场景和属性三个主要面板。
+`assets/fonts/SOURCE.md`。Docking 工作区在单操作系统窗口内提供对象、资产、场景和属性面板。
 字体及样式缩放与启动配置的窗口宽高分别处理，具体换算见 [Render](../runtime/render.md)。
 
 程序从 cwd 读取 `incubator.json`。仓库根目录中的同名文件是默认配置源文件，构建时增量复制到
@@ -57,6 +57,9 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 |---|---|
 | 实体列表 | 按创建顺序显示 EntityId，点击选中 |
 | Objects：New model / Create object | 选择 Avocado 或 Teapot，在画面中央按该模型的创建预设添加共享实体，并选中 |
+| Assets：Enter / Up / Refresh | 进入虚拟子目录、返回上级、重新列出当前目录；不解析或热重载资源 |
+| Assets：Add | 对 OBJ/glTF 候选文件按需准备，成功后加入场景并选中；其他文件没有加入入口 |
+| Assets：Clear unused models | 显式移出没有外部模型持有的缓存项；存活实体及在途 GPU 资源保持有效 |
 | File：Save / Save As / Open | Save 写当前文件；Open 和 Save As 输入目标并确认，成功后才更新当前文件；取消和失败保留原关联 |
 | Visible | 显示/隐藏当前实体，保留其变换 |
 | Position / Rotation / Scale | 独立编辑实体的真实 TRS；支持零、负值及非均匀缩放，旋转使用角度并转换为四元数 |
@@ -72,6 +75,15 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 启动时仅准备场景实际引用的模型；创建实体时按需准备所选模型。
 相同规范化来源与完整准备选项在当前会话内复用；不同选项分别准备。
 创建及场景重建共用 Runtime ModelManager；Editor 不再维护单独的模型缓存实现。
+资产列表通过 ResourceManager 获取单层目录，显示根内虚拟路径；不创建递归索引，不进入目录链接。
+PNG、bin/mtl 和未知文件分别显示类型，扩展名只代表候选类别，不证明内容可加载。
+新模型路径不需要加入内置模型表；Assets 的 Add 使用单位 Transform，保持模型原有单位，必要时通过属性缩放或聚焦观察。
+准备选项沿用 FullChain、线性 min/mag/mip 和 Lambert，并随虚拟来源一起保存，不写物理资产根或 GPU 引用。
+加载失败时 Assets 和状态栏显示本次调用的模型路径及具体依赖或解析原因，保留原场景、选择和文件关联；修复文件后再次 Add 即可。
+资源层已记录的加载失败不会由 Editor 重复记错；浏览访问失败单独显示，成功的空目录不显示错误。
+Listed 只统计当前目录发现项，Cached 只统计 PreparedModel 缓存项，二者均不代表 CPU 加载数或 GPU 存活数。
+删除、清空或打开其他场景后，模型仍可由缓存复用；Clear unused models 在编辑阶段、帧提取前显式移出未使用条目。
+清理结果表示移出的缓存项数；此前已提交的主场景及阴影帧继续持有 GPU 对象，相关 Fence 完成并释放帧槽持有后才实际回收，不逐次等待整个设备空闲。
 准备后 CPU 模型和 PNG 持有已释放，Loader/FileIO 继续存活，因此后续操作仍走原有资源服务。
 场景及阴影 Shader 同样通过 ResourceManager::hold 取得只可移动的 CPU 持有，准备结束后自动释放，不直接配对 Registry 引用。
 调整姿态和可见性复用现有 GPU 引用。
@@ -92,7 +104,7 @@ Scene settings 折叠区提供 Light yaw/pitch、Color (linear)、Intensity 和 
 清空实体保留当前灯光；打开场景文件读取其中的灯光。相机操作和聚焦不会改变灯光。
 这些参数直接读写当前 Scene，修改进入本帧提取，不重新准备模型、纹理、mip 或材质。
 轨道操作、聚焦和窗口重建复用现有 GPU 资源；打开文件按需准备尚未缓存的模型，没有实时采样模式切换。
-本会话的模型准备结果由消费者保留到关闭，不是全局资产缓存。
+本会话的模型准备结果由 ModelManager 缓存，直至显式清理或会话关闭，不是全局资产缓存。
 
 ## 实现与持有期
 
@@ -114,9 +126,9 @@ EditorApp 向回调消费者提供基于单调 Clock 的 FrameTime；生产 Edit
 
 回调共享的 EditorScene 在 run 收尾时释放，随后 EditorApp 清理 Scene、独占 Loader 路由和源绑定，再销毁 Renderer、Window、AssetSource 和 FileIO。
 删除实体、清空或切换 Scene 后，ModelManager 继续保留缓存；显式 collectUnused 才移除没有外部使用者的模型，
-在途资源待 Fence 完成后回收。当前资产浏览及清理面板尚未提供；会话结束释放缓存，独立 Renderer 先关闭时模型晚析构也安全。
-Shader、模型依赖或回调失败时 EditorApp 先清理并返回失败；模型 CPU 加载失败已由 ResourceManager 记录，
-面板展示其具体原因，main 不重复记录 Model::LoadError，其余异常由原处理边界记录，不继续提交不完整帧。
+在途资源待 Fence 完成后回收。Assets 面板调用显式清理；会话结束释放缓存，独立 Renderer 先关闭时模型晚析构也安全。
+启动阶段 Shader、模型依赖或回调失败时 EditorApp 先清理并返回失败；编辑中的加入或打开失败由 EditorScene 显示并保留原场景，允许重试。
+模型 CPU 加载失败已由 ResourceManager 记录，面板展示其具体原因，main 不重复记录 Model::LoadError，其余异常由原处理边界记录。
 
 Debug 示例沿用 Optional Validation，Release 为 Disabled；需要强制验证的 GPU 测试使用 Required。
 支持的模型、纹理、材质和同步边界分别见 [Model](../runtime/model.md)、[Resource](../runtime/resource/resource.md)
@@ -167,7 +179,7 @@ Camera 与实体状态提取场景并合成 UI。视口关闭、折叠或没有�
 ## 停靠工作区与文件关联
 
 默认窗口及缺省配置为 1920×1080，显式窗口尺寸仍有效。顶部 File 菜单提供打开、保存、另存为和退出，
-View 菜单提供场景视口开关与 Restore default layout。Objects 位于左侧，Scene 居中，Properties 位于右侧；
+View 菜单提供场景视口开关与 Restore default layout。Objects / Assets 作为左侧标签页共用高度，Scene 居中，Properties 位于右侧；
 对象列表使用左侧剩余高度，属性面板依次提供选中对象、观察操作和场景设置，空间不足时纵向滚动。
 底部仅保留一行当前文件与操作结果，错误显示为红色，悬停可查看完整路径与消息。
 面板可以停靠与重排，恢复默认布局不改变场景。

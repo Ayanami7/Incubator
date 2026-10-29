@@ -18,6 +18,7 @@
 #include "runtime/core/utils/utf8.h"
 #include "runtime/model/model_manager.h"
 #include "runtime/model/prepared_model.h"
+#include "runtime/resource/resource_manager.h"
 #include "runtime/scene/scene_file.h"
 #include "runtime/scene/scene_rebuild.h"
 #include "workspace.h"
@@ -33,12 +34,89 @@ namespace Incubator::Editor
         {
             cache_ = std::make_unique<Model::ModelManager>(app.renderer());
             openScene(app, path);
+            browseDirectory();
         }
 
         Scene::EntityId createEntity(Editor::EditorApp& app)
         {
-            selected_ = app.scene().createEntity(creationModel(useObj_), initialTransform(useObj_));
-            return selected_;
+            return addModel(app, creationPath(useObj_), initialTransform(useObj_)) ? selected_ : Scene::EntityId{};
+        }
+
+        /// @brief 列出虚拟目录；失败显示独立错误，不将访问失败当作空目录。
+        bool browseDirectory(std::string_view path = {})
+        {
+            try
+            {
+                auto entries = Resource::ResourceManager::instance().listDirectory(path);
+                assetDirectory_ = path;
+                assetEntries_ = std::move(entries);
+                assetError_.clear();
+                return true;
+            }
+            catch (const Error::Exception& error)
+            {
+                assetEntries_.clear();
+                assetError_ = "Cannot browse '" + std::string(path) + "': " + error.message();
+                Log::Registry::get("editor").error("{}", assetError_);
+                return false;
+            }
+        }
+        /// @brief 返回当前虚拟目录；空字符串表示资产根。
+        const std::string& assetDirectory() const
+        {
+            return assetDirectory_;
+        }
+        /// @brief 返回本次目录发现结果；不表示 CPU 加载或 GPU 准备状态。
+        const std::vector<Resource::AssetEntry>& assetEntries() const
+        {
+            return assetEntries_;
+        }
+        /// @brief 返回本次目录访问错误；成功列出空目录时为空。
+        const std::string& assetError() const
+        {
+            return assetError_;
+        }
+        /// @brief 返回上一级虚拟目录；根目录保持为根。
+        bool parentDirectory()
+        {
+            const auto slash = assetDirectory_.find_last_of('/');
+            return browseDirectory(slash == std::string::npos ? std::string{} : assetDirectory_.substr(0, slash));
+        }
+
+        /// @brief 使用统一预览选项准备模型，成功后才创建并选中实体；失败保留原场景和文件关联。
+        bool addModel(Editor::EditorApp& app, std::string_view path,
+                      const Scene::Transform& transform = Scene::Transform{})
+        {
+            try
+            {
+                auto model = cache_->resolve(Model::ModelReference(path, PREVIEW_OPTIONS));
+                selected_ = app.scene().createEntity(std::move(model), transform);
+                messageError_ = false;
+                message_ = "Added model: " + std::string(path);
+                Log::Registry::get("editor").info("{}", message_);
+                return true;
+            }
+            catch (const Error::Exception& error)
+            {
+                messageError_ = true;
+                message_ = "Cannot add '" + std::string(path) + "': " + error.message();
+                if (!dynamic_cast<const Model::LoadError*>(&error))
+                    Log::Registry::get("editor").error("{}", message_);
+                return false;
+            }
+        }
+        /// @brief 返回已准备模型的缓存项数；不表示 CPU 持有数或仍在途的 GPU 资源数。
+        size_t cachedModels() const
+        {
+            return cache_->size();
+        }
+        /// @brief 在编辑阶段移出未使用的模型缓存；在途资源由 Renderer 完成帧同步后释放。
+        size_t collectUnusedModels()
+        {
+            const auto removed = cache_->collectUnused();
+            messageError_ = false;
+            message_ = "Removed " + std::to_string(removed) + " unused cached models";
+            return removed;
         }
 
         void selectModel(bool useObj)
@@ -208,6 +286,7 @@ namespace Incubator::Editor
         void ui(Editor::EditorApp& app)
         {
             objects(app);
+            assets(app);
             properties(app);
             bool confirm = false;
             if (fileAction_ != FileAction::None)
@@ -251,6 +330,73 @@ namespace Incubator::Editor
         }
 
     private:
+        void assets(Editor::EditorApp& app)
+        {
+            ImGui::SetNextWindowSize({ImGui::GetFontSize() * 22, ImGui::GetFontSize() * 22}, ImGuiCond_FirstUseEver);
+            ImGui::Begin("Assets");
+            ImGui::TextWrapped("Directory: /%s", assetDirectory_.c_str());
+            if (!assetDirectory_.empty())
+            {
+                if (ImGui::Button("Up"))
+                    parentDirectory();
+                ImGui::SameLine();
+            }
+            if (ImGui::Button("Refresh"))
+                browseDirectory(assetDirectory_);
+            ImGui::Text("Listed: %zu | Cached: %zu", assetEntries_.size(), cachedModels());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Listed: directory entries only. Cached: prepared models.\n"
+                    "Neither count represents CPU loads or live GPU objects.\n"
+                    "Submitted frames retain GPU resources until completion.");
+            if (ImGui::Button("Clear unused models", {-1, 0}))
+                collectUnusedModels();
+            if (!assetError_.empty())
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+                ImGui::TextWrapped("%s", assetError_.c_str());
+                ImGui::PopStyleColor();
+            }
+            if (messageError_)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+                ImGui::TextWrapped("%s", message_.c_str());
+                ImGui::PopStyleColor();
+            }
+            std::string enter;
+            if (ImGui::BeginTable("##assets", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp))
+            {
+                ImGui::TableSetupColumn("Name / type", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 3.5f);
+                ImGui::TableHeadersRow();
+                for (const auto& entry : assetEntries_)
+                {
+                    ImGui::PushID(entry.path.c_str());
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    const auto kind = entry.kind == Resource::AssetKind::Directory    ? "Directory"
+                                      : entry.kind == Resource::AssetKind::Model      ? "Model candidate"
+                                      : entry.kind == Resource::AssetKind::Texture    ? "PNG"
+                                      : entry.kind == Resource::AssetKind::Dependency ? "Dependency"
+                                                                                      : "File";
+                    ImGui::TextUnformatted(entry.name.c_str());
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s\n%s", entry.path.c_str(), kind);
+                    ImGui::TextDisabled("%s", kind);
+                    ImGui::TableNextColumn();
+                    if (entry.kind == Resource::AssetKind::Directory && ImGui::Button("Enter"))
+                        enter = entry.path;
+                    if (entry.kind == Resource::AssetKind::Model && ImGui::Button("Add"))
+                        addModel(app, entry.path);
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
+            if (!enter.empty())
+                browseDirectory(enter);
+            ImGui::End();
+        }
+
         void menu(Editor::EditorApp& app)
         {
             if (!ImGui::BeginMainMenuBar())
@@ -448,10 +594,9 @@ namespace Incubator::Editor
                                               app.scene().entities().size());
         }
 
-        std::shared_ptr<const Model::PreparedModel> creationModel(bool useObj)
+        static std::string_view creationPath(bool useObj)
         {
-            return cache_->resolve(Model::ModelReference(
-                useObj ? "models/utah_teapot/utah_teapot.obj" : "models/avocado/glTF/Avocado.gltf", PREVIEW_OPTIONS));
+            return useObj ? "models/utah_teapot/utah_teapot.obj" : "models/avocado/glTF/Avocado.gltf";
         }
 
         static constexpr Model::PrepareOptions PREVIEW_OPTIONS{
@@ -475,6 +620,9 @@ namespace Incubator::Editor
         Workspace workspace_;
         bool viewportOpen_ = true;
         std::unique_ptr<Model::ModelManager> cache_;
+        std::string assetDirectory_;
+        std::vector<Resource::AssetEntry> assetEntries_;
+        std::string assetError_;
         Scene::EntityId selected_;
         bool useObj_ = false;
         bool saveRequested_ = false;

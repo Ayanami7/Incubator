@@ -29,9 +29,10 @@ namespace Incubator::Editor
                 ImGui::DockBuilderAddNode(id, ImGuiDockNodeFlags_DockSpace);
                 ImGui::DockBuilderSetNodeSize(id, ImGui::GetMainViewport()->WorkSize);
                 auto center = id;
-                const auto left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
+                const auto left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.24f, nullptr, &center);
                 const auto right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, nullptr, &center);
                 ImGui::DockBuilderDockWindow("Objects", left);
+                ImGui::DockBuilderDockWindow("Assets", left);
                 ImGui::DockBuilderDockWindow("Properties", right);
                 ImGui::DockBuilderDockWindow("Scene", center);
                 ImGui::DockBuilderFinish(id);

@@ -248,6 +248,217 @@ namespace
         std::ostringstream renderLog_;
     };
 
+    TEST_F(EditorAppTest, AssetBrowserRefreshesWithoutLoadingAndDistinguishesFailures)
+    {
+        copyShowcaseModels();
+        fs::create_directories("assets/browser/empty");
+        for (const char* name : {"new.obj", "image.png", "data.bin", "material.mtl", "notes.txt"})
+            std::ofstream(std::string("assets/browser/") + name) << "discovery only";
+        auto state = std::make_shared<Lifetime>();
+        Editor::EditorApp session(options(), std::make_unique<TrackedFileIO>(state));
+        session.run({[&](auto& app) {
+                         Editor::EditorScene editor;
+                         editor.initialize(app);
+                         const auto opens = state->opens;
+                         const auto prepared = editor.cachedModels();
+                         const auto gpu = Render::Detail::RendererReviewAccess::resourceCounts(app.renderer());
+                         ASSERT_TRUE(editor.browseDirectory("browser"));
+                         ASSERT_EQ(editor.assetEntries().size(), 6u);
+                         const auto kind = [&](std::string_view name) {
+                             const auto& entries = editor.assetEntries();
+                             return std::ranges::find(entries, name, &AssetEntry::name)->kind;
+                         };
+                         EXPECT_EQ(kind("new.obj"), AssetKind::Model);
+                         EXPECT_EQ(kind("image.png"), AssetKind::Texture);
+                         EXPECT_EQ(kind("data.bin"), AssetKind::Dependency);
+                         EXPECT_EQ(kind("material.mtl"), AssetKind::Dependency);
+                         EXPECT_EQ(kind("notes.txt"), AssetKind::File);
+                         EXPECT_EQ(kind("empty"), AssetKind::Directory);
+                         fs::remove("assets/browser/new.obj");
+                         std::ofstream("assets/browser/extra.gltf") << "not parsed";
+                         ASSERT_TRUE(editor.browseDirectory(editor.assetDirectory()));
+                         EXPECT_EQ(kind("extra.gltf"), AssetKind::Model);
+                         EXPECT_EQ(std::ranges::find(editor.assetEntries(), "new.obj", &AssetEntry::name),
+                                   editor.assetEntries().end());
+                         EXPECT_FALSE(ResourceManager::instance().query(ResourceType::MODEL, "browser/extra.gltf"));
+                         EXPECT_FALSE(ResourceManager::instance().query(ResourceType::TEXTURE, "browser/image.png"));
+                         ASSERT_TRUE(editor.browseDirectory("browser/empty"));
+                         EXPECT_TRUE(editor.assetEntries().empty());
+                         EXPECT_TRUE(editor.assetError().empty());
+                         ASSERT_TRUE(editor.parentDirectory());
+                         EXPECT_EQ(editor.assetDirectory(), "browser");
+                         ASSERT_FALSE(editor.browseDirectory("browser/missing"));
+                         EXPECT_FALSE(editor.assetError().empty());
+                         EXPECT_NE(editor.assetError().find("browser/missing"), std::string::npos);
+                         EXPECT_TRUE(editor.assetEntries().empty());
+                         ASSERT_TRUE(editor.parentDirectory());
+                         EXPECT_TRUE(editor.assetDirectory().empty());
+                         EXPECT_TRUE(editor.assetError().empty());
+                         EXPECT_FALSE(editor.assetEntries().empty());
+                         EXPECT_EQ(state->opens, opens);
+                         EXPECT_EQ(editor.cachedModels(), prepared);
+                         const auto after = Render::Detail::RendererReviewAccess::resourceCounts(app.renderer());
+                         EXPECT_EQ(after.meshes, gpu.meshes);
+                         EXPECT_EQ(after.textures, gpu.textures);
+                         EXPECT_EQ(after.materials, gpu.materials);
+                         app.requestExit();
+                     },
+                     {},
+                     {}});
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, NewVirtualModelsShareAndFailuresPreserveEditingStateUntilRetry)
+    {
+        copyShowcaseModels();
+        fs::copy("assets/models/minimal_gltf", "assets/models/imported_gltf", fs::copy_options::recursive);
+        fs::copy("assets/models/minimal_obj", "assets/models/imported_obj", fs::copy_options::recursive);
+        std::ostringstream failures;
+        Editor::EditorApp session(options());
+        session.run(
+            {[&](auto& app) {
+                 Editor::EditorScene editor;
+                 editor.initialize(app);
+                 editor.select(app.scene().entities()[0].id);
+                 auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(failures);
+                 sink->set_pattern("%l|%v");
+                 Log::Registry::get("resource").addSink(sink);
+                 Log::Registry::get("editor").addSink(sink);
+                 const auto retry = [&](const char* model, const char* dependency, const char* reason) {
+                     SCOPED_TRACE(model);
+                     const auto selected = editor.selected();
+                     const auto size = app.scene().entities().size();
+                     const auto cached = editor.cachedModels();
+                     const auto gpu = Render::Detail::RendererReviewAccess::resourceCounts(app.renderer());
+                     const std::string file(editor.scenePath());
+                     failures.str("");
+                     failures.clear();
+                     EXPECT_FALSE(editor.addModel(app, model));
+                     EXPECT_EQ(editor.selected(), selected);
+                     EXPECT_EQ(editor.scenePath(), file);
+                     EXPECT_EQ(app.scene().entities().size(), size);
+                     EXPECT_EQ(editor.cachedModels(), cached);
+                     EXPECT_NE(editor.message().find(model), std::string::npos);
+                     EXPECT_NE(editor.message().find(reason), std::string::npos) << editor.message();
+                     const auto logged = failures.str();
+                     const auto at = logged.find("error|");
+                     ASSERT_NE(at, std::string::npos);
+                     EXPECT_EQ(logged.find("error|", at + 6), std::string::npos) << logged;
+                     const auto info = ResourceManager::instance().query(ResourceType::MODEL, model);
+                     ASSERT_TRUE(info);
+                     EXPECT_FALSE(info->loaded);
+                     EXPECT_EQ(info->references, 0u);
+                     const auto after = Render::Detail::RendererReviewAccess::resourceCounts(app.renderer());
+                     EXPECT_EQ(after.meshes, gpu.meshes);
+                     EXPECT_EQ(after.textures, gpu.textures);
+                     EXPECT_EQ(after.materials, gpu.materials);
+                     fs::remove(dependency);
+                     fs::rename(std::string(dependency) + ".backup", dependency);
+                     ASSERT_TRUE(editor.addModel(app, model)) << editor.message();
+                     const auto first = editor.selected();
+                     ASSERT_NE(app.scene().find(first), nullptr);
+                     const auto shared = app.scene().find(first)->model;
+                     EXPECT_EQ(shared->source().path(), model);
+                     ASSERT_TRUE(editor.addModel(app, model));
+                     EXPECT_NE(first, editor.selected());
+                     EXPECT_EQ(app.scene().find(editor.selected())->model, shared);
+                     EXPECT_EQ(editor.cachedModels(), cached + 1);
+                 };
+                 const char* bin = "assets/models/imported_gltf/geometry/mesh.bin";
+                 fs::rename(bin, std::string(bin) + ".backup");
+                 retry("models/imported_gltf/model.gltf", bin, "mesh.bin");
+                 const char* mtl = "assets/models/imported_obj/materials/model.mtl";
+                 fs::rename(mtl, std::string(mtl) + ".backup");
+                 retry("models/imported_obj/model.obj", mtl, "model.mtl");
+                 fs::copy("assets/models/minimal_gltf", "assets/models/bad_json", fs::copy_options::recursive);
+                 const char* json = "assets/models/bad_json/model.gltf";
+                 fs::copy_file(json, std::string(json) + ".backup");
+                 std::ofstream(json) << "{invalid";
+                 retry("models/bad_json/model.gltf", json, "Invalid glTF JSON");
+                 fs::copy("assets/models/minimal_gltf", "assets/models/missing_png", fs::copy_options::recursive);
+                 fs::rename(std::string("assets/") + PNG, std::string("assets/") + PNG + ".backup");
+                 retry("models/missing_png/model.gltf", "assets/textures/direction_rgba.png", "direction_rgba.png");
+                 ASSERT_TRUE(editor.save(app, "new-models.json"));
+                 const auto description = Scene::readScene(app.fileIO(), "new-models.json");
+                 EXPECT_EQ(description.entities.back().model->path(), "models/missing_png/model.gltf");
+                 EXPECT_EQ(description.entities.back().model->options(),
+                           app.scene().entities().back().model->source().options());
+                 app.requestExit();
+             },
+             {},
+             {}});
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, ExplicitCacheCleanupRetainsSubmittedFramesAndLiveShadowModels)
+    {
+        copyShowcaseModels();
+        Editor::EditorApp session(options());
+        auto editor = std::make_shared<Editor::EditorScene>();
+        int frame = 0;
+        Render::Detail::RendererReviewAccess::ResourceCounts baseline{};
+        std::weak_ptr<const Model::PreparedModel> removed;
+        Render::Mesh mesh;
+        session.run({[&](auto& app) {
+                         editor->initialize(app, "assets/scenes/shadows.json");
+                         app.shadowSettings().enabled = true;
+                         baseline = Render::Detail::RendererReviewAccess::resourceCounts(app.renderer());
+                     },
+                     [&](auto& app, const auto&) {
+                         if (++frame == 7)
+                             app.requestExit();
+                     },
+                     [&](auto& app) {
+                         editor->ui(app);
+                         using Review = Render::Detail::RendererReviewAccess;
+                         if (frame % 2 == 1)
+                         {
+                             ASSERT_TRUE(editor->addModel(app, GLTF));
+                             const auto model = app.scene().find(editor->selected())->model;
+                             removed = model;
+                             mesh = model->meshes()[0];
+                             EXPECT_EQ(editor->cachedModels(), 4u);
+                             EXPECT_EQ(editor->collectUnusedModels(), 0u);
+                         }
+                         else
+                         {
+                             editor->deleteSelected(app);
+                             EXPECT_EQ(editor->collectUnusedModels(), 1u);
+                             EXPECT_TRUE(removed.expired());
+                             EXPECT_EQ(editor->cachedModels(), 3u);
+                             EXPECT_TRUE(mesh.valid());
+                             EXPECT_GT(Review::resourceCounts(app.renderer()).meshes, baseline.meshes);
+                             Review::waitForFrames(app.renderer());
+                             EXPECT_FALSE(mesh.valid());
+                             const auto after = Review::resourceCounts(app.renderer());
+                             EXPECT_EQ(after.meshes, baseline.meshes);
+                             EXPECT_EQ(after.textures, baseline.textures);
+                             EXPECT_EQ(after.materials, baseline.materials);
+                             auto snapshot =
+                                 Scene::extractSceneFrame(app.scene(), {384, 256}, true, app.shadowSettings());
+                             ASSERT_TRUE(snapshot);
+                             EXPECT_FALSE(snapshot->shadowDraws.empty());
+                             if (frame == 6)
+                             {
+                                 ASSERT_TRUE(editor->load(app, "assets/scenes/mixed.json"));
+                                 EXPECT_EQ(editor->collectUnusedModels(), 1u);
+                                 editor->clear(app);
+                                 EXPECT_EQ(editor->collectUnusedModels(), 2u);
+                                 EXPECT_EQ(editor->cachedModels(), 0u);
+                                 Review::waitForFrames(app.renderer());
+                                 const auto empty = Review::resourceCounts(app.renderer());
+                                 EXPECT_EQ(empty.meshes, 0u);
+                                 EXPECT_EQ(empty.textures, 0u);
+                                 EXPECT_EQ(empty.materials, 0u);
+                             }
+                         }
+                     },
+                     {},
+                     {},
+                     [editor](auto& app) { editor->layout(app); }});
+        cleanValidation();
+    }
+
     TEST_F(EditorAppTest, ShadowPreviewUsesCurrentFrameAndSurvivesFilesAndWindowRecovery)
     {
         copyShowcaseModels();
@@ -516,7 +727,9 @@ namespace
                          },
                          [&, demo](auto& app) {
                              demo->ui(app);
-                             for (const char* name : {"Objects", "Properties", "Scene"})
+                             if (frame == 2)
+                                 ImGui::SetWindowFocus("Assets");
+                             for (const char* name : {"Objects", "Assets", "Properties", "Scene"})
                              {
                                  const auto* panel = ImGui::FindWindowByName(name);
                                  ASSERT_NE(panel, nullptr);
