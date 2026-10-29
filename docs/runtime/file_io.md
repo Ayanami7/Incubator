@@ -145,7 +145,7 @@ Windows 实现用目录迭代器枚举，以 `GetFileAttributesW` 取得目录�
 
 ## 平台实现（Windows）
 
-**PlatformFileIO / PlatformFileHandle** 在 `fileio.cpp` 中实现，通过工厂函数获取，调用方不直接接触平台类型。
+**Win32FileIO / Win32FileHandle** 在 `fileio.cpp` 中实现，通过工厂函数获取，调用方不直接接触平台类型。
 
 1. **宽字符转换**：路径经 UTF-8 → 宽字符串转换后调用 `CreateFileW` 等 API
 2. **API 映射**：`CreateFileW`（打开）、`ReadFile`/`WriteFile`（读写）、`SetFilePointerEx`（seek）、`GetFileSizeEx`（size）、`GetFileAttributesW`（exists）、`CreateDirectoryW`（createDirectory）

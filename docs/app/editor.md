@@ -1,6 +1,6 @@
 # Editor 场景编辑工具
 
-`app/editor/` 是独立消费 IncubatorRuntime 的正式工具，目标为 `incubator_editor`。EditorApp 组织会话，EditorScene 承接工作区、实体编辑、资产浏览、文件和轨道交互。
+`app/editor/` 是独立消费 IncubatorRuntime 的正式工具，构建目标为 `Editor`，输出程序为 `Editor.exe`。EditorApp 组织会话，EditorScene 承接工作区、实体编辑、资产浏览、文件和轨道交互。
 
 ## 构建与启动
 
@@ -8,14 +8,14 @@
 
 ```powershell
 Set-Location 'E:/Project/VScode/Incubator/build'
-& './app/editor/incubator_editor.exe'
+& './app/editor/Editor.exe'
 ```
 
 工作目录必须是对应构建目录。目标依赖 `incubator_shaders`、`incubator_models`、`incubator_scenes` 和 `incubator_config`，
 复用 `<build>/assets/` 中的 SPIR-V、Avocado glTF/bin/PNG、Utah Teapot OBJ 和自有地面 OBJ/MTL。
 默认展示场景为 `assets/scenes/shadows.json`，原 `assets/scenes/mixed.json` 继续部署并可直接打开。
 Visual Studio 的目标调试工作目录也设为 `${CMAKE_BINARY_DIR}`。
-VS Code 选择 `Editor` 调试项，cwd 为 build；原 `Debug` 项继续启动最小 Demo。
+VS Code 选择 `Debug` 调试项启动 Editor，cwd 为 build；`Demo` 调试项启动最小 Demo。
 
 Editor 还显式依赖 `runtime_ui_fonts`，部署 Noto Sans SC Regular 和原始 SIL Open Font License。
 UI 使用 18 基础字号及统一控件间距，字体与样式随窗口 DPI 更新；窗口移动到不同缩放比例的显示器时，
@@ -28,7 +28,7 @@ UI 使用 18 基础字号及统一控件间距，字体与样式随窗口 DPI �
 
 ```json
 {
-  "window": {"title": "Incubator Engine Editor", "width": 1920, "height": 1080},
+  "window": {"title": "Incubator Engine", "width": 1920, "height": 1080},
   "startupScene": "assets/scenes/shadows.json"
 }
 ```
@@ -136,7 +136,7 @@ Debug 示例沿用 Optional Validation，Release 为 Disabled；需要强制验�
 
 ## 构建与代码边界
 
-按 WORKFLOW.md 执行 Debug/all，或单独构建 incubator_editor。Editor 编译 app/editor 的 main.cpp、editor_app.cpp、
+按 WORKFLOW.md 执行 Debug/all，或单独构建 Editor。Editor 编译 app/editor 的 main.cpp、editor_app.cpp、
 editor_scene.h、workspace.h 和共用启动配置，链接 Runtime/imgui，依赖 incubator_assets；不编译 Demo 源码。
 EditorApp 具体拥有本应用会话，不进入 Runtime，也不建立 Application 基类。输入、轨道相机、视口换算、光照和启动配置小组件放在 app/common。
 

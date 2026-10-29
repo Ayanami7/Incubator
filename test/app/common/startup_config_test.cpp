@@ -15,7 +15,7 @@ namespace
     TEST(StartupConfigTest, DefaultsAndPartialFieldsLeaveOtherOptionsUnchanged)
     {
         const auto defaults = App::decodeStartupConfig("{}");
-        EXPECT_EQ(defaults.options.window.title, "Incubator Engine Demo");
+        EXPECT_EQ(defaults.options.window.title, "Incubator Engine");
         EXPECT_EQ(defaults.options.window.width, 1920);
         EXPECT_EQ(defaults.options.window.height, 1080);
         EXPECT_EQ(defaults.startupScene, "assets/scenes/shadows.json");

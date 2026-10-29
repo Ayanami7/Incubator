@@ -38,7 +38,7 @@ namespace Incubator::App
 
     StartupConfig::StartupConfig()
     {
-        options.window.title = "Incubator Engine Demo";
+        options.window.title = "Incubator Engine";
     }
 
     StartupConfig decodeStartupConfig(std::string_view json)

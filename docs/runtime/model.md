@@ -134,7 +134,7 @@ std::array instances{
     ModelInstance{model, glm::translate(glm::mat4(1), glm::vec3(1, 0, 0))}};
 auto draws = makeModelDraws(instances);
 renderer.drawFrame({extent, camera, draws}, clearColor);
-// drawFrame borrows draws only during this call; storage may now be reused or released.
+// drawFrame 仅在本次调用期间借用 draws，返回后可复用或释放列表存储。
 ```
 
 `ModelInstance` 保存 `std::shared_ptr<const PreparedModel> model` 与默认单位矩阵的 `glm::mat4 transform`。

@@ -34,7 +34,7 @@ cd E:/Project/VScode/Incubator/build
 | Shadow bias | 展开调整接收深度偏移，默认 0.003 |
 
 主视口随窗口尺寸变化；最小化、失焦及无效尺寸取消当前手势，恢复后不重放旧增量。
-控制面板可收起 Lighting 与 Shadow settings，让场景保持主体。相机和 UI 编辑参与当前帧提取；
+控制面板可收起 Lighting 与 Shadow bias，让场景保持主体。相机和 UI 编辑参与当前帧提取；
 灯光及阴影预览不写回源场景。Demo 不保存停靠布局，也不读取或覆盖 Editor 的 `incubator-editor-layout.ini`。
 
 ## 实现与持有期

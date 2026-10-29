@@ -31,6 +31,7 @@ CPU 资产 release 与路由销毁分别管理，运行期间可再次显式准�
 | ResourceType 封闭枚举 | [resource_type.md](./resource_type.md) | ✅ 已实现 |
 | ResourceId + 虚拟路径规范化 | [resource_id.md](./resource_id.md) | ✅ 已实现 |
 | ResourceRegistry + Entry（X3） | [resource_registry.md](./resource_registry.md) | ✅ 已实现 |
+| AssetSource 单目录根、虚拟路径与目录发现 | [本页](#单目录资产源)、[查询与持有](./resource_manager.md#目录发现与状态查询) | ✅ 已实现 |
 | AssetInfo 描述壳 | [asset_info.md](./asset_info.md) | ✅ 已实现 |
 | ResourceObject 薄基类 + ResourceState | [resource_object.md](./resource_object.md) | ✅ 已实现 |
 | ResourceManager 门面 | [resource_manager.md](./resource_manager.md) | ✅ 已实现 |
@@ -49,6 +50,7 @@ src/runtime/resource/
 ├── resource_id.h/.cpp
 ├── resource_state.h
 ├── asset_info.h
+├── asset_source.h/.cpp
 ├── resource_object.h/.cpp
 ├── resource_registry.h/.cpp
 ├── resource_manager.h/.cpp

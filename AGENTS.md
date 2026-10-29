@@ -25,7 +25,7 @@ Incubator/
 ├── examples/
 │   └── demo/           # 引擎能力展示程序
 ├── app/
-│   ├── editor/         # 场景编辑工具，目标 incubator_editor
+│   ├── editor/         # 场景编辑工具，目标 Editor
 │   └── common/         # 两个应用实际共用的输入、相机、配置等小组件
 ├── test/               # 单元测试、集成测试与精确 fixture
 ├── docs/               # 构建、模块接口与使用说明
@@ -37,7 +37,7 @@ Incubator/
 └── README.md           # 项目说明
 ```
 
-正式目录为 `app/editor/`，独立目标为 `incubator_editor`，不创建 `apps/`。Editor 提供虚拟资产目录浏览、模型加入场景及显式未使用模型清理；当前范围以[任务索引](./.agents/specs/tasks/README.md)为准，构建约定见 [CMake 结构](./docs/cmake.md#正式应用目标appeditor)。候选方向不是实施承诺。
+正式目录为 `app/editor/`，独立目标为 `Editor`，不创建 `apps/`。Editor 提供虚拟资产目录浏览、模型加入场景及显式未使用模型清理；当前范围以[任务索引](./.agents/specs/tasks/README.md)为准，构建约定见 [CMake 结构](./docs/cmake.md#正式应用目标appeditor)。候选方向不是实施承诺。
 
 ## 工作约定
 

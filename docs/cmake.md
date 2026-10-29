@@ -99,7 +99,7 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 因此从构建目录直接运行或通过编辑器运行时，也使用 `<build>/test-fixtures/assets/` 中的精确样本。
 需要修改资产的 Demo/模型测试在自己的工作副本中运行，结束时恢复启动 cwd；不修改项目源资产或共享 fixture。
 
-独立进程场景保存/恢复程序为 `<build>/test/app/editor/editor_scene_restart.exe`，以 build cwd 调用 write/read 和同一目标场景路径；名称不匹配 TestMate 的 *_test.exe，不作为 GoogleTest 程序发现。迁移后定点移除旧 test/examples/demo 下 orbit_camera_test、startup_config_test 和 scene_restart_test 的废弃可执行文件。
+独立进程场景保存/恢复程序为 `<build>/test/app/editor/editor_scene_restart.exe`，在 build 下准备包含 assets 副本的隔离工作目录，两个进程以相同 cwd 和目标场景路径分别调用 write/read。写入进程会在副本中创建新虚拟路径模型，恢复进程验证来源、完整选项与共享实例；不在源资产或用户运行目录执行。名称不匹配 TestMate 的 *_test.exe，不作为 GoogleTest 程序发现。迁移后定点移除旧 test/examples/demo 下 orbit_camera_test、startup_config_test 和 scene_restart_test 的废弃可执行文件。
 
 ### 示例目标（examples/ 下）
 
@@ -112,15 +112,15 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 ### 正式应用目标（app/editor）
 
 根 CMake 在 Runtime、共用 Shader/资产目标定义后添加 app，再添加测试和示例。
-`app/CMakeLists.txt` 添加 editor；`app/editor/CMakeLists.txt` 定义 `incubator_editor`，编译本目录 main.cpp、editor_app.cpp、
+`app/CMakeLists.txt` 添加 editor；`app/editor/CMakeLists.txt` 定义 `Editor`，编译本目录 main.cpp、editor_app.cpp、
 editor_scene.h、workspace.h 及 app/common/startup_config.cpp。只链接 IncubatorRuntime、imgui，私有使用 RapidJSON 头。
 Editor 不包含、编译或链接 examples/demo 源码，也不依赖 demo 可执行目标。
 
 ```powershell
 # 按 WORKFLOW 进入 MSVC 环境并设置 UTF-8 代码页后执行。
-cmake --build build --config Debug --target incubator_editor
+cmake --build build --config Debug --target Editor
 cd build
-./app/editor/incubator_editor.exe
+./app/editor/Editor.exe
 ```
 
 单独目标依赖 incubator_assets，部署模型、Shader、场景、字体和 incubator.json；运行 cwd 为 build，
@@ -139,7 +139,7 @@ app/common 仅放双方实际共用的参数、输入、相机、光照和配置
 - `incubator_config` 在 `cmake/assets.cmake` 中将仓库根目录的 `incubator.json` 增量复制到 `<build>/incubator.json`，Editor 和 Demo 通过 incubator_assets 显式依赖该目标。配置部署与资产部署均为单向复制，运行时保存不回写源文件；新场景仍需显式加入部署规则。
 - `runtime_ui_fonts` 在同一文件中部署 `assets/fonts/NotoSansSC-Regular.otf` 与 `OFL.txt` 到 `<build>/assets/fonts/`，两个应用及独立进程场景恢复程序显式依赖该目标。字体来源与许可见 `assets/fonts/SOURCE.md`，不使用开发机系统字体。
 - `runtime_test_fixtures` 将同一生产字体及许可复制到 `<build>/test-fixtures/assets/fonts/`，GPU 和 Demo 隔离工作目录继续使用该字体。`imgui_integration_test` 按 GPU 测试属性串行运行于 `<build>/test-fixtures/`，覆盖受控 DPI 更新、像素密度与原生窗口字体呈现；模拟缩放与实际显示证据分别保存。
-- 配置解析复用 Assimp 附带的 RapidJSON 头文件，`demo`、`incubator_editor`、`editor_test` 和 `startup_config_test` 分别设置私有包含目录，不对外暴露解析器类型或增加链接库。
+- 配置解析复用 Assimp 附带的 RapidJSON 头文件，`demo`、`Editor`、`editor_test` 和 `startup_config_test` 分别设置私有包含目录，不对外暴露解析器类型或增加链接库。
 - `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。Vulkan review 使用精确纹理 fixture，真实模型集成测试按需读取选定模型；不向 `<build>/assets/` 部署测试输入。
 
 ### Assimp 依赖
@@ -173,9 +173,10 @@ Runtime 私有链接，生成文件及库位于 `build/3rdparty/assimp`。
 
 ### 本地工作区状态
 
-Demo 的停靠布局保存在运行 cwd 的 `incubator-layout.ini`，由 ImGui 直接管理，不作为资产部署，
+Editor 的停靠布局保存在运行 cwd 的 `incubator-editor-layout.ini`，由 ImGui 直接管理，不作为资产部署，
 不写入 `incubator.json` 或场景 JSON。默认启动窗口为 1920×1080，场景目标大小跟随中央图像区域，
-不与启动窗口尺寸绑定。Demo 的集成测试在隔离 cwd 保存布局及用户场景，不覆盖生产运行目录中的布局。
+不与启动窗口尺寸绑定。Editor 的集成测试在隔离 cwd 保存布局及用户场景，不覆盖生产运行目录中的布局。
+Demo 不持久化布局，不读取或覆盖 Editor 的布局文件。
 
 
 阴影精确测试模型位于 `test/runtime/fixtures/models/shadows/`，通过 `runtime_test_fixtures`
