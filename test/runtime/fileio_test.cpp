@@ -138,6 +138,22 @@ TEST_F(FileIOTest, FileExists)
 
     createSampleFile(path, "exists");
     EXPECT_TRUE(fileIO->exists(path));
+    EXPECT_FALSE(fileIO->exists(testDir));
+    EXPECT_FALSE(fileIO->exists(testDir / "missing-parent" / "file.txt"));
+
+    // 用非法文件名稳定触发非缺失的属性错误，不依赖机器的 ACL 或运行身份。
+    const auto invalid = testPath("invalid<name.txt");
+    try
+    {
+        fileIO->exists(invalid);
+        FAIL() << "Attribute query failure was treated as a missing file";
+    }
+    catch (const Incubator::Error::Exception& error)
+    {
+        EXPECT_EQ(error.code(), Incubator::Error::Code::IO);
+        EXPECT_NE(error.message().find(invalid), std::string::npos);
+        EXPECT_NE(error.message().find("error: "), std::string::npos);
+    }
 }
 
 TEST_F(FileIOTest, GetFileSize)

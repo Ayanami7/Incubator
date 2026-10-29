@@ -50,6 +50,8 @@ namespace Incubator
             // ---- 文件操作 ----
 
             /// @brief 检查文件是否存在
+            /// @return 文件存在时为 true；文件或父路径不存在、目标是目录时为 false。
+            /// @throws Error::Exception 其他属性查询错误抛 IO，保留路径和平台错误原因。
             virtual bool exists(const std::filesystem::path& path) = 0;
 
             /// @brief 获取文件大小

@@ -110,7 +110,7 @@ public:
     virtual ~FileIO() = default;
 
     // 文件操作
-    virtual bool exists(const std::filesystem::path& path) = 0;      // 是否存在
+    virtual bool exists(const std::filesystem::path& path) = 0;      // 查询文件；其他访问错误抛 IO
     virtual uint64_t getFileSize(const std::filesystem::path& path) = 0;  // 字节数，不存在返回 0
     virtual bool remove(const std::filesystem::path& path) = 0;      // 删除，不存在返回 false
 
@@ -134,6 +134,9 @@ protected:
 // 工厂：创建平台特定实现
 std::unique_ptr<FileIO> createPlatformFileIO();
 ```
+
+`exists` 在文件存在时返回 true，文件或父路径不存在、目标是目录时返回 false。
+Windows 的其他属性查询错误抛 IO，异常包含路径和 Win32 错误码，不把权限等访问失败当作文件缺失。
 
 `DirectoryEntry` 包含 UTF-8 `name`、`directory` 和 `reparsePoint`。`listDirectory` 仅返回直接子项，
 不递归、不保证顺序；空目录返回空列表，不存在、不是目录或访问失败抛 `Error::Exception(IO)`。

@@ -282,9 +282,17 @@ namespace Incubator
             public:
                 bool exists(const std::filesystem::path& path) override
                 {
-                    DWORD attrs = GetFileAttributesW(path.c_str());
-                    return attrs != INVALID_FILE_ATTRIBUTES &&
-                           !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+                    const DWORD attrs = GetFileAttributesW(path.c_str());
+                    if (attrs == INVALID_FILE_ATTRIBUTES)
+                    {
+                        const DWORD error = GetLastError();
+                        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+                            return false;
+                        throw Error::Exception(
+                            Error::Code::IO,
+                            formatWin32Error(error, "GetFileAttributesW failed: " + Utils::Utf8::toUtf8String(path)));
+                    }
+                    return !(attrs & FILE_ATTRIBUTE_DIRECTORY);
                 }
 
                 uint64_t getFileSize(const std::filesystem::path& path) override

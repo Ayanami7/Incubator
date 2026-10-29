@@ -180,6 +180,14 @@ namespace
         EXPECT_CALL(fileIO, exists(_)).WillOnce(Return(false));
         EXPECT_FALSE(io.Exists("models/optional.mtl"));
         EXPECT_TRUE(io.failure().empty());
+        const auto denied = source.resolve("models/denied.mtl");
+        EXPECT_CALL(fileIO, exists(denied))
+            .Times(2)
+            .WillRepeatedly(::testing::Throw(Error::Exception(Error::Code::IO, "controlled attribute access denied")));
+        EXPECT_THROW(source.exists("models/denied.mtl"), Error::Exception);
+        EXPECT_FALSE(io.Exists("models/denied.mtl"));
+        EXPECT_NE(io.failure().find("models/denied.mtl"), std::string::npos);
+        EXPECT_NE(io.failure().find("controlled attribute access denied"), std::string::npos);
     }
     TEST(AssimpFileIOTest, RequiredOpenFailureIsRecordedAndCloseDestroysHandle)
     {
