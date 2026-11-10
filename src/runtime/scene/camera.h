@@ -2,6 +2,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 
+#include "runtime/core/math/aabb.h"
 #include "runtime/render/frame_input.h"
 
 namespace Incubator::Scene
@@ -37,6 +38,11 @@ namespace Incubator::Scene
         /// @return 世界位姿的逆矩阵，以及仅应用一次最终 Y 轴适配的 RH/ZO 透视矩阵。
         /// @throws Error::Exception 渲染尺寸无效时抛出 CONFIG 错误。
         Render::CameraMatrices matrices(Render::FrameExtent extent) const;
+
+        /// @brief 将图像内归一化逻辑坐标反投影为世界空间近远面线段。
+        /// @param position 左上角为 (0,0)、右下角为 (1,1)，不额外应用 DPI 或 Y 翻转。
+        /// @return 坐标越界、尺寸无效或矩阵无法反投影时返回空值。
+        std::optional<Math::LineSegment> viewportSegment(Render::FrameExtent extent, glm::vec2 position) const;
 
     private:
         glm::vec3 position_;

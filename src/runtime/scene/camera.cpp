@@ -4,6 +4,7 @@
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 
 #include "runtime/scene/detail/pose_validation.h"
 
@@ -68,5 +69,28 @@ namespace Incubator::Scene
                                   perspective_.nearPlane, perspective_.farPlane);
         projection[1][1] *= -1;
         return {view, projection};
+    }
+
+    std::optional<Math::LineSegment> Camera::viewportSegment(Render::FrameExtent extent, glm::vec2 position) const
+    {
+        if (!extent.width || !extent.height || !std::isfinite(position.x) || !std::isfinite(position.y) ||
+            position.x < 0 || position.x > 1 || position.y < 0 || position.y > 1)
+            return std::nullopt;
+        const auto camera = matrices(extent);
+        const glm::dmat4 inverse = glm::inverse(glm::dmat4(camera.projection) * glm::dmat4(camera.view));
+        const double x = 2.0 * position.x - 1.0, y = 2.0 * position.y - 1.0;
+        auto point = [&](double z) -> std::optional<glm::vec3> {
+            const auto homogeneous = inverse * glm::dvec4(x, y, z, 1.0);
+            if (!std::isfinite(homogeneous.w) || homogeneous.w == 0.0)
+                return std::nullopt;
+            const glm::vec3 result(glm::dvec3(homogeneous) / homogeneous.w);
+            if (!std::isfinite(result.x) || !std::isfinite(result.y) || !std::isfinite(result.z))
+                return std::nullopt;
+            return result;
+        };
+        const auto near = point(0.0), far = point(1.0);
+        if (!near || !far)
+            return std::nullopt;
+        return Math::LineSegment{*near, *far};
     }
 }  // namespace Incubator::Scene

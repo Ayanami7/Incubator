@@ -9,6 +9,12 @@
 
 namespace Incubator::Scene
 {
+    /// @brief 由线段查询得到的实体 ID 和入盒参数；值不持有实体。
+    struct PickHit
+    {
+        EntityId id;
+        double parameter;
+    };
     /// @brief 扁平、单线程的逻辑场景。
     /// @note 共享 PreparedModel 不会转移 GPU 资源的所有权；ID 操作遇到无效实体时返回 nullptr 或 false，且不影响其他实体。
     class Scene
@@ -46,6 +52,12 @@ namespace Incubator::Scene
         /// @return 只读借用的实体视图。
         /// @note 调用 createEntity、destroyEntity 或 clear 后，必须重新获取实体指针或视图；遍历时不得修改实体集合结构。
         std::span<const Entity> entities() const;
+
+        /// @brief 查询可见模型的世界 AABB，最近入盒参数优先；相同参数按创建顺序。
+        /// @note 结果是按值返回的粗拾取；ID 在实体删除或场景销毁后失效。
+        std::optional<PickHit> pick(const Math::LineSegment& segment) const;
+        /// @brief 使用当前相机及图像内归一化位置进行近远裁剪范围拾取。
+        std::optional<PickHit> pick(Render::FrameExtent extent, glm::vec2 position) const;
 
         const Camera& camera() const;
         void setCamera(Camera camera);

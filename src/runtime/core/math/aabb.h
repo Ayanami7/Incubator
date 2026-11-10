@@ -8,6 +8,12 @@ namespace Incubator
 {
     namespace Math
     {
+        /// @brief 世界空间线段，起点和终点分别对应参数 0 和 1。
+        struct LineSegment
+        {
+            glm::vec3 start;
+            glm::vec3 end;
+        };
         /// @brief 由有限且有序的最小、最大端点表示的包围盒。
         /// @note 端点相等时仍有效；空集合应使用 optional<Aabb> 表示。
         struct Aabb
@@ -25,5 +31,9 @@ namespace Incubator
             /// @note 不执行透视除法。无法取得边界时必须保留原有绘制路径。
             std::optional<Aabb> transformed(const glm::mat4& matrix) const noexcept;
         };
+
+        /// @brief 求线段进入盒子的最小参数；边界及退化盒参与，起点在盒内时返回 0。
+        /// @return [0, 1] 的入盒参数，未命中或输入非有限时为空。
+        std::optional<double> intersectSegment(const LineSegment& segment, const Aabb& box) noexcept;
     }  // namespace Math
 }  // namespace Incubator

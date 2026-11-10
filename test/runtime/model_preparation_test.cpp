@@ -351,6 +351,61 @@ namespace
         std::ostringstream messages_, resourceMessages_;
     };
 
+    TEST_F(ModelPreparationTest, PickingUsesTransformedSharedBoundsAndStableNearestOrder)
+    {
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            auto model = Model::prepareModel(renderer, GLTF);
+            auto ground = Model::prepareModel(renderer, "models/shadows/receiver.obj");
+            ASSERT_TRUE(model->bounds());
+            const Scene::Transform pose({4, 2, -1}, glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1)),
+                                        {-2, 3, 0});
+            const auto world = model->bounds()->transformed(pose.matrix());
+            ASSERT_TRUE(world);
+            const auto center = (world->min + world->max) * 0.5f;
+            Scene::Scene scene;
+            scene.createEntity();
+            const auto hidden = scene.createEntity(model, pose, false);
+            auto distant = pose;
+            distant.setPosition(pose.position() + glm::vec3(0, 0, -2));
+            scene.createEntity(model, distant);
+            const auto first = scene.createEntity(model, pose);
+            const auto same = scene.createEntity(model, pose);
+            const auto groundId = scene.createEntity(ground, Scene::Transform({40, 0, 0}));
+            const Math::LineSegment segment{center + glm::vec3(0, 0, 5), center - glm::vec3(0, 0, 5)};
+            const auto counts = Detail::RendererReviewAccess::resourceCounts(renderer);
+            const auto logBefore = messages_.str();
+            auto hit = scene.pick(segment);
+            ASSERT_TRUE(hit);
+            EXPECT_EQ(hit->id, first);
+            EXPECT_NEAR(hit->parameter, 0.5, 0.00001);
+            const glm::vec3 edge{center.x, world->max.y - 0.0001f, center.z};
+            EXPECT_EQ(scene.pick(Math::LineSegment{edge + glm::vec3(0, 0, 5), edge - glm::vec3(0, 0, 5)})->id, first);
+            EXPECT_EQ(scene.pick(Math::LineSegment{{40, 0, 2}, {40, 0, -2}})->id, groundId);
+            scene.setVisible(first, false);
+            EXPECT_EQ(scene.pick(segment)->id, same);
+            scene.setVisible(hidden, true);
+            EXPECT_EQ(scene.pick(segment)->id, hidden);
+            scene.setCamera(Scene::Camera(center + glm::vec3(0, 0, 5)));
+            EXPECT_EQ(scene.pick(FrameExtent{800, 600}, {0.5f, 0.5f})->id, hidden);
+            scene.setCamera(Scene::Camera(center + glm::vec3(0, 0, 5), glm::quat(1, 0, 0, 0), {0.8f, 0.1f, 4.0f}));
+            EXPECT_FALSE(scene.pick(FrameExtent{800, 600}, {0.5f, 0.5f}));
+            const auto zero =
+                scene.createEntity(model, Scene::Transform({20, 0, 0}, glm::quat(1, 0, 0, 0), glm::vec3(0)));
+            EXPECT_EQ(scene.pick(Math::LineSegment{{20, 0, 1}, {20, 0, -1}})->id, zero);
+            scene.clear();
+            EXPECT_FALSE(scene.pick(segment));
+            const auto after = Detail::RendererReviewAccess::resourceCounts(renderer);
+            EXPECT_EQ(after.meshes, counts.meshes);
+            EXPECT_EQ(after.textures, counts.textures);
+            EXPECT_EQ(after.materials, counts.materials);
+            EXPECT_EQ(messages_.str(), logBefore);
+        }
+        cleanValidation();
+    }
+
     TEST_F(ModelPreparationTest, SpecifiedAssetRootPreparesBothFormatsWithoutFallbackToDefaultDirectory)
     {
         const auto root = sandbox_ / Utils::Utf8::toFsPath("独立 资产根");
@@ -1470,6 +1525,7 @@ namespace
     TEST_F(ModelPreparationTest, ModelManagerCanCloseBeforeUsersOrAfterRenderer)
     {
         auto native = window();
+        Scene::Scene cpuScene;
         std::unique_ptr<Model::ModelManager> lateCache;
         std::shared_ptr<const Model::PreparedModel> external;
         Mesh lateMesh;
@@ -1478,6 +1534,8 @@ namespace
             shaders(renderer);
             auto cache = std::make_unique<Model::ModelManager>(renderer);
             external = cache->resolve(Model::ModelReference(GLTF));
+            const auto cpuEntity = cpuScene.createEntity(external);
+            EXPECT_TRUE(cpuEntity.valid());
             cache.reset();
             EXPECT_TRUE(external->meshes()[0].valid());
             draw(*native, renderer, *external);
@@ -1487,6 +1545,12 @@ namespace
         }
         EXPECT_FALSE(external->meshes()[0].valid());
         EXPECT_FALSE(lateMesh.valid());
+        ASSERT_TRUE(external->bounds());
+        const auto center = (external->bounds()->min + external->bounds()->max) * 0.5f;
+        const auto hit = cpuScene.pick(Math::LineSegment{center + glm::vec3(0, 0, 3), center - glm::vec3(0, 0, 3)});
+        ASSERT_TRUE(hit);
+        EXPECT_EQ(hit->id, cpuScene.entities()[0].id);
+        cpuScene.clear();
         external.reset();
         EXPECT_EQ(lateCache->size(), 1u);
         EXPECT_EQ(lateCache->collectUnused(), 1u);
@@ -1612,6 +1676,7 @@ namespace
                 ASSERT_EQ(model->draws().size(), 5u);
                 Scene::Scene scene;
                 scene.createEntity(model, Scene::Transform({1000, 0, -10}));
+                EXPECT_FALSE(scene.pick(Math::LineSegment{{1000, 0, 0}, {1000, 0, -20}}));
                 EXPECT_EQ(Scene::extractSceneFrame(scene, {400, 400})->draws.size(), 5u);
                 EXPECT_EQ(model->meshes().size(), 1u);
                 EXPECT_EQ(model->materials().size(), 3u);

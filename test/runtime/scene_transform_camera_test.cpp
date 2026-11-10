@@ -4,6 +4,7 @@
 #include <cmath>
 #include <glm/gtc/constants.hpp>
 #include <limits>
+#include <utility>
 
 #include "runtime/core/error/error.h"
 #include "runtime/scene/camera.h"
@@ -14,6 +15,35 @@ namespace
     using namespace Incubator;
     using namespace Incubator::Scene;
     constexpr float EPSILON = 0.00001f;
+
+    TEST(SceneCameraTest, ViewportSegmentsRoundTripFinalProjectionAndClipRange)
+    {
+        const Camera camera({1, 2, 5}, glm::quat(1, 0, 0, 0), {glm::radians(60.0f), 0.5f, 20.0f});
+        for (const Render::FrameExtent extent : {Render::FrameExtent{800, 400}, Render::FrameExtent{400, 800}})
+        {
+            const auto matrices = camera.matrices(extent);
+            for (const glm::vec2 position : {glm::vec2{0, 0}, glm::vec2{0.5f, 0.5f}, glm::vec2{1, 1}})
+            {
+                const auto segment = camera.viewportSegment(extent, position);
+                ASSERT_TRUE(segment);
+                for (const auto& [point, depth] : {std::pair{segment->start, 0.0f}, std::pair{segment->end, 1.0f}})
+                {
+                    const auto clip = matrices.projection * matrices.view * glm::vec4(point, 1);
+                    EXPECT_NEAR(clip.x / clip.w, position.x * 2 - 1, 0.0001f);
+                    EXPECT_NEAR(clip.y / clip.w, position.y * 2 - 1, 0.0001f);
+                    EXPECT_NEAR(clip.z / clip.w, depth, 0.0001f);
+                }
+            }
+            const auto center = camera.viewportSegment(extent, {0.5f, 0.5f});
+            ASSERT_TRUE(center);
+            EXPECT_NEAR(center->start.z, 4.5f, 0.0001f);
+            EXPECT_NEAR(center->end.z, -15.0f, 0.001f);
+            EXPECT_GT(camera.viewportSegment(extent, {0, 0})->start.y, camera.position().y);
+        }
+        EXPECT_FALSE(camera.viewportSegment({0, 1}, {0.5f, 0.5f}));
+        EXPECT_FALSE(camera.viewportSegment({1, 1}, {-0.01f, 0.5f}));
+        EXPECT_FALSE(camera.viewportSegment({1, 1}, {0.5f, std::numeric_limits<float>::quiet_NaN()}));
+    }
 
     void expectPoint(const glm::mat4& matrix, glm::vec4 input, glm::vec4 expected)
     {

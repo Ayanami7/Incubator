@@ -10,6 +10,22 @@ namespace
 {
     using Incubator::Math::Aabb;
 
+    TEST(AabbTest, SegmentIntersectionHandlesClippingParallelAndDegenerateBounds)
+    {
+        using Incubator::Math::intersectSegment;
+        const Aabb box{{-1, -1, -1}, {1, 1, 1}};
+        EXPECT_DOUBLE_EQ(*intersectSegment({{0, 0, 3}, {0, 0, -3}}, box), 1.0 / 3.0);
+        EXPECT_DOUBLE_EQ(*intersectSegment({{0, 0, 0}, {3, 0, 0}}, box), 0.0);
+        EXPECT_DOUBLE_EQ(*intersectSegment({{1, 1, 2}, {1, 1, 1}}, box), 1.0);
+        EXPECT_FALSE(intersectSegment({{2, 0, 3}, {2, 0, -3}}, box));
+        EXPECT_FALSE(intersectSegment({{0, 0, 4}, {0, 0, 2}}, box));
+        EXPECT_FALSE(intersectSegment({{0, 0, -2}, {0, 0, -4}}, box));
+        const Aabb point{{0, 0, 0}, {0, 0, 0}};
+        EXPECT_DOUBLE_EQ(*intersectSegment({{0, 0, 1}, {0, 0, -1}}, point), 0.5);
+        EXPECT_FALSE(intersectSegment({{0.1f, 0, 1}, {0.1f, 0, -1}}, point));
+        EXPECT_FALSE(intersectSegment({{0, 0, 0}, {std::numeric_limits<float>::infinity(), 0, 0}}, box));
+    }
+
     void expectBounds(const Aabb& actual, const glm::vec3& min, const glm::vec3& max)
     {
         for (int axis = 0; axis < 3; ++axis)

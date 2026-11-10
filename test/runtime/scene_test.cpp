@@ -19,6 +19,15 @@ namespace
     using Incubator::Scene::Scene;
     using Incubator::Scene::Transform;
 
+    TEST(ScenePickingTest, EmptyOrModelFreeSceneHasNoHit)
+    {
+        Scene scene;
+        EXPECT_FALSE(scene.pick({800, 600}, {0.5f, 0.5f}));
+        scene.createEntity();
+        EXPECT_FALSE(scene.pick(Incubator::Math::LineSegment{{0, 0, 1}, {0, 0, -1}}));
+        EXPECT_FALSE(scene.pick({0, 600}, {0.5f, 0.5f}));
+    }
+
     TEST(SceneNamesTest, ValidatesAndPreservesNamesThroughCaptureAndRebuild)
     {
         Scene scene;

@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "runtime/core/error/error.h"
+#include "runtime/model/prepared_model.h"
 
 namespace Incubator::Scene
 {
@@ -84,6 +85,29 @@ namespace Incubator::Scene
     std::span<const Entity> Scene::entities() const
     {
         return entities_;
+    }
+
+    std::optional<PickHit> Scene::pick(const Math::LineSegment& segment) const
+    {
+        std::optional<PickHit> nearest;
+        for (const auto& entity : entities_)
+        {
+            if (!entity.visible || !entity.model || !entity.model->bounds())
+                continue;
+            const auto bounds = entity.model->bounds()->transformed(entity.transform.matrix());
+            if (!bounds)
+                continue;
+            const auto hit = Math::intersectSegment(segment, *bounds);
+            if (hit && (!nearest || *hit < nearest->parameter))
+                nearest = PickHit{entity.id, *hit};
+        }
+        return nearest;
+    }
+
+    std::optional<PickHit> Scene::pick(Render::FrameExtent extent, glm::vec2 position) const
+    {
+        const auto segment = camera_.viewportSegment(extent, position);
+        return segment ? pick(*segment) : std::nullopt;
     }
 
     const Camera& Scene::camera() const

@@ -1,5 +1,6 @@
 #include "runtime/core/math/aabb.h"
 
+#include <algorithm>
 #include <cmath>
 #include <glm/common.hpp>
 #include <glm/vec4.hpp>
@@ -8,6 +9,31 @@ namespace Incubator
 {
     namespace Math
     {
+        std::optional<double> intersectSegment(const LineSegment& segment, const Aabb& box) noexcept
+        {
+            double enter = 0.0, exit = 1.0;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const double a = segment.start[axis], b = segment.end[axis];
+                const double lo = box.min[axis], hi = box.max[axis];
+                if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(lo) || !std::isfinite(hi) || lo > hi)
+                    return std::nullopt;
+                const double direction = b - a;
+                if (direction == 0.0)
+                {
+                    if (a < lo || a > hi)
+                        return std::nullopt;
+                    continue;
+                }
+                const double t1 = (lo - a) / direction, t2 = (hi - a) / direction;
+                enter = std::max(enter, std::min(t1, t2));
+                exit = std::min(exit, std::max(t1, t2));
+                if (enter > exit)
+                    return std::nullopt;
+            }
+            return enter;
+        }
+
         void Aabb::include(const glm::vec3& point) noexcept
         {
             min = glm::min(min, point);
