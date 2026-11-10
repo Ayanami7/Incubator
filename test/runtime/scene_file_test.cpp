@@ -26,6 +26,8 @@ namespace
         d.entities.push_back({Model::ModelReference("models/兔子/模型.gltf", o),
                               Scene::Transform({1.25f, -2, 3}, {2, 1, 0, 3}, {0, -2, 4}), false});
         d.entities.push_back({std::nullopt, Scene::Transform{}, true});
+        d.entities[0].name = "兔子 ## 中文";
+        d.entities[1].name = "### 空实体";
         d.camera = Scene::Camera({3, 4, 5}, {2, 0, 1, 3}, {0.9f, 0.2f, 200});
         d.lighting = {{0, -2, -4}, {0.2f, 0.5f, 0.8f}, 2.25f, 0.3f};
         d.clearColor = {0.1f, 0.2f, 0.3f, 0.4f};
@@ -38,6 +40,7 @@ namespace
         {
             EXPECT_EQ(a.entities[i].model, b.entities[i].model);
             EXPECT_EQ(a.entities[i].visible, b.entities[i].visible);
+            EXPECT_EQ(a.entities[i].name, b.entities[i].name);
             EXPECT_EQ(a.entities[i].transform.position(), b.entities[i].transform.position());
             EXPECT_EQ(a.entities[i].transform.scale(), b.entities[i].transform.scale());
             EXPECT_NEAR(std::abs(glm::dot(a.entities[i].transform.rotation(), b.entities[i].transform.rotation())), 1,
@@ -95,6 +98,16 @@ namespace
         check(replace("\"version\": 1", "\"version\": 2"), "version");
         check(replace("\"version\": 1", "\"version\": 1.0"), "version");
         check(replace("\"visible\": false", "\"visible\": 0"), "visible");
+        check(replace("\"name\": \"兔子 ## 中文\"", "\"name\": 42"), "entities[0].name");
+        check(replace("\"name\": \"兔子 ## 中文\"", "\"name\": \"bad\\u0000name\""), "entities[0].name");
+        auto legacy = valid;
+        const auto nameAt = legacy.find("\"name\": \"兔子 ## 中文\",");
+        ASSERT_NE(nameAt, std::string::npos);
+        legacy.erase(nameAt, std::string("\"name\": \"兔子 ## 中文\",").size());
+        EXPECT_TRUE(Scene::decodeScene(legacy).entities[0].name.empty());
+        auto invalid = sample();
+        invalid.entities[0].name = std::string("\xff", 1);
+        EXPECT_THROW(Scene::encodeScene(invalid), Error::Exception);
         check(replace("\"mipMode\": \"fullChain\"", "\"mipMode\": \"other\""), "mipMode");
         check(replace("\"path\": \"models/兔子/模型.gltf\"", "\"path\": \"bad\\u0000path\""), "path");
         check(replace("\"clearColor\"", "\"missing\""), "clearColor");

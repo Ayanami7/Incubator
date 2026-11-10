@@ -22,13 +22,14 @@ scene.destroyEntity(first);
 
 Scene 不可复制或移动，使用一个 vector 保存实体，属于单线程 Runtime；当前不提供 ECS 或实体父子树。
 场景内容捕获、JSON 文件读写和重建由同模块的独立接口提供，见下文。
-Entity 保存 `id`、`transform`、`visible` 和可空的 `shared_ptr<const PreparedModel> model`。
+Entity 保存 `id`、UTF-8 `name`、`transform`、`visible` 和可空的 `shared_ptr<const PreparedModel> model`。名称允许为空或重复，不参与身份识别；非法 UTF-8 或内嵌 NUL 被拒绝。
 Transform 是实体整体变换的唯一真源，实体不另存 ModelInstance 或可修改的整体矩阵。
 模型内部节点仍属于 PreparedModel，不按节点创建实体。
 
 | 接口 | 行为 |
 |---|---|
-| createEntity(model={}, transform=Transform{}, visible=true) | 返回新 EntityId；无模型也可创建合法逻辑实体 |
+| createEntity(model={}, transform=Transform{}, visible=true, name={}) | 返回新 EntityId；无模型也可创建合法逻辑实体，名称默认为空 |
+| setName(EntityId, name) | 按 ID 修改名称；无效 ID 返回 false，非法名称抛 CONFIG 且保留原值 |
 | find(EntityId) const | 返回只读 Entity 指针；无效、已删除或其他 Scene 的 ID 返回 nullptr |
 | setTransform/setVisible/setModel | 通过 ID 修改指定实体；未命中返回 false，其他实体不变；setModel 可传空解除绑定 |
 | destroyEntity(EntityId) | 删除指定实体，未命中返回 false；其他存活实体相对顺序保持 |
@@ -68,7 +69,7 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
 
 背景 RGB 为 sRGB 编码、alpha 为线性值，各分量必须有限且位于 `[0,1]`；无效输入抛 CONFIG。
 默认描述使用默认 Camera、Lighting 和背景 `{0.12, 0.16, 0.22, 1}`。`SceneDescription::valid()`
-检查可直接修改的光照和背景；Transform、Camera 和 ModelReference 继续由各自类型保证合法性。
+检查可直接修改的光照、背景和实体名称；Transform、Camera 和 ModelReference 继续由各自类型保证合法性。
 
 ## 场景 JSON 文件
 
@@ -79,6 +80,7 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
 {
   "version": 1,
   "entities": [{
+    "name": "示例模型",
     "model": {"path": "models/example.gltf", "prepare": {
       "mipMode": "fullChain", "sampler": {"minFilter": "linear", "magFilter": "linear", "mipFilter": "linear"},
       "shading": "lambert"
@@ -92,6 +94,8 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
   "clearColor": [0.12, 0.16, 0.22, 1]
 }
 ```
+
+JSON v1 的 `name` 为可选字符串，旧文件缺省时为空；新文件保存所有实体的名称。非字符串、非法 UTF-8 或内嵌 NUL 会导致读取失败。
 
 字段均必需，`model` 可为 `null`；四元数顺序为 xyzw，FOV 使用弧度。枚举区分大小写：
 `mipMode` 为 `baseLevel/fullChain`，min/mag 过滤为 `nearest/linear`，mip 过滤为

@@ -357,6 +357,7 @@ namespace
                      ASSERT_TRUE(editor.addModel(app, model)) << editor.message();
                      const auto first = editor.selected();
                      ASSERT_NE(app.scene().find(first), nullptr);
+                     EXPECT_EQ(app.scene().find(first)->name, "model");
                      const auto shared = app.scene().find(first)->model;
                      EXPECT_EQ(shared->source().path(), model);
                      ASSERT_TRUE(editor.addModel(app, model));
@@ -387,6 +388,99 @@ namespace
              },
              {},
              {}});
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, NameFieldEditsSelectedEntityWithoutPreparingAnotherModel)
+    {
+        copyShowcaseModels();
+        auto state = std::make_shared<Lifetime>();
+        auto config = options(true);
+        config.window.width = 1280;
+        config.window.height = 800;
+        Editor::EditorApp session(config, std::make_unique<TrackedFileIO>(state));
+        auto editor = std::make_shared<Editor::EditorScene>();
+        Scene::EntityId selected;
+        Scene::EntityId first;
+        std::shared_ptr<const Model::PreparedModel> model;
+        size_t opens = 0;
+        int frame = 0;
+        ImVec2 click{};
+        ImVec2 firstRow{}, thirdRow{};
+        session.run({[&](auto& app) {
+                         editor->initialize(app);
+                         first = app.scene().entities()[0].id;
+                         selected = editor->createEntity(app);
+                         ASSERT_TRUE(selected.valid());
+                         EXPECT_EQ(app.scene().find(selected)->name, "Avocado");
+                         model = app.scene().find(selected)->model;
+                         opens = state->opens;
+                         auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                         glfwSetCursorPosCallback(handle, nullptr);
+                         const auto enter = glfwSetCursorEnterCallback(handle, nullptr);
+                         enter(handle, GLFW_TRUE);
+                         glfwFocusWindow(handle);
+                     },
+                     [&](auto& app, const auto&) {
+                         auto& io = ImGui::GetIO();
+                         if (frame == 3)
+                         {
+                             io.AddMousePosEvent(click.x, click.y);
+                             io.AddMouseButtonEvent(0, true);
+                         }
+                         if (frame == 4)
+                             io.AddMouseButtonEvent(0, false);
+                         if (frame == 6)
+                             io.AddInputCharactersUTF8(" 兔子##");
+                         if (frame == 8)
+                         {
+                             ASSERT_NE(app.scene().find(selected)->name.find("兔子##"), std::string::npos);
+                             app.scene().setName(first, app.scene().find(selected)->name);
+                             ImGui::SetWindowFocus("Objects");
+                         }
+                         if (frame == 10 || frame == 13)
+                         {
+                             const auto position = frame == 10 ? firstRow : thirdRow;
+                             io.AddMousePosEvent(position.x, position.y);
+                             io.AddMouseButtonEvent(0, true);
+                         }
+                         if (frame == 11 || frame == 14)
+                             io.AddMouseButtonEvent(0, false);
+                         if (frame == 12)
+                             EXPECT_EQ(editor->selected(), first);
+                         if (frame == 17)
+                         {
+                             EXPECT_NE(app.scene().find(selected)->name.find("兔子##"), std::string::npos);
+                             EXPECT_EQ(editor->selected(), selected);
+                             EXPECT_EQ(app.scene().find(selected)->model, model);
+                             EXPECT_EQ(state->opens, opens);
+                             app.requestExit();
+                         }
+                     },
+                     [&](auto& app) {
+                         editor->ui(app);
+                         const auto* panel = ImGui::FindWindowByName("Properties");
+                         ASSERT_NE(panel, nullptr);
+                         const auto start = panel->DC.CursorStartPos;
+                         click = {panel->Pos.x + panel->Size.x - ImGui::GetFontSize() * 2,
+                                  start.y + ImGui::GetFrameHeightWithSpacing() +
+                                      2 * ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeight() * 0.5f};
+                         if (frame >= 9)
+                         {
+                             const auto* objects = ImGui::FindWindowByName("Objects");
+                             ASSERT_NE(objects, nullptr);
+                             ASSERT_EQ(objects->DC.ChildWindows.Size, 1);
+                             const auto* child = objects->DC.ChildWindows[0];
+                             firstRow = {child->DC.CursorStartPos.x + 10,
+                                         child->DC.CursorStartPos.y + ImGui::GetTextLineHeight() * 0.5f};
+                             thirdRow = {firstRow.x, firstRow.y + 2 * ImGui::GetTextLineHeightWithSpacing()};
+                         }
+                         ++frame;
+                     },
+                     {},
+                     {},
+                     [editor](auto& app) { editor->layout(app); }});
+        model.reset();
         cleanValidation();
     }
 

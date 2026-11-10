@@ -11,7 +11,7 @@ namespace Incubator::Scene
         const std::function<std::shared_ptr<const Model::PreparedModel>(const Model::ModelReference&)>& resolve)
     {
         if (!description.valid())
-            throw Error::Exception(Error::Code::CONFIG, "Invalid scene lighting or clearColor");
+            throw Error::Exception(Error::Code::CONFIG, "Invalid scene lighting, clearColor or entity name");
         for (const auto& entity : description.entities)
         {
             if (!entity.model)
@@ -42,7 +42,7 @@ namespace Incubator::Scene
                 if (!model)
                     throw Error::Exception(Error::Code::CONFIG, "Scene model resolver returned null");
             }
-            scene->createEntity(std::move(model), entity.transform, entity.visible);
+            scene->createEntity(std::move(model), entity.transform, entity.visible, entity.name);
         }
         return {std::move(scene), description.clearColor};
     }

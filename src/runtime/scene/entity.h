@@ -2,7 +2,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <string_view>
 
+#include "runtime/core/utils/utf8.h"
 #include "runtime/scene/transform.h"
 
 namespace Incubator::Model
@@ -12,6 +15,11 @@ namespace Incubator::Model
 
 namespace Incubator::Scene
 {
+    /// @brief 检查实体名称是否为不含 NUL 的 UTF-8；空名称合法。
+    inline bool validEntityName(std::string_view name)
+    {
+        return name.find('\0') == std::string_view::npos && Utils::Utf8::isValid(name);
+    }
     class Scene;
 
     /// @brief 进程内的逻辑实体标识，与资源及 GPU/模型索引无关。
@@ -47,5 +55,6 @@ namespace Incubator::Scene
         Transform transform;
         bool visible = true;
         std::shared_ptr<const Model::PreparedModel> model;
+        std::string name;
     };
 }  // namespace Incubator::Scene

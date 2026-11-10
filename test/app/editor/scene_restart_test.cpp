@@ -28,9 +28,10 @@ int main(int argc, char** argv)
 
                          demo.selectModel(true);
                          const auto tea = demo.createEntity(session);
+                         session.scene().setName(tea, "茶壶 ## 一");
                          session.scene().setTransform(
                              tea, Incubator::Scene::Transform({1, 0, 0}, {1, 0, 0, 0}, {-0.1f, 0.2f, 0}));
-                         session.scene().createEntity({}, Incubator::Scene::Transform({5, 6, 7}), false);
+                         session.scene().createEntity({}, Incubator::Scene::Transform({5, 6, 7}), false, "空 ### 对象");
                          std::filesystem::create_directories("assets/models/restart-import");
                          std::filesystem::copy_file("assets/models/utah_teapot/utah_teapot.obj",
                                                     "assets/models/restart-import/sculpture.obj",
@@ -59,6 +60,7 @@ int main(int argc, char** argv)
                               Incubator::Render::MipFilter::Linear},
                              Incubator::Render::ShadingMode::Lambert};
                          if (d.entities.size() != 6 || !d.entities[0].model || !d.entities[2].model ||
+                             d.entities[2].name != "茶壶 ## 一" || d.entities[3].name != "空 ### 对象" ||
                              d.entities[3].model || d.entities[3].visible || !d.entities[4].model ||
                              !d.entities[5].model ||
                              d.entities[4].model->path() != "models/restart-import/sculpture.obj" ||

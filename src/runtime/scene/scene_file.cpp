@@ -13,6 +13,7 @@
 #include "runtime/core/error/error.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
+#include "runtime/scene/entity.h"
 
 namespace Incubator::Scene
 {
@@ -151,7 +152,7 @@ namespace Incubator::Scene
     std::string encodeScene(const SceneDescription& d)
     {
         if (!d.valid())
-            throw Error::Exception(Error::Code::CONFIG, "Invalid scene lighting or clearColor");
+            throw Error::Exception(Error::Code::CONFIG, "Invalid scene lighting, clearColor or entity name");
         for (const auto& entity : d.entities)
         {
             if (!entity.model)
@@ -177,6 +178,8 @@ namespace Incubator::Scene
         for (const auto& e : d.entities)
         {
             w.StartObject();
+            key(w, "name");
+            text(w, e.name);
             key(w, "model");
             if (!e.model)
                 w.Null();
@@ -280,6 +283,13 @@ namespace Incubator::Scene
             const auto& e = entities[i];
             const auto& m = member(e, "model", p);
             EntityDescription item;
+            const auto name = e.FindMember("name");
+            if (name != e.MemberEnd())
+            {
+                item.name = str(name->value, p + ".name");
+                if (!validEntityName(item.name))
+                    fail(p + ".name", "expected UTF-8 without NUL");
+            }
             if (!m.IsNull())
                 item.model = model(m, p + ".model");
             const auto& t = member(e, "transform", p);

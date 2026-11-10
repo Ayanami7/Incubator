@@ -90,7 +90,8 @@ namespace Incubator::Editor
             try
             {
                 auto model = cache_->resolve(Model::ModelReference(path, PREVIEW_OPTIONS));
-                selected_ = app.scene().createEntity(std::move(model), transform);
+                auto name = Utils::Utf8::toUtf8String(Utils::Utf8::toFsPath(path).stem());
+                selected_ = app.scene().createEntity(std::move(model), transform, true, std::move(name));
                 messageError_ = false;
                 message_ = "Added model: " + std::string(path);
                 Log::Registry::get("editor").info("{}", message_);
@@ -481,9 +482,15 @@ namespace Incubator::Editor
             {
                 for (const auto& entity : app.scene().entities())
                 {
-                    const auto label = std::to_string(entity.id.value());
-                    if (ImGui::Selectable(label.c_str(), selected_ == entity.id))
+                    const auto id = std::to_string(entity.id.value());
+                    const auto label = (entity.name.empty() ? std::string("未命名") : entity.name) + " (" + id + ")";
+                    ImGui::PushID(id.c_str());
+                    if (ImGui::Selectable("##entity", selected_ == entity.id))
                         select(entity.id);
+                    const auto pos = ImGui::GetItemRectMin();
+                    ImGui::GetWindowDrawList()->AddText({pos.x, pos.y}, ImGui::GetColorU32(ImGuiCol_Text), label.data(),
+                                                        label.data() + label.size());
+                    ImGui::PopID();
                 }
                 ImGui::EndListBox();
             }
@@ -498,6 +505,21 @@ namespace Incubator::Editor
             {
                 if (const auto* entity = app.scene().find(selected_))
                 {
+                    ImGui::Text("ID: %llu", static_cast<unsigned long long>(entity->id.value()));
+                    ImGui::TextUnformatted("Name");
+                    const auto nameId = std::to_string(entity->id.value());
+                    ImGui::PushID(nameId.c_str());
+                    auto name = pathBuffer(entity->name);
+                    const auto resize = [](ImGuiInputTextCallbackData* data) {
+                        auto* buffer = static_cast<std::vector<char>*>(data->UserData);
+                        buffer->resize(static_cast<size_t>(data->BufSize));
+                        data->Buf = buffer->data();
+                        return 0;
+                    };
+                    if (ImGui::InputText("##entity-name", name.data(), name.size(), ImGuiInputTextFlags_CallbackResize,
+                                         resize, &name))
+                        app.scene().setName(selected_, name.data());
+                    ImGui::PopID();
                     auto transform = entity->transform;
                     auto position = transform.position();
                     auto scale = transform.scale();

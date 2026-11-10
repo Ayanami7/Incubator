@@ -19,6 +19,25 @@ namespace
     using Incubator::Scene::Scene;
     using Incubator::Scene::Transform;
 
+    TEST(SceneNamesTest, ValidatesAndPreservesNamesThroughCaptureAndRebuild)
+    {
+        Scene scene;
+        const auto first = scene.createEntity({}, Transform{}, false, "兔子 ##名称");
+        const auto second = scene.createEntity({}, Transform{}, true, "兔子 ##名称");
+        EXPECT_TRUE(scene.setName(second, "### 空格"));
+        EXPECT_THROW(scene.setName(first, std::string("bad\0name", 8)), Incubator::Error::Exception);
+        EXPECT_THROW(scene.setName(first, std::string("\xff", 1)), Incubator::Error::Exception);
+        EXPECT_EQ(scene.find(first)->name, "兔子 ##名称");
+        EXPECT_FALSE(scene.setName(EntityId{}, "ignored"));
+        const auto captured = Incubator::Scene::captureScene(scene, {0, 0, 0, 1});
+        auto restored = Incubator::Scene::rebuildScene(captured, {});
+        ASSERT_EQ(restored.scene->entities().size(), 2u);
+        EXPECT_EQ(restored.scene->entities()[0].name, "兔子 ##名称");
+        EXPECT_FALSE(restored.scene->entities()[0].visible);
+        EXPECT_EQ(restored.scene->entities()[1].name, "### 空格");
+        EXPECT_NE(restored.scene->entities()[0].id, first);
+    }
+
     static_assert(!std::is_copy_constructible_v<Scene> && !std::is_copy_assignable_v<Scene>);
     static_assert(!std::is_move_constructible_v<Scene> && !std::is_move_assignable_v<Scene>);
     static_assert(std::is_same_v<decltype(std::declval<Scene&>().find(EntityId{})), const Entity*>);

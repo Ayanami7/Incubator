@@ -19,6 +19,7 @@ namespace Incubator::Scene
         std::optional<Model::ModelReference> model;
         Transform transform;
         bool visible = true;
+        std::string name;
     };
 
     /// @brief 独立持有的场景内容及消费者背景设置。
@@ -29,7 +30,7 @@ namespace Incubator::Scene
         Render::Lighting lighting;
         std::array<float, 4> clearColor{0.12f, 0.16f, 0.22f, 1.0f};
 
-        /// @brief 检查可直接修改的光照及背景值。
+        /// @brief 检查可直接修改的光照、背景及实体名称。
         bool valid() const noexcept;
     };
 

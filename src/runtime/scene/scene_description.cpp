@@ -12,9 +12,10 @@ namespace Incubator::Scene
 {
     bool SceneDescription::valid() const noexcept
     {
-        return lighting.valid() && std::ranges::all_of(clearColor, [](float value) {
-                   return std::isfinite(value) && value >= 0.0f && value <= 1.0f;
-               });
+        return lighting.valid() &&
+               std::ranges::all_of(entities, [](const auto& entity) { return validEntityName(entity.name); }) &&
+               std::ranges::all_of(clearColor,
+                                   [](float value) { return std::isfinite(value) && value >= 0.0f && value <= 1.0f; });
     }
 
     SceneDescription captureScene(const Scene& scene, std::array<float, 4> clearColor)
@@ -31,7 +32,7 @@ namespace Incubator::Scene
             std::optional<Model::ModelReference> model;
             if (entity.model)
                 model = entity.model->source();
-            result.entities.push_back({std::move(model), entity.transform, entity.visible});
+            result.entities.push_back({std::move(model), entity.transform, entity.visible, entity.name});
         }
         return result;
     }

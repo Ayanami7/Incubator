@@ -7,14 +7,17 @@
 
 namespace Incubator::Scene
 {
-    EntityId Scene::createEntity(std::shared_ptr<const Model::PreparedModel> model, Transform transform, bool visible)
+    EntityId Scene::createEntity(std::shared_ptr<const Model::PreparedModel> model, Transform transform, bool visible,
+                                 std::string name)
     {
+        if (!validEntityName(name))
+            throw Error::Exception(Error::Code::CONFIG, "Entity name must be UTF-8 without NUL");
         // 所有 Scene 共用一个计数器。Scene 操作遵循 Runtime 的主线程约定。
         static uint64_t nextId = 1;
         if (nextId == 0)
             throw Error::Exception(Error::Code::CONFIG, "EntityId space is exhausted");
         const EntityId id(nextId++);
-        entities_.push_back({id, std::move(transform), visible, std::move(model)});
+        entities_.push_back({id, std::move(transform), visible, std::move(model), std::move(name)});
         return id;
     }
 
@@ -45,6 +48,17 @@ namespace Incubator::Scene
         if (!entity)
             return false;
         entity->visible = visible;
+        return true;
+    }
+
+    bool Scene::setName(EntityId id, std::string name)
+    {
+        auto* entity = findMutable(id);
+        if (!entity)
+            return false;
+        if (!validEntityName(name))
+            throw Error::Exception(Error::Code::CONFIG, "Entity name must be UTF-8 without NUL");
+        entity->name = std::move(name);
         return true;
     }
 

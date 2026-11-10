@@ -24,9 +24,10 @@ namespace Incubator::Scene
         /// @param model 实体使用的模型；为空时仍会创建有效的逻辑实体。
         /// @param transform 实体的初始变换。
         /// @param visible 实体的初始可见状态。
+        /// @param name 自有 UTF-8 名称；允许空名和重名，不含 NUL。
         /// @return 新实体的场景内标识。实体删除、清空或销毁后，该 ID 不会复用。
         EntityId createEntity(std::shared_ptr<const Model::PreparedModel> model = {}, Transform transform = Transform{},
-                              bool visible = true);
+                              bool visible = true, std::string name = {});
 
         /// @brief 按标识查找实体。
         /// @param id 待查找的实体标识。
@@ -34,6 +35,8 @@ namespace Incubator::Scene
         const Entity* find(EntityId id) const;
         bool setTransform(EntityId id, Transform transform);
         bool setVisible(EntityId id, bool visible);
+        /// @brief 修改名称；无效 ID 返回 false，非法名称抛 CONFIG 并保留原值。
+        bool setName(EntityId id, std::string name);
         bool setModel(EntityId id, std::shared_ptr<const Model::PreparedModel> model);
         bool destroyEntity(EntityId id);
         /// @brief 清除实体和模型持有，保留相机与光照。
