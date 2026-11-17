@@ -5,6 +5,8 @@ set(TARGET_NAME Editor)
 set(EDITOR_HEADERS
     editor_app.h
     editor_scene.h
+    editor_operations.h
+    editor_selection.h
     workspace.h
 )
 set(EDITOR_SOURCES

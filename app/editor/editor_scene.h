@@ -13,6 +13,7 @@
 #include "app/common/lighting_controls.h"
 #include "app/common/orbit_camera.h"
 #include "editor_app.h"
+#include "editor_operations.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
@@ -32,14 +33,14 @@ namespace Incubator::Editor
     public:
         void initialize(Editor::EditorApp& app, std::string_view path = "assets/scenes/mixed.json")
         {
-            cache_ = std::make_unique<Model::ModelManager>(app.renderer());
-            openScene(app, path);
+            operations_.initialize(app.renderer());
+            load(app, path, true);
             browseDirectory();
         }
 
         Scene::EntityId createEntity(Editor::EditorApp& app)
         {
-            return addModel(app, creationPath(useObj_), initialTransform(useObj_)) ? selected_ : Scene::EntityId{};
+            return addModel(app, creationPath(useObj_), initialTransform(useObj_)) ? operations_.selected() : Scene::EntityId{};
         }
 
         /// @brief 列出虚拟目录；失败显示独立错误，不将访问失败当作空目录。
@@ -87,38 +88,12 @@ namespace Incubator::Editor
         bool addModel(Editor::EditorApp& app, std::string_view path,
                       const Scene::Transform& transform = Scene::Transform{})
         {
-            try
-            {
-                auto model = cache_->resolve(Model::ModelReference(path, PREVIEW_OPTIONS));
-                auto name = Utils::Utf8::toUtf8String(Utils::Utf8::toFsPath(path).stem());
-                selected_ = app.scene().createEntity(std::move(model), transform, true, std::move(name));
-                messageError_ = false;
-                message_ = "Added model: " + std::string(path);
-                Log::Registry::get("editor").info("{}", message_);
-                return true;
-            }
-            catch (const Error::Exception& error)
-            {
-                messageError_ = true;
-                message_ = "Cannot add '" + std::string(path) + "': " + error.message();
-                if (!dynamic_cast<const Model::LoadError*>(&error))
-                    Log::Registry::get("editor").error("{}", message_);
-                return false;
-            }
+            return operations_.addModel(app.scene(), path, transform);
         }
-        /// @brief 返回已准备模型的缓存项数；不表示 CPU 持有数或仍在途的 GPU 资源数。
-        size_t cachedModels() const
-        {
-            return cache_->size();
-        }
-        /// @brief 在编辑阶段移出未使用的模型缓存；在途资源由 Renderer 完成帧同步后释放。
-        size_t collectUnusedModels()
-        {
-            const auto removed = cache_->collectUnused();
-            messageError_ = false;
-            message_ = "Removed " + std::to_string(removed) + " unused cached models";
-            return removed;
-        }
+        /// @brief 返回已准备模型的缓存项数。
+        size_t cachedModels() const { return operations_.cachedModels(); }
+        /// @brief 显式清理未使用的模型缓存。
+        size_t collectUnusedModels() { return operations_.collectUnusedModels(); }
 
         void selectModel(bool useObj)
         {
@@ -127,52 +102,31 @@ namespace Incubator::Editor
 
         bool save(Editor::EditorApp& app, std::string_view path)
         {
-            try
-            {
-                std::string target(path);
-                Scene::writeScene(app.fileIO(), path, Scene::captureScene(app.scene(), app.clearColor()));
-                messageError_ = false;
-                message_ = "Saved: " + std::string(path);
-                currentFile_ = std::move(target);
-                Log::Registry::get("editor").info("Saved scene '{}' ({} entities)", logPath(currentFile_),
-                                                  app.scene().entities().size());
-                return true;
-            }
-            catch (const Error::Exception& error)
-            {
-                messageError_ = true;
-                message_ = error.message();
-                Log::Registry::get("editor").error("Failed to save scene '{}': {}", path, error.message());
-                return false;
-            }
+            return operations_.save(app.fileIO(), app.scene(), app.clearColor(), path);
         }
 
-        bool load(Editor::EditorApp& app, std::string_view path)
+        bool load(Editor::EditorApp& app, std::string_view path, bool rethrow = false)
         {
-            try
-            {
-                openScene(app, path);
-                return true;
-            }
-            catch (const Error::Exception& error)
-            {
-                messageError_ = true;
-                message_ = error.message();
-                if (!dynamic_cast<const Model::LoadError*>(&error))
-                    Log::Registry::get("editor").error("Failed to load scene '{}': {}", path, error.message());
+            auto rebuilt = operations_.load(app.fileIO(), path, rethrow);
+            if (!rebuilt)
                 return false;
-            }
+            app.setScene(std::move(rebuilt->scene));
+            app.clearColor() = rebuilt->clearColor;
+            cancelInteraction();
+            orbit_.synchronize(app.scene().camera());
+            scenePath_ = pathBuffer(path);
+            return true;
         }
 
         /// @brief 保存到当前文件；没有文件关联时进入另存确认。
         bool save(Editor::EditorApp& app)
         {
-            if (currentFile_.empty())
+            if (operations_.currentFile().empty())
             {
                 beginSaveAs();
                 return false;
             }
-            return save(app, currentFile_);
+            return save(app, operations_.currentFile());
         }
         void beginSaveAs()
         {
@@ -214,44 +168,45 @@ namespace Incubator::Editor
 
         const std::string& message() const
         {
-            return message_;
+            return operations_.message();
         }
         /// @brief 获取当前关联场景文件的 UTF-8 路径。
         std::string_view scenePath() const
         {
-            return currentFile_;
+            return operations_.currentFile();
         }
 
         Scene::EntityId selected() const
         {
-            return selected_;
+            return operations_.selected();
         }
         void select(Scene::EntityId id)
         {
-            selected_ = id;
+            operations_.select(id);
         }
 
         void deleteSelected(Editor::EditorApp& app)
         {
-            app.scene().destroyEntity(selected_);
-            selected_ = {};
+            operations_.remove(app.scene());
+            clickCandidate_ = false;
         }
 
         void clear(Editor::EditorApp& app)
         {
-            app.scene().clear();
-            selected_ = {};
+            operations_.clear(app.scene());
+            clickCandidate_ = false;
         }
 
         void cancelInteraction()
         {
             orbit_.cancel();
+            clickCandidate_ = false;
             extent_ = {0, 0};
         }
 
         bool focusSelected(Editor::EditorApp& app, Render::FrameExtent extent)
         {
-            const auto* entity = app.scene().find(selected_);
+            const auto* entity = app.scene().find(operations_.selected());
             if (!entity || !entity->model || !entity->model->bounds())
                 return false;
             const auto bounds = entity->model->bounds()->transformed(entity->transform.matrix());
@@ -272,6 +227,24 @@ namespace Incubator::Editor
             const auto logicalSize = region.size.x > 0 && region.size.y > 0
                                          ? region.size
                                          : Input::PointerValue{double(width), double(height)};
+            const bool cameraGesture = input.rotate.down || input.rotate.pressed || input.rotate.released ||
+                                       input.pan.down || input.pan.pressed || input.pan.released || input.scroll.y != 0;
+            const float threshold = ImGui::GetIO().MouseDragThreshold;
+            if (input.select.pressed && !input.captureMouse && !cameraGesture)
+                clickCandidate_ = true;
+            if (clickCandidate_ && (input.captureMouse || cameraGesture ||
+                                    input.selectDragDistanceSquared > threshold * threshold))
+                clickCandidate_ = false;
+            if (clickCandidate_ && input.select.released)
+            {
+                const glm::vec2 position(static_cast<float>(input.position.x / region.size.x),
+                                         static_cast<float>(input.position.y / region.size.y));
+                const auto hit = app.scene().pick(extent, position);
+                operations_.select(hit ? hit->id : Scene::EntityId{});
+                clickCandidate_ = false;
+            }
+            else if (clickCandidate_ && !input.select.down && !input.select.pressed)
+                clickCandidate_ = false;
             if (orbit_.apply(camera, input, logicalSize))
                 app.scene().setCamera(camera);
             if (input.focusPressed && !input.captureKeyboard)
@@ -296,7 +269,7 @@ namespace Incubator::Editor
                 ImGui::SetNextWindowSize({ImGui::GetFontSize() * 30, 0}, ImGuiCond_Appearing);
                 ImGui::Begin(fileAction_ == FileAction::Open ? "Open scene" : "Save scene as", &open,
                              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
-                ImGui::TextWrapped("Current file: %s", currentFile_.empty() ? "(unsaved)" : currentFile_.c_str());
+                ImGui::TextWrapped("Current file: %s", operations_.currentFile().empty() ? "(unsaved)" : operations_.currentFile().c_str());
                 ImGui::TextUnformatted("Target path");
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputText("##path", scenePath_.data(), scenePath_.size());
@@ -308,10 +281,10 @@ namespace Incubator::Editor
                 ImGui::TextWrapped(
                     "Saving a deployed copy does not update source assets. Build cleanup deletes it; "
                     "asset redeployment may overwrite it.");
-                if (messageError_)
+                if (operations_.messageError())
                 {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
-                    ImGui::TextWrapped("%s", message_.c_str());
+                    ImGui::TextWrapped("%s", operations_.message().c_str());
                     ImGui::PopStyleColor();
                 }
                 ImGui::End();
@@ -358,10 +331,10 @@ namespace Incubator::Editor
                 ImGui::TextWrapped("%s", assetError_.c_str());
                 ImGui::PopStyleColor();
             }
-            if (messageError_)
+            if (operations_.messageError())
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
-                ImGui::TextWrapped("%s", message_.c_str());
+                ImGui::TextWrapped("%s", operations_.message().c_str());
                 ImGui::PopStyleColor();
             }
             std::string enter;
@@ -440,16 +413,16 @@ namespace Incubator::Editor
             if (ImGui::BeginViewportSideBar("##status", ImGui::GetMainViewport(), ImGuiDir_Down,
                                             ImGui::GetFrameHeight(), flags))
             {
-                if (messageError_)
+                if (operations_.messageError())
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
-                ImGui::Text("%s | %s", currentFile_.empty() ? "(unsaved)" : currentFile_.c_str(), message_.c_str());
-                if (messageError_)
+                ImGui::Text("%s | %s", operations_.currentFile().empty() ? "(unsaved)" : operations_.currentFile().c_str(), operations_.message().c_str());
+                if (operations_.messageError())
                     ImGui::PopStyleColor();
                 if (ImGui::IsItemHovered())
                 {
                     ImGui::BeginTooltip();
                     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35);
-                    ImGui::TextWrapped("%s\n%s", currentFile_.c_str(), message_.c_str());
+                    ImGui::TextWrapped("%s\n%s", operations_.currentFile().c_str(), operations_.message().c_str());
                     ImGui::PopTextWrapPos();
                     ImGui::EndTooltip();
                 }
@@ -485,7 +458,7 @@ namespace Incubator::Editor
                     const auto id = std::to_string(entity.id.value());
                     const auto label = (entity.name.empty() ? std::string("未命名") : entity.name) + " (" + id + ")";
                     ImGui::PushID(id.c_str());
-                    if (ImGui::Selectable("##entity", selected_ == entity.id))
+                    if (ImGui::Selectable("##entity", operations_.selected() == entity.id))
                         select(entity.id);
                     const auto pos = ImGui::GetItemRectMin();
                     ImGui::GetWindowDrawList()->AddText({pos.x, pos.y}, ImGui::GetColorU32(ImGuiCol_Text), label.data(),
@@ -503,7 +476,7 @@ namespace Incubator::Editor
             ImGui::PushItemWidth(-1);
             if (ImGui::CollapsingHeader("Selected object", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                if (const auto* entity = app.scene().find(selected_))
+                if (const auto* entity = app.scene().find(operations_.selected()))
                 {
                     ImGui::Text("ID: %llu", static_cast<unsigned long long>(entity->id.value()));
                     ImGui::TextUnformatted("Name");
@@ -518,7 +491,7 @@ namespace Incubator::Editor
                     };
                     if (ImGui::InputText("##entity-name", name.data(), name.size(), ImGuiInputTextFlags_CallbackResize,
                                          resize, &name))
-                        app.scene().setName(selected_, name.data());
+                        operations_.rename(app.scene(), name.data());
                     ImGui::PopID();
                     auto transform = entity->transform;
                     auto position = transform.position();
@@ -526,7 +499,7 @@ namespace Incubator::Editor
                     auto degrees = glm::degrees(glm::eulerAngles(transform.rotation()));
                     bool visible = entity->visible;
                     if (ImGui::Checkbox("Visible", &visible))
-                        app.scene().setVisible(selected_, visible);
+                        operations_.setVisible(app.scene(), visible);
                     bool changed = false;
                     ImGui::TextUnformatted("Position");
                     if (ImGui::DragFloat3("##position", &position.x, 0.05f))
@@ -547,7 +520,7 @@ namespace Incubator::Editor
                         changed = true;
                     }
                     if (changed)
-                        app.scene().setTransform(selected_, transform);
+                        operations_.setTransform(app.scene(), transform);
                     if (ImGui::Button("Delete selected"))
                         deleteSelected(app);
                 }
@@ -583,13 +556,6 @@ namespace Incubator::Editor
             ImGui::End();
         }
 
-        static std::string logPath(std::string_view path)
-        {
-            std::error_code error;
-            const auto absolute = std::filesystem::absolute(Utils::Utf8::toFsPath(path), error);
-            return error ? std::string(path) : Utils::Utf8::toUtf8String(absolute.lexically_normal());
-        }
-
         static std::vector<char> pathBuffer(std::string_view path)
         {
             std::vector<char> buffer(std::max(size_t{1024}, path.size() + 1), '\0');
@@ -597,34 +563,10 @@ namespace Incubator::Editor
             return buffer;
         }
 
-        void openScene(Editor::EditorApp& app, std::string_view path)
-        {
-            auto buffer = pathBuffer(path);
-            const auto description = Scene::readScene(app.fileIO(), path);
-            auto rebuilt =
-                Scene::rebuildScene(description, [this](const auto& source) { return cache_->resolve(source); });
-            auto message = "Loaded: " + std::string(path);
-            app.setScene(std::move(rebuilt.scene));
-            app.clearColor() = rebuilt.clearColor;
-            selected_ = {};
-            orbit_.synchronize(app.scene().camera());
-            scenePath_ = std::move(buffer);
-            currentFile_ = scenePath_.data();
-            messageError_ = false;
-            message_ = std::move(message);
-            Log::Registry::get("editor").info("Loaded scene '{}' ({} entities)", logPath(scenePath_.data()),
-                                              app.scene().entities().size());
-        }
-
         static std::string_view creationPath(bool useObj)
         {
             return useObj ? "models/utah_teapot/utah_teapot.obj" : "models/avocado/glTF/Avocado.gltf";
         }
-
-        static constexpr Model::PrepareOptions PREVIEW_OPTIONS{
-            Render::TextureMipMode::FullChain,
-            {Render::TextureFilter::Linear, Render::TextureFilter::Linear, Render::MipFilter::Linear},
-            Render::ShadingMode::Lambert};
 
         static Scene::Transform initialTransform(bool useObj)
         {
@@ -638,20 +580,17 @@ namespace Incubator::Editor
             SaveAs
         };
         FileAction fileAction_ = FileAction::None;
-        std::string currentFile_;
         Workspace workspace_;
         bool viewportOpen_ = true;
-        std::unique_ptr<Model::ModelManager> cache_;
+        EditorOperations operations_;
         std::string assetDirectory_;
         std::vector<Resource::AssetEntry> assetEntries_;
         std::string assetError_;
-        Scene::EntityId selected_;
         bool useObj_ = false;
         bool saveRequested_ = false;
         std::vector<char> scenePath_ = pathBuffer("");
-        std::string message_;
-        bool messageError_ = false;
         App::OrbitCamera orbit_;
+        bool clickCandidate_ = false;
         Render::FrameExtent extent_{0, 0};
     };
 

@@ -14,6 +14,8 @@ namespace Incubator::App
         bool focusPressed = false;
         bool captureMouse = false;
         bool captureKeyboard = false;
+        Input::ButtonState select;
+        float selectDragDistanceSquared = 0;
     };
 
     /// @brief 当前场景图像在 ImGui 屏幕逻辑坐标中的区域及交互状态。
@@ -53,9 +55,11 @@ namespace Incubator::App
             {
                 // 固定版本 ImGui 1.91.9b-docking：观察队列排空情况，不改变 UI 或文本事件。
                 if (raw.focused() && ImGui::GetCurrentContext()->InputEventsQueue.empty() &&
+                    !raw.mouseButton(Input::MouseButton::Left).down &&
                     !raw.mouseButton(Input::MouseButton::Right).down &&
                     !raw.mouseButton(Input::MouseButton::Middle).down && !raw.key(Input::KeyCode::F).down &&
-                    !ImGui::IsMouseDown(1) && !ImGui::IsMouseDown(2) && !ImGui::IsKeyDown(ImGuiKey_F))
+                    !ImGui::IsMouseDown(0) && !ImGui::IsMouseDown(1) && !ImGui::IsMouseDown(2) &&
+                    !ImGui::IsKeyDown(ImGuiKey_F))
                     suspended_ = false;
                 return {};
             }
@@ -70,7 +74,9 @@ namespace Incubator::App
                     {io.MouseWheelH, io.MouseWheel},
                     ImGui::IsKeyPressed(ImGuiKey_F, false),
                     io.WantCaptureMouse,
-                    io.WantCaptureKeyboard};
+                    io.WantCaptureKeyboard,
+                    button(0),
+                    io.MouseDragMaxDistanceSqr[0]};
         }
 
     private:

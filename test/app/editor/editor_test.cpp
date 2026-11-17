@@ -37,6 +37,30 @@ namespace
     using namespace Incubator::Resource;
     namespace fs = std::filesystem;
     namespace NativeIO = Incubator::FileIO;
+
+    TEST(EditorSelectionTest, EditsByIdAndDoesNotRetainScenePointers)
+    {
+        Editor::EditorSelection selection;
+        Scene::Scene scene;
+        const auto first = scene.createEntity();
+        const auto second = scene.createEntity();
+        selection.select(first);
+        EXPECT_TRUE(selection.rename(scene, "中文 ## 名称"));
+        EXPECT_TRUE(selection.setVisible(scene, false));
+        EXPECT_TRUE(selection.setTransform(scene, Scene::Transform({1, 2, 3})));
+        EXPECT_EQ(scene.find(first)->name, "中文 ## 名称");
+        EXPECT_FALSE(scene.find(first)->visible);
+        EXPECT_EQ(scene.find(first)->transform.position(), glm::vec3(1, 2, 3));
+        EXPECT_TRUE(scene.find(second)->name.empty());
+        selection.remove(scene);
+        EXPECT_FALSE(selection.selected().valid());
+        EXPECT_EQ(scene.find(first), nullptr);
+        EXPECT_NE(scene.find(second), nullptr);
+        selection.select(second);
+        selection.clear(scene);
+        EXPECT_FALSE(selection.selected().valid());
+        EXPECT_TRUE(scene.entities().empty());
+    }
     constexpr const char* GLTF = "models/minimal_gltf/model.gltf";
     constexpr const char* OBJ = "models/minimal_obj/model.obj";
     constexpr const char* PNG = "textures/direction_rgba.png";
@@ -419,6 +443,9 @@ namespace
                          glfwSetCursorPosCallback(handle, nullptr);
                          const auto enter = glfwSetCursorEnterCallback(handle, nullptr);
                          enter(handle, GLFW_TRUE);
+                         const auto focus = glfwSetWindowFocusCallback(handle, nullptr);
+                         glfwSetWindowFocusCallback(handle, focus);
+                         focus(handle, GLFW_TRUE);
                          glfwFocusWindow(handle);
                      },
                      [&](auto& app, const auto&) {
@@ -481,6 +508,280 @@ namespace
                      {},
                      [editor](auto& app) { editor->layout(app); }});
         model.reset();
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, ViewportClickSelectsSharedInstancesAndEmptySpace)
+    {
+        copyShowcaseModels();
+        auto config = options(true);
+        config.window.width = 1280;
+        config.window.height = 800;
+        Editor::EditorApp session(config);
+        Editor::EditorScene editor;
+        std::array<glm::vec2, 3> points{};
+        std::array<bool, 3> found{};
+        Scene::EntityId first, second;
+        int stage = 0, frames = 0;
+        bool issued = false;
+        session.run({[&](auto& app) {
+                         editor.initialize(app);
+                         EditorTest::setSharedEditorScene(app, editor, false);
+                         first = app.scene().entities()[0].id;
+                         second = app.scene().entities()[1].id;
+                         editor.select({});
+                         auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                         const auto enter = glfwSetCursorEnterCallback(handle, nullptr);
+                         enter(handle, GLFW_TRUE);
+                         const auto focus = glfwSetWindowFocusCallback(handle, nullptr);
+                         glfwSetWindowFocusCallback(handle, focus);
+                         focus(handle, GLFW_TRUE);
+                         glfwFocusWindow(handle);
+                     },
+                     [&](auto& app, const auto&) {
+                         if (frames == 3)
+                             ImGui::SetWindowFocus("Objects");
+                         if (++frames > 150)
+                         {
+                             ADD_FAILURE() << "输入批次未完成";
+                             app.requestExit();
+                             return;
+                         }
+                         const auto& region = app.viewportRegion();
+                         if (frames < 5 || stage >= 6 || issued || region.size.x <= 0 || region.size.y <= 0)
+                             return;
+                         if (!found[0] || !found[1] || !found[2])
+                         {
+                             for (int y = 1; y < 20; ++y)
+                                 for (int x = 1; x < 20; ++x)
+                                 {
+                                     const glm::vec2 p(x / 20.0f, y / 20.0f);
+                                     const auto hit = app.scene().pick(app.sceneExtent(), p);
+                                     const int index = !hit ? 2 : hit->id == first ? 0 : hit->id == second ? 1 : -1;
+                                     if (index >= 0 && !found[index])
+                                     {
+                                         points[index] = p;
+                                         found[index] = true;
+                                     }
+                                 }
+                             if (!found[0] || !found[1] || !found[2])
+                                 return;
+                         }
+                         auto& io = ImGui::GetIO();
+                         const auto p = points[stage / 2];
+                         io.AddMousePosEvent(float(region.origin.x + p.x * region.size.x),
+                                             float(region.origin.y + p.y * region.size.y));
+                         io.AddMouseButtonEvent(0, stage % 2 == 0);
+                         issued = true;
+                     },
+                     [&](auto& app) { editor.ui(app); },
+                     [&](auto&) { editor.cancelInteraction(); },
+                     [&](auto& app, auto extent, const auto& input) {
+                         editor.input(app, extent, input);
+                         if (issued && ((stage % 2 == 0 && input.select.pressed) ||
+                                        (stage % 2 == 1 && input.select.released)))
+                         {
+                             if (stage == 1) EXPECT_EQ(editor.selected(), first);
+                             if (stage == 3) EXPECT_EQ(editor.selected(), second);
+                             if (stage == 5) EXPECT_FALSE(editor.selected().valid());
+                             ++stage;
+                             issued = false;
+                             if (stage == 6) app.requestExit();
+                         }
+                     },
+                     [&](auto& app) { editor.layout(app); }});
+        EXPECT_EQ(stage, 6);
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, PopupBlocksViewportSelection)
+    {
+        copyShowcaseModels();
+        auto config = options(true);
+        config.window.width = 1280;
+        config.window.height = 800;
+        Editor::EditorApp session(config);
+        Editor::EditorScene editor;
+        Scene::EntityId selected;
+        ImVec2 popupPoint{};
+        int stage = 0, frames = 0;
+        bool issued = false, opened = false;
+        session.run({[&](auto& app) {
+                         editor.initialize(app);
+                         EditorTest::setSharedEditorScene(app, editor, false);
+                         selected = editor.selected();
+                         auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                         const auto enter = glfwSetCursorEnterCallback(handle, nullptr);
+                         enter(handle, GLFW_TRUE);
+                         const auto focus = glfwSetWindowFocusCallback(handle, nullptr);
+                         glfwSetWindowFocusCallback(handle, focus);
+                         focus(handle, GLFW_TRUE);
+                         glfwFocusWindow(handle);
+                     },
+                     [&](auto& app, const auto&) {
+                         if (++frames > 150)
+                         {
+                             ADD_FAILURE() << "弹窗输入批次未完成";
+                             app.requestExit();
+                         }
+                         if (frames < 6 || issued || popupPoint.x == 0)
+                             return;
+                         auto& io = ImGui::GetIO();
+                         io.AddMousePosEvent(popupPoint.x, popupPoint.y);
+                         io.AddMouseButtonEvent(0, stage == 0);
+                         issued = true;
+                     },
+                     [&](auto& app) {
+                         editor.ui(app);
+                         if (!opened)
+                         {
+                             ImGui::OpenPopup("Selection blocker");
+                             opened = true;
+                         }
+                         if (ImGui::BeginPopupModal("Selection blocker", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+                         {
+                             ImGui::TextUnformatted("弹窗内点击不能选择场景");
+                             const auto pos = ImGui::GetWindowPos();
+                             const auto size = ImGui::GetWindowSize();
+                             popupPoint = {pos.x + size.x * 0.5f, pos.y + size.y * 0.5f};
+                             ImGui::EndPopup();
+                         }
+                     },
+                     [&](auto&) { editor.cancelInteraction(); },
+                     [&](auto& app, auto extent, const auto& input) {
+                         editor.input(app, extent, input);
+                         if (issued && ((stage == 0 && input.select.pressed) || (stage == 1 && input.select.released)))
+                         {
+                             EXPECT_TRUE(input.captureMouse);
+                             EXPECT_EQ(editor.selected(), selected);
+                             issued = false;
+                             if (++stage == 2)
+                                 app.requestExit();
+                         }
+                     },
+                     [&](auto& app) { editor.layout(app); }});
+        EXPECT_EQ(stage, 2);
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, ClickCandidatesCancelAndUseLogicalCoordinatesAcrossExtents)
+    {
+        copyShowcaseModels();
+        auto config = options();
+        config.window.width = 1280;
+        config.window.height = 800;
+        Editor::EditorApp session(config);
+        Editor::EditorScene editor;
+        int frames = 0, updates = 0;
+        session.run({[&](auto& app) {
+                         editor.initialize(app);
+                         EditorTest::setSharedEditorScene(app, editor, false);
+                         auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                         const auto focus = glfwSetWindowFocusCallback(handle, nullptr);
+                         glfwSetWindowFocusCallback(handle, focus);
+                         focus(handle, GLFW_TRUE);
+                         glfwFocusWindow(handle);
+                     },
+                     [&](auto& app, const auto&) {
+                         if (++updates > 150)
+                         {
+                             ADD_FAILURE() << "未收到有效视口输入";
+                             app.requestExit();
+                         }
+                     },
+                     [&](auto& app) { editor.ui(app); }, {},
+                     [&](auto& app, auto extent, const auto&) {
+                         if (++frames != 3)
+                             return;
+                         const auto first = app.scene().entities()[0].id;
+                         const auto second = app.scene().entities()[1].id;
+                         const auto region = app.viewportRegion();
+                         glm::vec2 point{};
+                         bool found = false;
+                         for (int y = 1; y < 30 && !found; ++y)
+                             for (int x = 1; x < 30 && !found; ++x)
+                             {
+                                 const glm::vec2 p(x / 30.0f, y / 30.0f);
+                                 const auto hit = app.scene().pick(extent, p);
+                                 if (hit && hit->id == second)
+                                 {
+                                     point = p;
+                                     found = true;
+                                 }
+                             }
+                         if (!found)
+                         {
+                             ADD_FAILURE() << "未找到第二个实例的拾取点";
+                             app.requestExit();
+                             return;
+                         }
+                         App::UiInput press;
+                         press.position = {point.x * region.size.x, point.y * region.size.y};
+                         press.select = {true, true, false};
+                         auto held = press;
+                         held.select.pressed = false;
+                         auto release = held;
+                         release.select = {false, false, true};
+                         const auto preserved = [&] { EXPECT_EQ(editor.selected(), first); };
+                         editor.select(first);
+                         // 图像外按下和越出后返回都不能形成有效点击。
+                         auto outside = press;
+                         outside.captureMouse = true;
+                         editor.input(app, extent, outside);
+                         editor.input(app, extent, release);
+                         preserved();
+                         editor.input(app, extent, press);
+                         outside = held;
+                         outside.captureMouse = true;
+                         editor.input(app, extent, outside);
+                         editor.input(app, extent, release);
+                         preserved();
+                         // 拖动超出阈值或同时操作相机后，即使返回原点也不能选择。
+                         editor.input(app, extent, press);
+                         auto dragged = held;
+                         dragged.selectDragDistanceSquared = 10000;
+                         editor.input(app, extent, dragged);
+                         editor.input(app, extent, release);
+                         preserved();
+                         for (int button = 0; button < 2; ++button)
+                         {
+                             editor.input(app, extent, press);
+                             auto camera = held;
+                             (button == 0 ? camera.rotate : camera.pan) = {true, true, false};
+                             editor.input(app, extent, camera);
+                             editor.input(app, extent, release);
+                             preserved();
+                             editor.cancelInteraction();
+                         }
+                         editor.input(app, extent, press);
+                         editor.cancelInteraction();
+                         editor.input(app, extent, release);
+                         preserved();
+                         // 逻辑坐标不乘 DPI；等比例改变像素尺寸不改变命中。
+                         for (float dpi : {1.0f, 1.5f, 2.0f})
+                         {
+                             editor.select(first);
+                             const Render::FrameExtent pixels{uint32_t(extent.width * dpi),
+                                                              uint32_t(extent.height * dpi)};
+                             editor.input(app, pixels, press);
+                             editor.input(app, pixels, release);
+                             EXPECT_EQ(editor.selected(), second);
+                         }
+                         editor.select(first);
+                         editor.input(app, extent, press);
+                         EXPECT_FALSE(editor.load(app, "missing-scene.json"));
+                         EXPECT_EQ(editor.selected(), first);
+                         editor.input(app, extent, release);
+                         EXPECT_EQ(editor.selected(), second);
+                         editor.input(app, extent, press);
+                         EXPECT_TRUE(editor.load(app, "assets/scenes/mixed.json"));
+                         EXPECT_FALSE(editor.selected().valid());
+                         editor.input(app, extent, release);
+                         EXPECT_FALSE(editor.selected().valid());
+                         app.requestExit();
+                     },
+                     [&](auto& app) { editor.layout(app); }});
+        EXPECT_EQ(frames, 3);
         cleanValidation();
     }
 
@@ -1497,6 +1798,18 @@ namespace
         EXPECT_NE(camera.rotation(), canceled.rotation());
         mouse(handle, 1, GLFW_RELEASE, 0);
         EXPECT_TRUE(sample().rotate.released);
+
+        adapter.cancel();
+        mouse(handle, 0, GLFW_PRESS, 0);
+        EXPECT_FALSE(sample().select.pressed);
+        EXPECT_FALSE(sample().select.down);
+        mouse(handle, 0, GLFW_RELEASE, 0);
+        EXPECT_FALSE(sample().select.released);
+        EXPECT_FALSE(sample().select.down);
+        mouse(handle, 0, GLFW_PRESS, 0);
+        EXPECT_TRUE(sample().select.pressed);
+        mouse(handle, 0, GLFW_RELEASE, 0);
+        EXPECT_TRUE(sample().select.released);
     }
 
     TEST_F(EditorAppTest, ViewportDragCrossesPanelsAndReplacementRequiresFreshPress)
