@@ -61,6 +61,32 @@ namespace
         EXPECT_FALSE(selection.selected().valid());
         EXPECT_TRUE(scene.entities().empty());
     }
+
+    TEST(EditorSelectionTest, DuplicateNamesAndSelectionFollowEntityIdentity)
+    {
+        Editor::EditorSelection selection;
+        Scene::Scene scene;
+        const auto first = scene.createEntity({}, Scene::Transform({1, 2, 3}), false, "测试 ##");
+        EXPECT_FALSE(selection.duplicate(scene).valid());
+        selection.select(first);
+        const auto copy = selection.duplicate(scene);
+        ASSERT_TRUE(copy.valid());
+        EXPECT_EQ(selection.selected(), copy);
+        EXPECT_EQ(scene.find(first)->name, "测试 ##");
+        EXPECT_EQ(scene.find(copy)->name, "测试 ## 副本");
+        EXPECT_FALSE(scene.find(copy)->visible);
+        EXPECT_EQ(scene.find(copy)->transform.matrix(), scene.find(first)->transform.matrix());
+        const auto empty = scene.createEntity();
+        selection.select(empty);
+        const auto unnamed = selection.duplicate(scene);
+        ASSERT_TRUE(unnamed.valid());
+        EXPECT_EQ(scene.find(unnamed)->name, "未命名 副本");
+        ASSERT_TRUE(scene.destroyEntity(unnamed));
+        EXPECT_FALSE(selection.duplicate(scene).valid());
+        selection.remove(scene);
+        EXPECT_FALSE(selection.selected().valid());
+        EXPECT_EQ(scene.entities().size(), 3u);
+    }
     constexpr const char* GLTF = "models/minimal_gltf/model.gltf";
     constexpr const char* OBJ = "models/minimal_obj/model.obj";
     constexpr const char* PNG = "textures/direction_rgba.png";
@@ -785,6 +811,101 @@ namespace
         cleanValidation();
     }
 
+    TEST_F(EditorAppTest, DuplicateButtonUsesSelectionOperation)
+    {
+        copyShowcaseModels();
+        auto config = options(true);
+        config.window.width = 1280;
+        config.window.height = 900;
+        Editor::EditorApp session(config);
+        Editor::EditorScene editor;
+        Scene::EntityId source;
+        int frame = 0;
+        session.run({[&](auto& app) {
+                         editor.initialize(app);
+                         EditorTest::setSharedEditorScene(app, editor, false);
+                         source = editor.selected();
+                     },
+                     [&](auto& app, const auto&) {
+                         if (++frame > 20)
+                         {
+                             ADD_FAILURE() << "未能触发复制按钮";
+                             app.requestExit();
+                         }
+                     },
+                     [&](auto& app) {
+                         if (frame == 4)
+                         {
+                             auto* window = ImGui::FindWindowByName("Properties");
+                             ASSERT_NE(window, nullptr);
+                             const auto id = window->GetID("Duplicate");
+                             auto& context = *ImGui::GetCurrentContext();
+                             context.NavActivateId = id;
+                             context.NavActivateDownId = id;
+                         }
+                         editor.ui(app);
+                         if (frame == 4)
+                         {
+                             const auto copy = editor.selected();
+                             EXPECT_NE(copy, source);
+                             ASSERT_NE(app.scene().find(copy), nullptr);
+                             EXPECT_EQ(app.scene().find(copy)->name, "未命名 副本");
+                             EXPECT_EQ(app.scene().find(copy)->model, app.scene().find(source)->model);
+                             app.requestExit();
+                         }
+                     },
+                     {}, {}, [&](auto& app) { editor.layout(app); }});
+        EXPECT_EQ(frame, 4);
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, DuplicatePersistsValuesAndSharesCachedModel)
+    {
+        copyShowcaseModels();
+        auto state = std::make_shared<Lifetime>();
+        Editor::EditorApp session(options(), std::make_unique<TrackedFileIO>(state));
+        session.run({[&](auto& app) {
+                         Editor::EditorScene editor;
+                         editor.initialize(app);
+                         const auto source = editor.createEntity(app);
+                         ASSERT_TRUE(app.scene().setName(source, "模型 ##"));
+                         const Scene::Transform pose({1, 2, 3}, glm::angleAxis(0.4f, glm::vec3(0, 1, 0)), {-1, 0, 2});
+                         ASSERT_TRUE(app.scene().setTransform(source, pose));
+                         ASSERT_TRUE(app.scene().setVisible(source, false));
+                         const auto model = app.scene().find(source)->model;
+                         const auto opens = state->opens;
+                         const auto uploads = count("Uploaded mesh:");
+                         const auto copy = editor.duplicateSelected(app);
+                         ASSERT_TRUE(copy.valid());
+                         EXPECT_NE(source, copy);
+                         EXPECT_EQ(editor.selected(), copy);
+                         EXPECT_EQ(app.scene().find(copy)->name, "模型 ## 副本");
+                         EXPECT_EQ(app.scene().find(copy)->model, model);
+                         EXPECT_EQ(state->opens, opens);
+                         EXPECT_EQ(count("Uploaded mesh:"), uploads);
+                         ASSERT_TRUE(editor.save(app, "duplicate.json"));
+                         const auto description = Scene::readScene(app.fileIO(), "duplicate.json");
+                         const auto& saved = description.entities.back();
+                         EXPECT_EQ(saved.name, "模型 ## 副本");
+                         ASSERT_TRUE(saved.model);
+                         EXPECT_EQ(*saved.model, model->source());
+                         EXPECT_EQ(saved.transform.matrix(), pose.matrix());
+                         EXPECT_FALSE(saved.visible);
+                         ASSERT_TRUE(editor.load(app, "duplicate.json"));
+                         EXPECT_FALSE(editor.selected().valid());
+                         EXPECT_EQ(app.scene().find(source), nullptr);
+                         EXPECT_EQ(app.scene().find(copy), nullptr);
+                         const auto& restored = app.scene().entities().back();
+                         EXPECT_EQ(restored.name, "模型 ## 副本");
+                         EXPECT_EQ(restored.transform.matrix(), pose.matrix());
+                         EXPECT_FALSE(restored.visible);
+                         EXPECT_EQ(restored.model, model);
+                         EXPECT_EQ(count("Uploaded mesh:"), uploads);
+                         app.requestExit();
+                     }, [](auto& app, const auto&) { app.requestExit(); }, {}});
+        cleanValidation();
+    }
+
     TEST_F(EditorAppTest, ExplicitCacheCleanupRetainsSubmittedFramesAndLiveShadowModels)
     {
         copyShowcaseModels();
@@ -794,6 +915,7 @@ namespace
         Render::Detail::RendererReviewAccess::ResourceCounts baseline{};
         std::weak_ptr<const Model::PreparedModel> removed;
         Render::Mesh mesh;
+        Scene::EntityId source;
         session.run({[&](auto& app) {
                          editor->initialize(app, "assets/scenes/shadows.json");
                          app.shadowSettings().enabled = true;
@@ -810,13 +932,29 @@ namespace
                          {
                              ASSERT_TRUE(editor->addModel(app, GLTF));
                              const auto model = app.scene().find(editor->selected())->model;
+                             source = editor->selected();
                              removed = model;
                              mesh = model->meshes()[0];
                              EXPECT_EQ(editor->cachedModels(), 4u);
+                             const auto before = Review::resourceCounts(app.renderer());
+                             const auto duplicate = editor->duplicateSelected(app);
+                             ASSERT_TRUE(duplicate.valid());
+                             EXPECT_EQ(app.scene().find(duplicate)->model, model);
+                             EXPECT_EQ(app.scene().find(duplicate)->transform.matrix(),
+                                       app.scene().find(source)->transform.matrix());
+                             const auto after = Review::resourceCounts(app.renderer());
+                             EXPECT_EQ(before.meshes, after.meshes);
+                             EXPECT_EQ(before.textures, after.textures);
+                             EXPECT_EQ(before.materials, after.materials);
                              EXPECT_EQ(editor->collectUnusedModels(), 0u);
                          }
                          else
                          {
+                             editor->deleteSelected(app);
+                             EXPECT_EQ(editor->collectUnusedModels(), 0u);
+                             EXPECT_NE(app.scene().find(source), nullptr);
+                             EXPECT_TRUE(mesh.valid());
+                             editor->select(source);
                              editor->deleteSelected(app);
                              EXPECT_EQ(editor->collectUnusedModels(), 1u);
                              EXPECT_TRUE(removed.expired());

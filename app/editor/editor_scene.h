@@ -191,6 +191,11 @@ namespace Incubator::Editor
             clickCandidate_ = false;
         }
 
+        Scene::EntityId duplicateSelected(Editor::EditorApp& app)
+        {
+            return operations_.duplicate(app.scene());
+        }
+
         void clear(Editor::EditorApp& app)
         {
             operations_.clear(app.scene());
@@ -521,6 +526,9 @@ namespace Incubator::Editor
                     }
                     if (changed)
                         operations_.setTransform(app.scene(), transform);
+                    if (ImGui::Button("Duplicate"))
+                        duplicateSelected(app);
+                    ImGui::SameLine();
                     if (ImGui::Button("Delete selected"))
                         deleteSelected(app);
                 }

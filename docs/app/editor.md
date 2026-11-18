@@ -64,6 +64,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | File：Save / Save As / Open | Save 写当前文件；Open 和 Save As 输入目标并确认，成功后才更新当前文件；取消和失败保留原关联 |
 | Visible | 显示/隐藏当前实体，保留其变换 |
 | Position / Rotation / Scale | 独立编辑实体的真实 TRS；支持零、负值及非均匀缩放，旋转使用角度并转换为四元数 |
+| Duplicate | 复制并选中实体，保持变换、可见性和共享模型；名称追加“ 副本”，空名使用“未命名 副本” |
 | Delete selected | 删除选中实体，旧 ID 失效，其他实体保持 |
 | Objects → More → Clear scene | 清空实体及选中状态，保留 Camera、背景和 UI |
 | 场景右键拖动 / 中键拖动 / 滚轮 | 轨道旋转 / 平移 / 缩放；UI 上开始的手势不操作相机，场景手势跨面板保持归属 |

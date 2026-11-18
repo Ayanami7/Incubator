@@ -198,6 +198,30 @@ namespace
         EXPECT_EQ(scene.find(second)->transform.position(), glm::vec3(1, 2, 3));
     }
 
+    TEST(SceneEntityCpuTest, DuplicateCopiesValuesWithNewIdentityAndRejectsMissingSource)
+    {
+        Scene scene;
+        const Transform transform({1, 2, 3}, glm::angleAxis(0.7f, glm::vec3(0, 1, 0)), {-2, 0, 4});
+        const auto source = scene.createEntity({}, transform, false, "同名 ##");
+        const auto other = scene.createEntity({}, Transform{}, true, "同名 ##");
+        EXPECT_FALSE(scene.duplicateEntity({}).valid());
+        const auto duplicate = scene.duplicateEntity(source);
+        ASSERT_TRUE(duplicate.valid());
+        EXPECT_NE(duplicate, source);
+        ASSERT_NE(scene.find(source), nullptr);
+        ASSERT_NE(scene.find(duplicate), nullptr);
+        EXPECT_EQ(scene.find(source)->name, "同名 ##");
+        EXPECT_EQ(scene.find(duplicate)->name, scene.find(source)->name);
+        EXPECT_EQ(scene.find(duplicate)->transform.matrix(), transform.matrix());
+        EXPECT_FALSE(scene.find(duplicate)->visible);
+        EXPECT_FALSE(scene.find(duplicate)->model);
+        EXPECT_EQ(scene.find(other)->name, "同名 ##");
+        ASSERT_TRUE(scene.destroyEntity(source));
+        EXPECT_FALSE(scene.duplicateEntity(source).valid());
+        EXPECT_EQ(scene.entities().size(), 2u);
+        EXPECT_NE(scene.find(duplicate), nullptr);
+    }
+
     TEST(SceneEntityCpuTest, MutationsPreserveCreationOrderAndOtherEntityState)
     {
         Scene scene;

@@ -22,6 +22,15 @@ namespace Incubator::Scene
         return id;
     }
 
+    EntityId Scene::duplicateEntity(EntityId id)
+    {
+        const auto* entity = find(id);
+        if (!entity)
+            return {};
+        const auto copy = *entity;
+        return createEntity(copy.model, copy.transform, copy.visible, copy.name);
+    }
+
     const Entity* Scene::find(EntityId id) const
     {
         const auto found = std::ranges::find(entities_, id, &Entity::id);

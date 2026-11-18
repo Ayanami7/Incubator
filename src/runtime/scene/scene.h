@@ -35,6 +35,11 @@ namespace Incubator::Scene
         EntityId createEntity(std::shared_ptr<const Model::PreparedModel> model = {}, Transform transform = Transform{},
                               bool visible = true, std::string name = {});
 
+        /// @brief 复制实体的名称、变换、可见性及共享模型，不改变源实体。
+        /// @return 新实体 ID；源 ID 无效时返回无效 ID。
+        /// @note 结构变化后必须重新获取实体指针和视图；不会加载或准备模型。
+        EntityId duplicateEntity(EntityId id);
+
         /// @brief 按标识查找实体。
         /// @param id 待查找的实体标识。
         /// @return 找到时返回只读借用指针，否则返回 nullptr。
@@ -50,7 +55,7 @@ namespace Incubator::Scene
 
         /// @brief 按创建顺序返回场景中的有效实体。
         /// @return 只读借用的实体视图。
-        /// @note 调用 createEntity、destroyEntity 或 clear 后，必须重新获取实体指针或视图；遍历时不得修改实体集合结构。
+        /// @note 调用 createEntity、duplicateEntity、destroyEntity 或 clear 后，必须重新获取实体指针或视图；遍历时不得修改实体集合结构。
         std::span<const Entity> entities() const;
 
         /// @brief 查询可见模型的世界 AABB，最近入盒参数优先；相同参数按创建顺序。

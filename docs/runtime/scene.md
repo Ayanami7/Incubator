@@ -29,6 +29,7 @@ Transform 是实体整体变换的唯一真源，实体不另存 ModelInstance �
 | 接口 | 行为 |
 |---|---|
 | createEntity(model={}, transform=Transform{}, visible=true, name={}) | 返回新 EntityId；无模型也可创建合法逻辑实体，名称默认为空 |
+| duplicateEntity(EntityId) | 复制名称、真实 Transform、可见性和共享模型，返回新 ID；无效 ID 返回无效值，不加载或上传资源 |
 | setName(EntityId, name) | 按 ID 修改名称；无效 ID 返回 false，非法名称抛 CONFIG 且保留原值 |
 | find(EntityId) const | 返回只读 Entity 指针；无效、已删除或其他 Scene 的 ID 返回 nullptr |
 | setTransform/setVisible/setModel | 通过 ID 修改指定实体；未命中返回 false，其他实体不变；setModel 可传空解除绑定 |
@@ -52,7 +53,7 @@ EntityId 是独立的 uint64 包装，默认 0 无效，只有 Scene 分配非�
 序号耗尽时创建抛 CONFIG，不回绕分配旧值；不提供跨进程身份或从资源/模型索引构造实体 ID 的接口。
 valid() 只表示曾分配过非零值，实体是否仍存活须由所属 Scene 的 find 判断。
 
-查询、遍历结果仅在当前访问期借用。createEntity/destroyEntity/clear 后重新查询全部实体指针、引用与 span；
+查询、遍历结果仅在当前访问期借用。createEntity/duplicateEntity/destroyEntity/clear 后重新查询全部实体指针、引用与 span；
 不在遍历期间改变容器结构，持久引用保存 EntityId。transform、可见性、模型和相机修改应在更新/UI 阶段进行。
 Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Transform/Camera 沿用自身的校验契约。
 
