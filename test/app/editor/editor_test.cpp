@@ -1,5 +1,6 @@
-// 编译期确认操作接口头文件独立于 ImGui。
+// 编译期确认操作接口与 Gizmo 头文件独立于 ImGui。
 #include "app/editor/editor_operations.h"
+#include "app/editor/gizmo.h"
 
 #include <gtest/gtest.h>
 #include <imgui.h>
@@ -498,6 +499,220 @@ namespace
         const auto noModel = emptyScene.createEntity();
         EXPECT_TRUE(Editor::projectSelectionBox(emptyScene, {}, extent, region).empty());
         EXPECT_TRUE(Editor::projectSelectionBox(emptyScene, noModel, extent, region).empty());
+    }
+
+    TEST(EditorGizmoTest, ViewDepthConstantScreenScaleAndViewportAlignment)
+    {
+        Scene::Scene scene;
+        auto camera = scene.camera();
+        camera.setPosition({0.0f, 0.0f, 5.0f});
+        camera.setRotation({1.0f, 0.0f, 0.0f, 0.0f});
+        Scene::Perspective persp;
+        persp.verticalFov = glm::radians(60.0f);
+        persp.nearPlane = 0.1f;
+        persp.farPlane = 100.0f;
+        camera.setPerspective(persp);
+        scene.setCamera(camera);
+
+        // 无模型但可见的实体同样允许生成 Gizmo 图元。
+        const auto entityId = scene.createEntity(nullptr, Scene::Transform{}, true, "EmptyPivot");
+        const Render::FrameExtent extent{800, 600};
+        const App::ViewportRegion region{{100.0, 50.0}, {800.0, 600.0}, true, true};
+
+        auto yAxisScreenLength = [](const Editor::ProjectedGizmo& gizmo) {
+            for (const auto& item : gizmo.segments)
+            {
+                if (item.axis == Editor::GizmoAxis::Y)
+                    return glm::length(item.segment.end - item.segment.start);
+            }
+            return 0.0f;
+        };
+
+        const auto centerGizmo =
+            Editor::projectGizmo(scene, entityId, Editor::GizmoMode::Translate, extent, region, 90.0f);
+        ASSERT_TRUE(centerGizmo.visible);
+        ASSERT_EQ(centerGizmo.segments.size(), 9u);
+        EXPECT_NEAR(yAxisScreenLength(centerGizmo), 90.0f, 1e-2f);
+
+        // 对齐校验：对称于原点的世界 AABB 中心应与 Gizmo 原点屏幕坐标严格一致（Y 轴仅翻转一次）。
+        const auto aabbSegs =
+            Editor::projectAabbOverlay({{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}}, camera, extent, region);
+        ASSERT_EQ(aabbSegs.size(), 12u);
+        glm::vec2 aabbCenter(0.0f);
+        for (const auto& s : aabbSegs)
+            aabbCenter += s.start + s.end;
+        aabbCenter /= static_cast<float>(aabbSegs.size() * 2);
+        EXPECT_NEAR(centerGizmo.segments.front().segment.start.x, aabbCenter.x, 1e-3f);
+        EXPECT_NEAR(centerGizmo.segments.front().segment.start.y, aabbCenter.y, 1e-3f);
+
+        // 同一视图深度下移动到靠近视口右边缘：必须基于 z_view 而非欧氏距离，屏幕 Y 轴长度仍恒定。
+        ASSERT_TRUE(scene.setTransform(entityId, Scene::Transform({2.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, glm::vec3(1.0f))));
+        const auto edgeGizmo =
+            Editor::projectGizmo(scene, entityId, Editor::GizmoMode::Translate, extent, region, 90.0f);
+        ASSERT_TRUE(edgeGizmo.visible);
+        EXPECT_NEAR(edgeGizmo.worldLength, centerGizmo.worldLength, 1e-4f);
+        EXPECT_NEAR(yAxisScreenLength(edgeGizmo), 90.0f, 1e-2f);
+
+        // 相机拉远后世界轴长线性增大，屏幕逻辑长度仍保持 90 px。
+        ASSERT_TRUE(scene.setTransform(entityId, Scene::Transform{}));
+        camera.setPosition({0.0f, 0.0f, 15.0f});
+        scene.setCamera(camera);
+        const auto farGizmo = Editor::projectGizmo(scene, entityId, Editor::GizmoMode::Translate, extent, region, 90.0f);
+        ASSERT_TRUE(farGizmo.visible);
+        EXPECT_NEAR(farGizmo.worldLength, centerGizmo.worldLength * 3.0f, 1e-3f);
+        EXPECT_NEAR(yAxisScreenLength(farGizmo), 90.0f, 1e-2f);
+
+        // 改变宽高比与 2x DPI 渲染尺寸但保持逻辑视口大小：屏幕逻辑尺度与投影中心依然保持一致。
+        const Render::FrameExtent wideDpiExtent{2400, 1200};
+        const App::ViewportRegion wideRegion{{100.0, 50.0}, {1200.0, 600.0}, true, true};
+        const auto wideGizmo =
+            Editor::projectGizmo(scene, entityId, Editor::GizmoMode::Translate, wideDpiExtent, wideRegion, 90.0f);
+        ASSERT_TRUE(wideGizmo.visible);
+        EXPECT_NEAR(yAxisScreenLength(wideGizmo), 90.0f, 1e-2f);
+        EXPECT_NEAR(wideGizmo.segments.front().segment.start.x, 700.0f, 1e-2f);
+        EXPECT_NEAR(wideGizmo.segments.front().segment.start.y, 350.0f, 1e-2f);
+    }
+
+    TEST(EditorGizmoTest, ClippingBehindNearPlaneAndHiddenEntitySafety)
+    {
+        Scene::Scene scene;
+        auto camera = scene.camera();
+        camera.setPosition({0.0f, 0.0f, 5.0f});
+        camera.setRotation({1.0f, 0.0f, 0.0f, 0.0f});
+        Scene::Perspective persp;
+        persp.verticalFov = glm::radians(60.0f);
+        persp.nearPlane = 0.5f;
+        persp.farPlane = 50.0f;
+        camera.setPerspective(persp);
+        scene.setCamera(camera);
+
+        const Render::FrameExtent extent{800, 600};
+        const App::ViewportRegion region{{20.0, 10.0}, {800.0, 600.0}, true, true};
+        const auto id = scene.createEntity(nullptr, Scene::Transform{}, true, "Target");
+
+        // 无效选中、无效视口、隐藏实体均返回空。
+        EXPECT_FALSE(Editor::projectGizmo(scene, {}, Editor::GizmoMode::Translate, extent, region).visible);
+        EXPECT_FALSE(Editor::projectGizmo(scene, id, Editor::GizmoMode::Translate, {0, 600}, region).visible);
+        EXPECT_FALSE(
+            Editor::projectGizmo(scene, id, Editor::GizmoMode::Translate, extent, {{0.0, 0.0}, {0.0, 100.0}}).visible);
+
+        ASSERT_TRUE(scene.setVisible(id, false));
+        EXPECT_FALSE(Editor::projectGizmo(scene, id, Editor::GizmoMode::Translate, extent, region).visible);
+        ASSERT_TRUE(scene.setVisible(id, true));
+
+        // 中心位于近平面后方（zView < nearPlane）与相机背后：返回空结果。
+        ASSERT_TRUE(scene.setTransform(id, Scene::Transform({0.0f, 0.0f, 4.7f}, {1.0f, 0.0f, 0.0f, 0.0f}, glm::vec3(1.0f))));
+        const auto behindNear = Editor::projectGizmo(scene, id, Editor::GizmoMode::Rotate, extent, region);
+        EXPECT_FALSE(behindNear.visible);
+        EXPECT_TRUE(behindNear.segments.empty());
+
+        ASSERT_TRUE(scene.setTransform(id, Scene::Transform({0.0f, 0.0f, 8.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, glm::vec3(1.0f))));
+        EXPECT_FALSE(Editor::projectGizmo(scene, id, Editor::GizmoMode::Translate, extent, region).visible);
+
+        // 中心恰好在近平面前一点点，旋转圆环跨越近平面与视口边缘：裁剪端点必须全部有限且处于视口内。
+        ASSERT_TRUE(scene.setTransform(id, Scene::Transform({0.0f, 0.0f, 4.45f}, {1.0f, 0.0f, 0.0f, 0.0f}, glm::vec3(1.0f))));
+        const auto acrossNear = Editor::projectGizmo(scene, id, Editor::GizmoMode::Rotate, extent, region, 300.0f);
+        ASSERT_TRUE(acrossNear.visible);
+        ASSERT_FALSE(acrossNear.segments.empty());
+        for (const auto& item : acrossNear.segments)
+        {
+            for (const auto& p : {item.segment.start, item.segment.end})
+            {
+                EXPECT_TRUE(std::isfinite(p.x) && std::isfinite(p.y));
+                EXPECT_GE(p.x, region.origin.x - 1e-2f);
+                EXPECT_LE(p.x, region.origin.x + region.size.x + 1e-2f);
+                EXPECT_GE(p.y, region.origin.y - 1e-2f);
+                EXPECT_LE(p.y, region.origin.y + region.size.y + 1e-2f);
+            }
+        }
+    }
+
+    TEST(EditorGizmoTest, ModeAxesOrientationAndPickGizmoAxisPriority)
+    {
+        Scene::Scene scene;
+        auto camera = scene.camera();
+        camera.setPosition({0.0f, 0.0f, 5.0f});
+        camera.setRotation({1.0f, 0.0f, 0.0f, 0.0f});
+        scene.setCamera(camera);
+
+        const Render::FrameExtent extent{800, 600};
+        const App::ViewportRegion region{{0.0, 0.0}, {800.0, 600.0}, true, true};
+        const auto id = scene.createEntity(nullptr, Scene::Transform{}, true, "OrientationTarget");
+
+        // 旋转前后的 Translate 与 Rotate 均保持世界轴向。
+        const auto translateBefore = Editor::projectGizmo(scene, id, Editor::GizmoMode::Translate, extent, region);
+        const auto rotateBefore = Editor::projectGizmo(scene, id, Editor::GizmoMode::Rotate, extent, region);
+        const auto scaleBefore = Editor::projectGizmo(scene, id, Editor::GizmoMode::Scale, extent, region);
+
+        ASSERT_TRUE(scene.setTransform(
+            id, Scene::Transform({0.0f, 0.0f, 0.0f},
+                                 glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)), glm::vec3(1.0f))));
+        const auto translateAfter = Editor::projectGizmo(scene, id, Editor::GizmoMode::Translate, extent, region);
+        const auto rotateAfter = Editor::projectGizmo(scene, id, Editor::GizmoMode::Rotate, extent, region);
+        const auto scaleAfter = Editor::projectGizmo(scene, id, Editor::GizmoMode::Scale, extent, region);
+
+        ASSERT_EQ(translateBefore.segments.size(), translateAfter.segments.size());
+        for (size_t i = 0; i < translateBefore.segments.size(); ++i)
+        {
+            EXPECT_NEAR(translateBefore.segments[i].segment.end.x, translateAfter.segments[i].segment.end.x, 1e-4f);
+            EXPECT_NEAR(translateBefore.segments[i].segment.end.y, translateAfter.segments[i].segment.end.y, 1e-4f);
+        }
+        ASSERT_EQ(rotateBefore.segments.size(), rotateAfter.segments.size());
+        EXPECT_NEAR(rotateBefore.segments.front().segment.start.x, rotateAfter.segments.front().segment.start.x, 1e-4f);
+
+        // Scale 模式下实体绕 +Z 旋转 90 度后，局部 +X 轴与未旋转时的 +Y 轴指向一致（屏幕上方）。
+        auto findAxisStemEnd = [](const Editor::ProjectedGizmo& gizmo, Editor::GizmoAxis axis) {
+            for (const auto& item : gizmo.segments)
+            {
+                if (item.axis == axis)
+                    return item.segment.end;
+            }
+            return glm::vec2{};
+        };
+        const glm::vec2 beforeYEnd = findAxisStemEnd(scaleBefore, Editor::GizmoAxis::Y);
+        const glm::vec2 afterXEnd = findAxisStemEnd(scaleAfter, Editor::GizmoAxis::X);
+        EXPECT_NEAR(afterXEnd.x, beforeYEnd.x, 1e-2f);
+        EXPECT_NEAR(afterXEnd.y, beforeYEnd.y, 1e-2f);
+
+        // 命中测试：轴干、末端、旋转圆环与容差内外边界检查。
+        const glm::vec2 xTip = findAxisStemEnd(translateBefore, Editor::GizmoAxis::X);
+        const glm::vec2 yMid = (translateBefore.segments[3].segment.start + findAxisStemEnd(translateBefore, Editor::GizmoAxis::Y)) * 0.5f;
+        EXPECT_EQ(Editor::pickGizmoAxis(xTip, translateBefore, 8.0f), Editor::GizmoAxis::X);
+        EXPECT_EQ(Editor::pickGizmoAxis(yMid + glm::vec2(7.5f, 0.0f), translateBefore, 8.0f), Editor::GizmoAxis::Y);
+        EXPECT_EQ(Editor::pickGizmoAxis(yMid + glm::vec2(8.5f, 0.0f), translateBefore, 8.0f), Editor::GizmoAxis::None);
+
+        // 原点多轴重叠等距时按 X -> Y -> Z 确定返回 X。
+        EXPECT_EQ(Editor::pickGizmoAxis(translateBefore.segments.front().segment.start, translateBefore, 8.0f),
+                  Editor::GizmoAxis::X);
+
+        // Y 与 Z 在交点精确等距时返回 Y；Z 明显更近时返回 Z。
+        Editor::ProjectedGizmo synthetic;
+        synthetic.visible = true;
+        synthetic.segments = {
+            {Editor::GizmoAxis::Z, {{100.0f, 100.0f}, {150.0f, 100.0f}}},
+            {Editor::GizmoAxis::Y, {{100.0f, 100.0f}, {100.0f, 150.0f}}},
+        };
+        EXPECT_EQ(Editor::pickGizmoAxis({100.0f, 100.0f}, synthetic, 8.0f), Editor::GizmoAxis::Y);
+        EXPECT_EQ(Editor::pickGizmoAxis({130.0f, 103.0f}, synthetic, 8.0f), Editor::GizmoAxis::Z);
+
+        // Rotate 圆环命中与无效输入安全返回（避开与 X/Y 圆环交叉的 0° 点，取 Z 环 45° 处线段）。
+        glm::vec2 zRingPoint{};
+        int zCount = 0;
+        for (const auto& item : rotateBefore.segments)
+        {
+            if (item.axis == Editor::GizmoAxis::Z)
+            {
+                if (zCount == 6)
+                {
+                    zRingPoint = (item.segment.start + item.segment.end) * 0.5f;
+                    break;
+                }
+                ++zCount;
+            }
+        }
+        EXPECT_EQ(Editor::pickGizmoAxis(zRingPoint, rotateBefore, 8.0f), Editor::GizmoAxis::Z);
+        EXPECT_EQ(Editor::pickGizmoAxis({std::numeric_limits<float>::quiet_NaN(), 0.0f}, rotateBefore, 8.0f),
+                  Editor::GizmoAxis::None);
     }
     constexpr const char* GLTF = "models/minimal_gltf/model.gltf";
     constexpr const char* OBJ = "models/minimal_obj/model.obj";
