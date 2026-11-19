@@ -2118,6 +2118,20 @@ namespace
                  EXPECT_EQ(ops.collectUnusedModels(), 1u);
                  EXPECT_EQ(ops.cachedModels(), 2u);
 
+                 // 验证历史容量上限淘汰：重新加入 GLTF 并删除后，连续提交 64 步新编辑将删除记录挤出 undoStack_，此时可正常回收。
+                 ASSERT_TRUE(ops.addModel(app.scene(), app.clearColor(), GLTF));
+                 const auto evictedTarget = ops.selected();
+                 EXPECT_EQ(ops.cachedModels(), 3u);
+                 ASSERT_TRUE(ops.remove(app.scene(), app.clearColor()));
+                 EXPECT_EQ(ops.collectUnusedModels(), 0u);
+                 ops.select(app.scene().entities().front().id);
+                 for (size_t step = 0; step < Editor::EditorOperations::MAX_HISTORY; ++step)
+                     ASSERT_TRUE(ops.setTransform(app.scene(), app.clearColor(),
+                                                  Scene::Transform({static_cast<float>(step + 1), 0, 0})));
+                 EXPECT_EQ(app.scene().find(evictedTarget), nullptr);
+                 EXPECT_EQ(ops.collectUnusedModels(), 1u);
+                 EXPECT_EQ(ops.cachedModels(), 2u);
+
                  app.requestExit();
              },
              {}, {}});
@@ -5285,6 +5299,76 @@ namespace
              {}, {}, [&](auto& app) { editor.layout(app); }, [&](auto& app) { editor.requestClose(app); }});
 
         EXPECT_TRUE(done);
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, GizmoThreeModeVisualScreenshotsWithRequiredValidation)
+    {
+        copyShowcaseModels();
+        auto config = options(true);
+        config.window.width = 1280;
+        config.window.height = 800;
+        config.validation = Render::RendererValidationMode::Required;
+        Editor::EditorApp session(config);
+        Editor::EditorScene editor;
+        int frame = 0;
+        WindowCapture::Image translateImg, rotateImg, scaleImg;
+        bool capturedAll = false;
+
+        session.run(
+            {[&](auto& app) {
+                 editor.initialize(app, "assets/scenes/shadows.json");
+                 app.shadowSettings().enabled = true;
+                 ASSERT_FALSE(app.scene().entities().empty());
+                 editor.select(app, app.scene().entities().front().id);
+                 editor.setGizmoMode(Editor::GizmoMode::Translate);
+                 std::filesystem::create_directories("review");
+             },
+             [&](auto& app, const auto&) {
+                 ++frame;
+                 if (frame == 5)
+                 {
+                     glfwWaitEventsTimeout(0.06);
+                     translateImg = WindowCapture::capture(app.window());
+                     WindowCapture::save(translateImg, "review/gizmo-translate.ppm");
+                     editor.setGizmoMode(Editor::GizmoMode::Rotate);
+                 }
+                 else if (frame == 7)
+                 {
+                     glfwWaitEventsTimeout(0.06);
+                     rotateImg = WindowCapture::capture(app.window());
+                     WindowCapture::save(rotateImg, "review/gizmo-rotate.ppm");
+                     editor.setGizmoMode(Editor::GizmoMode::Scale);
+                 }
+                 else if (frame == 9)
+                 {
+                     glfwWaitEventsTimeout(0.06);
+                     scaleImg = WindowCapture::capture(app.window());
+                     WindowCapture::save(scaleImg, "review/gizmo-scale.ppm");
+                     capturedAll = true;
+                     app.requestExit();
+                 }
+             },
+             [&](auto& app) { editor.ui(app); },
+             {},
+             {},
+             [&](auto& app) { editor.layout(app); },
+             [&](auto& app) { editor.requestClose(app); }});
+
+        EXPECT_TRUE(capturedAll);
+        EXPECT_GT(translateImg.width, 0);
+        EXPECT_GT(translateImg.height, 0);
+        EXPECT_EQ(translateImg.width, rotateImg.width);
+        EXPECT_EQ(translateImg.height, rotateImg.height);
+        EXPECT_EQ(translateImg.width, scaleImg.width);
+        EXPECT_EQ(translateImg.height, scaleImg.height);
+        EXPECT_FALSE(translateImg.rgba.empty());
+        EXPECT_NE(translateImg.rgba, rotateImg.rgba);
+        EXPECT_NE(rotateImg.rgba, scaleImg.rgba);
+        EXPECT_NE(translateImg.rgba, scaleImg.rgba);
+        EXPECT_TRUE(std::filesystem::exists("review/gizmo-translate.ppm"));
+        EXPECT_TRUE(std::filesystem::exists("review/gizmo-rotate.ppm"));
+        EXPECT_TRUE(std::filesystem::exists("review/gizmo-scale.ppm"));
         cleanValidation();
     }
 
