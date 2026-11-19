@@ -20,13 +20,14 @@ namespace Incubator::Editor
 {
     bool EditorScene::addModel(Editor::EditorApp& app, std::string_view path, const Scene::Transform& transform)
     {
-        return operations_.addModel(app.scene(), path, transform);
+        return operations_.addModel(app.scene(), app.clearColor(), path, transform);
     }
 
     void EditorScene::initialize(Editor::EditorApp& app, std::string_view path)
     {
         operations_.initialize(app.renderer());
-        load(app, path, true);
+        if (!path.empty())
+            load(app, path, true);
         browseDirectory();
     }
 
@@ -93,7 +94,8 @@ namespace Incubator::Editor
             return false;
         app.setScene(std::move(rebuilt->scene));
         app.clearColor() = rebuilt->clearColor;
-        cancelInteraction();
+        cancelInteraction(app);
+        clearPendingAction();
         orbit_.synchronize(app.scene().camera());
         scenePath_ = pathBuffer(path);
         return true;
@@ -122,6 +124,72 @@ namespace Incubator::Editor
     void EditorScene::cancelFileAction()
     {
         fileAction_ = FileAction::None;
+    }
+
+    void EditorScene::requestOpen()
+    {
+        if (!operations_.isDirty())
+        {
+            beginOpen();
+            return;
+        }
+        pendingAction_ = PendingAction::Open;
+        pendingSaveAs_ = false;
+    }
+
+    void EditorScene::requestClear(Editor::EditorApp& app)
+    {
+        if (!operations_.isDirty())
+        {
+            clear(app);
+            return;
+        }
+        pendingAction_ = PendingAction::Clear;
+        pendingSaveAs_ = false;
+    }
+
+    void EditorScene::requestExit(Editor::EditorApp& app)
+    {
+        if (!operations_.isDirty())
+        {
+            app.requestExit();
+            return;
+        }
+        pendingAction_ = PendingAction::Exit;
+        pendingSaveAs_ = false;
+    }
+
+    void EditorScene::requestClose(Editor::EditorApp& app)
+    {
+        if (!operations_.isDirty())
+            return;
+        app.window().setShouldClose(false);
+        pendingAction_ = PendingAction::Exit;
+        pendingSaveAs_ = false;
+    }
+
+    void EditorScene::executePendingAction(Editor::EditorApp& app)
+    {
+        switch (pendingAction_)
+        {
+            case PendingAction::Open:
+                beginOpen();
+                break;
+            case PendingAction::Clear:
+                clear(app);
+                break;
+            case PendingAction::Exit:
+                app.requestExit();
+                break;
+            case PendingAction::None:
+                break;
+        }
+    }
+
+    void EditorScene::clearPendingAction() noexcept
+    {
+        pendingAction_ = PendingAction::None;
+        pendingSaveAs_ = false;
     }
 
     void EditorScene::operationPath(std::string_view path)
@@ -153,6 +221,16 @@ namespace Incubator::Editor
         workspace_.reset();
     }
 
+    std::string EditorScene::statusText() const
+    {
+        std::string text = operations_.currentFile().empty() ? "(unsaved)" : operations_.currentFile();
+        if (operations_.isDirty())
+            text += " *";
+        text += " | ";
+        text += operations_.message();
+        return text;
+    }
+
     const std::string& EditorScene::message() const
     {
         return operations_.message();
@@ -175,22 +253,22 @@ namespace Incubator::Editor
 
     void EditorScene::deleteSelected(Editor::EditorApp& app)
     {
-        operations_.remove(app.scene());
+        operations_.remove(app.scene(), app.clearColor());
         clickCandidate_ = false;
     }
 
     Scene::EntityId EditorScene::duplicateSelected(Editor::EditorApp& app)
     {
-        return operations_.duplicate(app.scene());
+        return operations_.duplicate(app.scene(), app.clearColor());
     }
 
     void EditorScene::clear(Editor::EditorApp& app)
     {
-        operations_.clear(app.scene());
+        operations_.clear(app.scene(), app.clearColor());
         clickCandidate_ = false;
     }
 
-    void EditorScene::cancelInteraction()
+    void EditorScene::cancelInteraction(Editor::EditorApp&)
     {
         orbit_.cancel();
         clickCandidate_ = false;
@@ -254,6 +332,44 @@ namespace Incubator::Editor
         objects(app);
         assets(app);
         properties(app);
+        if (pendingAction_ != PendingAction::None && !pendingSaveAs_)
+        {
+            bool open = true;
+            ImGui::SetNextWindowSize({ImGui::GetFontSize() * 26, 0}, ImGuiCond_Appearing);
+            if (ImGui::Begin("Unsaved changes", &open,
+                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking))
+            {
+                ImGui::TextWrapped("Save changes to %s before continuing?",
+                                   operations_.currentFile().empty() ? "(unsaved)"
+                                                                     : operations_.currentFile().c_str());
+                if (ImGui::Button("Save"))
+                {
+                    if (!operations_.currentFile().empty())
+                    {
+                        if (save(app))
+                            executePendingAction(app);
+                        clearPendingAction();
+                    }
+                    else
+                    {
+                        pendingSaveAs_ = true;
+                        beginSaveAs();
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Discard"))
+                {
+                    executePendingAction(app);
+                    clearPendingAction();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel"))
+                    open = false;
+            }
+            ImGui::End();
+            if (!open)
+                clearPendingAction();
+        }
         bool confirm = false;
         if (fileAction_ != FileAction::None)
         {
@@ -284,6 +400,7 @@ namespace Incubator::Editor
             if (!open)
             {
                 cancelFileAction();
+                clearPendingAction();
                 confirm = false;
             }
         }
@@ -293,7 +410,16 @@ namespace Incubator::Editor
             save(app);
         }
         if (confirm)
-            confirmFileAction(app);
+        {
+            const bool wasSaveAs = fileAction_ == FileAction::SaveAs;
+            const bool success = confirmFileAction(app);
+            if (wasSaveAs && pendingSaveAs_)
+            {
+                if (success)
+                    executePendingAction(app);
+                clearPendingAction();
+            }
+        }
         drawSelectionOverlay(app);
     }
 
@@ -390,7 +516,7 @@ namespace Incubator::Editor
         if (ImGui::BeginMenu("File"))
         {
             if (ImGui::MenuItem("Open..."))
-                beginOpen();
+                requestOpen();
             if (ImGui::MenuItem("Save"))
                 saveRequested_ = true;
             if (ImGui::MenuItem("Save As..."))
@@ -404,7 +530,7 @@ namespace Incubator::Editor
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Exit"))
-                app.requestExit();
+                requestExit(app);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("View"))
@@ -426,8 +552,8 @@ namespace Incubator::Editor
         {
             if (operations_.messageError())
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
-            ImGui::Text("%s | %s", operations_.currentFile().empty() ? "(unsaved)" : operations_.currentFile().c_str(),
-                        operations_.message().c_str());
+            const auto text = statusText();
+            ImGui::TextUnformatted(text.c_str());
             if (operations_.messageError())
                 ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
@@ -458,7 +584,7 @@ namespace Incubator::Editor
         if (ImGui::BeginPopup("Object actions"))
         {
             if (ImGui::MenuItem("Clear scene", nullptr, false, !app.scene().entities().empty()))
-                clear(app);
+                requestClear(app);
             ImGui::EndPopup();
         }
         ImGui::Separator();
@@ -503,7 +629,7 @@ namespace Incubator::Editor
                 };
                 if (ImGui::InputText("##entity-name", name.data(), name.size(), ImGuiInputTextFlags_CallbackResize,
                                      resize, &name))
-                    operations_.rename(app.scene(), name.data());
+                    operations_.rename(app.scene(), app.clearColor(), name.data());
                 ImGui::PopID();
                 auto transform = entity->transform;
                 auto position = transform.position();
@@ -511,7 +637,7 @@ namespace Incubator::Editor
                 auto degrees = glm::degrees(glm::eulerAngles(transform.rotation()));
                 bool visible = entity->visible;
                 if (ImGui::Checkbox("Visible", &visible))
-                    operations_.setVisible(app.scene(), visible);
+                    operations_.setVisible(app.scene(), app.clearColor(), visible);
                 bool changed = false;
                 ImGui::TextUnformatted("Position");
                 if (ImGui::DragFloat3("##position", &position.x, 0.05f))
@@ -532,7 +658,7 @@ namespace Incubator::Editor
                     changed = true;
                 }
                 if (changed)
-                    operations_.setTransform(app.scene(), transform);
+                    operations_.setTransform(app.scene(), app.clearColor(), transform);
                 if (ImGui::Button("Duplicate"))
                     duplicateSelected(app);
                 ImGui::SameLine();
@@ -552,7 +678,9 @@ namespace Incubator::Editor
         if (ImGui::CollapsingHeader("Scene settings", ImGuiTreeNodeFlags_DefaultOpen))
         {
             ImGui::TextUnformatted("Background");
-            ImGui::ColorEdit3("##background", app.clearColor().data(), ImGuiColorEditFlags_NoInputs);
+            auto clearColor = app.clearColor();
+            if (ImGui::ColorEdit3("##background", clearColor.data(), ImGuiColorEditFlags_NoInputs))
+                operations_.setClearColor(app.scene(), app.clearColor(), clearColor);
             auto& shadows = app.shadowSettings();
             ImGui::Checkbox("Shadows", &shadows.enabled);
             if (ImGui::IsItemHovered())
@@ -565,7 +693,9 @@ namespace Incubator::Editor
             ImGui::SliderFloat("##shadowBias", &shadows.depthBias, 0, 0.01f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
             ImGui::TextWrapped("Shadow preview settings are not saved in scene files.");
             ImGui::Separator();
-            App::lightingControls(app.scene());
+            auto lighting = app.scene().lighting();
+            if (App::lightingWidget(lighting).changed)
+                operations_.setLighting(app.scene(), app.clearColor(), lighting);
         }
         ImGui::PopItemWidth();
         ImGui::End();
@@ -597,8 +727,9 @@ namespace Incubator::Editor
                 },
                 {},
                 [demo](auto& app) { demo->ui(app); },
-                [demo](auto&) { demo->cancelInteraction(); },
+                [demo](auto& app) { demo->cancelInteraction(app); },
                 [demo](auto& app, auto extent, const auto& input) { demo->input(app, extent, input); },
-                [demo](auto& app) { demo->layout(app); }};
+                [demo](auto& app) { demo->layout(app); },
+                [demo](auto& app) { demo->requestClose(app); }};
     }
 }  // namespace Incubator::Editor

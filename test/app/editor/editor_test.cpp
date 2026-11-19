@@ -16,6 +16,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 #include "app/common/lighting_controls.h"
@@ -37,6 +38,20 @@
 #include "support/texture_gpu_review.h"
 #include "support/window_capture.h"
 #include "test/app/editor/showcase_scene.h"
+
+#define GLFW_EXPOSE_NATIVE_WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
+#include <windows.h>
+#ifdef ERROR
+#undef ERROR
+#endif
 
 namespace
 {
@@ -93,6 +108,76 @@ namespace
         selection.remove(scene);
         EXPECT_FALSE(selection.selected().valid());
         EXPECT_EQ(scene.entities().size(), 3u);
+    }
+
+    TEST(EditorOperationsDirtyTest, CompositionTracksPersistentChangesAndIgnoresNoOps)
+    {
+        static_assert(!std::is_base_of_v<Editor::EditorSelection, Editor::EditorOperations>,
+                      "EditorOperations 应组合而非公有继承 EditorSelection");
+
+        Editor::EditorOperations operations;
+        Scene::Scene scene;
+        std::array<float, 4> clearColor{0.12f, 0.16f, 0.22f, 1.0f};
+        EXPECT_FALSE(operations.isDirty());
+
+        // 空场景清理、无效选中删除/复制不置脏。
+        EXPECT_FALSE(operations.clear(scene, clearColor));
+        EXPECT_FALSE(operations.remove(scene, clearColor));
+        EXPECT_FALSE(operations.duplicate(scene, clearColor).valid());
+        EXPECT_FALSE(operations.isDirty());
+
+        const auto first = scene.createEntity({}, Scene::Transform({1, 0, 0}), true, "对象A");
+        const auto second = scene.createEntity({}, Scene::Transform({2, 0, 0}), true, "对象B");
+
+        // 仅切换选择不置脏。
+        operations.select(first);
+        EXPECT_EQ(operations.selected(), first);
+        EXPECT_FALSE(operations.isDirty());
+
+        // 设置与当前值相同的数据不置脏。
+        EXPECT_TRUE(operations.rename(scene, clearColor, "对象A"));
+        EXPECT_TRUE(operations.setVisible(scene, clearColor, true));
+        EXPECT_TRUE(operations.setTransform(scene, clearColor, Scene::Transform({1, 0, 0})));
+        EXPECT_TRUE(operations.setLighting(scene, clearColor, scene.lighting()));
+        EXPECT_TRUE(operations.setClearColor(scene, clearColor, clearColor));
+        EXPECT_FALSE(operations.isDirty());
+
+        // 真实修改（名称、可见性、TRS、灯光、背景色、复制、删除、清空）均正确置脏。
+        const auto checkDirty = [&](auto fn) {
+            Editor::EditorOperations op;
+            Scene::Scene s;
+            std::array<float, 4> bg{0.1f, 0.2f, 0.3f, 1.0f};
+            const auto id = s.createEntity({}, Scene::Transform({1, 0, 0}), true, "初始");
+            op.select(id);
+            EXPECT_FALSE(op.isDirty());
+            fn(op, s, bg, id);
+            EXPECT_TRUE(op.isDirty());
+        };
+
+        checkDirty([](auto& op, auto& s, const auto& bg, auto) { EXPECT_TRUE(op.rename(s, bg, "新名称")); });
+        checkDirty([](auto& op, auto& s, const auto& bg, auto) { EXPECT_TRUE(op.setVisible(s, bg, false)); });
+        checkDirty([](auto& op, auto& s, const auto& bg, auto) {
+            EXPECT_TRUE(op.setTransform(s, bg, Scene::Transform({3, 4, 5})));
+        });
+        checkDirty([](auto& op, auto& s, const auto& bg, auto) {
+            EXPECT_TRUE(op.duplicate(s, bg).valid());
+        });
+        checkDirty([](auto& op, auto& s, const auto& bg, auto) { EXPECT_TRUE(op.remove(s, bg)); });
+        checkDirty([](auto& op, auto& s, const auto& bg, auto) { EXPECT_TRUE(op.clear(s, bg)); });
+        checkDirty([](auto& op, auto& s, const auto& bg, auto) {
+            auto l = s.lighting();
+            l.intensity = 2.5f;
+            EXPECT_TRUE(op.setLighting(s, bg, l));
+        });
+        checkDirty([](auto& op, const auto& s, auto& bg, auto) {
+            EXPECT_TRUE(op.setClearColor(s, bg, {0.5f, 0.5f, 0.5f, 1.0f}));
+        });
+
+        // 删除场景外部已被销毁的实体不置脏。
+        EXPECT_TRUE(scene.destroyEntity(second));
+        operations.select(second);
+        EXPECT_FALSE(operations.remove(scene, clearColor));
+        EXPECT_FALSE(operations.isDirty());
     }
 
     TEST(EditorSelectionOverlayTest, ClipHomogeneousSegmentHandlesNearFarBehindCameraOffscreenAndNonFinite)
@@ -727,7 +812,7 @@ namespace
                          issued = true;
                      },
                      [&](auto& app) { editor.ui(app); },
-                     [&](auto&) { editor.cancelInteraction(); },
+                     [&](auto& app) { editor.cancelInteraction(app); },
                      [&](auto& app, auto extent, const auto& input) {
                          editor.input(app, extent, input);
                          if (issued && ((stage % 2 == 0 && input.select.pressed) ||
@@ -799,7 +884,7 @@ namespace
                              ImGui::EndPopup();
                          }
                      },
-                     [&](auto&) { editor.cancelInteraction(); },
+                     [&](auto& app) { editor.cancelInteraction(app); },
                      [&](auto& app, auto extent, const auto& input) {
                          editor.input(app, extent, input);
                          if (issued && ((stage == 0 && input.select.pressed) || (stage == 1 && input.select.released)))
@@ -903,10 +988,10 @@ namespace
                              editor.input(app, extent, camera);
                              editor.input(app, extent, release);
                              preserved();
-                             editor.cancelInteraction();
+                             editor.cancelInteraction(app);
                          }
                          editor.input(app, extent, press);
-                         editor.cancelInteraction();
+                         editor.cancelInteraction(app);
                          editor.input(app, extent, release);
                          preserved();
                          // 逻辑坐标不乘 DPI；等比例改变像素尺寸不改变命中。
@@ -1184,7 +1269,7 @@ namespace
                  previous = app.renderer().prepareSceneTarget(app.sceneExtent());
                  glfwWaitEventsTimeout(0.04);
              },
-             [editor](auto&) { editor->cancelInteraction(); },
+             [editor](auto& app) { editor->cancelInteraction(app); },
              [editor](auto& app, auto extent, const auto& input) { editor->input(app, extent, input); },
              [editor](auto& app) { editor->layout(app); }});
 
@@ -1302,7 +1387,7 @@ namespace
                      app.requestExit();
                  }
              },
-             [&](auto&) { editor.cancelInteraction(); },
+             [&](auto& app) { editor.cancelInteraction(app); },
              [&](auto& app, auto extent, const auto& input) {
                  editor.input(app, extent, input);
                  if (issued && ((stage % 3 == 0 && input.select.pressed) || (stage % 3 == 1 && input.select.released)))
@@ -1317,6 +1402,231 @@ namespace
              },
              [&](auto& app) { editor.layout(app); }});
         EXPECT_EQ(stage, 5);
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, DirtyStateTracksEditsWithoutFalsePositivesAndShowsStatusMarker)
+    {
+        copyShowcaseModels();
+        auto config = options(true);
+        config.window.width = 1280;
+        config.window.height = 800;
+        Editor::EditorApp session(config);
+        Editor::EditorScene editor;
+        int frame = 0;
+
+        session.run({[&](auto& app) {
+                         editor.initialize(app, "assets/scenes/mixed.json");
+                         EXPECT_FALSE(editor.isDirty());
+                         EXPECT_EQ(editor.statusText().find(" * |"), std::string::npos);
+                     },
+                     [&](auto& app, const auto&) {
+                         ++frame;
+                         if (frame == 2)
+                         {
+                             // 非持久化操作和失败操作均不得置脏。
+                             editor.select(app.scene().entities()[0].id);
+                             editor.focusSelected(app, app.sceneExtent());
+                             editor.resetCamera(app);
+                             app.shadowSettings().enabled = true;
+                             app.shadowSettings().depthBias = 0.005f;
+                             editor.browseDirectory("models");
+                             editor.collectUnusedModels();
+                             editor.restoreLayout();
+                             EXPECT_FALSE(editor.addModel(app, "models/missing.gltf"));
+                             EXPECT_FALSE(editor.load(app, "missing-scene.json"));
+                             EXPECT_FALSE(editor.save(app, "missing-dir/out.json"));
+                             EXPECT_FALSE(editor.isDirty());
+                             EXPECT_EQ(editor.statusText().find(" * |"), std::string::npos);
+                         }
+                         else if (frame == 3)
+                         {
+                             // addModel 成功后置脏且状态栏展示 * 标记。
+                             ASSERT_TRUE(editor.addModel(app, GLTF));
+                             EXPECT_TRUE(editor.isDirty());
+                             EXPECT_NE(editor.statusText().find("assets/scenes/mixed.json * |"), std::string::npos);
+                         }
+                         else if (frame == 4)
+                         {
+                             // save 成功后清除脏状态与 * 标记。
+                             ASSERT_TRUE(editor.save(app, "dirty-check-saved.json"));
+                             EXPECT_FALSE(editor.isDirty());
+                             EXPECT_EQ(editor.statusText().find(" * |"), std::string::npos);
+                         }
+                         else if (frame == 5)
+                         {
+                             // 失败保存不破坏既有干净状态；真实修改置脏后 load 恢复干净状态。
+                             EXPECT_FALSE(editor.save(app, "missing-dir/out.json"));
+                             EXPECT_FALSE(editor.isDirty());
+                             editor.select(app.scene().entities()[0].id);
+                             editor.duplicateSelected(app);
+                             EXPECT_TRUE(editor.isDirty());
+                             EXPECT_NE(editor.statusText().find("dirty-check-saved.json * |"), std::string::npos);
+                             ASSERT_TRUE(editor.load(app, "dirty-check-saved.json"));
+                             EXPECT_FALSE(editor.isDirty());
+                             EXPECT_EQ(editor.statusText().find(" * |"), std::string::npos);
+                             app.requestExit();
+                         }
+                     },
+                     [&](auto& app) { editor.ui(app); },
+                     [&](auto& app) { editor.cancelInteraction(app); },
+                     [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                     [&](auto& app) { editor.layout(app); }});
+        EXPECT_EQ(frame, 5);
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, UnsavedChangesDialogGuardsOpenClearExitAndWindowCloseWithSaveDiscardCancel)
+    {
+        copyShowcaseModels();
+        auto config = options(true);
+        config.window.width = 1280;
+        config.window.height = 800;
+        Editor::EditorApp session(config);
+        Editor::EditorScene editor;
+        int frame = 0;
+
+        auto activateWindowButton = [](const char* windowName, const char* buttonLabel) {
+            auto* window = ImGui::FindWindowByName(windowName);
+            ASSERT_NE(window, nullptr) << windowName;
+            const auto id = window->GetID(buttonLabel);
+            auto& context = *ImGui::GetCurrentContext();
+            context.NavActivateId = id;
+            context.NavActivateDownId = id;
+        };
+
+        session.run(
+            {[&](auto& app) {
+                 editor.initialize(app, "assets/scenes/mixed.json");
+                 EXPECT_FALSE(editor.isDirty());
+                 // 干净状态下触发 requestOpen 直接打开路径窗、requestClose 不拦截。
+                 editor.requestClose(app);
+                 EXPECT_FALSE(app.window().shouldClose());
+                 editor.requestOpen();
+                 EXPECT_EQ(ImGui::FindWindowByName("Unsaved changes"), nullptr);
+                 editor.cancelFileAction();
+             },
+             [&](auto& app, const auto&) {
+                 ++frame;
+                 if (frame > 40)
+                 {
+                     ADD_FAILURE() << "未保存拦截测试未按预期推进";
+                     app.requestExit();
+                     return;
+                 }
+                 if (frame == 3)
+                 {
+                     // 置脏后触发 requestOpen -> 弹出 Unsaved changes。
+                     ASSERT_TRUE(editor.addModel(app, GLTF));
+                     EXPECT_TRUE(editor.isDirty());
+                     editor.requestOpen();
+                 }
+                 else if (frame == 6)
+                 {
+                     EXPECT_EQ(ImGui::FindWindowByName("Open scene"), nullptr);
+                     EXPECT_TRUE(editor.isDirty());
+                     // 触发 requestClear -> 弹出 Unsaved changes。
+                     editor.requestClear(app);
+                 }
+                 else if (frame == 9)
+                 {
+                     EXPECT_TRUE(app.scene().entities().empty());
+                     // 恢复混合场景并保存为关联副本，再做修改后走 Save 继续原 PendingAction (Open)。
+                     ASSERT_TRUE(editor.load(app, "assets/scenes/mixed.json"));
+                     ASSERT_TRUE(editor.save(app, "guarded-work.json"));
+                     ASSERT_TRUE(editor.addModel(app, GLTF));
+                     EXPECT_TRUE(editor.isDirty());
+                     editor.requestOpen();
+                 }
+                 else if (frame == 12)
+                 {
+                     EXPECT_FALSE(editor.isDirty());
+                     EXPECT_NE(ImGui::FindWindowByName("Open scene"), nullptr);
+                     editor.cancelFileAction();
+                 }
+                 else if (frame == 14)
+                 {
+                     app.requestExit();
+                 }
+             },
+             [&](auto& app) {
+                 if (frame == 5)
+                     activateWindowButton("Unsaved changes", "Cancel");
+                 else if (frame == 8)
+                     activateWindowButton("Unsaved changes", "Discard");
+                 else if (frame == 11)
+                     activateWindowButton("Unsaved changes", "Save");
+                 editor.ui(app);
+             },
+             [&](auto& app) { editor.cancelInteraction(app); },
+             [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+             [&](auto& app) { editor.layout(app); },
+             [&](auto& app) { editor.requestClose(app); }});
+        EXPECT_EQ(frame, 14);
+
+        // 第二个独立会话：验证无文件关联时，窗口关闭按钮 (closeRequested) 拦截 -> Save -> Save As Cancel 中止 -> 再触发 -> Save As 保存后退出。
+        Editor::EditorApp closeSession(config);
+        Editor::EditorScene closeEditor;
+        int closeFrame = 0;
+        bool closeSaved = false;
+        closeSession.run(
+            {[&](auto& app) {
+                 closeEditor.initialize(app, "");
+                 EXPECT_TRUE(closeEditor.scenePath().empty());
+                 EXPECT_FALSE(closeEditor.isDirty());
+                 ASSERT_TRUE(closeEditor.addModel(app, GLTF));
+                 EXPECT_TRUE(closeEditor.isDirty());
+                 EXPECT_NE(closeEditor.statusText().find("(unsaved) * |"), std::string::npos);
+             },
+             [&](auto& app, const auto&) {
+                 ++closeFrame;
+                 if (closeFrame > 40)
+                 {
+                     ADD_FAILURE() << "无文件关联窗口关闭保护测试未完成";
+                     app.requestExit();
+                     return;
+                 }
+                 if (closeFrame == 2)
+                 {
+                     // 通过原生 WM_CLOSE 投递窗口关闭消息，在 pollEvents() 后触发 AppSession::closeRequested 拦截退出并弹出 Unsaved changes。
+                     auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                     PostMessageW(glfwGetWin32Window(handle), WM_CLOSE, 0, 0);
+                 }
+                 else if (closeFrame == 7)
+                 {
+                     EXPECT_TRUE(closeEditor.isDirty());
+                     EXPECT_EQ(app.scene().entities().size(), 1u);
+                     // 再次投递关闭按钮消息触发拦截。
+                     auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                     PostMessageW(glfwGetWin32Window(handle), WM_CLOSE, 0, 0);
+                 }
+             },
+             [&](auto& app) {
+                 if (closeFrame == 4)
+                     activateWindowButton("Unsaved changes", "Save");
+                 else if (closeFrame == 6)
+                 {
+                     EXPECT_NE(ImGui::FindWindowByName("Save scene as"), nullptr);
+                     activateWindowButton("Save scene as", "Cancel");
+                 }
+                 else if (closeFrame == 9)
+                     activateWindowButton("Unsaved changes", "Save");
+                 else if (closeFrame == 11)
+                 {
+                     closeEditor.operationPath("saved-on-close.json");
+                     activateWindowButton("Save scene as", "Save");
+                     closeSaved = true;
+                 }
+                 closeEditor.ui(app);
+             },
+             [&](auto& app) { closeEditor.cancelInteraction(app); },
+             [&](auto& app, auto extent, const auto& input) { closeEditor.input(app, extent, input); },
+             [&](auto& app) { closeEditor.layout(app); },
+             [&](auto& app) { closeEditor.requestClose(app); }});
+        EXPECT_TRUE(closeSaved);
+        EXPECT_FALSE(closeEditor.isDirty());
+        EXPECT_EQ(closeEditor.scenePath(), "saved-on-close.json");
+        EXPECT_TRUE(fs::exists("saved-on-close.json"));
         cleanValidation();
     }
 
@@ -1575,7 +1885,7 @@ namespace
                          previous = app.renderer().prepareSceneTarget(app.sceneExtent());
                          glfwWaitEventsTimeout(0.04);
                      },
-                     [demo](auto&) { demo->cancelInteraction(); },
+                     [demo](auto& app) { demo->cancelInteraction(app); },
                      [demo](auto& app, auto extent, const auto& input) { demo->input(app, extent, input); },
                      [demo](auto& app) { demo->layout(app); }});
         EXPECT_EQ(shadowImages.size(), 2u);
@@ -2439,7 +2749,7 @@ namespace
                          }
                      },
                      {},
-                     [&](auto&) { demo.cancelInteraction(); },
+                     [&](auto& app) { demo.cancelInteraction(app); },
                      [&](auto& app, auto extent, const auto& input) { demo.input(app, extent, input); },
                      [&](auto& app) {
                          app.sceneViewport("Scene");
@@ -2515,9 +2825,9 @@ namespace
                          }
                      },
                      {},
-                     [&](auto&) {
+                     [&](auto& app) {
                          ++cancellations;
-                         demo.cancelInteraction();
+                         demo.cancelInteraction(app);
                      },
                      [&](auto& app, auto extent, const auto& input) {
                          EXPECT_NE(frame, 4);

@@ -40,6 +40,8 @@ namespace Incubator::App
         std::function<void(Application&, Render::FrameExtent, const App::UiInput&)> input;
         /// @brief 在输入和编辑之前建立当前帧视口布局。
         std::function<void(Application&)> layout;
+        /// @brief 窗口收到关闭请求时触发；回调可调用 window().setShouldClose(false) 拦截退出。
+        std::function<void(Application&)> closeRequested;
     };
 
     /// @brief 管理单窗口、主线程的应用会话，并独占所有 Loader 路由。
@@ -56,9 +58,10 @@ namespace Incubator::App
         void run(Application& app, SessionCallbacks<Application>& callbacks)
         {
             FrameCallbacks frame{
-                bind(app, std::move(callbacks.initialize)), bind(app, std::move(callbacks.update)),
-                bind(app, std::move(callbacks.ui)),         bind(app, std::move(callbacks.cancelInteraction)),
-                bind(app, std::move(callbacks.input)),      bind(app, std::move(callbacks.layout)),
+                bind(app, std::move(callbacks.initialize)),     bind(app, std::move(callbacks.update)),
+                bind(app, std::move(callbacks.ui)),             bind(app, std::move(callbacks.cancelInteraction)),
+                bind(app, std::move(callbacks.input)),          bind(app, std::move(callbacks.layout)),
+                bind(app, std::move(callbacks.closeRequested)),
             };
             callbacks = {};
             run(frame);
@@ -112,6 +115,7 @@ namespace Incubator::App
             std::function<void()> cancelInteraction;
             std::function<void(Render::FrameExtent, const UiInput&)> input;
             std::function<void()> layout;
+            std::function<void()> closeRequested;
         };
 
         template <class Application, class... Args>

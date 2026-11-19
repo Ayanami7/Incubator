@@ -57,11 +57,20 @@ namespace Incubator::Editor
         void beginSaveAs();
         void beginOpen();
         void cancelFileAction();
+        void requestOpen();
+        void requestClear(Editor::EditorApp& app);
+        void requestExit(Editor::EditorApp& app);
+        void requestClose(Editor::EditorApp& app);
         void operationPath(std::string_view path);
         bool confirmFileAction(Editor::EditorApp& app);
         void layout(Editor::EditorApp& app);
         void restoreLayout();
 
+        bool isDirty() const noexcept
+        {
+            return operations_.isDirty();
+        }
+        std::string statusText() const;
         const std::string& message() const;
         /// @brief 获取当前关联场景文件的 UTF-8 路径。
         std::string_view scenePath() const;
@@ -75,7 +84,7 @@ namespace Incubator::Editor
 
         void clear(Editor::EditorApp& app);
 
-        void cancelInteraction();
+        void cancelInteraction(Editor::EditorApp& app);
 
         bool focusSelected(Editor::EditorApp& app, Render::FrameExtent extent);
 
@@ -86,6 +95,22 @@ namespace Incubator::Editor
         void ui(Editor::EditorApp& app);
 
     private:
+        enum class FileAction
+        {
+            None,
+            Open,
+            SaveAs
+        };
+        enum class PendingAction
+        {
+            None,
+            Open,
+            Clear,
+            Exit
+        };
+        void executePendingAction(Editor::EditorApp& app);
+        void clearPendingAction() noexcept;
+
         void drawSelectionOverlay(Editor::EditorApp& app) const;
 
         void assets(Editor::EditorApp& app);
@@ -104,13 +129,9 @@ namespace Incubator::Editor
 
         static Scene::Transform initialTransform(bool useObj);
 
-        enum class FileAction
-        {
-            None,
-            Open,
-            SaveAs
-        };
         FileAction fileAction_ = FileAction::None;
+        PendingAction pendingAction_ = PendingAction::None;
+        bool pendingSaveAs_ = false;
         Workspace workspace_;
         bool viewportOpen_ = true;
         EditorOperations operations_;

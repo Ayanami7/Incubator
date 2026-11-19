@@ -158,6 +158,8 @@ namespace Incubator::App
             {
                 window_->beginInputFrame();
                 window_->pollEvents();
+                if (!exitRequested_ && window_->shouldClose() && callbacks.closeRequested)
+                    callbacks.closeRequested();
                 if (exitRequested_ || window_->shouldClose())
                     break;
                 const auto now = Clock::now();
