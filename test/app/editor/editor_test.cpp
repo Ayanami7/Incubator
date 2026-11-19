@@ -9,6 +9,7 @@
 #include <glm/ext/matrix_transform.hpp>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -86,6 +87,125 @@ namespace
         selection.remove(scene);
         EXPECT_FALSE(selection.selected().valid());
         EXPECT_EQ(scene.entities().size(), 3u);
+    }
+
+    TEST(EditorSelectionOverlayTest, ClipHomogeneousSegmentHandlesNearFarBehindCameraOffscreenAndNonFinite)
+    {
+        // 完全在视锥内部：保持原端点。
+        const auto inside = Editor::clipHomogeneousSegment({-0.5, 0.25, 0.5, 2.0}, {0.5, -0.25, 1.5, 2.0});
+        ASSERT_TRUE(inside.has_value());
+        EXPECT_DOUBLE_EQ(inside->first.x, -0.5);
+        EXPECT_DOUBLE_EQ(inside->second.z, 1.5);
+
+        // 完全在相机后方（w < 0）或完全离屏：直接剔除。
+        EXPECT_FALSE(Editor::clipHomogeneousSegment({0.0, 0.0, -1.0, -2.0}, {0.1, 0.1, -0.5, -1.0}).has_value());
+        EXPECT_FALSE(Editor::clipHomogeneousSegment({3.0, 0.0, 0.5, 2.0}, {4.0, 0.0, 0.5, 2.0}).has_value());
+        EXPECT_FALSE(Editor::clipHomogeneousSegment({0.0, 0.0, 2.5, 2.0}, {0.0, 0.0, 3.0, 2.0}).has_value());
+
+        // 跨越近平面且起点位于相机后方（w < 0）：裁剪到 z = 0 且两端 w > 0。
+        const auto acrossNear = Editor::clipHomogeneousSegment({0.0, 0.0, -1.0, -1.0}, {0.0, 0.0, 1.0, 3.0});
+        ASSERT_TRUE(acrossNear.has_value());
+        EXPECT_NEAR(acrossNear->first.z, 0.0, 1e-12);
+        EXPECT_GT(acrossNear->first.w, 0.0);
+        EXPECT_GT(acrossNear->second.w, 0.0);
+
+        // 跨越远平面（z > w）：裁剪到 z = w。
+        const auto acrossFar = Editor::clipHomogeneousSegment({0.0, 0.0, 0.5, 2.0}, {0.0, 0.0, 4.0, 2.0});
+        ASSERT_TRUE(acrossFar.has_value());
+        EXPECT_NEAR(acrossFar->second.z, acrossFar->second.w, 1e-12);
+
+        // 跨越右侧裁剪面（x > w）：裁剪到 x = w。
+        const auto acrossRight = Editor::clipHomogeneousSegment({0.0, 0.0, 0.5, 2.0}, {4.0, 0.0, 0.5, 2.0});
+        ASSERT_TRUE(acrossRight.has_value());
+        EXPECT_NEAR(acrossRight->second.x, acrossRight->second.w, 1e-12);
+
+        // 非有限输入（NaN/Inf）安全剔除。
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const double inf = std::numeric_limits<double>::infinity();
+        EXPECT_FALSE(Editor::clipHomogeneousSegment({nan, 0.0, 0.5, 1.0}, {0.0, 0.0, 0.5, 1.0}).has_value());
+        EXPECT_FALSE(Editor::clipHomogeneousSegment({0.0, 0.0, 0.5, 1.0}, {inf, 0.0, 0.5, 1.0}).has_value());
+    }
+
+    TEST(EditorSelectionOverlayTest, ProjectAabbOverlayMatchesViewportMappingAcrossDpiAndClipsBounds)
+    {
+        const Scene::Camera camera({0.0f, 0.0f, 6.0f});
+        const App::ViewportRegion region{{100.0, 50.0}, {800.0, 600.0}, true, true};
+        const Render::FrameExtent extent{800, 600};
+        const Math::Aabb box{{-1.0f, -0.5f, -1.0f}, {1.0f, 1.5f, 1.0f}};
+
+        // 无效视口不产出线段。
+        EXPECT_TRUE(Editor::projectAabbOverlay(box, camera, {0, 600}, region).empty());
+        EXPECT_TRUE(Editor::projectAabbOverlay(box, camera, extent, {{100.0, 50.0}, {0.0, 600.0}, true, true}).empty());
+
+        const auto segments = Editor::projectAabbOverlay(box, camera, extent, region);
+        ASSERT_EQ(segments.size(), 12u);
+
+        // 验证 Y 方向不重复翻转（世界 +Y 顶点应映射到屏幕更小的 y 坐标）且等比例 DPI 缩放不改变逻辑坐标。
+        float minY = region.origin.y + region.size.y;
+        float maxY = region.origin.y;
+        for (const auto& s : segments)
+        {
+            for (const auto& p : {s.start, s.end})
+            {
+                EXPECT_TRUE(std::isfinite(p.x) && std::isfinite(p.y));
+                EXPECT_GE(p.x, region.origin.x - 1e-3f);
+                EXPECT_LE(p.x, region.origin.x + region.size.x + 1e-3f);
+                EXPECT_GE(p.y, region.origin.y - 1e-3f);
+                EXPECT_LE(p.y, region.origin.y + region.size.y + 1e-3f);
+                minY = std::min(minY, p.y);
+                maxY = std::max(maxY, p.y);
+            }
+        }
+        const float centerY = static_cast<float>(region.origin.y + region.size.y * 0.5);
+        // 盒子在 Y 上是 [-0.5, 1.5]（偏向上方 +Y），因此屏幕顶部距离中心应大于底部距离中心。
+        EXPECT_GT(centerY - minY, maxY - centerY);
+
+        for (float dpi : {1.5f, 2.0f})
+        {
+            const Render::FrameExtent scaled{static_cast<uint32_t>(extent.width * dpi),
+                                             static_cast<uint32_t>(extent.height * dpi)};
+            const auto scaledSegments = Editor::projectAabbOverlay(box, camera, scaled, region);
+            ASSERT_EQ(scaledSegments.size(), segments.size());
+            for (size_t i = 0; i < segments.size(); ++i)
+            {
+                EXPECT_NEAR(scaledSegments[i].start.x, segments[i].start.x, 1e-3f);
+                EXPECT_NEAR(scaledSegments[i].start.y, segments[i].start.y, 1e-3f);
+                EXPECT_NEAR(scaledSegments[i].end.x, segments[i].end.x, 1e-3f);
+                EXPECT_NEAR(scaledSegments[i].end.y, segments[i].end.y, 1e-3f);
+            }
+        }
+
+        // 跨越相机近平面与相机后方的包围盒：前 4 条边可见，4 条纵边在近平面处被裁剪，后 4 条边被剔除。
+        const Math::Aabb acrossCamera{{-0.5f, -0.5f, 3.0f}, {0.5f, 0.5f, 9.0f}};
+        const auto clippedSegments = Editor::projectAabbOverlay(acrossCamera, camera, extent, region);
+        EXPECT_EQ(clippedSegments.size(), 8u);
+        for (const auto& s : clippedSegments)
+        {
+            for (const auto& p : {s.start, s.end})
+            {
+                EXPECT_TRUE(std::isfinite(p.x) && std::isfinite(p.y));
+                EXPECT_GE(p.x, region.origin.x - 1e-3f);
+                EXPECT_LE(p.x, region.origin.x + region.size.x + 1e-3f);
+                EXPECT_GE(p.y, region.origin.y - 1e-3f);
+                EXPECT_LE(p.y, region.origin.y + region.size.y + 1e-3f);
+            }
+        }
+
+        // 相机位于超大包围盒内部且 12 条边均在视锥外：全部正确剔除。
+        const Math::Aabb enclosingCamera{{-2.0f, -2.0f, 3.0f}, {2.0f, 2.0f, 9.0f}};
+        EXPECT_TRUE(Editor::projectAabbOverlay(enclosingCamera, camera, extent, region).empty());
+
+        // 完全在相机后方或完全离屏的包围盒：返回空。
+        const Math::Aabb behindCamera{{-1.0f, -1.0f, 7.0f}, {1.0f, 1.0f, 10.0f}};
+        EXPECT_TRUE(Editor::projectAabbOverlay(behindCamera, camera, extent, region).empty());
+        const Math::Aabb offscreen{{50.0f, 0.0f, -2.0f}, {52.0f, 2.0f, 0.0f}};
+        EXPECT_TRUE(Editor::projectAabbOverlay(offscreen, camera, extent, region).empty());
+
+        // 无选择/无模型实体不产出线段。
+        Scene::Scene emptyScene;
+        const auto noModel = emptyScene.createEntity();
+        EXPECT_TRUE(Editor::projectSelectionBox(emptyScene, {}, extent, region).empty());
+        EXPECT_TRUE(Editor::projectSelectionBox(emptyScene, noModel, extent, region).empty());
     }
     constexpr const char* GLTF = "models/minimal_gltf/model.gltf";
     constexpr const char* OBJ = "models/minimal_obj/model.obj";
@@ -903,6 +1023,150 @@ namespace
                          EXPECT_EQ(count("Uploaded mesh:"), uploads);
                          app.requestExit();
                      }, [](auto& app, const auto&) { app.requestExit(); }, {}});
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, SelectionOverlayFollowsSameFrameEditsOrderAndSavesReviewCaptures)
+    {
+        copyShowcaseModels();
+        auto config = options(true);
+        config.window.width = 1280;
+        config.window.height = 800;
+        Editor::EditorApp session(config);
+        auto editor = std::make_shared<Editor::EditorScene>();
+        Render::SceneOutput previous;
+        WindowCapture::Image unselectedScene, selectedScene;
+        Render::Detail::RendererReviewAccess::ResourceCounts baseline{};
+        Scene::EntityId target;
+        int frame = 0;
+
+        auto captureScene = [&](Editor::EditorApp& app) {
+            WindowCapture::Image image;
+            const auto extent = previous.extent();
+            image.width = int(extent.width);
+            image.height = int(extent.height);
+            Render::Detail::RendererReviewAccess::withSceneOutput(
+                app.renderer(), previous, [&](const auto& device, const auto& targetImage) {
+                    image.rgba = TextureGpuReview::captureMip(device, targetImage, 0, {extent.width, extent.height});
+                });
+            return image;
+        };
+
+        auto saveWorkspace = [&](Editor::EditorApp& app, const char* name) {
+            glfwWaitEventsTimeout(0.06);
+            WindowCapture::save(WindowCapture::capture(app.window()), std::string("review/") + name + ".ppm");
+        };
+
+        session.run(
+            {[&](auto& app) {
+                 editor->initialize(app, "assets/scenes/shadows.json");
+                 app.shadowSettings().enabled = true;
+                 ASSERT_GE(app.scene().entities().size(), 2u);
+                 target = app.scene().entities()[0].id;
+                 baseline = Render::Detail::RendererReviewAccess::resourceCounts(app.renderer());
+             },
+             [&](auto& app, const auto&) {
+                 ++frame;
+                 if (frame == 4)
+                     unselectedScene = captureScene(app);
+                 if (frame == 5)
+                 {
+                     // 选中辅助线仅绘制在 ImGui 叠加层，不改变离屏场景/阴影颜色路径。
+                     selectedScene = captureScene(app);
+                     EXPECT_EQ(selectedScene.rgba, unselectedScene.rgba);
+                     saveWorkspace(app, "selection-overlay-initial");
+                 }
+                 if (frame == 6)
+                     saveWorkspace(app, "selection-overlay-transformed");
+                 if (frame == 7)
+                     saveWorkspace(app, "selection-overlay-camera-popup");
+                 if (frame == 9)
+                 {
+                     saveWorkspace(app, "selection-overlay-resized");
+                     app.requestExit();
+                 }
+             },
+             [&](auto& app) {
+                 auto* sceneList = app.sceneDrawList();
+                 const int beforeVtx = sceneList ? sceneList->VtxBuffer.Size : 0;
+
+                 if (frame == 4)
+                 {
+                     editor->select(target);
+                 }
+                 else if (frame == 5)
+                 {
+                     // 本帧编辑变换（移动/旋转/缩放）须立即反映到同一帧辅助线。
+                     auto pose = app.scene().find(target)->transform;
+                     pose.setPosition(pose.position() + glm::vec3(0.45f, 0.25f, 0.15f));
+                     pose.setRotation(glm::angleAxis(glm::radians(35.0f), glm::vec3(0.0f, 1.0f, 0.0f)) *
+                                      pose.rotation());
+                     pose.setScale(pose.scale() * glm::vec3(1.25f, 0.9f, 1.15f));
+                     ASSERT_TRUE(app.scene().setTransform(target, pose));
+                 }
+                 else if (frame == 6)
+                 {
+                     // 调整相机并打开浮动弹窗，验证辅助线随相机更新且停留在 Scene 层、不遮盖弹窗。
+                     auto camera = app.scene().camera();
+                     camera.setPosition(camera.position() + glm::vec3(0.8f, 0.4f, -0.8f));
+                     app.scene().setCamera(camera);
+                     editor->beginOpen();
+                 }
+                 else if (frame == 7)
+                 {
+                     editor->cancelFileAction();
+                     // 隐藏选中实体：保留选择但不绘制辅助线。
+                     ASSERT_TRUE(app.scene().setVisible(target, false));
+                 }
+                 else if (frame == 8)
+                 {
+                     // 恢复可见并调整窗口尺寸，验证尺寸变化后对齐。
+                     ASSERT_TRUE(app.scene().setVisible(target, true));
+                     auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                     glfwSetWindowSize(handle, 1024, 640);
+                 }
+
+                 editor->ui(app);
+
+                 const int afterVtx = sceneList ? sceneList->VtxBuffer.Size : 0;
+                 // 不使用无裁限全窗口前景绘制。
+                 EXPECT_EQ(ImGui::GetForegroundDrawList()->VtxBuffer.Size, 0);
+
+                 if (frame == 3)
+                 {
+                     // 未选中时不追加辅助线顶点。
+                     EXPECT_EQ(afterVtx, beforeVtx);
+                 }
+                 else if (frame == 4 || frame == 5 || frame == 6)
+                 {
+                     // 选中且可见时，在 Scene DrawList 的图像之后追加辅助线。
+                     ASSERT_NE(sceneList, nullptr);
+                     EXPECT_GT(afterVtx, beforeVtx);
+                     const auto expected = Editor::projectSelectionBox(app.scene(), editor->selected(),
+                                                                       app.sceneExtent(), app.viewportRegion());
+                     EXPECT_FALSE(expected.empty());
+                 }
+                 else if (frame == 7)
+                 {
+                     // 隐藏后保留选择但不再绘制辅助线。
+                     EXPECT_EQ(editor->selected(), target);
+                     EXPECT_EQ(afterVtx, beforeVtx);
+                 }
+
+                 // 不增加任何 GPU 渲染资源。
+                 const auto counts = Render::Detail::RendererReviewAccess::resourceCounts(app.renderer());
+                 EXPECT_EQ(counts.meshes, baseline.meshes);
+                 EXPECT_EQ(counts.textures, baseline.textures);
+                 EXPECT_EQ(counts.materials, baseline.materials);
+
+                 previous = app.renderer().prepareSceneTarget(app.sceneExtent());
+                 glfwWaitEventsTimeout(0.04);
+             },
+             [editor](auto&) { editor->cancelInteraction(); },
+             [editor](auto& app, auto extent, const auto& input) { editor->input(app, extent, input); },
+             [editor](auto& app) { editor->layout(app); }});
+
+        // 确认未将界面辅助写入场景文件（且删除后不绘制）。
         cleanValidation();
     }
 

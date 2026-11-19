@@ -22,6 +22,7 @@
 #include "runtime/resource/resource_manager.h"
 #include "runtime/scene/scene_file.h"
 #include "runtime/scene/scene_rebuild.h"
+#include "selection_overlay.h"
 #include "workspace.h"
 
 namespace Incubator::Editor
@@ -306,9 +307,28 @@ namespace Incubator::Editor
             }
             if (confirm)
                 confirmFileAction(app);
+            drawSelectionOverlay(app);
         }
 
     private:
+        void drawSelectionOverlay(Editor::EditorApp& app) const
+        {
+            auto* drawList = app.sceneDrawList();
+            if (!drawList)
+                return;
+            const auto& region = app.viewportRegion();
+            const auto segments = projectSelectionBox(app.scene(), operations_.selected(), app.sceneExtent(), region);
+            if (segments.empty())
+                return;
+            const ImVec2 clipMin(static_cast<float>(region.origin.x), static_cast<float>(region.origin.y));
+            const ImVec2 clipMax(static_cast<float>(region.origin.x + region.size.x),
+                                 static_cast<float>(region.origin.y + region.size.y));
+            const ImU32 color = IM_COL32(255, 200, 64, 255);
+            drawList->PushClipRect(clipMin, clipMax, true);
+            for (const auto& segment : segments)
+                drawList->AddLine({segment.start.x, segment.start.y}, {segment.end.x, segment.end.y}, color, 2.0f);
+            drawList->PopClipRect();
+        }
         void assets(Editor::EditorApp& app)
         {
             ImGui::SetNextWindowSize({ImGui::GetFontSize() * 22, ImGui::GetFontSize() * 22}, ImGuiCond_FirstUseEver);

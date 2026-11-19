@@ -13,6 +13,8 @@
 #include "runtime/resource/asset_source.h"
 #include "runtime/scene/scene.h"
 
+struct ImDrawList;
+
 namespace Incubator::Editor
 {
     struct FrameTime
@@ -91,6 +93,11 @@ namespace Incubator::Editor
         {
             return sceneExtent_;
         }
+        /// @brief 返回本帧场景视口窗口的绘制列表；视口未显示或尺寸无效时为空。
+        ImDrawList* sceneDrawList() const
+        {
+            return sceneDrawList_;
+        }
 
     private:
         void requireOpen() const;
@@ -107,6 +114,7 @@ namespace Incubator::Editor
         Render::FrameExtent sceneExtent_{};
         Render::SceneOutput sceneOutput_;
         App::ViewportRegion viewportRegion_;
+        ImDrawList* sceneDrawList_ = nullptr;
         bool sceneChanged_ = false;
         bool ownsRoutes_ = false;
         bool exitRequested_ = false;

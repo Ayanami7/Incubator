@@ -7,6 +7,7 @@ set(EDITOR_HEADERS
     editor_scene.h
     editor_operations.h
     editor_selection.h
+    selection_overlay.h
     workspace.h
 )
 set(EDITOR_SOURCES

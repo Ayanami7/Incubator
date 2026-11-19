@@ -144,6 +144,7 @@ namespace Incubator::Editor
                 if (hovered && (ImGui::IsMouseClicked(0) || ImGui::IsMouseClicked(1) || ImGui::IsMouseClicked(2)))
                     ImGui::SetWindowFocus();
                 viewportRegion_ = {{origin.x, origin.y}, {size.x, size.y}, hovered, ImGui::IsWindowFocused()};
+                sceneDrawList_ = ImGui::GetWindowDrawList();
             }
         }
         ImGui::End();
@@ -199,6 +200,7 @@ namespace Incubator::Editor
                 sceneExtent_ = {};
                 sceneOutput_ = {};
                 viewportRegion_ = {};
+                sceneDrawList_ = nullptr;
                 if (callbacks.layout)
                     callbacks.layout(*this);
                 const auto renderExtent = callbacks.layout ? sceneExtent_ : *extent;
