@@ -425,4 +425,50 @@ namespace
         scene.createEntity();
         EXPECT_EQ(scene.camera().matrices({800, 600}).view, expected.view);
     }
+
+    TEST(SceneEntityCpuTest, RestoreEntitiesPreservesIdentitiesRejectsInvalidInputAndAdvancesAllocator)
+    {
+        Scene scene;
+        const auto first = scene.createEntity({}, Transform({1, 2, 3}), true, "实体一");
+        const auto second = scene.createEntity({}, Transform({4, 5, 6}), false, "实体二");
+        const std::vector<Entity> snapshot(scene.entities().begin(), scene.entities().end());
+
+        // 破坏性清空后还原：原始 ID、列表顺序和字段完整恢复。
+        scene.clear();
+        EXPECT_TRUE(scene.entities().empty());
+        scene.restoreEntities(snapshot);
+        ASSERT_EQ(scene.entities().size(), 2u);
+        EXPECT_EQ(scene.entities()[0].id, first);
+        EXPECT_EQ(scene.entities()[0].name, "实体一");
+        EXPECT_EQ(scene.entities()[0].transform.position(), glm::vec3(1, 2, 3));
+        EXPECT_EQ(scene.entities()[1].id, second);
+        EXPECT_FALSE(scene.entities()[1].visible);
+
+        // 还原后新建与复制实体 ID 严格大于已还原的最大 ID，绝不冲突。
+        const auto created = scene.createEntity();
+        const auto duplicated = scene.duplicateEntity(first);
+        EXPECT_GT(created.value(), second.value());
+        EXPECT_GT(duplicated.value(), created.value());
+
+        // 非法还原输入（无效 ID、重复 ID、非法名称）抛出 CONFIG 且不破坏既有实体。
+        const auto before = scene.entities().size();
+        std::vector<Entity> invalidId = snapshot;
+        invalidId[0].id = EntityId{};
+        EXPECT_THROW(scene.restoreEntities(invalidId), Incubator::Error::Exception);
+        EXPECT_EQ(scene.entities().size(), before);
+
+        std::vector<Entity> duplicateId = snapshot;
+        duplicateId[1].id = first;
+        EXPECT_THROW(scene.restoreEntities(duplicateId), Incubator::Error::Exception);
+        EXPECT_EQ(scene.entities().size(), before);
+
+        std::vector<Entity> badName = snapshot;
+        badName[0].name = std::string("\xff", 1);
+        EXPECT_THROW(scene.restoreEntities(badName), Incubator::Error::Exception);
+        EXPECT_EQ(scene.entities().size(), before);
+
+        // 空列表还原等同于清空实体集合。
+        scene.restoreEntities({});
+        EXPECT_TRUE(scene.entities().empty());
+    }
 }  // namespace

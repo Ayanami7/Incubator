@@ -1,6 +1,8 @@
 #include "runtime/scene/scene.h"
 
 #include <algorithm>
+#include <limits>
+#include <unordered_set>
 #include <utility>
 
 #include "runtime/core/error/error.h"
@@ -8,16 +10,20 @@
 
 namespace Incubator::Scene
 {
+    namespace
+    {
+        // 所有 Scene 共用一个计数器。Scene 操作遵循 Runtime 的主线程约定。
+        uint64_t gNextEntityId = 1;
+    }  // namespace
+
     EntityId Scene::createEntity(std::shared_ptr<const Model::PreparedModel> model, Transform transform, bool visible,
                                  std::string name)
     {
         if (!validEntityName(name))
             throw Error::Exception(Error::Code::CONFIG, "Entity name must be UTF-8 without NUL");
-        // 所有 Scene 共用一个计数器。Scene 操作遵循 Runtime 的主线程约定。
-        static uint64_t nextId = 1;
-        if (nextId == 0)
+        if (gNextEntityId == 0)
             throw Error::Exception(Error::Code::CONFIG, "EntityId space is exhausted");
-        const EntityId id(nextId++);
+        const EntityId id(gNextEntityId++);
         entities_.push_back({id, std::move(transform), visible, std::move(model), std::move(name)});
         return id;
     }
@@ -29,6 +35,30 @@ namespace Incubator::Scene
             return {};
         const auto copy = *entity;
         return createEntity(copy.model, copy.transform, copy.visible, copy.name);
+    }
+
+    void Scene::restoreEntities(std::span<const Entity> entities)
+    {
+        std::unordered_set<uint64_t> seenIds;
+        seenIds.reserve(entities.size());
+        uint64_t maxId = 0;
+        for (const auto& entity : entities)
+        {
+            if (!entity.id.valid())
+                throw Error::Exception(Error::Code::CONFIG, "Entity restore requires valid EntityId");
+            if (!validEntityName(entity.name))
+                throw Error::Exception(Error::Code::CONFIG, "Entity name must be UTF-8 without NUL");
+            if (!seenIds.insert(entity.id.value()).second)
+                throw Error::Exception(Error::Code::CONFIG, "Entity restore requires unique EntityIds");
+            maxId = std::max(maxId, entity.id.value());
+        }
+
+        std::vector<Entity> restored(entities.begin(), entities.end());
+        entities_ = std::move(restored);
+        if (maxId > 0 && (gNextEntityId == 0 || maxId >= gNextEntityId))
+        {
+            gNextEntityId = (maxId == std::numeric_limits<uint64_t>::max()) ? 0 : (maxId + 1);
+        }
     }
 
     const Entity* Scene::find(EntityId id) const

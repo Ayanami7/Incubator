@@ -19,15 +19,49 @@ namespace Incubator::Editor
         }
     }  // namespace
 
-    bool EditorOperations::addModel(Scene::Scene& scene, const std::array<float, 4>&, std::string_view path,
+    EditorOperations::HistorySnapshot EditorOperations::captureSnapshot(const Scene::Scene& scene,
+                                                                        const std::array<float, 4>& clearColor,
+                                                                        uint64_t revision) const
+    {
+        const auto entities = scene.entities();
+        return {std::vector<Scene::Entity>(entities.begin(), entities.end()), scene.lighting(), clearColor,
+                selection_.selected(), revision};
+    }
+
+    void EditorOperations::pushUndoSnapshot(HistorySnapshot before)
+    {
+        undoStack_.push_back(std::move(before));
+        if (undoStack_.size() > MAX_HISTORY)
+        {
+            const uint64_t evictedRevision = undoStack_.front().revision;
+            undoStack_.erase(undoStack_.begin());
+            if (savedRevision_ && *savedRevision_ == evictedRevision)
+                savedRevision_.reset();
+        }
+        redoStack_.clear();
+        currentRevision_ = nextRevision_++;
+    }
+
+    void EditorOperations::applySnapshot(Scene::Scene& scene, std::array<float, 4>& clearColor,
+                                         const HistorySnapshot& snapshot)
+    {
+        scene.restoreEntities(snapshot.entities);
+        scene.setLighting(snapshot.lighting);
+        clearColor = snapshot.clearColor;
+        selection_.select(snapshot.selected);
+        currentRevision_ = snapshot.revision;
+    }
+
+    bool EditorOperations::addModel(Scene::Scene& scene, const std::array<float, 4>& clearColor, std::string_view path,
                                     const Scene::Transform& transform)
     {
         try
         {
             auto model = cache_->resolve(Model::ModelReference(path, PREVIEW_OPTIONS));
             auto name = Utils::Utf8::toUtf8String(Utils::Utf8::toFsPath(path).stem());
+            auto before = captureSnapshot(scene, clearColor, currentRevision_);
             selection_.select(scene.createEntity(std::move(model), transform, true, std::move(name)));
-            dirty_ = true;
+            pushUndoSnapshot(std::move(before));
             messageError_ = false;
             message_ = "Added model: " + std::string(path);
             Log::Registry::get("editor").info("{}", message_);
@@ -43,89 +77,142 @@ namespace Incubator::Editor
         }
     }
 
-    bool EditorOperations::rename(Scene::Scene& scene, const std::array<float, 4>&, std::string name)
+    bool EditorOperations::rename(Scene::Scene& scene, const std::array<float, 4>& clearColor, std::string name)
     {
         const auto* entity = scene.find(selection_.selected());
         if (!entity)
             return false;
         if (entity->name == name)
             return true;
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
         if (!selection_.rename(scene, std::move(name)))
             return false;
-        dirty_ = true;
+        pushUndoSnapshot(std::move(before));
         return true;
     }
 
-    bool EditorOperations::setVisible(Scene::Scene& scene, const std::array<float, 4>&, bool visible)
+    bool EditorOperations::setVisible(Scene::Scene& scene, const std::array<float, 4>& clearColor, bool visible)
     {
         const auto* entity = scene.find(selection_.selected());
         if (!entity)
             return false;
         if (entity->visible == visible)
             return true;
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
         if (!selection_.setVisible(scene, visible))
             return false;
-        dirty_ = true;
+        pushUndoSnapshot(std::move(before));
         return true;
     }
 
-    bool EditorOperations::setTransform(Scene::Scene& scene, const std::array<float, 4>&, Scene::Transform transform)
+    bool EditorOperations::setTransform(Scene::Scene& scene, const std::array<float, 4>& clearColor,
+                                        Scene::Transform transform)
     {
         const auto* entity = scene.find(selection_.selected());
         if (!entity)
             return false;
         if (sameTransform(entity->transform, transform))
             return true;
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
         if (!selection_.setTransform(scene, std::move(transform)))
             return false;
-        dirty_ = true;
+        pushUndoSnapshot(std::move(before));
         return true;
     }
 
-    Scene::EntityId EditorOperations::duplicate(Scene::Scene& scene, const std::array<float, 4>&)
+    Scene::EntityId EditorOperations::duplicate(Scene::Scene& scene, const std::array<float, 4>& clearColor)
     {
+        const auto* source = scene.find(selection_.selected());
+        if (!source)
+            return {};
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
         const auto id = selection_.duplicate(scene);
         if (id.valid())
-            dirty_ = true;
+            pushUndoSnapshot(std::move(before));
         return id;
     }
 
-    bool EditorOperations::remove(Scene::Scene& scene, const std::array<float, 4>&)
+    bool EditorOperations::remove(Scene::Scene& scene, const std::array<float, 4>& clearColor)
     {
         const bool existed = scene.find(selection_.selected()) != nullptr;
-        selection_.remove(scene);
         if (!existed)
+        {
+            selection_.remove(scene);
             return false;
-        dirty_ = true;
+        }
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
+        selection_.remove(scene);
+        pushUndoSnapshot(std::move(before));
         return true;
     }
 
-    bool EditorOperations::clear(Scene::Scene& scene, const std::array<float, 4>&)
+    bool EditorOperations::clear(Scene::Scene& scene, const std::array<float, 4>& clearColor)
     {
-        const bool hadEntities = !scene.entities().empty();
-        selection_.clear(scene);
-        if (!hadEntities)
+        if (scene.entities().empty())
+        {
+            selection_.clear(scene);
             return false;
-        dirty_ = true;
+        }
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
+        selection_.clear(scene);
+        pushUndoSnapshot(std::move(before));
         return true;
     }
 
-    bool EditorOperations::setLighting(Scene::Scene& scene, const std::array<float, 4>&, Render::Lighting lighting)
+    bool EditorOperations::setLighting(Scene::Scene& scene, const std::array<float, 4>& clearColor,
+                                       Render::Lighting lighting)
     {
         if (scene.lighting() == lighting)
             return true;
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
         scene.setLighting(lighting);
-        dirty_ = true;
+        pushUndoSnapshot(std::move(before));
         return true;
     }
 
-    bool EditorOperations::setClearColor(const Scene::Scene&, std::array<float, 4>& clearColor,
+    bool EditorOperations::setClearColor(const Scene::Scene& scene, std::array<float, 4>& clearColor,
                                          const std::array<float, 4>& newColor)
     {
         if (clearColor == newColor)
             return true;
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
         clearColor = newColor;
-        dirty_ = true;
+        pushUndoSnapshot(std::move(before));
+        return true;
+    }
+
+    bool EditorOperations::undo(Scene::Scene& scene, std::array<float, 4>& clearColor)
+    {
+        if (undoStack_.empty())
+            return false;
+        auto current = captureSnapshot(scene, clearColor, currentRevision_);
+        auto target = std::move(undoStack_.back());
+        undoStack_.pop_back();
+        applySnapshot(scene, clearColor, target);
+        redoStack_.push_back(std::move(current));
+        messageError_ = false;
+        message_ = "Undid last action";
+        return true;
+    }
+
+    bool EditorOperations::redo(Scene::Scene& scene, std::array<float, 4>& clearColor)
+    {
+        if (redoStack_.empty())
+            return false;
+        auto current = captureSnapshot(scene, clearColor, currentRevision_);
+        auto target = std::move(redoStack_.back());
+        redoStack_.pop_back();
+        applySnapshot(scene, clearColor, target);
+        undoStack_.push_back(std::move(current));
+        if (undoStack_.size() > MAX_HISTORY)
+        {
+            const uint64_t evictedRevision = undoStack_.front().revision;
+            undoStack_.erase(undoStack_.begin());
+            if (savedRevision_ && *savedRevision_ == evictedRevision)
+                savedRevision_.reset();
+        }
+        messageError_ = false;
+        message_ = "Redid action";
         return true;
     }
 
@@ -139,7 +226,7 @@ namespace Incubator::Editor
             messageError_ = false;
             message_ = "Saved: " + target;
             currentFile_ = std::move(target);
-            dirty_ = false;
+            savedRevision_ = currentRevision_;
             Log::Registry::get("editor").info("Saved scene '{}' ({} entities)", logPath(currentFile_),
                                               scene.entities().size());
             return true;
@@ -164,7 +251,10 @@ namespace Incubator::Editor
             message_ = "Loaded: " + currentFile_;
             messageError_ = false;
             selection_.select({});
-            dirty_ = false;
+            undoStack_.clear();
+            redoStack_.clear();
+            currentRevision_ = nextRevision_++;
+            savedRevision_ = currentRevision_;
             Log::Registry::get("editor").info("Loaded scene '{}' ({} entities)", logPath(currentFile_),
                                               rebuilt.scene->entities().size());
             return rebuilt;

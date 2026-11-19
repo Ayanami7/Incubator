@@ -35,6 +35,7 @@ Transform 是实体整体变换的唯一真源，实体不另存 ModelInstance �
 | setTransform/setVisible/setModel | 通过 ID 修改指定实体；未命中返回 false，其他实体不变；setModel 可传空解除绑定 |
 | destroyEntity(EntityId) | 删除指定实体，未命中返回 false；其他存活实体相对顺序保持 |
 | clear() | 清除全部实体和它们的模型持有，保留当前 Camera 与光照 |
+| restoreEntities(span<const Entity>) | 专门用于编辑历史快照恢复：按顺序整体替换实体并保留原 EntityId，校验 ID 唯一/有效与名称合法，并推进后续 ID 分配器至最大值之后 |
 | entities() const | 返回 span<const Entity>，按存活实体的创建顺序遍历；新实体追加到尾部 |
 | camera() const / setCamera(Camera) | 只读访问或整体替换 Scene 自有 Camera；默认 Camera 有效，设置时复制其值 |
 | lighting() const / setLighting(Render::Lighting) | 只读借用或整体替换 Scene 自有光照；非法设置抛 CONFIG，保留原值 |
@@ -49,7 +50,7 @@ Scene 保存输入方向原值，构造光源矩阵及 GPU 帧参数时只归一
 打开场景成功后使用文件中的光照，普通相机操作、聚焦与实体编辑保留当前光照；阴影预览设置由 EditorApp 独立持有，不写入 Scene。
 
 EntityId 是独立的 uint64 包装，默认 0 无效，只有 Scene 分配非零标识；value() 可用于诊断、operator== 用于比较。
-所有 Scene 共用进程内单调序号，删除、clear 或 Scene 销毁后不复用旧值，其他 Scene 的 ID 不会命中本 Scene。
+所有 Scene 共用进程内单调序号，常规 `createEntity` / `duplicateEntity` 在实体删除、`clear` 或 Scene 销毁后绝不复用已删除实体的 ID，其他 Scene 的 ID 不会命中本 Scene；只有编辑历史快照恢复专用接口 `restoreEntities` 可按快照还原既有实体的原 `EntityId`，同时保证后续分配的序号严格大于已还原的最大值。
 序号耗尽时创建抛 CONFIG，不回绕分配旧值；不提供跨进程身份或从资源/模型索引构造实体 ID 的接口。
 valid() 只表示曾分配过非零值，实体是否仍存活须由所属 Scene 的 find 判断。
 

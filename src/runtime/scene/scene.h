@@ -40,6 +40,13 @@ namespace Incubator::Scene
         /// @note 结构变化后必须重新获取实体指针和视图；不会加载或准备模型。
         EntityId duplicateEntity(EntityId id);
 
+        /// @brief 按快照顺序完整替换当前场景实体列表并保留原有 EntityId。
+        /// @param entities 待恢复的实体快照列表，不可包含无效或重复 EntityId 及非法名称。
+        /// @throws Error::Exception 存在无效/重复 ID 或非法 UTF-8/NUL 名称时抛出 CONFIG，且不改变原实体列表。
+        /// @note 常规 createEntity/duplicateEntity 不会复用已删除实体 ID；本接口仅用于编辑历史恢复既有实体身份，
+        /// 并推进后续 ID 分配器至所有已恢复 ID 之后。结构变化后必须重新获取实体指针和视图。
+        void restoreEntities(std::span<const Entity> entities);
+
         /// @brief 按标识查找实体。
         /// @param id 待查找的实体标识。
         /// @return 找到时返回只读借用指针，否则返回 nullptr。

@@ -180,6 +180,113 @@ namespace
         EXPECT_FALSE(operations.isDirty());
     }
 
+    TEST(EditorOperationsHistoryTest, DiscreteOperationsUndoRedoCapacityAndRevisionDirtySync)
+    {
+        Editor::EditorOperations operations;
+        Scene::Scene scene;
+        std::array<float, 4> clearColor{0.12f, 0.16f, 0.22f, 1.0f};
+
+        const auto idA = scene.createEntity({}, Scene::Transform({1, 0, 0}), true, "原始A");
+        const auto idB = scene.createEntity({}, Scene::Transform({2, 0, 0}), false, "原始B");
+        EXPECT_FALSE(operations.canUndo());
+        EXPECT_FALSE(operations.canRedo());
+        EXPECT_FALSE(operations.isDirty());
+
+        // 1. 改名 -> 2. 可见性 -> 3. 变换 -> 4. 复制 -> 5. 灯光 -> 6. 背景色 -> 7. 删除 -> 8. 清空。
+        operations.select(idA);
+        ASSERT_TRUE(operations.rename(scene, clearColor, "重命名A"));
+        ASSERT_TRUE(operations.setVisible(scene, clearColor, false));
+        ASSERT_TRUE(operations.setTransform(scene, clearColor, Scene::Transform({9, 8, 7})));
+        const auto idCopy = operations.duplicate(scene, clearColor);
+        ASSERT_TRUE(idCopy.valid());
+        auto lighting = scene.lighting();
+        lighting.intensity = 2.0f;
+        ASSERT_TRUE(operations.setLighting(scene, clearColor, lighting));
+        ASSERT_TRUE(operations.setClearColor(scene, clearColor, {0.4f, 0.5f, 0.6f, 1.0f}));
+        // 异常或无变化操作不污染历史栈。
+        EXPECT_THROW(operations.rename(scene, clearColor, std::string("\xff", 1)), Error::Exception);
+        auto badLighting = scene.lighting();
+        badLighting.direction = {0, 0, 0};
+        EXPECT_THROW(operations.setLighting(scene, clearColor, badLighting), Error::Exception);
+        operations.select(idA);
+        ASSERT_TRUE(operations.remove(scene, clearColor));
+        EXPECT_EQ(scene.find(idA), nullptr);
+        ASSERT_TRUE(operations.clear(scene, clearColor));
+        EXPECT_TRUE(scene.entities().empty());
+        EXPECT_TRUE(operations.isDirty());
+
+        // 清空后无效选中返回 false，不抛出也不入栈。
+        operations.select(idCopy);
+        EXPECT_FALSE(operations.rename(scene, clearColor, "missing"));
+
+        // 撤销清空 -> 撤销删除（恢复原始 idA 与顺序）-> 撤销背景色 -> 撤销灯光 -> 撤销复制 -> 撤销变换 -> 撤销可见性 -> 撤销改名。
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        ASSERT_EQ(scene.entities().size(), 2u);
+        EXPECT_EQ(scene.entities()[0].id, idB);
+        EXPECT_EQ(scene.entities()[1].id, idCopy);
+
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        ASSERT_EQ(scene.entities().size(), 3u);
+        EXPECT_EQ(scene.entities()[0].id, idA);
+        EXPECT_EQ(scene.entities()[0].name, "重命名A");
+        EXPECT_FALSE(scene.entities()[0].visible);
+        EXPECT_EQ(scene.entities()[0].transform.position(), glm::vec3(9, 8, 7));
+        EXPECT_EQ(operations.selected(), idA);
+
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        EXPECT_EQ(clearColor, (std::array<float, 4>{0.12f, 0.16f, 0.22f, 1.0f}));
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        EXPECT_FLOAT_EQ(scene.lighting().intensity, 1.0f);
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        EXPECT_EQ(scene.find(idCopy), nullptr);
+        EXPECT_EQ(operations.selected(), idA);
+
+        // 撤销先前对同一 idA 的变换、可见性和改名。
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        EXPECT_EQ(scene.find(idA)->transform.position(), glm::vec3(1, 0, 0));
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        EXPECT_TRUE(scene.find(idA)->visible);
+        EXPECT_TRUE(operations.isDirty());
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        EXPECT_EQ(scene.find(idA)->name, "原始A");
+        // 恰好回到初始修订号：isDirty 自动恢复 false。
+        EXPECT_FALSE(operations.isDirty());
+        EXPECT_FALSE(operations.canUndo());
+        EXPECT_TRUE(operations.canRedo());
+
+        // 之后新建实体的 ID 不与曾存在的 idCopy 冲突。
+        const auto idNew = scene.createEntity();
+        EXPECT_GT(idNew.value(), idCopy.value());
+        EXPECT_TRUE(scene.destroyEntity(idNew));
+
+        // 连续重做前 3 步并检查状态与脏标记，再在中间分支做新编辑截断 redoStack_。
+        ASSERT_TRUE(operations.redo(scene, clearColor));
+        EXPECT_TRUE(operations.isDirty());
+        EXPECT_EQ(scene.find(idA)->name, "重命名A");
+        ASSERT_TRUE(operations.redo(scene, clearColor));
+        EXPECT_FALSE(scene.find(idA)->visible);
+        EXPECT_TRUE(operations.canRedo());
+
+        ASSERT_TRUE(operations.setTransform(scene, clearColor, Scene::Transform({5, 5, 5})));
+        EXPECT_FALSE(operations.canRedo());
+
+        // 测试 64 步容量上限：执行 65 次有效修改，最多只能 undo 64 次，且第 0 步基线被淘汰后 isDirty 保持 true。
+        Editor::EditorOperations bounded;
+        Scene::Scene boundedScene;
+        std::array<float, 4> boundedColor{0, 0, 0, 1};
+        const auto target = boundedScene.createEntity({}, Scene::Transform({0, 0, 0}));
+        bounded.select(target);
+        for (int step = 1; step <= 65; ++step)
+            ASSERT_TRUE(bounded.setTransform(boundedScene, boundedColor, Scene::Transform({float(step), 0, 0})));
+
+        size_t undos = 0;
+        while (bounded.undo(boundedScene, boundedColor))
+            ++undos;
+        EXPECT_EQ(undos, Editor::EditorOperations::MAX_HISTORY);
+        EXPECT_EQ(boundedScene.find(target)->transform.position().x, 1.0f);
+        EXPECT_TRUE(bounded.isDirty());
+    }
+
     TEST(EditorSelectionOverlayTest, ClipHomogeneousSegmentHandlesNearFarBehindCameraOffscreenAndNonFinite)
     {
         // 完全在视锥内部：保持原端点。
@@ -1630,6 +1737,84 @@ namespace
         cleanValidation();
     }
 
+    TEST_F(EditorAppTest, HistoryStackReusesModelsProtectsCollectUnusedAndResetsOnLoad)
+    {
+        copyShowcaseModels();
+        auto state = std::make_shared<Lifetime>();
+        Editor::EditorApp session(options(), std::make_unique<TrackedFileIO>(state));
+        session.run(
+            {[&](auto& app) {
+                 Editor::EditorOperations ops;
+                 ops.initialize(app.renderer());
+                 auto initial = ops.load(app.fileIO(), "assets/scenes/mixed.json", true);
+                 app.setScene(std::move(initial->scene));
+                 app.clearColor() = initial->clearColor;
+                 EXPECT_FALSE(ops.isDirty());
+                 EXPECT_FALSE(ops.canUndo());
+                 EXPECT_EQ(ops.cachedModels(), 2u);
+
+                 // 加入新模型（minimal_gltf），随后删除它并检查 collectUnused 不会误回收仍在 undoStack 中的模型。
+                 ASSERT_TRUE(ops.addModel(app.scene(), app.clearColor(), GLTF));
+                 const auto addedId = ops.selected();
+                 auto addedModel = app.scene().find(addedId)->model;
+                 EXPECT_EQ(ops.cachedModels(), 3u);
+                 EXPECT_TRUE(ops.isDirty());
+
+                 const auto opensBeforeUndo = state->opens;
+                 const auto uploadsBeforeUndo = count("Uploaded mesh:");
+
+                 ASSERT_TRUE(ops.remove(app.scene(), app.clearColor()));
+                 EXPECT_EQ(app.scene().find(addedId), nullptr);
+                 // 此时 undoStack_ 仍持有 addedModel，显式清理不得回收它。
+                 EXPECT_EQ(ops.collectUnusedModels(), 0u);
+                 EXPECT_EQ(ops.cachedModels(), 3u);
+
+                 // Undo 恢复被删除实体：不触发文件读取或 GPU 重新上传，且恢复原有 EntityId 与共享模型。
+                 ASSERT_TRUE(ops.undo(app.scene(), app.clearColor()));
+                 ASSERT_NE(app.scene().find(addedId), nullptr);
+                 EXPECT_EQ(app.scene().find(addedId)->model, addedModel);
+                 EXPECT_EQ(state->opens, opensBeforeUndo);
+                 EXPECT_EQ(count("Uploaded mesh:"), uploadsBeforeUndo);
+
+                 // 保存新基线 -> 再 Undo 到未添加模型之前，此时偏离保存基线故 isDirty 应为 true；Redo 回到保存基线恢复 false。
+                 ASSERT_TRUE(ops.save(app.fileIO(), app.scene(), app.clearColor(), "history-saved.json"));
+                 EXPECT_FALSE(ops.isDirty());
+                 ASSERT_TRUE(ops.undo(app.scene(), app.clearColor()));
+                 EXPECT_TRUE(ops.isDirty());
+                 ASSERT_TRUE(ops.redo(app.scene(), app.clearColor()));
+                 EXPECT_FALSE(ops.isDirty());
+
+                 // 再删除并清空后用新分支编辑/加载重置历史栈，此时 collectUnusedModels 可正常回收模型。
+                 ASSERT_TRUE(ops.remove(app.scene(), app.clearColor()));
+                 ASSERT_TRUE(ops.undo(app.scene(), app.clearColor()));  // remove 进入 redoStack_
+                 ASSERT_TRUE(ops.setVisible(app.scene(), app.clearColor(), false));  // 覆盖 redoStack_
+                 EXPECT_FALSE(ops.canRedo());
+
+                 // 失败的 load/save 不破坏既有历史栈。
+                 EXPECT_FALSE(ops.load(app.fileIO(), "missing-scene.json"));
+                 EXPECT_TRUE(ops.canUndo());
+                 EXPECT_FALSE(ops.save(app.fileIO(), app.scene(), app.clearColor(), "missing-dir/bad.json"));
+                 EXPECT_TRUE(ops.canUndo());
+
+                 // 成功 load 清空历史栈与挂起分支，释放 undoStack_ 持有的 GLTF 模型，随后 collectUnusedModels 可回收之。
+                 auto reloaded = ops.load(app.fileIO(), "assets/scenes/mixed.json");
+                 ASSERT_TRUE(reloaded);
+                 app.setScene(std::move(reloaded->scene));
+                 app.clearColor() = reloaded->clearColor;
+                 EXPECT_FALSE(ops.canUndo());
+                 EXPECT_FALSE(ops.canRedo());
+                 EXPECT_FALSE(ops.isDirty());
+                 // 注意：局部变量 addedModel 仍在作用域内，先释放局部变量持有，再清理缓存。
+                 addedModel.reset();
+                 EXPECT_EQ(ops.collectUnusedModels(), 1u);
+                 EXPECT_EQ(ops.cachedModels(), 2u);
+
+                 app.requestExit();
+             },
+             {}, {}});
+        cleanValidation();
+    }
+
     TEST_F(EditorAppTest, ExplicitCacheCleanupRetainsSubmittedFramesAndLiveShadowModels)
     {
         copyShowcaseModels();
@@ -1680,26 +1865,32 @@ namespace
                              EXPECT_TRUE(mesh.valid());
                              editor->select(source);
                              editor->deleteSelected(app);
-                             EXPECT_EQ(editor->collectUnusedModels(), 1u);
-                             EXPECT_TRUE(removed.expired());
-                             EXPECT_EQ(editor->cachedModels(), 3u);
+                             // 历史栈仍持有已删除实体的模型以支撑 Undo，显式清理不得误回收。
+                             EXPECT_EQ(editor->collectUnusedModels(), 0u);
+                             EXPECT_FALSE(removed.expired());
+                             EXPECT_EQ(editor->cachedModels(), 4u);
                              EXPECT_TRUE(mesh.valid());
                              EXPECT_GT(Review::resourceCounts(app.renderer()).meshes, baseline.meshes);
-                             Review::waitForFrames(app.renderer());
-                             EXPECT_FALSE(mesh.valid());
-                             const auto after = Review::resourceCounts(app.renderer());
-                             EXPECT_EQ(after.meshes, baseline.meshes);
-                             EXPECT_EQ(after.textures, baseline.textures);
-                             EXPECT_EQ(after.materials, baseline.materials);
                              auto snapshot =
                                  Scene::extractSceneFrame(app.scene(), {384, 256}, true, app.shadowSettings());
                              ASSERT_TRUE(snapshot);
                              EXPECT_FALSE(snapshot->shadowDraws.empty());
                              if (frame == 6)
                              {
+                                 // 加载新场景清空历史栈，释放对 GLTF 与 ground 的历史持有；但上一帧已提交的在途 GPU 资源仍受帧槽保护。
                                  ASSERT_TRUE(editor->load(app, "assets/scenes/mixed.json"));
-                                 EXPECT_EQ(editor->collectUnusedModels(), 1u);
+                                 EXPECT_EQ(editor->collectUnusedModels(), 2u);
+                                 EXPECT_TRUE(removed.expired());
+                                 EXPECT_EQ(editor->cachedModels(), 2u);
+                                 EXPECT_TRUE(mesh.valid());
+                                 Review::waitForFrames(app.renderer());
+                                 EXPECT_FALSE(mesh.valid());
+
                                  editor->clear(app);
+                                 // clear 动作已进入历史栈，avocado/teapot 仍受 Undo 持有保护。
+                                 EXPECT_EQ(editor->collectUnusedModels(), 0u);
+                                 ASSERT_TRUE(editor->save(app, "empty-history-reset.json"));
+                                 ASSERT_TRUE(editor->load(app, "empty-history-reset.json"));
                                  EXPECT_EQ(editor->collectUnusedModels(), 2u);
                                  EXPECT_EQ(editor->cachedModels(), 0u);
                                  Review::waitForFrames(app.renderer());
