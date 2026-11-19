@@ -7,6 +7,7 @@
 
 #include "runtime/render/frame_input.h"
 #include "runtime/scene/entity.h"
+#include "runtime/scene/transform.h"
 #include "selection_overlay.h"
 
 namespace Incubator::App
@@ -78,10 +79,57 @@ namespace Incubator::Editor
                                 Render::FrameExtent extent, const App::ViewportRegion& region,
                                 float screenLength = 90.0f);
 
+    /// @brief 单次 Gizmo 三轴拖拽交互的几何求解状态与锁定的起始基准。
+    struct GizmoDragState
+    {
+        bool active = false;
+        GizmoMode mode = GizmoMode::Translate;
+        GizmoAxis axis = GizmoAxis::None;
+        Scene::EntityId entity{};
+        Scene::Transform startTransform{};
+        Scene::Transform lastTransform{};
+        float startWorldLength = 0.0f;
+        float screenLength = 90.0f;
+        glm::dvec3 dragAxis{0.0};
+        double startAxisParam = 0.0;
+        bool hasAxisReference = false;
+        bool planarMode = false;
+        glm::dvec3 startPlaneVector{0.0};
+        bool hasPlaneReference = false;
+        glm::dvec2 startCursor{0.0};
+        glm::dvec2 startScreenTangent{1.0, 0.0};
+    };
+
     /// @brief 在屏幕逻辑坐标空间中执行 Gizmo 三轴 2D 命中测试。
     /// @param cursorPosition 与投影图元处于同一坐标系（含 ViewportRegion::origin 偏移）的鼠标逻辑坐标。
     /// @param gizmo 当前帧投影得到的 Gizmo 图元。
     /// @param tolerance 命中判定容差（逻辑像素）。
     /// @return 距离小于等于容差的最短距离轴；距离完全相等时按 X -> Y -> Z 顺序返回；未命中返回 GizmoAxis::None。
     GizmoAxis pickGizmoAxis(glm::vec2 cursorPosition, const ProjectedGizmo& gizmo, float tolerance = 8.0f) noexcept;
+
+    /// @brief 初始化 Gizmo 三轴拖拽状态并锁定起始几何与旋转求解分支。
+    /// @param entity 被拖拽的选中实体标识。
+    /// @param mode 本次拖拽锁定的 Gizmo 操作模式。
+    /// @param axis 本次拖拽锁定的操作轴（需为 X / Y / Z）。
+    /// @param startTransform 拖拽开始时刻实体的世界空间变换。
+    /// @param camera 当前帧场景相机。
+    /// @param extent 本帧实际渲染尺寸。
+    /// @param region 本帧场景图像在 ImGui 中的逻辑区域。
+    /// @param cursorPosition 与投影图元同坐标系（含 ViewportRegion::origin 偏移）的起始鼠标逻辑坐标。
+    /// @param screenLength Gizmo 的屏幕逻辑参考长度（像素）。
+    /// @return 初始化后的拖拽状态；参数无效或中心位于近裁剪面后方时 active 为 false。
+    GizmoDragState beginGizmoDrag(Scene::EntityId entity, GizmoMode mode, GizmoAxis axis,
+                                  const Scene::Transform& startTransform, const Scene::Camera& camera,
+                                  Render::FrameExtent extent, const App::ViewportRegion& region,
+                                  glm::vec2 cursorPosition, float screenLength = 90.0f) noexcept;
+
+    /// @brief 根据当前鼠标位置与相机求解 Gizmo 拖拽产生的新变换，支持鼠标跨出视口边界的非裁剪射线。
+    /// @param state 可变拖拽状态，维护上一有效帧变换并在首帧缺失参考时补齐。
+    /// @param camera 当前帧场景相机。
+    /// @param extent 本帧实际渲染尺寸。
+    /// @param region 本帧场景图像在 ImGui 中的逻辑区域。
+    /// @param cursorPosition 与投影图元同坐标系（含 ViewportRegion::origin 偏移）的当前鼠标逻辑坐标。
+    /// @return 更新后的实体变换；当视线退化、平行或数值非有限时保持上一有效帧变换不变。
+    Scene::Transform updateGizmoDrag(GizmoDragState& state, const Scene::Camera& camera, Render::FrameExtent extent,
+                                     const App::ViewportRegion& region, glm::vec2 cursorPosition) noexcept;
 }  // namespace Incubator::Editor

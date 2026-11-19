@@ -7,6 +7,7 @@
 #include "app/common/orbit_camera.h"
 #include "editor_app.h"
 #include "editor_operations.h"
+#include "gizmo.h"
 #include "runtime/resource/asset_source.h"
 #include "workspace.h"
 
@@ -87,6 +88,18 @@ namespace Incubator::Editor
 
         Scene::EntityId selected() const;
         void select(Scene::EntityId id);
+        void select(Editor::EditorApp& app, Scene::EntityId id);
+
+        /// @brief 获取当前视口 Gizmo 操作模式。
+        GizmoMode gizmoMode() const noexcept;
+        /// @brief 设置视口 Gizmo 操作模式；拖拽激活期间调用不打断或篡改正在进行的拖拽模式。
+        void setGizmoMode(GizmoMode mode) noexcept;
+        /// @brief 获取当前悬停的 Gizmo 坐标轴。
+        GizmoAxis hoveredGizmoAxis() const noexcept;
+        /// @brief 返回当前是否正在进行 Gizmo 拖拽。
+        bool gizmoDragging() const noexcept;
+        /// @brief 获取当前正在拖拽的 Gizmo 坐标轴，未拖拽时返回 GizmoAxis::None。
+        GizmoAxis activeGizmoAxis() const noexcept;
 
         void deleteSelected(Editor::EditorApp& app);
 
@@ -122,6 +135,7 @@ namespace Incubator::Editor
         void clearPendingAction() noexcept;
         void clearPanelTransactionFlags() noexcept;
         void commitPanelTransactions(Editor::EditorApp& app);
+        void cancelGizmoDrag(Editor::EditorApp& app);
         bool settleForDirtyCheck(Editor::EditorApp& app);
         void handleShortcuts(Editor::EditorApp& app);
 
@@ -162,6 +176,9 @@ namespace Incubator::Editor
         bool lightingTransactionActive_ = false;
         bool backgroundTransactionActive_ = false;
         bool shortcutSuspended_ = false;
+        GizmoMode gizmoMode_ = GizmoMode::Translate;
+        GizmoAxis hoveredGizmoAxis_ = GizmoAxis::None;
+        GizmoDragState gizmoDrag_{};
     };
 
     Editor::Callbacks makeCallbacks(std::string startupScene = "assets/scenes/shadows.json");

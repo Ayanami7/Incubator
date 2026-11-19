@@ -4480,4 +4480,369 @@ namespace
         cleanValidation();
     }
 
+    TEST(EditorGizmoTest, TranslateRotateAndScaleSolversWithDegenerateGuards)
+    {
+        const Render::FrameExtent extent{800, 600};
+        const App::ViewportRegion region{{100.0, 50.0}, {800.0, 600.0}};
+        const auto isFiniteTransform = [](const Scene::Transform& t) {
+            return std::isfinite(t.position().x) && std::isfinite(t.position().y) && std::isfinite(t.position().z) &&
+                   std::isfinite(t.rotation().w) && std::isfinite(t.rotation().x) && std::isfinite(t.rotation().y) &&
+                   std::isfinite(t.rotation().z) && std::isfinite(t.scale().x) && std::isfinite(t.scale().y) &&
+                   std::isfinite(t.scale().z);
+        };
+        const auto axisTip = [](const Editor::ProjectedGizmo& gizmo, Editor::GizmoAxis axis) -> glm::vec2 {
+            for (const auto& seg : gizmo.segments)
+            {
+                if (seg.axis == axis)
+                    return seg.segment.end;
+            }
+            return {};
+        };
+
+        // 1. Translate 模式：三轴独立平移、跨出视口射线与视线平行轴退化保护
+        {
+            Scene::Scene scene;
+            scene.setCamera(Scene::Camera({2.5f, 2.0f, 6.0f}));
+            const auto id = scene.createEntity(
+                nullptr, Scene::Transform({0.0f, 0.0f, 0.0f}, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), {1.0f, 2.0f, 3.0f}),
+                true, "GizmoTarget");
+            const auto* entity = scene.find(id);
+            ASSERT_NE(entity, nullptr);
+
+            const auto gizmo =
+                Editor::projectGizmo(scene, id, Editor::GizmoMode::Translate, extent, region);
+            ASSERT_TRUE(gizmo.visible);
+
+            for (const auto [axis, comp] : std::array<std::pair<Editor::GizmoAxis, int>, 3>{
+                     {{Editor::GizmoAxis::X, 0}, {Editor::GizmoAxis::Y, 1}, {Editor::GizmoAxis::Z, 2}}})
+            {
+                const glm::vec2 startPos = axisTip(gizmo, axis);
+                const glm::vec2 endPos = startPos + (startPos - gizmo.segments.front().segment.start);
+                auto drag = Editor::beginGizmoDrag(id, Editor::GizmoMode::Translate, axis, entity->transform,
+                                                   scene.camera(), extent, region, startPos);
+                ASSERT_TRUE(drag.active);
+                const auto updated = Editor::updateGizmoDrag(drag, scene.camera(), extent, region, endPos);
+                EXPECT_TRUE(isFiniteTransform(updated));
+                EXPECT_GT(updated.position()[comp], 0.1f);
+                EXPECT_NEAR(updated.position()[(comp + 1) % 3], 0.0f, 1e-4f);
+                EXPECT_NEAR(updated.position()[(comp + 2) % 3], 0.0f, 1e-4f);
+                EXPECT_EQ(updated.rotation(), entity->transform.rotation());
+                EXPECT_EQ(updated.scale(), entity->transform.scale());
+            }
+
+            // 跨出视口边界的外推坐标拖拽仍能正常推进平移
+            const glm::vec2 xStart = axisTip(gizmo, Editor::GizmoAxis::X);
+            auto outDrag = Editor::beginGizmoDrag(id, Editor::GizmoMode::Translate, Editor::GizmoAxis::X,
+                                                  entity->transform, scene.camera(), extent, region, xStart);
+            ASSERT_TRUE(outDrag.active);
+            const auto outUpdated =
+                Editor::updateGizmoDrag(outDrag, scene.camera(), extent, region, glm::vec2(1200.0f, xStart.y));
+            EXPECT_TRUE(isFiniteTransform(outUpdated));
+            EXPECT_GT(outUpdated.position().x, 1.0f);
+
+            // 视线与平移轴近似平行时不产生 NaN / Inf
+            Scene::Camera parallelCam({0.0f, 0.0f, 6.0f});
+            const glm::vec2 centerCursor(region.origin.x + region.size.x * 0.5,
+                                         region.origin.y + region.size.y * 0.5);
+            auto parallelDrag =
+                Editor::beginGizmoDrag(id, Editor::GizmoMode::Translate, Editor::GizmoAxis::Z, entity->transform,
+                                       parallelCam, extent, region, centerCursor);
+            ASSERT_TRUE(parallelDrag.active);
+            const auto parallelResult =
+                Editor::updateGizmoDrag(parallelDrag, parallelCam, extent, region, centerCursor + glm::vec2(5.0f, 0.0f));
+            EXPECT_TRUE(isFiniteTransform(parallelResult));
+            EXPECT_EQ(parallelResult.position(), entity->transform.position());
+        }
+
+        // 2. Rotate 模式：平面分支精确转角与掠射切线分支全程锁定不跳变
+        {
+            Scene::Scene scene;
+            scene.setCamera(Scene::Camera({0.0f, 0.0f, 6.0f}));
+            const auto id = scene.createEntity(nullptr, Scene::Transform{}, true, "RotateTarget");
+            const auto* entity = scene.find(id);
+            ASSERT_NE(entity, nullptr);
+
+            const auto gizmo = Editor::projectGizmo(scene, id, Editor::GizmoMode::Rotate, extent, region);
+            ASSERT_TRUE(gizmo.visible);
+
+            // 相机正对 Z 轴平面环：从 +X 环点拖向 +Y 环点（世界 +Y 对应 Vulkan 屏幕上方），应围绕 +Z 逆时针旋转约 +90 度
+            const glm::dmat4 vp =
+                glm::dmat4(scene.camera().matrices(extent).projection) * glm::dmat4(scene.camera().matrices(extent).view);
+            auto projectWorldPoint = [&](const glm::dvec3& p) -> glm::vec2 {
+                const glm::dvec4 c = vp * glm::dvec4(p, 1.0);
+                return glm::vec2(region.origin.x + (c.x / c.w + 1.0) * 0.5 * region.size.x,
+                                 region.origin.y + (c.y / c.w + 1.0) * 0.5 * region.size.y);
+            };
+            const glm::vec2 ringPlusX = projectWorldPoint({gizmo.worldLength, 0.0, 0.0});
+            const glm::vec2 ringPlusY = projectWorldPoint({0.0, gizmo.worldLength, 0.0});
+            auto planarDrag = Editor::beginGizmoDrag(id, Editor::GizmoMode::Rotate, Editor::GizmoAxis::Z,
+                                                     entity->transform, scene.camera(), extent, region, ringPlusX);
+            ASSERT_TRUE(planarDrag.active);
+            EXPECT_TRUE(planarDrag.planarMode);
+            const auto rotated90 = Editor::updateGizmoDrag(planarDrag, scene.camera(), extent, region, ringPlusY);
+            EXPECT_TRUE(isFiniteTransform(rotated90));
+            const glm::vec3 xAfter = rotated90.rotation() * glm::vec3(1.0f, 0.0f, 0.0f);
+            EXPECT_NEAR(xAfter.x, 0.0f, 1e-2f);
+            EXPECT_NEAR(xAfter.y, 1.0f, 1e-2f);
+            EXPECT_NEAR(xAfter.z, 0.0f, 1e-2f);
+
+            // 掠射视角锁定 Y 轴切线分支，即使途中光标大幅上下移动跨越 0.15 阈值也不切换分支或跳变
+            const glm::vec2 ringCenter = projectWorldPoint({0.0, 0.0, 0.0});
+            auto grazingDrag = Editor::beginGizmoDrag(id, Editor::GizmoMode::Rotate, Editor::GizmoAxis::Y,
+                                                      entity->transform, scene.camera(), extent, region, ringCenter);
+            ASSERT_TRUE(grazingDrag.active);
+            EXPECT_FALSE(grazingDrag.planarMode);
+            const glm::vec2 tangentPx(grazingDrag.startScreenTangent);
+            const auto step1 = Editor::updateGizmoDrag(grazingDrag, scene.camera(), extent, region,
+                                                       ringCenter + tangentPx * 45.0f + glm::vec2(0.0f, 200.0f));
+            const auto step2 = Editor::updateGizmoDrag(grazingDrag, scene.camera(), extent, region,
+                                                       ringCenter + tangentPx * 46.0f + glm::vec2(0.0f, 200.0f));
+            EXPECT_TRUE(isFiniteTransform(step1));
+            EXPECT_TRUE(isFiniteTransform(step2));
+            EXPECT_FALSE(grazingDrag.planarMode);
+            const glm::vec3 z1 = step1.rotation() * glm::vec3(0.0f, 0.0f, 1.0f);
+            const glm::vec3 z2 = step2.rotation() * glm::vec3(0.0f, 0.0f, 1.0f);
+            EXPECT_GT(z1.x, 0.2f);
+            EXPECT_NEAR(glm::length(z2 - z1), 1.0f / 90.0f, 0.02f);
+        }
+
+        // 3. Scale 模式：旋转局部轴缩放与零初始分量加性恢复
+        {
+            Scene::Scene scene;
+            scene.setCamera(Scene::Camera({2.0f, 2.0f, 6.0f}));
+            const glm::quat rotY90 = glm::angleAxis(glm::half_pi<float>(), glm::vec3(0.0f, 1.0f, 0.0f));
+            const auto id = scene.createEntity(nullptr, Scene::Transform({0.0f, 0.0f, 0.0f}, rotY90, {0.0f, 2.0f, 1.0f}),
+                                               true, "ScaleTarget");
+            const auto* entity = scene.find(id);
+            ASSERT_NE(entity, nullptr);
+
+            const auto gizmo = Editor::projectGizmo(scene, id, Editor::GizmoMode::Scale, extent, region);
+            ASSERT_TRUE(gizmo.visible);
+
+            const glm::vec2 xStart = gizmo.segments[0].segment.start;
+            const glm::vec2 xEnd = gizmo.segments[0].segment.end;
+            auto zeroScaleDrag = Editor::beginGizmoDrag(id, Editor::GizmoMode::Scale, Editor::GizmoAxis::X,
+                                                        entity->transform, scene.camera(), extent, region, xStart);
+            ASSERT_TRUE(zeroScaleDrag.active);
+            const auto zeroRecovered =
+                Editor::updateGizmoDrag(zeroScaleDrag, scene.camera(), extent, region, xEnd);
+            EXPECT_TRUE(isFiniteTransform(zeroRecovered));
+            EXPECT_GT(zeroRecovered.scale().x, 0.5f);
+            EXPECT_FLOAT_EQ(zeroRecovered.scale().y, 2.0f);
+            EXPECT_FLOAT_EQ(zeroRecovered.scale().z, 1.0f);
+            EXPECT_EQ(zeroRecovered.position(), entity->transform.position());
+            EXPECT_EQ(zeroRecovered.rotation(), entity->transform.rotation());
+        }
+    }
+
+    TEST_F(EditorAppTest, GizmoDragGesturePriorityUndoRedoOutOfViewportAndCancel)
+    {
+        copyShowcaseModels();
+        auto opts = options();
+        opts.window.width = 1280;
+        opts.window.height = 800;
+        Editor::EditorApp session(opts);
+        Editor::EditorScene editor;
+
+        Scene::EntityId targetId;
+        Scene::EntityId otherId;
+        Scene::Transform initialTransform;
+        Scene::Transform postDragTransform;
+        Scene::Camera initialCamera;
+        glm::vec2 xTipScreen{};
+        glm::vec2 xMidScreen{};
+        GLFWwindowfocusfun focus = nullptr;
+        int step = 0;
+        int totalFrames = 0;
+        bool done = false;
+
+        auto makeViewportInput = [&](const App::ViewportRegion& region, glm::vec2 screenPos, bool captureMouse,
+                                     bool pressed, bool down, bool released, bool focus = false) {
+            App::UiInput ui;
+            ui.position = {screenPos.x - region.origin.x, screenPos.y - region.origin.y};
+            ui.captureMouse = captureMouse;
+            ui.select = {down, pressed, released};
+            ui.focusPressed = focus;
+            return ui;
+        };
+
+        session.run(
+            {[&](auto& app) {
+                 editor.initialize(app, "assets/scenes/mixed.json");
+                 ASSERT_GE(app.scene().entities().size(), 2u);
+                 targetId = app.scene().entities()[0].id;
+                 otherId = app.scene().entities()[1].id;
+                 editor.select(targetId);
+                 initialTransform = app.scene().find(targetId)->transform;
+                 initialCamera = app.scene().camera();
+                 EXPECT_FALSE(editor.isDirty());
+                 auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                 focus = glfwSetWindowFocusCallback(handle, nullptr);
+                 glfwSetWindowFocusCallback(handle, focus);
+                 focus(handle, GLFW_TRUE);
+             },
+             [&](auto& app, const auto&) {
+                 if (++totalFrames > 160)
+                 {
+                     ADD_FAILURE() << "GizmoDragGesturePriorityUndoRedoOutOfViewportAndCancel 超时 step=" << step;
+                     app.requestExit();
+                 }
+             },
+             [&](auto& app) {
+                 editor.ui(app);
+                 if (step == 6)
+                 {
+                     // 第 N 帧 input 末尾刚投递失焦事件，等待第 N+1 帧 cancelInteraction 执行后再断言
+                     ++step;
+                 }
+                 else if (step == 7)
+                 {
+                     // 验证失焦引发的 AppSession::cancelInteraction 已将变换精确回滚且无残留 Undo 记录
+                     EXPECT_FALSE(editor.gizmoDragging());
+                     EXPECT_EQ(app.scene().find(targetId)->transform.position(), initialTransform.position());
+                     EXPECT_FALSE(editor.canUndo());
+                     EXPECT_FALSE(editor.isDirty());
+                     auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                     focus(handle, GLFW_TRUE);
+                     ++step;
+                 }
+             },
+             [&](auto& app) { editor.cancelInteraction(app); },
+             [&](auto& app, auto extent, const auto& realInput) {
+                 const auto& region = app.viewportRegion();
+                 if (extent.width == 0 || extent.height == 0 || region.size.x <= 0.0 || region.size.y <= 0.0)
+                 {
+                     editor.input(app, extent, realInput);
+                     return;
+                 }
+                 switch (step)
+                 {
+                     case 0:
+                     {
+                         const auto gizmo =
+                             Editor::projectGizmo(app.scene(), targetId, editor.gizmoMode(), extent, region);
+                         ASSERT_TRUE(gizmo.visible);
+                         xMidScreen = (gizmo.segments[0].segment.start + gizmo.segments[0].segment.end) * 0.5f;
+                         xTipScreen = gizmo.segments[0].segment.end;
+                         // 从视口外按下并拖入视口不应误启动 Gizmo 拖拽
+                         editor.input(app, extent,
+                                      makeViewportInput(region, glm::vec2(region.origin.x - 20.0f, xMidScreen.y), true,
+                                                        true, true, false));
+                         EXPECT_FALSE(editor.gizmoDragging());
+                         ++step;
+                         break;
+                     }
+                     case 1:
+                         editor.input(app, extent, makeViewportInput(region, xMidScreen, false, false, true, false));
+                         EXPECT_FALSE(editor.gizmoDragging());
+                         editor.input(app, extent, makeViewportInput(region, xMidScreen, false, false, false, true));
+                         EXPECT_EQ(editor.selected(), targetId);
+                         ++step;
+                         break;
+                     case 2:
+                         // 在视口内左键按下命中 X 轴启动 Gizmo 拖拽，且阻断相机/点选
+                         editor.input(app, extent, makeViewportInput(region, xMidScreen, false, true, true, false));
+                         EXPECT_TRUE(editor.gizmoDragging());
+                         EXPECT_EQ(editor.activeGizmoAxis(), Editor::GizmoAxis::X);
+                         // 拖拽中调用 setGizmoMode 不应切换正在进行的平移拖拽
+                         editor.setGizmoMode(Editor::GizmoMode::Rotate);
+                         EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Translate);
+                         ++step;
+                         break;
+                     case 3:
+                         // 拖到视口外（captureMouse=true）同时按 F 键：拖拽持续有效且相机不动
+                         editor.input(app, extent,
+                                      makeViewportInput(region,
+                                                        glm::vec2(region.origin.x + region.size.x + 120.0f, xTipScreen.y),
+                                                        true, false, true, false, true));
+                         EXPECT_TRUE(editor.gizmoDragging());
+                         EXPECT_GT(app.scene().find(targetId)->transform.position().x,
+                                   initialTransform.position().x + 0.5f);
+                         EXPECT_EQ(app.scene().camera().position(), initialCamera.position());
+                         ++step;
+                         break;
+                     case 4:
+                         // 松开左键即使在视口外也正常提交为单条 Undo 记录，且不误取消选择
+                         editor.input(app, extent,
+                                      makeViewportInput(region,
+                                                        glm::vec2(region.origin.x + region.size.x + 120.0f, xTipScreen.y),
+                                                        true, false, false, true));
+                         EXPECT_FALSE(editor.gizmoDragging());
+                         EXPECT_EQ(editor.selected(), targetId);
+                         postDragTransform = app.scene().find(targetId)->transform;
+                         EXPECT_TRUE(editor.isDirty());
+                         EXPECT_TRUE(editor.canUndo());
+                         ASSERT_TRUE(editor.undo(app));
+                         EXPECT_FALSE(editor.canUndo());
+                         EXPECT_FALSE(editor.isDirty());
+                         EXPECT_EQ(app.scene().find(targetId)->transform.position(), initialTransform.position());
+                         ASSERT_TRUE(editor.redo(app));
+                         EXPECT_TRUE(editor.isDirty());
+                         EXPECT_EQ(app.scene().find(targetId)->transform.position(), postDragTransform.position());
+                         ASSERT_TRUE(editor.undo(app));
+                         EXPECT_FALSE(editor.canUndo());
+                         EXPECT_FALSE(editor.isDirty());
+                         ++step;
+                         break;
+                     case 5:
+                     {
+                         // 重新开始 Gizmo 拖拽后模拟窗口失焦：由 AppSession 触发 cancelInteraction 回滚
+                         const auto gizmo =
+                             Editor::projectGizmo(app.scene(), targetId, editor.gizmoMode(), extent, region);
+                         xMidScreen = (gizmo.segments[0].segment.start + gizmo.segments[0].segment.end) * 0.5f;
+                         editor.input(app, extent, makeViewportInput(region, xMidScreen, false, true, true, false));
+                         ASSERT_TRUE(editor.gizmoDragging());
+                         editor.input(app, extent,
+                                      makeViewportInput(region, xMidScreen + glm::vec2(60.0f, 0.0f), false, false, true,
+                                                        false));
+                         EXPECT_GT(app.scene().find(targetId)->transform.position().x,
+                                   initialTransform.position().x + 0.1f);
+                         auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                         focus(handle, GLFW_FALSE);
+                         ++step;
+                         break;
+                     }
+                     case 6:
+                     case 7:
+                         // 等待第 N+1 帧 cancelInteraction 执行并由 ui 恢复窗口焦点
+                         break;
+                     case 8:
+                     {
+                         // 拖拽中切换选中实体也应立即回滚取消事务
+                         const auto gizmo =
+                             Editor::projectGizmo(app.scene(), targetId, editor.gizmoMode(), extent, region);
+                         xMidScreen = (gizmo.segments[0].segment.start + gizmo.segments[0].segment.end) * 0.5f;
+                         editor.input(app, extent, makeViewportInput(region, xMidScreen, false, true, true, false));
+                         ASSERT_TRUE(editor.gizmoDragging());
+                         editor.input(app, extent,
+                                      makeViewportInput(region, xMidScreen + glm::vec2(60.0f, 0.0f), false, false, true,
+                                                        false));
+                         editor.select(app, otherId);
+                         EXPECT_FALSE(editor.gizmoDragging());
+                         EXPECT_EQ(editor.selected(), otherId);
+                         EXPECT_EQ(app.scene().find(targetId)->transform.position(), initialTransform.position());
+                         EXPECT_FALSE(editor.canUndo());
+                         ++step;
+                         break;
+                     }
+                     case 9:
+                     {
+                         // 未命中 Gizmo 轴的空白处左键点选仍保持原有取消选择行为
+                         const glm::vec2 blankPos(region.origin.x + 4.0, region.origin.y + 4.0);
+                         editor.input(app, extent, makeViewportInput(region, blankPos, false, true, true, false));
+                         EXPECT_FALSE(editor.gizmoDragging());
+                         editor.input(app, extent, makeViewportInput(region, blankPos, false, false, false, true));
+                         EXPECT_FALSE(editor.selected().valid());
+                         done = true;
+                         app.requestExit();
+                         break;
+                     }
+                 }
+             },
+             [&](auto& app) { editor.layout(app); }, [&](auto& app) { editor.requestClose(app); }});
+
+        EXPECT_TRUE(done);
+        cleanValidation();
+    }
+
 }  // namespace

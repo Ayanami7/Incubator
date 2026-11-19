@@ -20,6 +20,7 @@ namespace Incubator::Editor
 {
     bool EditorScene::addModel(Editor::EditorApp& app, std::string_view path, const Scene::Transform& transform)
     {
+        cancelGizmoDrag(app);
         return operations_.addModel(app.scene(), app.clearColor(), path, transform);
     }
 
@@ -207,10 +208,21 @@ namespace Incubator::Editor
         operations_.commitTransaction(app.scene(), app.clearColor());
     }
 
+    void EditorScene::cancelGizmoDrag(Editor::EditorApp& app)
+    {
+        hoveredGizmoAxis_ = GizmoAxis::None;
+        if (!gizmoDrag_.active)
+            return;
+        gizmoDrag_ = {};
+        operations_.cancelTransaction(app.scene(), app.clearColor());
+    }
+
     bool EditorScene::settleForDirtyCheck(Editor::EditorApp& app)
     {
         if (operations_.inTransaction())
         {
+            gizmoDrag_ = {};
+            hoveredGizmoAxis_ = GizmoAxis::None;
             clearPanelTransactionFlags();
             operations_.commitTransaction(app.scene(), app.clearColor());
         }
@@ -273,17 +285,59 @@ namespace Incubator::Editor
 
     void EditorScene::select(Scene::EntityId id)
     {
+        if (id != operations_.selected())
+        {
+            gizmoDrag_ = {};
+            hoveredGizmoAxis_ = GizmoAxis::None;
+        }
         operations_.select(id);
+    }
+
+    void EditorScene::select(Editor::EditorApp& app, Scene::EntityId id)
+    {
+        if (id != operations_.selected())
+            cancelGizmoDrag(app);
+        operations_.select(id);
+    }
+
+    GizmoMode EditorScene::gizmoMode() const noexcept
+    {
+        return gizmoMode_;
+    }
+
+    void EditorScene::setGizmoMode(GizmoMode mode) noexcept
+    {
+        // 拖拽进行中锁定模式，避免在单次几何求解过程中切换分支或坐标轴定义。
+        if (gizmoDrag_.active)
+            return;
+        gizmoMode_ = mode;
+    }
+
+    GizmoAxis EditorScene::hoveredGizmoAxis() const noexcept
+    {
+        return hoveredGizmoAxis_;
+    }
+
+    bool EditorScene::gizmoDragging() const noexcept
+    {
+        return gizmoDrag_.active;
+    }
+
+    GizmoAxis EditorScene::activeGizmoAxis() const noexcept
+    {
+        return gizmoDrag_.active ? gizmoDrag_.axis : GizmoAxis::None;
     }
 
     void EditorScene::deleteSelected(Editor::EditorApp& app)
     {
+        cancelGizmoDrag(app);
         operations_.remove(app.scene(), app.clearColor());
         clickCandidate_ = false;
     }
 
     bool EditorScene::undo(Editor::EditorApp& app)
     {
+        cancelGizmoDrag(app);
         if (!operations_.undo(app.scene(), app.clearColor()))
             return false;
         clearPanelTransactionFlags();
@@ -294,6 +348,7 @@ namespace Incubator::Editor
 
     bool EditorScene::redo(Editor::EditorApp& app)
     {
+        cancelGizmoDrag(app);
         if (!operations_.redo(app.scene(), app.clearColor()))
             return false;
         clearPanelTransactionFlags();
@@ -304,11 +359,13 @@ namespace Incubator::Editor
 
     Scene::EntityId EditorScene::duplicateSelected(Editor::EditorApp& app)
     {
+        cancelGizmoDrag(app);
         return operations_.duplicate(app.scene(), app.clearColor());
     }
 
     void EditorScene::clear(Editor::EditorApp& app)
     {
+        cancelGizmoDrag(app);
         operations_.clear(app.scene(), app.clearColor());
         clickCandidate_ = false;
     }
@@ -317,6 +374,9 @@ namespace Incubator::Editor
     {
         orbit_.cancel();
         clickCandidate_ = false;
+        const bool wasGizmoDragging = gizmoDrag_.active;
+        gizmoDrag_ = {};
+        hoveredGizmoAxis_ = GizmoAxis::None;
         extent_ = {0, 0};
         int fbWidth = 0;
         int fbHeight = 0;
@@ -326,8 +386,8 @@ namespace Incubator::Editor
         const bool viewportVisible = app.sceneExtent().width > 0 && app.sceneExtent().height > 0;
         if (!raw.focused() || raw.focusLost())
             shortcutSuspended_ = true;
-        // 仅因 Scene 视口折叠或关闭触发的取消只重置视口手势，保留 Properties 面板正在进行的属性事务。
-        if (windowUnavailable || viewportVisible)
+        // 仅因 Scene 视口折叠或关闭触发的取消只重置视口手势（含 Gizmo 拖拽），保留 Properties 面板正在进行的属性事务。
+        if (windowUnavailable || viewportVisible || wasGizmoDragging)
         {
             clearPanelTransactionFlags();
             operations_.cancelTransaction(app.scene(), app.clearColor());
@@ -360,11 +420,84 @@ namespace Incubator::Editor
         const auto& region = app.viewportRegion();
         const auto logicalSize =
             region.size.x > 0 && region.size.y > 0 ? region.size : Input::PointerValue{double(width), double(height)};
+        const glm::vec2 cursorScreenPos(static_cast<float>(region.origin.x + input.position.x),
+                                        static_cast<float>(region.origin.y + input.position.y));
         const bool cameraGesture = input.rotate.down || input.rotate.pressed || input.rotate.released ||
-                                   input.pan.down || input.pan.pressed || input.pan.released || input.scroll.y != 0;
+                                   input.pan.down || input.pan.pressed || input.pan.released ||
+                                   input.scroll.y != 0 || orbit_.dragging();
+
+        if (gizmoDrag_.active)
+        {
+            if (gizmoDrag_.entity != operations_.selected() || !app.scene().find(gizmoDrag_.entity))
+            {
+                cancelGizmoDrag(app);
+                return;
+            }
+            hoveredGizmoAxis_ = gizmoDrag_.axis;
+            if (input.select.down)
+            {
+                const auto updated = updateGizmoDrag(gizmoDrag_, camera, extent, region, cursorScreenPos);
+                operations_.setTransform(app.scene(), app.clearColor(), updated);
+            }
+            if (input.select.released || !input.select.down)
+            {
+                gizmoDrag_ = {};
+                operations_.commitTransaction(app.scene(), app.clearColor());
+                if (!cameraGesture && !input.captureMouse && operations_.selected().valid())
+                {
+                    const auto gizmo = projectGizmo(app.scene(), operations_.selected(), gizmoMode_, extent, region);
+                    hoveredGizmoAxis_ = pickGizmoAxis(cursorScreenPos, gizmo);
+                }
+                else
+                {
+                    hoveredGizmoAxis_ = GizmoAxis::None;
+                }
+            }
+            // Gizmo 拖拽活跃帧独占视口交互，屏蔽左键点选、相机轨道旋转/平移/滚轮缩放与 F 键聚焦。
+            return;
+        }
+
+        if (!cameraGesture && !input.captureMouse && operations_.selected().valid())
+        {
+            const auto gizmo = projectGizmo(app.scene(), operations_.selected(), gizmoMode_, extent, region);
+            hoveredGizmoAxis_ = pickGizmoAxis(cursorScreenPos, gizmo);
+        }
+        else
+        {
+            hoveredGizmoAxis_ = GizmoAxis::None;
+        }
+
         const float threshold = ImGui::GetIO().MouseDragThreshold;
         if (input.select.pressed && !input.captureMouse && !cameraGesture)
-            clickCandidate_ = true;
+        {
+            if (hoveredGizmoAxis_ != GizmoAxis::None)
+            {
+                if (const auto* entity = app.scene().find(operations_.selected()))
+                {
+                    const auto drag = beginGizmoDrag(operations_.selected(), gizmoMode_, hoveredGizmoAxis_,
+                                                     entity->transform, camera, extent, region, cursorScreenPos);
+                    if (drag.active)
+                    {
+                        commitPanelTransactions(app);
+                        operations_.beginTransaction(app.scene(), app.clearColor());
+                        gizmoDrag_ = drag;
+                        clickCandidate_ = false;
+                    }
+                    else
+                    {
+                        clickCandidate_ = true;
+                    }
+                }
+                else
+                {
+                    clickCandidate_ = true;
+                }
+            }
+            else
+            {
+                clickCandidate_ = true;
+            }
+        }
         if (clickCandidate_ &&
             (input.captureMouse || cameraGesture || input.selectDragDistanceSquared > threshold * threshold))
             clickCandidate_ = false;
@@ -705,7 +838,7 @@ namespace Incubator::Editor
                 const auto label = (entity.name.empty() ? std::string("未命名") : entity.name) + " (" + id + ")";
                 ImGui::PushID(id.c_str());
                 if (ImGui::Selectable("##entity", operations_.selected() == entity.id))
-                    select(entity.id);
+                    select(app, entity.id);
                 const auto pos = ImGui::GetItemRectMin();
                 ImGui::GetWindowDrawList()->AddText({pos.x, pos.y}, ImGui::GetColorU32(ImGuiCol_Text), label.data(),
                                                     label.data() + label.size());
