@@ -257,19 +257,19 @@ void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
 4. 未来切换输入后端（如 SDL）时，只需新增转换函数（如 `fromSdlKey`），KeyCode 枚举无需修改
 5. KeyCode 的有效枚举范围为 0–120；InputState 在访问内部数组前检查索引范围。
 
-## Demo 与 ImGui 消费批次
+## 应用与 ImGui 消费批次
 
 EditorApp 和 DemoApp 每轮执行 beginInputFrame → pollEvents → update → beginUiFrame。
 `Callbacks::cancelInteraction` 在无有效 extent、当前失焦或本轮曾失焦时调用，即使 UI 被跳过也执行。
 两个具体会话的 `Callbacks::input` 接收应用引用、FrameExtent 和 `const App::UiInput&`，在有效 NewFrame 后、面板和帧提取前调用，
-提供本次实际 extent。EditorScene 已消费此入口实现轨道旋转、平移、缩放及 F 聚焦；取消通知直接结束旧手势。
+提供本次实际 extent。EditorScene 已消费此入口实现轨道旋转、平移、缩放、左键对象选择及 F 聚焦；取消通知直接结束旧手势和点击候选。
 
-`app/common/ui_input.h` 的 UiInputAdapter 读取 ImGui 本次已消费的鼠标右/中键边沿、位置/位移、
+`app/common/ui_input.h` 的 UiInputAdapter 读取 ImGui 本次已消费的鼠标右/中/左键边沿、`selectDragDistanceSquared`、位置/位移、
 滚轮和 F 键首次按下，配合同一次 NewFrame 的捕获标记；不混用原始轮次 pressed 和 UI 捕获。
 保持默认 ConfigInputTrickleEventQueue，延迟边沿随 ImGui 消费批次保留。新手势消费者应以按下位置
 建立基准，忽略开始之前的位移；捕获标记只决定新手势归属，释放不受屏蔽。已有手势的位移与释放同批时先应用末段位移，再结束手势；显式取消则直接丢弃旧操作。
 
-取消后适配器持续丢弃操作，直到 ImGui 待处理队列排空，且原始状态与 ImGui 的右/中键和 F 均释放。
+取消后适配器持续丢弃操作，直到 ImGui 待处理队列排空，且原始状态与 ImGui 的左/右/中键和 F 均释放。
 中性帧本身不产生操作，此后的新合法按下才能开始交互。该恢复边界内的按下也被丢弃，需释放后重按；
 不重放最小化/失焦期间的操作，不清空 ImGui 的 UI/文本事件。
 仅为判断队列是否排空，示例适配层读取固定 ImGui 1.91.9b-docking 的内部 InputEventsQueue；升级时须复核此依赖。

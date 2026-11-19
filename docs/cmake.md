@@ -113,7 +113,7 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 
 根 CMake 在 Runtime、共用 Shader/资产目标定义后添加 app，再添加测试和示例。
 `app/CMakeLists.txt` 添加 editor；`app/editor/CMakeLists.txt` 定义 `Editor`，编译本目录 main.cpp、editor_app.cpp、
-editor_scene.h、workspace.h 及 app/common/startup_config.cpp。只链接 IncubatorRuntime、imgui，私有使用 RapidJSON 头。
+editor_scene.h、editor_operations.h、editor_selection.h、selection_overlay.h、workspace.h 及 app/common/startup_config.cpp。只链接 IncubatorRuntime、imgui，私有使用 RapidJSON 头。
 Editor 不包含、编译或链接 examples/demo 源码，也不依赖 demo 可执行目标。
 
 ```powershell

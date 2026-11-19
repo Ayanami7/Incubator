@@ -31,6 +31,16 @@ int main(int argc, char** argv)
                          session.scene().setName(tea, "茶壶 ## 一");
                          session.scene().setTransform(
                              tea, Incubator::Scene::Transform({1, 0, 0}, {1, 0, 0, 0}, {-0.1f, 0.2f, 0}));
+                         demo.select(tea);
+                         const auto teaCopy = demo.duplicateSelected(session);
+                         if (!teaCopy.valid())
+                         {
+                             std::cerr << "Duplicate failed\n";
+                             result = 1;
+                         }
+                         const auto temp = demo.createEntity(session);
+                         demo.select(temp);
+                         demo.deleteSelected(session);
                          session.scene().createEntity({}, Incubator::Scene::Transform({5, 6, 7}), false, "空 ### 对象");
                          std::filesystem::create_directories("assets/models/restart-import");
                          std::filesystem::copy_file("assets/models/utah_teapot/utah_teapot.obj",
@@ -53,20 +63,28 @@ int main(int argc, char** argv)
                      }
                      else if (mode == "read")
                      {
+                         if (demo.selected().valid())
+                         {
+                             std::cerr << "Selection should not persist across restart\n";
+                             result = 1;
+                         }
                          const auto d = Incubator::Scene::captureScene(session.scene(), session.clearColor());
                          const Incubator::Model::PrepareOptions expected{
                              Incubator::Render::TextureMipMode::FullChain,
                              {Incubator::Render::TextureFilter::Linear, Incubator::Render::TextureFilter::Linear,
                               Incubator::Render::MipFilter::Linear},
                              Incubator::Render::ShadingMode::Lambert};
-                         if (d.entities.size() != 6 || !d.entities[0].model || !d.entities[2].model ||
-                             d.entities[2].name != "茶壶 ## 一" || d.entities[3].name != "空 ### 对象" ||
-                             d.entities[3].model || d.entities[3].visible || !d.entities[4].model ||
-                             !d.entities[5].model ||
-                             d.entities[4].model->path() != "models/restart-import/sculpture.obj" ||
-                             d.entities[4].model != d.entities[5].model ||
-                             session.scene().entities()[4].model != session.scene().entities()[5].model ||
-                             d.entities[4].model->options() != expected ||
+                         if (d.entities.size() != 7 || !d.entities[0].model || !d.entities[2].model ||
+                             !d.entities[3].model || d.entities[2].name != "茶壶 ## 一" ||
+                             d.entities[3].name != "茶壶 ## 一 副本" || d.entities[4].name != "空 ### 对象" ||
+                             d.entities[4].model || d.entities[4].visible || !d.entities[5].model ||
+                             !d.entities[6].model ||
+                             session.scene().entities()[2].model != session.scene().entities()[3].model ||
+                             d.entities[3].transform.scale() != glm::vec3(-0.1f, 0.2f, 0) ||
+                             d.entities[5].model->path() != "models/restart-import/sculpture.obj" ||
+                             d.entities[5].model != d.entities[6].model ||
+                             session.scene().entities()[5].model != session.scene().entities()[6].model ||
+                             d.entities[5].model->options() != expected ||
                              d.entities[0].model->path() != "models/avocado/gltf/avocado.gltf" ||
                              d.entities[2].model->path() != "models/utah_teapot/utah_teapot.obj" ||
                              d.entities[0].model->options() != expected || d.entities[2].model->options() != expected ||

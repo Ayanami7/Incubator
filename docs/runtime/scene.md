@@ -231,6 +231,7 @@ Camera 保存世界位置、单位旋转及 Perspective，不保存缩放。局�
 | setPosition/setRotation | 设置世界刚体位姿；旋转从相机局部坐标映射到世界坐标 |
 | setPerspective(Perspective) | 整体设置 verticalFov（弧度）、nearPlane、farPlane；有限且 0<FOV<π、0<near<far |
 | matrices(FrameExtent) | 返回 view 与最终 projection；宽高任一为零时抛 CONFIG，计算投影前即拒绝 |
+| viewportSegment(FrameExtent, vec2) | 将图像内 `[0,1]` 归一化逻辑坐标反投影为世界近远面线段；越界、零尺寸或矩阵不可逆返回空值 |
 
 无效位置、四元数或透视参数在构造/设置时抛 CONFIG；设置失败不改变已有状态。
 view 为世界刚体位姿的逆，即 `R⁻¹ * T⁻¹`。projection 使用实际 extent 的宽高比、右手坐标和 0–1 深度，

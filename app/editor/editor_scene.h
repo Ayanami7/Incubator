@@ -329,6 +329,7 @@ namespace Incubator::Editor
                 drawList->AddLine({segment.start.x, segment.start.y}, {segment.end.x, segment.end.y}, color, 2.0f);
             drawList->PopClipRect();
         }
+
         void assets(Editor::EditorApp& app)
         {
             ImGui::SetNextWindowSize({ImGui::GetFontSize() * 22, ImGui::GetFontSize() * 22}, ImGuiCond_FirstUseEver);

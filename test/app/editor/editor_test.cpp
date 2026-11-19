@@ -1,3 +1,6 @@
+// 编译期确认操作接口头文件独立于 ImGui。
+#include "app/editor/editor_operations.h"
+
 #include <gtest/gtest.h>
 #include <imgui.h>
 #include <spdlog/sinks/ostream_sink.h>
@@ -1083,8 +1086,9 @@ namespace
                  if (frame == 9)
                  {
                      saveWorkspace(app, "selection-overlay-resized");
-                     app.requestExit();
                  }
+                 if (frame == 11)
+                     app.requestExit();
              },
              [&](auto& app) {
                  auto* sceneList = app.sceneDrawList();
@@ -1125,6 +1129,16 @@ namespace
                      auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
                      glfwSetWindowSize(handle, 1024, 640);
                  }
+                 else if (frame == 10)
+                 {
+                     // 删除选中实体：清除选择、停止绘制且界面辅助不写入场景文件。
+                     editor->deleteSelected(app);
+                     ASSERT_TRUE(editor->save(app, "overlay-saved.json"));
+                     std::ifstream file("overlay-saved.json");
+                     const std::string json((std::istreambuf_iterator<char>(file)), {});
+                     EXPECT_EQ(json.find("selected"), std::string::npos);
+                     EXPECT_EQ(json.find("overlay"), std::string::npos);
+                 }
 
                  editor->ui(app);
 
@@ -1152,6 +1166,11 @@ namespace
                      EXPECT_EQ(editor->selected(), target);
                      EXPECT_EQ(afterVtx, beforeVtx);
                  }
+                 else if (frame == 10)
+                 {
+                     EXPECT_FALSE(editor->selected().valid());
+                     EXPECT_EQ(afterVtx, beforeVtx);
+                 }
 
                  // 不增加任何 GPU 渲染资源。
                  const auto counts = Render::Detail::RendererReviewAccess::resourceCounts(app.renderer());
@@ -1166,7 +1185,135 @@ namespace
              [editor](auto& app, auto extent, const auto& input) { editor->input(app, extent, input); },
              [editor](auto& app) { editor->layout(app); }});
 
-        // 确认未将界面辅助写入场景文件（且删除后不绘制）。
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, MultiInstanceClickRenameDuplicateDeleteSaveAndLegacyCompatibility)
+    {
+        copyShowcaseModels();
+        auto config = options(true);
+        config.window.width = 1280;
+        config.window.height = 800;
+        Editor::EditorApp session(config);
+        Editor::EditorScene editor;
+        std::array<glm::vec2, 2> points{};
+        std::array<bool, 2> found{};
+        Scene::EntityId first, second, copy;
+        std::shared_ptr<const Model::PreparedModel> sharedModel;
+        int stage = 0, frames = 0;
+        bool issued = false;
+
+        session.run(
+            {[&](auto& app) {
+                 // 先验证旧 JSON v1（无 name 字段）可兼容加载且不保留选择。
+                 editor.initialize(app, "assets/scenes/mixed.json");
+                 EXPECT_FALSE(editor.selected().valid());
+                 for (const auto& entity : app.scene().entities())
+                     EXPECT_TRUE(entity.name.empty());
+
+                 EditorTest::setSharedEditorScene(app, editor, false);
+                 first = app.scene().entities()[0].id;
+                 second = app.scene().entities()[1].id;
+                 sharedModel = app.scene().find(first)->model;
+                 EXPECT_EQ(app.scene().find(second)->model, sharedModel);
+                 editor.select({});
+
+                 auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                 const auto enter = glfwSetCursorEnterCallback(handle, nullptr);
+                 enter(handle, GLFW_TRUE);
+                 const auto focus = glfwSetWindowFocusCallback(handle, nullptr);
+                 glfwSetWindowFocusCallback(handle, focus);
+                 focus(handle, GLFW_TRUE);
+                 glfwFocusWindow(handle);
+             },
+             [&](auto& app, const auto&) {
+                 if (++frames > 150)
+                 {
+                     ADD_FAILURE() << "多实例交互流程未完成";
+                     app.requestExit();
+                     return;
+                 }
+                 const auto& region = app.viewportRegion();
+                 if (frames < 5 || issued || region.size.x <= 0 || region.size.y <= 0)
+                     return;
+                 if (stage < 2 && (!found[0] || !found[1]))
+                 {
+                     for (int y = 1; y < 20; ++y)
+                         for (int x = 1; x < 20; ++x)
+                         {
+                             const glm::vec2 p(x / 20.0f, y / 20.0f);
+                             const auto hit = app.scene().pick(app.sceneExtent(), p);
+                             const int index = hit && hit->id == first ? 0 : hit && hit->id == second ? 1 : -1;
+                             if (index >= 0 && !found[index])
+                             {
+                                 points[index] = p;
+                                 found[index] = true;
+                             }
+                         }
+                     if (!found[0] || !found[1])
+                         return;
+                 }
+                 if (stage == 0 || stage == 1 || stage == 3 || stage == 4)
+                 {
+                     const auto p = points[stage < 2 ? 0 : 1];
+                     auto& io = ImGui::GetIO();
+                     io.AddMousePosEvent(float(region.origin.x + p.x * region.size.x),
+                                         float(region.origin.y + p.y * region.size.y));
+                     io.AddMouseButtonEvent(0, stage == 0 || stage == 3);
+                     issued = true;
+                 }
+             },
+             [&](auto& app) {
+                 editor.ui(app);
+                 if (stage == 2)
+                 {
+                     ASSERT_EQ(editor.selected(), first);
+                     ASSERT_TRUE(app.scene().setName(first, "主实例 ## 01"));
+                     copy = editor.duplicateSelected(app);
+                     ASSERT_TRUE(copy.valid());
+                     EXPECT_EQ(editor.selected(), copy);
+                     ASSERT_TRUE(app.scene().setTransform(
+                         copy, Scene::Transform({0.0f, 1.8f, 0.0f}, {1, 0, 0, 0}, {0.5f, 0.5f, 0.5f})));
+                     stage = 3;
+                 }
+                 else if (stage == 5)
+                 {
+                     ASSERT_EQ(editor.selected(), second);
+                     editor.deleteSelected(app);
+                     EXPECT_FALSE(editor.selected().valid());
+                     EXPECT_EQ(app.scene().find(second), nullptr);
+                     ASSERT_TRUE(editor.save(app, "multi-instance-saved.json"));
+                     ASSERT_TRUE(editor.load(app, "multi-instance-saved.json"));
+                     EXPECT_FALSE(editor.selected().valid());
+                     EXPECT_EQ(app.scene().find(first), nullptr);
+                     EXPECT_EQ(app.scene().find(copy), nullptr);
+                     ASSERT_EQ(app.scene().entities().size(), 2u);
+                     EXPECT_EQ(app.scene().entities()[0].name, "主实例 ## 01");
+                     EXPECT_EQ(app.scene().entities()[1].name, "主实例 ## 01 副本");
+                     EXPECT_EQ(app.scene().entities()[0].model, sharedModel);
+                     EXPECT_EQ(app.scene().entities()[1].model, sharedModel);
+                     EXPECT_EQ(app.scene().entities()[1].transform.position(), glm::vec3(0.0f, 1.8f, 0.0f));
+                     ASSERT_TRUE(editor.load(app, "assets/scenes/mixed.json"));
+                     EXPECT_FALSE(editor.selected().valid());
+                     EXPECT_EQ(app.scene().entities().size(), 2u);
+                     app.requestExit();
+                 }
+             },
+             [&](auto&) { editor.cancelInteraction(); },
+             [&](auto& app, auto extent, const auto& input) {
+                 editor.input(app, extent, input);
+                 if (issued && ((stage % 3 == 0 && input.select.pressed) || (stage % 3 == 1 && input.select.released)))
+                 {
+                     if (stage == 1)
+                         EXPECT_EQ(editor.selected(), first);
+                     if (stage == 4)
+                         EXPECT_EQ(editor.selected(), second);
+                     ++stage;
+                     issued = false;
+                 }
+             },
+             [&](auto& app) { editor.layout(app); }});
+        EXPECT_EQ(stage, 5);
         cleanValidation();
     }
 

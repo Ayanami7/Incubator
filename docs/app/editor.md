@@ -56,6 +56,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | 控件 | 行为 |
 |---|---|
 | 实体列表 | 按创建顺序显示名称和 EntityId，空名显示“未命名”，点击选中 |
+| 选中包围盒辅助显示 | 选中可见且有边界的实体时，在 Scene 图像层绘制世界 AABB 的 12 条辅助线；始终可见且不参与深度，非模型轮廓，不遮挡其他面板与弹窗，不持久化 |
 | Name | 编辑选中实体名称，允许重名和空名；名称不影响实体身份或模型缓存 |
 | Objects：New model / Create object | 选择 Avocado 或 Teapot，在画面中央按该模型的创建预设添加共享实体，并选中 |
 | Assets：Enter / Up / Refresh | 进入虚拟子目录、返回上级、重新列出当前目录；不解析或热重载资源 |
@@ -112,9 +113,8 @@ Scene settings 折叠区提供 Light yaw/pitch、Color (linear)、Intensity 和 
 
 `main.cpp` 创建 FileIO、读取启动配置，将同一 FileIO 交给 `EditorApp`，并以启动场景路径创建主循环回调；
 `EditorApp::run()` 无参入口使用默认场景路径，不自行读取配置。`editor_scene.h` 保存模型展示和面板操作。
-`EditorOperations` 保存会话模型复用表、当前选择和文件关联；`EditorScene` 协调面板及轨道、点击手势。实体唯一 Transform、可见性、Camera
-及光照由 Scene 保存。角度、TRS 与灯光编辑值在本轮 UI 中临时取得，发生修改才通过 Scene 接口写回。
-创建/删除/清空时不跨结构变更保存实体指针；从文件加载成功后清除旧选择。
+`EditorOperations`（继承自 `EditorSelection`，二者头文件均不依赖 ImGui）维护会话模型复用表、唯一选中 `EntityId` 和当前文件关联，不持有 Scene 或实体指针；`EditorScene` 承接面板未确认输入缓冲、弹窗、布局、轨道/点击手势与 `selection_overlay.h` 包围盒辅助线显示，不复制第二份 Scene 或实体状态。实体唯一 Transform、可见性、Camera 及光照由 Scene 保存。角度、TRS 与灯光编辑值在本轮 UI 中临时取得，发生修改才通过操作/Scene 接口写回。
+创建/删除/清空时不跨结构变更保存实体指针；从文件加载成功后清除旧选择。操作规则与纯 CPU 裁剪/投影由单元测试覆盖，面板控件、列表与视口左键点击由真实 ImGui 输入批次集成测试覆盖，独立进程保存与恢复由 `editor_scene_restart` 验证，互不替代。
 
 EditorApp 向回调消费者提供基于单调 Clock 的 FrameTime；生产 Editor 不显示循环间隔，也没有固定步长调度或自动实体动画。
 事件→更新→本次 UI 批次相机操作→UI→SceneFrame 提取→Renderer 提交由 EditorApp 组织，UI 修改参与当次提取。
@@ -139,7 +139,7 @@ Debug 示例沿用 Optional Validation，Release 为 Disabled；需要强制验�
 ## 构建与代码边界
 
 按 WORKFLOW.md 执行 Debug/all，或单独构建 Editor。Editor 编译 app/editor 的 main.cpp、editor_app.cpp、
-editor_scene.h、workspace.h 和共用启动配置，链接 Runtime/imgui，依赖 incubator_assets；不编译 Demo 源码。
+editor_scene.h、editor_operations.h、editor_selection.h、selection_overlay.h、workspace.h 和共用启动配置，链接 Runtime/imgui，依赖 incubator_assets；不编译 Demo 源码。
 EditorApp 具体拥有本应用会话，不进入 Runtime，也不建立 Application 基类。输入、轨道相机、视口换算、光照和启动配置小组件放在 app/common。
 
 Editor 消费层测试位于 `test/app/editor/editor_test.cpp`，目标为 `editor_test`，启动 cwd 为构建目录；
@@ -201,6 +201,8 @@ View 菜单提供场景视口开关与 Restore default layout。Objects / Assets
 点击图像可以获得视口焦点，停靠标题、菜单和属性面板不属于图像区域。
 
 在图像内按下并释放左键可选择最近命中的可见模型世界包围盒，点击空白取消选择；选择与 Objects 和 Properties 面板共用，且不会自动移动相机。拾取按包围盒计算，可能命中模型孔洞或旋转后扩大的范围，不保证三角形或像素精度。拖动、越出图像或同时操作相机时取消本次点击。
+
+选中可见且具有有效边界的实体后，Scene 图像上会同步绘制其世界 AABB 的十二条边作为辅助反馈：辅助线在齐次裁剪空间按 Vulkan 范围裁剪并裁限在图像矩形内，不重复翻 Y 或缩放；该辅助线始终可见、不参与场景深度遮挡且不是模型轮廓，不改变场景/阴影颜色路径、不遮盖其他面板或弹窗，也不写入场景文件。未选中、隐藏、删除、无模型、无边界或无有效视口时不绘制，其中隐藏实体仍保留其选择状态。
 
 输入位置转为相对图像原点的逻辑坐标，平移使用图像逻辑高度；聚焦使用当前场景目标像素尺寸。
 失焦、最小化、关闭或折叠视口、成功替换场景会取消手势，并等待队列排空、按钮和 F 释放后的中性批次，
