@@ -1703,7 +1703,7 @@ namespace
                  // 干净状态下触发 requestOpen 直接打开路径窗、requestClose 不拦截。
                  editor.requestClose(app);
                  EXPECT_FALSE(app.window().shouldClose());
-                 editor.requestOpen();
+                 editor.requestOpen(app);
                  EXPECT_EQ(ImGui::FindWindowByName("Unsaved changes"), nullptr);
                  editor.cancelFileAction();
              },
@@ -1720,7 +1720,7 @@ namespace
                      // 置脏后触发 requestOpen -> 弹出 Unsaved changes。
                      ASSERT_TRUE(editor.addModel(app, GLTF));
                      EXPECT_TRUE(editor.isDirty());
-                     editor.requestOpen();
+                     editor.requestOpen(app);
                  }
                  else if (frame == 6)
                  {
@@ -1737,7 +1737,7 @@ namespace
                      ASSERT_TRUE(editor.save(app, "guarded-work.json"));
                      ASSERT_TRUE(editor.addModel(app, GLTF));
                      EXPECT_TRUE(editor.isDirty());
-                     editor.requestOpen();
+                     editor.requestOpen(app);
                  }
                  else if (frame == 12)
                  {
@@ -4050,7 +4050,7 @@ namespace
                      case 20:
                          EXPECT_TRUE(editor.canUndo());
                          // 弹出 Unsaved changes 确认框时 Ctrl+Z 不触发
-                         editor.requestOpen();
+                         editor.requestOpen(app);
                          ++step;
                          break;
                      case 21:
@@ -4129,6 +4129,139 @@ namespace
              [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
              [&](auto& app) { editor.layout(app); }, [&](auto& app) { editor.requestClose(app); }});
         EXPECT_TRUE(done);
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, PendingPropertyTransactionTriggersUnsavedGuardOnCloseOpenAndClear)
+    {
+        copyShowcaseModels();
+        auto opts = options();
+        opts.window.width = 1280;
+        opts.window.height = 800;
+        Editor::EditorApp session(opts);
+        Editor::EditorScene editor;
+
+        Scene::EntityId targetId;
+        std::string savedName;
+        int step = 0;
+        int totalFrames = 0;
+        bool done = false;
+
+        auto activateUnsavedCancel = []() {
+            if (auto* unsaved = ImGui::FindWindowByName("Unsaved changes"))
+            {
+                ImGui::ActivateItemByID(unsaved->GetID("Cancel"));
+                return true;
+            }
+            return false;
+        };
+
+        session.run(
+            {[&](auto& app) {
+                 editor.initialize(app, "assets/scenes/mixed.json");
+                 ASSERT_FALSE(app.scene().entities().empty());
+                 targetId = app.scene().entities().front().id;
+                 editor.select(targetId);
+                 savedName = app.scene().find(targetId)->name;
+                 EXPECT_FALSE(editor.isDirty());
+             },
+             [&](auto& app, const auto&) {
+                 if (++totalFrames > 160)
+                 {
+                     ADD_FAILURE() << "PendingPropertyTransactionTriggersUnsavedGuardOnCloseOpenAndClear 超时 step="
+                                   << step;
+                     app.requestExit();
+                     return;
+                 }
+                 auto* props = ImGui::FindWindowByName("Properties");
+                 if (!props)
+                     return;
+                 const std::string idStr = std::to_string(targetId.value());
+                 const ImGuiID nameId = ImHashStr("##entity-name", 0, props->GetID(idStr.c_str()));
+                 auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+
+                 switch (step)
+                 {
+                     case 0:
+                         ImGui::ActivateItemByID(nameId);
+                         ++step;
+                         break;
+                     case 1:
+                         ImGui::GetIO().AddInputCharacter('X');
+                         ++step;
+                         break;
+                     case 2:
+                         // 仍在输入框编辑（未离开输入框）时投递 WM_CLOSE 模拟点击窗口右上角 X
+                         EXPECT_NE(app.scene().find(targetId)->name, savedName);
+                         PostMessageW(glfwGetWin32Window(handle), WM_CLOSE, 0, 0);
+                         ++step;
+                         break;
+                     case 3:
+                         if (activateUnsavedCancel())
+                         {
+                             EXPECT_FALSE(app.window().shouldClose());
+                             EXPECT_TRUE(editor.isDirty());
+                             EXPECT_TRUE(editor.canUndo());
+                             EXPECT_NE(app.scene().find(targetId)->name, savedName);
+                             ++step;
+                         }
+                         break;
+                     case 4:
+                         ASSERT_TRUE(editor.save(app, "pending-guard.json"));
+                         savedName = app.scene().find(targetId)->name;
+                         EXPECT_FALSE(editor.isDirty());
+                         ImGui::ActivateItemByID(nameId);
+                         ++step;
+                         break;
+                     case 5:
+                         ImGui::GetIO().AddInputCharacter('Y');
+                         ++step;
+                         break;
+                     case 6:
+                         EXPECT_NE(app.scene().find(targetId)->name, savedName);
+                         editor.requestOpen(app);
+                         EXPECT_TRUE(editor.isDirty());
+                         ++step;
+                         break;
+                     case 7:
+                         if (activateUnsavedCancel())
+                             ++step;
+                         break;
+                     case 8:
+                         ASSERT_TRUE(editor.save(app, "pending-guard.json"));
+                         savedName = app.scene().find(targetId)->name;
+                         EXPECT_FALSE(editor.isDirty());
+                         ImGui::ActivateItemByID(nameId);
+                         ++step;
+                         break;
+                     case 9:
+                         ImGui::GetIO().AddInputCharacter('Z');
+                         ++step;
+                         break;
+                     case 10:
+                         EXPECT_NE(app.scene().find(targetId)->name, savedName);
+                         editor.requestClear(app);
+                         EXPECT_TRUE(editor.isDirty());
+                         EXPECT_FALSE(app.scene().entities().empty());
+                         ++step;
+                         break;
+                     case 11:
+                         if (activateUnsavedCancel())
+                             ++step;
+                         break;
+                     case 12:
+                         ASSERT_TRUE(editor.save(app, "pending-guard.json"));
+                         EXPECT_FALSE(editor.isDirty());
+                         done = true;
+                         app.requestExit();
+                         break;
+                 }
+             },
+             [&](auto& app) { editor.ui(app); }, [&](auto& app) { editor.cancelInteraction(app); },
+             [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+             [&](auto& app) { editor.layout(app); }, [&](auto& app) { editor.requestClose(app); }});
+        EXPECT_TRUE(done);
+        std::filesystem::remove("pending-guard.json");
         cleanValidation();
     }
 

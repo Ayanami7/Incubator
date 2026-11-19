@@ -126,9 +126,9 @@ namespace Incubator::Editor
         fileAction_ = FileAction::None;
     }
 
-    void EditorScene::requestOpen()
+    void EditorScene::requestOpen(Editor::EditorApp& app)
     {
-        if (!operations_.isDirty())
+        if (!settleForDirtyCheck(app))
         {
             beginOpen();
             return;
@@ -139,7 +139,7 @@ namespace Incubator::Editor
 
     void EditorScene::requestClear(Editor::EditorApp& app)
     {
-        if (!operations_.isDirty())
+        if (!settleForDirtyCheck(app))
         {
             clear(app);
             return;
@@ -150,7 +150,7 @@ namespace Incubator::Editor
 
     void EditorScene::requestExit(Editor::EditorApp& app)
     {
-        if (!operations_.isDirty())
+        if (!settleForDirtyCheck(app))
         {
             app.requestExit();
             return;
@@ -161,7 +161,7 @@ namespace Incubator::Editor
 
     void EditorScene::requestClose(Editor::EditorApp& app)
     {
-        if (!operations_.isDirty())
+        if (!settleForDirtyCheck(app))
             return;
         app.window().setShouldClose(false);
         pendingAction_ = PendingAction::Exit;
@@ -190,6 +190,31 @@ namespace Incubator::Editor
     {
         pendingAction_ = PendingAction::None;
         pendingSaveAs_ = false;
+    }
+
+    void EditorScene::clearPanelTransactionFlags() noexcept
+    {
+        entityTransactionActive_ = false;
+        lightingTransactionActive_ = false;
+        backgroundTransactionActive_ = false;
+    }
+
+    void EditorScene::commitPanelTransactions(Editor::EditorApp& app)
+    {
+        if (!entityTransactionActive_ && !lightingTransactionActive_ && !backgroundTransactionActive_)
+            return;
+        clearPanelTransactionFlags();
+        operations_.commitTransaction(app.scene(), app.clearColor());
+    }
+
+    bool EditorScene::settleForDirtyCheck(Editor::EditorApp& app)
+    {
+        if (operations_.inTransaction())
+        {
+            clearPanelTransactionFlags();
+            operations_.commitTransaction(app.scene(), app.clearColor());
+        }
+        return operations_.isDirty();
     }
 
     void EditorScene::operationPath(std::string_view path)
@@ -261,8 +286,7 @@ namespace Incubator::Editor
     {
         if (!operations_.undo(app.scene(), app.clearColor()))
             return false;
-        lightingTransactionActive_ = false;
-        backgroundTransactionActive_ = false;
+        clearPanelTransactionFlags();
         clickCandidate_ = false;
         orbit_.synchronize(app.scene().camera());
         return true;
@@ -272,8 +296,7 @@ namespace Incubator::Editor
     {
         if (!operations_.redo(app.scene(), app.clearColor()))
             return false;
-        lightingTransactionActive_ = false;
-        backgroundTransactionActive_ = false;
+        clearPanelTransactionFlags();
         clickCandidate_ = false;
         orbit_.synchronize(app.scene().camera());
         return true;
@@ -306,14 +329,12 @@ namespace Incubator::Editor
         // 仅因 Scene 视口折叠或关闭触发的取消只重置视口手势，保留 Properties 面板正在进行的属性事务。
         if (windowUnavailable || viewportVisible)
         {
-            lightingTransactionActive_ = false;
-            backgroundTransactionActive_ = false;
+            clearPanelTransactionFlags();
             operations_.cancelTransaction(app.scene(), app.clearColor());
         }
         else if (!operations_.inTransaction())
         {
-            lightingTransactionActive_ = false;
-            backgroundTransactionActive_ = false;
+            clearPanelTransactionFlags();
         }
     }
 
@@ -588,7 +609,7 @@ namespace Incubator::Editor
         if (ImGui::BeginMenu("File"))
         {
             if (ImGui::MenuItem("Open..."))
-                requestOpen();
+                requestOpen(app);
             if (ImGui::MenuItem("Save"))
                 saveRequested_ = true;
             if (ImGui::MenuItem("Save As..."))
@@ -697,20 +718,33 @@ namespace Incubator::Editor
 
     void EditorScene::properties(Editor::EditorApp& app)
     {
+        if (!operations_.inTransaction())
+            clearPanelTransactionFlags();
         if (!ImGui::Begin("Properties"))
         {
             ImGui::End();
-            if (operations_.inTransaction())
-            {
-                lightingTransactionActive_ = false;
-                backgroundTransactionActive_ = false;
-                operations_.commitTransaction(app.scene(), app.clearColor());
-            }
+            commitPanelTransactions(app);
             return;
         }
         const auto& raw = app.window().input();
         const bool windowFocused = raw.focused() && !raw.focusLost();
         bool entityWidgetActive = false;
+        const auto beginEntityTransaction = [&]() {
+            if (entityTransactionActive_ || lightingTransactionActive_ || backgroundTransactionActive_)
+                commitPanelTransactions(app);
+            if (!operations_.inTransaction())
+            {
+                operations_.beginTransaction(app.scene(), app.clearColor());
+                entityTransactionActive_ = operations_.inTransaction();
+            }
+        };
+        const auto finishEntityTransaction = [&]() {
+            if (entityTransactionActive_)
+            {
+                entityTransactionActive_ = false;
+                operations_.commitTransaction(app.scene(), app.clearColor());
+            }
+        };
         ImGui::PushItemWidth(-1);
         if (ImGui::CollapsingHeader("Selected object", ImGuiTreeNodeFlags_DefaultOpen))
         {
@@ -730,20 +764,12 @@ namespace Incubator::Editor
                 const bool nameChanged = ImGui::InputText("##entity-name", name.data(), name.size(),
                                                           ImGuiInputTextFlags_CallbackResize, resize, &name);
                 if (ImGui::IsItemActivated() && windowFocused)
-                {
-                    if (lightingTransactionActive_ || backgroundTransactionActive_)
-                    {
-                        lightingTransactionActive_ = false;
-                        backgroundTransactionActive_ = false;
-                        operations_.commitTransaction(app.scene(), app.clearColor());
-                    }
-                    operations_.beginTransaction(app.scene(), app.clearColor());
-                }
+                    beginEntityTransaction();
                 if (nameChanged)
                     operations_.rename(app.scene(), app.clearColor(), name.data());
                 entityWidgetActive |= ImGui::IsItemActive();
                 if (ImGui::IsItemDeactivated())
-                    operations_.commitTransaction(app.scene(), app.clearColor());
+                    finishEntityTransaction();
                 ImGui::PopID();
                 auto transform = entity->transform;
                 auto position = transform.position();
@@ -753,21 +779,15 @@ namespace Incubator::Editor
                 if (ImGui::Checkbox("Visible", &visible))
                     operations_.setVisible(app.scene(), app.clearColor(), visible);
                 const auto applyTransformWidget = [&](bool edited) {
-                    if ((ImGui::IsItemActivated() || (edited && ImGui::IsItemActive())) && windowFocused)
-                    {
-                        if (lightingTransactionActive_ || backgroundTransactionActive_)
-                        {
-                            lightingTransactionActive_ = false;
-                            backgroundTransactionActive_ = false;
-                            operations_.commitTransaction(app.scene(), app.clearColor());
-                        }
-                        operations_.beginTransaction(app.scene(), app.clearColor());
-                    }
+                    const bool activateStart = ImGui::IsItemActivated();
+                    if ((activateStart || (edited && ImGui::IsItemActive() && !entityTransactionActive_)) &&
+                        windowFocused)
+                        beginEntityTransaction();
                     if (edited)
                         operations_.setTransform(app.scene(), app.clearColor(), transform);
                     entityWidgetActive |= ImGui::IsItemActive();
                     if (ImGui::IsItemDeactivated())
-                        operations_.commitTransaction(app.scene(), app.clearColor());
+                        finishEntityTransaction();
                 };
                 ImGui::TextUnformatted("Position");
                 bool edited = ImGui::DragFloat3("##position", &position.x, 0.05f);
@@ -811,20 +831,20 @@ namespace Incubator::Editor
             const bool backgroundActive = (ImGui::IsItemActive() || pickerOpen) && windowFocused;
             if (backgroundActive && !backgroundTransactionActive_)
             {
-                if (operations_.inTransaction())
+                if (entityTransactionActive_ || lightingTransactionActive_)
+                    commitPanelTransactions(app);
+                if (!operations_.inTransaction())
                 {
-                    lightingTransactionActive_ = false;
-                    operations_.commitTransaction(app.scene(), app.clearColor());
+                    operations_.beginTransaction(app.scene(), app.clearColor());
+                    backgroundTransactionActive_ = operations_.inTransaction();
                 }
-                operations_.beginTransaction(app.scene(), app.clearColor());
-                backgroundTransactionActive_ = true;
             }
             if (colorChanged)
                 operations_.setClearColor(app.scene(), app.clearColor(), clearColor);
             if (!backgroundActive && backgroundTransactionActive_)
             {
-                operations_.commitTransaction(app.scene(), app.clearColor());
                 backgroundTransactionActive_ = false;
+                operations_.commitTransaction(app.scene(), app.clearColor());
             }
             auto& shadows = app.shadowSettings();
             ImGui::Checkbox("Shadows", &shadows.enabled);
@@ -843,20 +863,20 @@ namespace Incubator::Editor
             const bool lightingActive = lightingState.active && windowFocused;
             if (lightingActive && !lightingTransactionActive_)
             {
-                if (operations_.inTransaction())
+                if (entityTransactionActive_ || backgroundTransactionActive_)
+                    commitPanelTransactions(app);
+                if (!operations_.inTransaction())
                 {
-                    backgroundTransactionActive_ = false;
-                    operations_.commitTransaction(app.scene(), app.clearColor());
+                    operations_.beginTransaction(app.scene(), app.clearColor());
+                    lightingTransactionActive_ = operations_.inTransaction();
                 }
-                operations_.beginTransaction(app.scene(), app.clearColor());
-                lightingTransactionActive_ = true;
             }
             if (lightingState.changed)
                 operations_.setLighting(app.scene(), app.clearColor(), lighting);
             if (!lightingActive && lightingTransactionActive_)
             {
-                operations_.commitTransaction(app.scene(), app.clearColor());
                 lightingTransactionActive_ = false;
+                operations_.commitTransaction(app.scene(), app.clearColor());
             }
         }
         else if (lightingTransactionActive_ || backgroundTransactionActive_)
@@ -865,9 +885,8 @@ namespace Incubator::Editor
             backgroundTransactionActive_ = false;
             operations_.commitTransaction(app.scene(), app.clearColor());
         }
-        if (operations_.inTransaction() && !entityWidgetActive && !lightingTransactionActive_ &&
-            !backgroundTransactionActive_)
-            operations_.commitTransaction(app.scene(), app.clearColor());
+        if (entityTransactionActive_ && !entityWidgetActive)
+            finishEntityTransaction();
         ImGui::PopItemWidth();
         ImGui::End();
     }

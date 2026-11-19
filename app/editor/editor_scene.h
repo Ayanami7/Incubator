@@ -57,7 +57,7 @@ namespace Incubator::Editor
         void beginSaveAs();
         void beginOpen();
         void cancelFileAction();
-        void requestOpen();
+        void requestOpen(Editor::EditorApp& app);
         void requestClear(Editor::EditorApp& app);
         void requestExit(Editor::EditorApp& app);
         void requestClose(Editor::EditorApp& app);
@@ -120,6 +120,9 @@ namespace Incubator::Editor
         };
         void executePendingAction(Editor::EditorApp& app);
         void clearPendingAction() noexcept;
+        void clearPanelTransactionFlags() noexcept;
+        void commitPanelTransactions(Editor::EditorApp& app);
+        bool settleForDirtyCheck(Editor::EditorApp& app);
         void handleShortcuts(Editor::EditorApp& app);
 
         void drawSelectionOverlay(Editor::EditorApp& app) const;
@@ -155,6 +158,7 @@ namespace Incubator::Editor
         App::OrbitCamera orbit_;
         bool clickCandidate_ = false;
         Render::FrameExtent extent_{0, 0};
+        bool entityTransactionActive_ = false;
         bool lightingTransactionActive_ = false;
         bool backgroundTransactionActive_ = false;
         bool shortcutSuspended_ = false;
