@@ -58,9 +58,11 @@ namespace Incubator::App
                     !raw.mouseButton(Input::MouseButton::Left).down &&
                     !raw.mouseButton(Input::MouseButton::Right).down &&
                     !raw.mouseButton(Input::MouseButton::Middle).down && !raw.key(Input::KeyCode::F).down &&
-                    !raw.key(Input::KeyCode::Z).down && !raw.key(Input::KeyCode::Y).down &&
-                    !ImGui::IsMouseDown(0) && !ImGui::IsMouseDown(1) && !ImGui::IsMouseDown(2) &&
-                    !ImGui::IsKeyDown(ImGuiKey_F) && !ImGui::IsKeyDown(ImGuiKey_Z) &&
+                    !raw.key(Input::KeyCode::W).down && !raw.key(Input::KeyCode::E).down &&
+                    !raw.key(Input::KeyCode::R).down && !raw.key(Input::KeyCode::Z).down &&
+                    !raw.key(Input::KeyCode::Y).down && !ImGui::IsMouseDown(0) && !ImGui::IsMouseDown(1) &&
+                    !ImGui::IsMouseDown(2) && !ImGui::IsKeyDown(ImGuiKey_F) && !ImGui::IsKeyDown(ImGuiKey_W) &&
+                    !ImGui::IsKeyDown(ImGuiKey_E) && !ImGui::IsKeyDown(ImGuiKey_R) && !ImGui::IsKeyDown(ImGuiKey_Z) &&
                     !ImGui::IsKeyDown(ImGuiKey_Y))
                     suspended_ = false;
                 return {};

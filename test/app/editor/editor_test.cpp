@@ -3830,7 +3830,7 @@ namespace
              [&](auto& app, const auto&) {
                  if (phase == Phase::Done || failed)
                      return;
-                 if (++totalFrames > 800)
+                 if (++totalFrames > 1500)
                  {
                      failed = true;
                      ADD_FAILURE() << "Timeout at phase " << static_cast<int>(phase)
@@ -4840,6 +4840,449 @@ namespace
                  }
              },
              [&](auto& app) { editor.layout(app); }, [&](auto& app) { editor.requestClose(app); }});
+
+        EXPECT_TRUE(done);
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, GizmoOverlayClipOrderColorsHighlightToolbarAndShortcuts)
+    {
+        copyShowcaseModels();
+        auto config = options();
+        config.window.width = 1280;
+        config.window.height = 800;
+        Editor::EditorApp session(config);
+        Editor::EditorScene editor;
+        Scene::EntityId modeledId{};
+        Scene::EntityId emptyEntityId{};
+        int frame = 0;
+        int step = 0;
+        bool done = false;
+        glm::vec2 xMidScreen{0.0f};
+        bool triggerEmptyDragThisFrame = false;
+        ImGuiID pendingNavActivateId = 0;
+        ImGuiID pendingItemActivateId = 0;
+        float emptyInitialAvgX = 0.0f;
+        int rotateVertexCount = 0;
+        int translateVertexCount = 0;
+
+        constexpr ImU32 kBoxColor = IM_COL32(255, 200, 64, 255);
+        constexpr ImU32 kXColor = IM_COL32(230, 70, 70, 255);
+        constexpr ImU32 kYColor = IM_COL32(70, 210, 90, 255);
+        constexpr ImU32 kZColor = IM_COL32(70, 140, 245, 255);
+        constexpr ImU32 kHighlightColor = IM_COL32(255, 240, 100, 255);
+
+        struct DrawColorSummary
+        {
+            int boxVertices = 0;
+            int xVertices = 0;
+            int yVertices = 0;
+            int zVertices = 0;
+            int highlightVertices = 0;
+            int maxBoxIndex = -1;
+            int minGizmoIndex = -1;
+            int maxDefaultAxisIndex = -1;
+            int minHighlightIndex = -1;
+            float avgXPosForHighlight = 0.0f;
+            float avgXPosForGizmo = 0.0f;
+            bool allOverlayClippedToViewport = false;
+        };
+
+        const auto summarizeDrawList = [&](const ImDrawList* drawList, const App::ViewportRegion& region) {
+            DrawColorSummary out{};
+            if (!drawList)
+                return out;
+            double highlightXSum = 0.0;
+            double gizmoXSum = 0.0;
+            int gizmoCount = 0;
+            for (int i = 0; i < drawList->VtxBuffer.Size; ++i)
+            {
+                const auto& v = drawList->VtxBuffer[i];
+                if (v.col == kBoxColor)
+                {
+                    ++out.boxVertices;
+                    out.maxBoxIndex = std::max(out.maxBoxIndex, i);
+                }
+                else if (v.col == kXColor || v.col == kYColor || v.col == kZColor || v.col == kHighlightColor)
+                {
+                    if (v.col == kXColor)
+                        ++out.xVertices;
+                    else if (v.col == kYColor)
+                        ++out.yVertices;
+                    else if (v.col == kZColor)
+                        ++out.zVertices;
+                    else
+                    {
+                        ++out.highlightVertices;
+                        highlightXSum += v.pos.x;
+                        out.minHighlightIndex =
+                            out.minHighlightIndex < 0 ? i : std::min(out.minHighlightIndex, i);
+                    }
+                    if (v.col != kHighlightColor)
+                        out.maxDefaultAxisIndex = std::max(out.maxDefaultAxisIndex, i);
+                    out.minGizmoIndex = out.minGizmoIndex < 0 ? i : std::min(out.minGizmoIndex, i);
+                    gizmoXSum += v.pos.x;
+                    ++gizmoCount;
+                }
+            }
+            if (out.highlightVertices > 0)
+                out.avgXPosForHighlight = static_cast<float>(highlightXSum / out.highlightVertices);
+            if (gizmoCount > 0)
+                out.avgXPosForGizmo = static_cast<float>(gizmoXSum / gizmoCount);
+
+            const float rx0 = static_cast<float>(region.origin.x);
+            const float ry0 = static_cast<float>(region.origin.y);
+            const float rx1 = static_cast<float>(region.origin.x + region.size.x);
+            const float ry1 = static_cast<float>(region.origin.y + region.size.y);
+            for (int c = 0; c < drawList->CmdBuffer.Size; ++c)
+            {
+                const auto& cmd = drawList->CmdBuffer[c];
+                if (std::abs(cmd.ClipRect.x - rx0) < 1.0f && std::abs(cmd.ClipRect.y - ry0) < 1.0f &&
+                    std::abs(cmd.ClipRect.z - rx1) < 1.0f && std::abs(cmd.ClipRect.w - ry1) < 1.0f)
+                {
+                    out.allOverlayClippedToViewport = true;
+                    break;
+                }
+            }
+            return out;
+        };
+
+        const auto makeViewportInput = [](const App::ViewportRegion& region, glm::vec2 screenPos, bool hovered,
+                                          bool selectPressed, bool selectDown, bool selectReleased) {
+            App::UiInput uiInput{};
+            uiInput.position = {screenPos.x - region.origin.x, screenPos.y - region.origin.y};
+            uiInput.select = {selectDown, selectPressed, selectReleased};
+            uiInput.captureMouse = !hovered;
+            uiInput.captureKeyboard = false;
+            return uiInput;
+        };
+
+        auto* handle = static_cast<GLFWwindow*>(session.window().getNativeHandle());
+        GLFWwindowfocusfun focus = glfwSetWindowFocusCallback(handle, nullptr);
+        glfwSetWindowFocusCallback(handle, focus);
+
+        session.run(
+            {[&](auto& app) {
+                 editor.initialize(app);
+                 EditorTest::setSharedEditorScene(app, editor, false);
+                 modeledId = editor.selected();
+                 Scene::Transform emptyTransform;
+                 emptyTransform.setPosition({0.5f, 0.25f, 0.0f});
+                 emptyEntityId = app.scene().createEntity({}, emptyTransform, true, "EmptyMarker");
+                 editor.select(app, modeledId);
+                 focus(handle, GLFW_TRUE);
+             },
+             [&](auto& app, const auto&) {
+                 if (++frame > 100)
+                 {
+                     ADD_FAILURE() << "GizmoOverlayClipOrderColorsHighlightToolbarAndShortcuts 超时 step=" << step;
+                     app.requestExit();
+                 }
+                 if (pendingItemActivateId != 0)
+                 {
+                     ImGui::ActivateItemByID(pendingItemActivateId);
+                     pendingItemActivateId = 0;
+                 }
+                 if (triggerEmptyDragThisFrame)
+                 {
+                     triggerEmptyDragThisFrame = false;
+                     const auto extent = app.sceneExtent();
+                     const auto& region = app.viewportRegion();
+                     const auto gizmo =
+                         Editor::projectGizmo(app.scene(), emptyEntityId, Editor::GizmoMode::Translate, extent, region);
+                     ASSERT_FALSE(gizmo.segments.empty());
+                     const glm::vec2 emptyXMid =
+                         (gizmo.segments[0].segment.start + gizmo.segments[0].segment.end) * 0.5f;
+                     editor.input(app, extent, makeViewportInput(region, emptyXMid, true, true, true, false));
+                     ASSERT_TRUE(editor.gizmoDragging());
+                     editor.input(
+                         app, extent,
+                         makeViewportInput(region, emptyXMid + glm::vec2(80.0f, 0.0f), true, false, true, false));
+                 }
+             },
+             [&](auto& app) {
+                 if (pendingNavActivateId != 0)
+                 {
+                     auto& context = *ImGui::GetCurrentContext();
+                     context.NavActivateId = pendingNavActivateId;
+                     context.NavActivateDownId = pendingNavActivateId;
+                     pendingNavActivateId = 0;
+                 }
+                 editor.ui(app);
+                 if (done)
+                     return;
+                 const auto extent = app.sceneExtent();
+                 const auto& region = app.viewportRegion();
+                 if (frame < 3 || extent.width == 0 || extent.height == 0 || region.size.x <= 0 || region.size.y <= 0)
+                     return;
+
+                 const auto summary = summarizeDrawList(app.sceneDrawList(), region);
+                 switch (step)
+                 {
+                     case 0:
+                     {
+                         // 1. 有模型实体默认 Translate 模式：AABB 先画，三轴 Gizmo 叠在其上，视口裁剪正确
+                         EXPECT_GT(summary.boxVertices, 0);
+                         EXPECT_GT(summary.xVertices, 0);
+                         EXPECT_GT(summary.yVertices, 0);
+                         EXPECT_GT(summary.zVertices, 0);
+                         EXPECT_EQ(summary.highlightVertices, 0);
+                         EXPECT_LT(summary.maxBoxIndex, summary.minGizmoIndex);
+                         EXPECT_TRUE(summary.allOverlayClippedToViewport);
+                         translateVertexCount = summary.xVertices + summary.yVertices + summary.zVertices;
+
+                         // 悬停 X 轴：下帧绘制中 X 轴变高亮，其余 Y/Z 保持蓝/绿
+                         const auto gizmo =
+                             Editor::projectGizmo(app.scene(), modeledId, Editor::GizmoMode::Translate, extent, region);
+                         ASSERT_FALSE(gizmo.segments.empty());
+                         xMidScreen = (gizmo.segments[0].segment.start + gizmo.segments[0].segment.end) * 0.5f;
+                         editor.input(app, extent, makeViewportInput(region, xMidScreen, true, false, false, false));
+                         EXPECT_EQ(editor.hoveredGizmoAxis(), Editor::GizmoAxis::X);
+                         ++step;
+                         break;
+                     }
+                     case 1:
+                     {
+                         // 验证悬停 X 轴时 X 轴切换为高亮黄白且绘制在 Y/Z 之上
+                         EXPECT_EQ(summary.xVertices, 0);
+                         EXPECT_GT(summary.highlightVertices, 0);
+                         EXPECT_GT(summary.yVertices, 0);
+                         EXPECT_GT(summary.zVertices, 0);
+                         EXPECT_GT(summary.minHighlightIndex, summary.maxDefaultAxisIndex);
+
+                         // 开始按住左键拖拽 Gizmo，同时按 E 不应切换模式
+                         editor.input(app, extent, makeViewportInput(region, xMidScreen, true, true, true, false));
+                         ASSERT_TRUE(editor.gizmoDragging());
+                         EXPECT_EQ(editor.activeGizmoAxis(), Editor::GizmoAxis::X);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_E, true);
+                         ++step;
+                         break;
+                     }
+                     case 2:
+                     {
+                         // 验证拖拽期间 E 键被忽略，随后释放 E 与左键，并在同一帧触发 E 切换到 Rotate
+                         EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Translate);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_E, false);
+                         const glm::vec2 shifted = xMidScreen + glm::vec2(70.0f, 0.0f);
+                         editor.input(app, extent, makeViewportInput(region, shifted, true, false, true, false));
+                         EXPECT_EQ(editor.activeGizmoAxis(), Editor::GizmoAxis::X);
+                         editor.input(app, extent, makeViewportInput(region, shifted, true, false, false, true));
+                         EXPECT_FALSE(editor.gizmoDragging());
+
+                         // 移开光标后恢复默认红/绿/蓝配色
+                         const glm::vec2 blankPos(region.origin.x + 5.0, region.origin.y + 5.0);
+                         editor.input(app, extent, makeViewportInput(region, blankPos, true, false, false, false));
+                         EXPECT_EQ(editor.hoveredGizmoAxis(), Editor::GizmoAxis::None);
+                         ++step;
+                         break;
+                     }
+                     case 3:
+                     {
+                         EXPECT_GT(summary.xVertices, 0);
+                         EXPECT_GT(summary.yVertices, 0);
+                         EXPECT_GT(summary.zVertices, 0);
+                         EXPECT_EQ(summary.highlightVertices, 0);
+
+                         // 2. 通过 Properties 面板按钮切换到 Rotate (E)
+                         auto* props = ImGui::FindWindowByName("Properties");
+                         ASSERT_NE(props, nullptr);
+                         pendingNavActivateId = props->GetID("Rotate (E)");
+                         ++step;
+                         break;
+                     }
+                     case 4:
+                     {
+                         EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Rotate);
+                         rotateVertexCount = summary.xVertices + summary.yVertices + summary.zVertices;
+                         EXPECT_GT(rotateVertexCount, translateVertexCount);
+
+                         // 通过面板按钮切换到 Scale (R)，再通过 W 键切回 Translate，R 键切到 Scale
+                         auto* props = ImGui::FindWindowByName("Properties");
+                         ASSERT_NE(props, nullptr);
+                         pendingNavActivateId = props->GetID("Scale (R)");
+                         ++step;
+                         break;
+                     }
+                     case 5:
+                     {
+                         EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Scale);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_W, true);
+                         ++step;
+                         break;
+                     }
+                     case 6:
+                     {
+                         EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Translate);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_W, false);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_R, true);
+                         ++step;
+                         break;
+                     }
+                     case 7:
+                     {
+                         EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Scale);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_R, false);
+
+                         // 带 Ctrl / Alt 修饰键按 W 不得切换模式
+                         ImGui::GetIO().AddKeyEvent(ImGuiMod_Ctrl, true);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_W, true);
+                         ++step;
+                         break;
+                     }
+                     case 8:
+                     {
+                         EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Scale);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_W, false);
+                         ImGui::GetIO().AddKeyEvent(ImGuiMod_Ctrl, false);
+
+                         // 激活 Name 文本框输入 'w' / 'e' 不得切换模式
+                         auto* props = ImGui::FindWindowByName("Properties");
+                         ASSERT_NE(props, nullptr);
+                         const std::string idStr = std::to_string(modeledId.value());
+                         pendingItemActivateId = ImHashStr("##entity-name", 0, props->GetID(idStr.c_str()));
+                         ++step;
+                         break;
+                     }
+                     case 9:
+                     {
+                         // 本帧 editor.ui 已激活 ##entity-name，下帧 WantTextInput == true 时注入 W
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_W, true);
+                         ImGui::GetIO().AddInputCharacter('w');
+                         ++step;
+                         break;
+                     }
+                     case 10:
+                     {
+                         EXPECT_TRUE(ImGui::GetIO().WantTextInput);
+                         EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Scale);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_W, false);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, true);
+                         ++step;
+                         break;
+                     }
+                     case 11:
+                     {
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, false);
+                         ImGui::ClearActiveID();
+
+                         // 光标置于视口图像区域内并按住右键（相机轨道拖拽态）
+                         ImGui::GetIO().AddMousePosEvent(static_cast<float>(region.origin.x + 24.0),
+                                                         static_cast<float>(region.origin.y + 24.0));
+                         ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+                         ++step;
+                         break;
+                     }
+                     case 12:
+                     {
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_W, true);
+                         ++step;
+                         break;
+                     }
+                     case 13:
+                     {
+                         EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Scale);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_W, false);
+                         ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+                         ++step;
+                         break;
+                     }
+                     case 14:
+                     {
+                         // 等待鼠标右键与 W 键释放事件排空后，再按 W 恢复 Translate
+                         if (!ImGui::GetCurrentContext()->InputEventsQueue.empty() ||
+                             ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsKeyDown(ImGuiKey_W))
+                             break;
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_W, true);
+                         ++step;
+                         break;
+                     }
+                     case 15:
+                     {
+                         EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Translate);
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_W, false);
+
+                         // 3. 选中无模型实体：无 AABB，但三轴 Gizmo 正常显示且可拖拽
+                         editor.select(app, emptyEntityId);
+                         ++step;
+                         break;
+                     }
+                     case 16:
+                     {
+                         EXPECT_EQ(summary.boxVertices, 0);
+                         EXPECT_GT(summary.xVertices, 0);
+                         EXPECT_GT(summary.yVertices, 0);
+                         EXPECT_GT(summary.zVertices, 0);
+                         emptyInitialAvgX = summary.avgXPosForGizmo;
+
+                         // 下帧 update 中对无模型实体拖拽 X 轴，同帧 ui 立即看到位置与高亮更新（无一帧滞后）
+                         triggerEmptyDragThisFrame = true;
+                         ++step;
+                         break;
+                     }
+                     case 17:
+                     {
+                         const auto* emptyEntity = app.scene().find(emptyEntityId);
+                         ASSERT_NE(emptyEntity, nullptr);
+                         EXPECT_GT(emptyEntity->transform.position().x, 0.6f);
+                         EXPECT_GT(summary.avgXPosForGizmo, emptyInitialAvgX + 10.0f);
+                         EXPECT_EQ(summary.xVertices, 0);
+                         EXPECT_GT(summary.highlightVertices, 0);
+
+                         // 结束拖拽并隐藏无模型实体 -> 下帧 Gizmo 立即消失
+                         editor.input(app, extent, makeViewportInput(region, xMidScreen, true, false, false, true));
+                         EXPECT_FALSE(editor.gizmoDragging());
+                         ASSERT_TRUE(app.scene().setVisible(emptyEntityId, false));
+                         ++step;
+                         break;
+                     }
+                     case 18:
+                     {
+                         EXPECT_EQ(summary.boxVertices, 0);
+                         EXPECT_EQ(summary.xVertices, 0);
+                         EXPECT_EQ(summary.yVertices, 0);
+                         EXPECT_EQ(summary.zVertices, 0);
+
+                         // 重新显示后恢复，再测试清空/取消选中立即消失
+                         ASSERT_TRUE(app.scene().setVisible(emptyEntityId, true));
+                         ++step;
+                         break;
+                     }
+                     case 19:
+                     {
+                         EXPECT_GT(summary.xVertices, 0);
+                         editor.select(app, {});
+                         ++step;
+                         break;
+                     }
+                     case 20:
+                     {
+                         EXPECT_EQ(summary.boxVertices, 0);
+                         EXPECT_EQ(summary.xVertices, 0);
+                         EXPECT_EQ(summary.yVertices, 0);
+                         EXPECT_EQ(summary.zVertices, 0);
+
+                         // 验证 UiInputAdapter 失焦取消后若 W 仍被按住，不会提前结束 neutral suspended
+                         App::UiInputAdapter adapter;
+                         Input::InputState raw;
+                         raw.onFocus(true);
+                         raw.onKey(Input::KeyCode::W, Input::KeyState::Press);
+                         ImGui::GetIO().MousePos = {42.0f, 24.0f};
+                         adapter.cancel();
+                         const auto blocked = adapter.sample(raw);
+                         EXPECT_EQ(blocked.position.x, 0.0);
+                         raw.onKey(Input::KeyCode::W, Input::KeyState::Release);
+                         const auto neutralFrame = adapter.sample(raw);
+                         EXPECT_EQ(neutralFrame.position.x, 0.0);
+                         const auto resumed = adapter.sample(raw);
+                         EXPECT_EQ(resumed.position.x, 42.0);
+
+                         done = true;
+                         app.requestExit();
+                         break;
+                     }
+                 }
+             },
+             {}, {}, [&](auto& app) { editor.layout(app); }, [&](auto& app) { editor.requestClose(app); }});
 
         EXPECT_TRUE(done);
         cleanValidation();

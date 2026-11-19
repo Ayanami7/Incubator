@@ -630,23 +630,38 @@ namespace Incubator::Editor
         }
         if (shortcutSuspended_)
         {
-            if (ImGui::GetCurrentContext()->InputEventsQueue.empty() && !raw.key(Input::KeyCode::Z).down &&
-                !raw.key(Input::KeyCode::Y).down && !ImGui::IsKeyDown(ImGuiKey_Z) && !ImGui::IsKeyDown(ImGuiKey_Y))
+            if (ImGui::GetCurrentContext()->InputEventsQueue.empty() && !raw.key(Input::KeyCode::W).down &&
+                !raw.key(Input::KeyCode::E).down && !raw.key(Input::KeyCode::R).down &&
+                !raw.key(Input::KeyCode::Z).down && !raw.key(Input::KeyCode::Y).down &&
+                !ImGui::IsKeyDown(ImGuiKey_W) && !ImGui::IsKeyDown(ImGuiKey_E) && !ImGui::IsKeyDown(ImGuiKey_R) &&
+                !ImGui::IsKeyDown(ImGuiKey_Z) && !ImGui::IsKeyDown(ImGuiKey_Y))
                 shortcutSuspended_ = false;
             return;
         }
         const ImGuiIO& io = ImGui::GetIO();
         if (io.WantTextInput || fileAction_ != FileAction::None || pendingAction_ != PendingAction::None ||
             ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) ||
-            operations_.inTransaction() || orbit_.dragging())
+            operations_.inTransaction() || orbit_.dragging() || gizmoDrag_.active)
             return;
-        if (!io.KeyCtrl || io.KeyAlt || io.KeySuper)
+        if (io.KeyAlt || io.KeySuper)
             return;
-        if (!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))
-            undo(app);
-        else if ((!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Y, false)) ||
-                 (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))
-            redo(app);
+        if (io.KeyCtrl)
+        {
+            if (!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))
+                undo(app);
+            else if ((!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Y, false)) ||
+                     (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))
+                redo(app);
+            return;
+        }
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle))
+            return;
+        if (ImGui::IsKeyPressed(ImGuiKey_W, false))
+            setGizmoMode(GizmoMode::Translate);
+        else if (ImGui::IsKeyPressed(ImGuiKey_E, false))
+            setGizmoMode(GizmoMode::Rotate);
+        else if (ImGui::IsKeyPressed(ImGuiKey_R, false))
+            setGizmoMode(GizmoMode::Scale);
     }
 
     void EditorScene::drawSelectionOverlay(Editor::EditorApp& app) const
@@ -655,16 +670,44 @@ namespace Incubator::Editor
         if (!drawList)
             return;
         const auto& region = app.viewportRegion();
-        const auto segments = projectSelectionBox(app.scene(), operations_.selected(), app.sceneExtent(), region);
-        if (segments.empty())
+        const auto boxSegments = projectSelectionBox(app.scene(), operations_.selected(), app.sceneExtent(), region);
+        const auto gizmo = projectGizmo(app.scene(), operations_.selected(), gizmoMode_, app.sceneExtent(), region);
+        if (boxSegments.empty() && gizmo.segments.empty())
             return;
         const ImVec2 clipMin(static_cast<float>(region.origin.x), static_cast<float>(region.origin.y));
         const ImVec2 clipMax(static_cast<float>(region.origin.x + region.size.x),
                              static_cast<float>(region.origin.y + region.size.y));
-        const ImU32 color = IM_COL32(255, 200, 64, 255);
+        const ImU32 boxColor = IM_COL32(255, 200, 64, 255);
+        const GizmoAxis highlightedAxis = gizmoDrag_.active ? gizmoDrag_.axis : hoveredGizmoAxis_;
+        const auto axisDefaultColor = [](GizmoAxis axis) {
+            switch (axis)
+            {
+                case GizmoAxis::X: return IM_COL32(230, 70, 70, 255);
+                case GizmoAxis::Y: return IM_COL32(70, 210, 90, 255);
+                case GizmoAxis::Z: return IM_COL32(70, 140, 245, 255);
+                case GizmoAxis::None: break;
+            }
+            return IM_COL32(255, 255, 255, 255);
+        };
+
         drawList->PushClipRect(clipMin, clipMax, true);
-        for (const auto& segment : segments)
-            drawList->AddLine({segment.start.x, segment.start.y}, {segment.end.x, segment.end.y}, color, 2.0f);
+        for (const auto& segment : boxSegments)
+            drawList->AddLine({segment.start.x, segment.start.y}, {segment.end.x, segment.end.y}, boxColor, 2.0f);
+        for (const bool drawHighlighted : {false, true})
+        {
+            for (const auto& gizmoSegment : gizmo.segments)
+            {
+                const bool highlighted =
+                    gizmoSegment.axis != GizmoAxis::None && gizmoSegment.axis == highlightedAxis;
+                if (highlighted != drawHighlighted)
+                    continue;
+                const ImU32 color =
+                    highlighted ? IM_COL32(255, 240, 100, 255) : axisDefaultColor(gizmoSegment.axis);
+                const float thickness = highlighted ? 3.5f : 2.5f;
+                drawList->AddLine({gizmoSegment.segment.start.x, gizmoSegment.segment.start.y},
+                                  {gizmoSegment.segment.end.x, gizmoSegment.segment.end.y}, color, thickness);
+            }
+        }
         drawList->PopClipRect();
     }
 
@@ -945,6 +988,24 @@ namespace Incubator::Editor
             }
             else
                 ImGui::TextWrapped("Select an object to edit.");
+            ImGui::Separator();
+            const auto gizmoModeButton = [&](const char* label, GizmoMode mode) {
+                const bool active = gizmoMode_ == mode;
+                if (active)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                }
+                if (ImGui::Button(label))
+                    setGizmoMode(mode);
+                if (active)
+                    ImGui::PopStyleColor(2);
+            };
+            gizmoModeButton("Translate (W)", GizmoMode::Translate);
+            ImGui::SameLine();
+            gizmoModeButton("Rotate (E)", GizmoMode::Rotate);
+            ImGui::SameLine();
+            gizmoModeButton("Scale (R)", GizmoMode::Scale);
         }
         if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen))
         {
