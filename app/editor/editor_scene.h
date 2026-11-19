@@ -70,6 +70,16 @@ namespace Incubator::Editor
         {
             return operations_.isDirty();
         }
+        bool canUndo() const noexcept
+        {
+            return operations_.canUndo();
+        }
+        bool canRedo() const noexcept
+        {
+            return operations_.canRedo();
+        }
+        bool undo(Editor::EditorApp& app);
+        bool redo(Editor::EditorApp& app);
         std::string statusText() const;
         const std::string& message() const;
         /// @brief 获取当前关联场景文件的 UTF-8 路径。
@@ -110,6 +120,7 @@ namespace Incubator::Editor
         };
         void executePendingAction(Editor::EditorApp& app);
         void clearPendingAction() noexcept;
+        void handleShortcuts(Editor::EditorApp& app);
 
         void drawSelectionOverlay(Editor::EditorApp& app) const;
 
@@ -144,6 +155,9 @@ namespace Incubator::Editor
         App::OrbitCamera orbit_;
         bool clickCandidate_ = false;
         Render::FrameExtent extent_{0, 0};
+        bool lightingTransactionActive_ = false;
+        bool backgroundTransactionActive_ = false;
+        bool shortcutSuspended_ = false;
     };
 
     Editor::Callbacks makeCallbacks(std::string startupScene = "assets/scenes/shadows.json");

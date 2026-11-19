@@ -57,6 +57,17 @@ namespace Incubator::Editor
         {
             return !redoStack_.empty();
         }
+        /// @brief 当前是否处于连续编辑事务中。
+        bool inTransaction() const noexcept
+        {
+            return transaction_.has_value();
+        }
+        /// @brief 开始一次连续编辑事务，采集起始场景与背景色快照；若已在事务中则保持当前起始快照。
+        void beginTransaction(const Scene::Scene& scene, const std::array<float, 4>& clearColor);
+        /// @brief 提交当前连续编辑事务；若实体、光照或背景色相对起始快照发生变化则压入 1 条撤销记录，未变化则静默丢弃。
+        bool commitTransaction(const Scene::Scene& scene, const std::array<float, 4>& clearColor);
+        /// @brief 取消当前连续编辑事务并回滚场景与背景色到起始快照，不产生历史记录且不修改 revision。
+        bool cancelTransaction(Scene::Scene& scene, std::array<float, 4>& clearColor);
         /// @brief 撤销最近一次历史记录并还原 Scene、clearColor 与选中标识。
         bool undo(Scene::Scene& scene, std::array<float, 4>& clearColor);
         /// @brief 重做最近一次被撤销的记录并还原 Scene、clearColor 与选中标识。
@@ -117,6 +128,7 @@ namespace Incubator::Editor
         bool messageError_ = false;
         std::vector<HistorySnapshot> undoStack_;
         std::vector<HistorySnapshot> redoStack_;
+        std::optional<HistorySnapshot> transaction_;
         uint64_t currentRevision_ = 0;
         uint64_t nextRevision_ = 1;
         std::optional<uint64_t> savedRevision_ = 0;

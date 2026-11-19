@@ -19,6 +19,11 @@ namespace Incubator::App
         {
             gesture_ = Gesture::None;
         }
+        /// @brief 当前是否正处于旋转或平移拖拽手势中。
+        bool dragging() const noexcept
+        {
+            return gesture_ != Gesture::None;
+        }
 
         void synchronize(const Scene::Camera& camera)
         {

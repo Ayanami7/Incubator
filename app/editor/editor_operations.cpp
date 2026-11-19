@@ -17,6 +17,29 @@ namespace Incubator::Editor
         {
             return a.position() == b.position() && a.rotation() == b.rotation() && a.scale() == b.scale();
         }
+
+        bool sameEntity(const Scene::Entity& a, const Scene::Entity& b) noexcept
+        {
+            return a.id == b.id && a.name == b.name && a.visible == b.visible && a.model == b.model &&
+                   sameTransform(a.transform, b.transform);
+        }
+
+        bool sameSnapshotState(const std::vector<Scene::Entity>& beforeEntities, const Render::Lighting& beforeLighting,
+                               const std::array<float, 4>& beforeClearColor, const Scene::Scene& scene,
+                               const std::array<float, 4>& clearColor)
+        {
+            if (!(beforeLighting == scene.lighting()) || beforeClearColor != clearColor)
+                return false;
+            const auto entities = scene.entities();
+            if (beforeEntities.size() != entities.size())
+                return false;
+            for (size_t i = 0; i < beforeEntities.size(); ++i)
+            {
+                if (!sameEntity(beforeEntities[i], entities[i]))
+                    return false;
+            }
+            return true;
+        }
     }  // namespace
 
     EditorOperations::HistorySnapshot EditorOperations::captureSnapshot(const Scene::Scene& scene,
@@ -52,11 +75,41 @@ namespace Incubator::Editor
         currentRevision_ = snapshot.revision;
     }
 
+    void EditorOperations::beginTransaction(const Scene::Scene& scene, const std::array<float, 4>& clearColor)
+    {
+        if (transaction_)
+            return;
+        transaction_ = captureSnapshot(scene, clearColor, currentRevision_);
+    }
+
+    bool EditorOperations::commitTransaction(const Scene::Scene& scene, const std::array<float, 4>& clearColor)
+    {
+        if (!transaction_)
+            return false;
+        auto before = std::move(*transaction_);
+        transaction_.reset();
+        if (sameSnapshotState(before.entities, before.lighting, before.clearColor, scene, clearColor))
+            return false;
+        pushUndoSnapshot(std::move(before));
+        return true;
+    }
+
+    bool EditorOperations::cancelTransaction(Scene::Scene& scene, std::array<float, 4>& clearColor)
+    {
+        if (!transaction_)
+            return false;
+        const auto before = std::move(*transaction_);
+        transaction_.reset();
+        applySnapshot(scene, clearColor, before);
+        return true;
+    }
+
     bool EditorOperations::addModel(Scene::Scene& scene, const std::array<float, 4>& clearColor, std::string_view path,
                                     const Scene::Transform& transform)
     {
         try
         {
+            commitTransaction(scene, clearColor);
             auto model = cache_->resolve(Model::ModelReference(path, PREVIEW_OPTIONS));
             auto name = Utils::Utf8::toUtf8String(Utils::Utf8::toFsPath(path).stem());
             auto before = captureSnapshot(scene, clearColor, currentRevision_);
@@ -84,6 +137,8 @@ namespace Incubator::Editor
             return false;
         if (entity->name == name)
             return true;
+        if (transaction_)
+            return selection_.rename(scene, std::move(name));
         auto before = captureSnapshot(scene, clearColor, currentRevision_);
         if (!selection_.rename(scene, std::move(name)))
             return false;
@@ -98,6 +153,8 @@ namespace Incubator::Editor
             return false;
         if (entity->visible == visible)
             return true;
+        if (transaction_)
+            return selection_.setVisible(scene, visible);
         auto before = captureSnapshot(scene, clearColor, currentRevision_);
         if (!selection_.setVisible(scene, visible))
             return false;
@@ -113,6 +170,8 @@ namespace Incubator::Editor
             return false;
         if (sameTransform(entity->transform, transform))
             return true;
+        if (transaction_)
+            return selection_.setTransform(scene, std::move(transform));
         auto before = captureSnapshot(scene, clearColor, currentRevision_);
         if (!selection_.setTransform(scene, std::move(transform)))
             return false;
@@ -122,6 +181,7 @@ namespace Incubator::Editor
 
     Scene::EntityId EditorOperations::duplicate(Scene::Scene& scene, const std::array<float, 4>& clearColor)
     {
+        commitTransaction(scene, clearColor);
         const auto* source = scene.find(selection_.selected());
         if (!source)
             return {};
@@ -134,6 +194,7 @@ namespace Incubator::Editor
 
     bool EditorOperations::remove(Scene::Scene& scene, const std::array<float, 4>& clearColor)
     {
+        commitTransaction(scene, clearColor);
         const bool existed = scene.find(selection_.selected()) != nullptr;
         if (!existed)
         {
@@ -148,6 +209,7 @@ namespace Incubator::Editor
 
     bool EditorOperations::clear(Scene::Scene& scene, const std::array<float, 4>& clearColor)
     {
+        commitTransaction(scene, clearColor);
         if (scene.entities().empty())
         {
             selection_.clear(scene);
@@ -164,6 +226,11 @@ namespace Incubator::Editor
     {
         if (scene.lighting() == lighting)
             return true;
+        if (transaction_)
+        {
+            scene.setLighting(lighting);
+            return true;
+        }
         auto before = captureSnapshot(scene, clearColor, currentRevision_);
         scene.setLighting(lighting);
         pushUndoSnapshot(std::move(before));
@@ -175,6 +242,11 @@ namespace Incubator::Editor
     {
         if (clearColor == newColor)
             return true;
+        if (transaction_)
+        {
+            clearColor = newColor;
+            return true;
+        }
         auto before = captureSnapshot(scene, clearColor, currentRevision_);
         clearColor = newColor;
         pushUndoSnapshot(std::move(before));
@@ -183,6 +255,7 @@ namespace Incubator::Editor
 
     bool EditorOperations::undo(Scene::Scene& scene, std::array<float, 4>& clearColor)
     {
+        commitTransaction(scene, clearColor);
         if (undoStack_.empty())
             return false;
         auto current = captureSnapshot(scene, clearColor, currentRevision_);
@@ -197,6 +270,7 @@ namespace Incubator::Editor
 
     bool EditorOperations::redo(Scene::Scene& scene, std::array<float, 4>& clearColor)
     {
+        commitTransaction(scene, clearColor);
         if (redoStack_.empty())
             return false;
         auto current = captureSnapshot(scene, clearColor, currentRevision_);
@@ -221,6 +295,7 @@ namespace Incubator::Editor
     {
         try
         {
+            commitTransaction(scene, color);
             std::string target(path);
             Scene::writeScene(file, path, Scene::captureScene(scene, color));
             messageError_ = false;
@@ -253,6 +328,7 @@ namespace Incubator::Editor
             selection_.select({});
             undoStack_.clear();
             redoStack_.clear();
+            transaction_.reset();
             currentRevision_ = nextRevision_++;
             savedRevision_ = currentRevision_;
             Log::Registry::get("editor").info("Loaded scene '{}' ({} entities)", logPath(currentFile_),

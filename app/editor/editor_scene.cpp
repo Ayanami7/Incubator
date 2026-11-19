@@ -257,6 +257,28 @@ namespace Incubator::Editor
         clickCandidate_ = false;
     }
 
+    bool EditorScene::undo(Editor::EditorApp& app)
+    {
+        if (!operations_.undo(app.scene(), app.clearColor()))
+            return false;
+        lightingTransactionActive_ = false;
+        backgroundTransactionActive_ = false;
+        clickCandidate_ = false;
+        orbit_.synchronize(app.scene().camera());
+        return true;
+    }
+
+    bool EditorScene::redo(Editor::EditorApp& app)
+    {
+        if (!operations_.redo(app.scene(), app.clearColor()))
+            return false;
+        lightingTransactionActive_ = false;
+        backgroundTransactionActive_ = false;
+        clickCandidate_ = false;
+        orbit_.synchronize(app.scene().camera());
+        return true;
+    }
+
     Scene::EntityId EditorScene::duplicateSelected(Editor::EditorApp& app)
     {
         return operations_.duplicate(app.scene(), app.clearColor());
@@ -268,11 +290,31 @@ namespace Incubator::Editor
         clickCandidate_ = false;
     }
 
-    void EditorScene::cancelInteraction(Editor::EditorApp&)
+    void EditorScene::cancelInteraction(Editor::EditorApp& app)
     {
         orbit_.cancel();
         clickCandidate_ = false;
         extent_ = {0, 0};
+        int fbWidth = 0;
+        int fbHeight = 0;
+        app.window().getFramebufferSize(fbWidth, fbHeight);
+        const auto& raw = app.window().input();
+        const bool windowUnavailable = !raw.focused() || raw.focusLost() || fbWidth <= 0 || fbHeight <= 0;
+        const bool viewportVisible = app.sceneExtent().width > 0 && app.sceneExtent().height > 0;
+        if (!raw.focused() || raw.focusLost())
+            shortcutSuspended_ = true;
+        // 仅因 Scene 视口折叠或关闭触发的取消只重置视口手势，保留 Properties 面板正在进行的属性事务。
+        if (windowUnavailable || viewportVisible)
+        {
+            lightingTransactionActive_ = false;
+            backgroundTransactionActive_ = false;
+            operations_.cancelTransaction(app.scene(), app.clearColor());
+        }
+        else if (!operations_.inTransaction())
+        {
+            lightingTransactionActive_ = false;
+            backgroundTransactionActive_ = false;
+        }
     }
 
     bool EditorScene::focusSelected(Editor::EditorApp& app, Render::FrameExtent extent)
@@ -420,7 +462,37 @@ namespace Incubator::Editor
                 clearPendingAction();
             }
         }
+        handleShortcuts(app);
         drawSelectionOverlay(app);
+    }
+
+    void EditorScene::handleShortcuts(Editor::EditorApp& app)
+    {
+        const auto& raw = app.window().input();
+        if (!raw.focused() || raw.focusLost())
+        {
+            shortcutSuspended_ = true;
+            return;
+        }
+        if (shortcutSuspended_)
+        {
+            if (ImGui::GetCurrentContext()->InputEventsQueue.empty() && !raw.key(Input::KeyCode::Z).down &&
+                !raw.key(Input::KeyCode::Y).down && !ImGui::IsKeyDown(ImGuiKey_Z) && !ImGui::IsKeyDown(ImGuiKey_Y))
+                shortcutSuspended_ = false;
+            return;
+        }
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.WantTextInput || fileAction_ != FileAction::None || pendingAction_ != PendingAction::None ||
+            ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) ||
+            operations_.inTransaction() || orbit_.dragging())
+            return;
+        if (!io.KeyCtrl || io.KeyAlt || io.KeySuper)
+            return;
+        if (!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))
+            undo(app);
+        else if ((!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Y, false)) ||
+                 (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))
+            redo(app);
     }
 
     void EditorScene::drawSelectionOverlay(Editor::EditorApp& app) const
@@ -533,6 +605,21 @@ namespace Incubator::Editor
                 requestExit(app);
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Edit"))
+        {
+            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, canUndo()))
+                undo(app);
+            if (ImGui::MenuItem("Redo", "Ctrl+Y", false, canRedo()))
+                redo(app);
+            ImGui::Separator();
+            const bool hasSelection =
+                operations_.selected().valid() && app.scene().find(operations_.selected()) != nullptr;
+            if (ImGui::MenuItem("Duplicate", nullptr, false, hasSelection))
+                duplicateSelected(app);
+            if (ImGui::MenuItem("Delete", nullptr, false, hasSelection))
+                deleteSelected(app);
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("View"))
         {
             ImGui::MenuItem("Scene viewport", nullptr, &viewportOpen_);
@@ -610,7 +697,20 @@ namespace Incubator::Editor
 
     void EditorScene::properties(Editor::EditorApp& app)
     {
-        ImGui::Begin("Properties");
+        if (!ImGui::Begin("Properties"))
+        {
+            ImGui::End();
+            if (operations_.inTransaction())
+            {
+                lightingTransactionActive_ = false;
+                backgroundTransactionActive_ = false;
+                operations_.commitTransaction(app.scene(), app.clearColor());
+            }
+            return;
+        }
+        const auto& raw = app.window().input();
+        const bool windowFocused = raw.focused() && !raw.focusLost();
+        bool entityWidgetActive = false;
         ImGui::PushItemWidth(-1);
         if (ImGui::CollapsingHeader("Selected object", ImGuiTreeNodeFlags_DefaultOpen))
         {
@@ -627,9 +727,23 @@ namespace Incubator::Editor
                     data->Buf = buffer->data();
                     return 0;
                 };
-                if (ImGui::InputText("##entity-name", name.data(), name.size(), ImGuiInputTextFlags_CallbackResize,
-                                     resize, &name))
+                const bool nameChanged = ImGui::InputText("##entity-name", name.data(), name.size(),
+                                                          ImGuiInputTextFlags_CallbackResize, resize, &name);
+                if (ImGui::IsItemActivated() && windowFocused)
+                {
+                    if (lightingTransactionActive_ || backgroundTransactionActive_)
+                    {
+                        lightingTransactionActive_ = false;
+                        backgroundTransactionActive_ = false;
+                        operations_.commitTransaction(app.scene(), app.clearColor());
+                    }
+                    operations_.beginTransaction(app.scene(), app.clearColor());
+                }
+                if (nameChanged)
                     operations_.rename(app.scene(), app.clearColor(), name.data());
+                entityWidgetActive |= ImGui::IsItemActive();
+                if (ImGui::IsItemDeactivated())
+                    operations_.commitTransaction(app.scene(), app.clearColor());
                 ImGui::PopID();
                 auto transform = entity->transform;
                 auto position = transform.position();
@@ -638,27 +752,38 @@ namespace Incubator::Editor
                 bool visible = entity->visible;
                 if (ImGui::Checkbox("Visible", &visible))
                     operations_.setVisible(app.scene(), app.clearColor(), visible);
-                bool changed = false;
+                const auto applyTransformWidget = [&](bool edited) {
+                    if ((ImGui::IsItemActivated() || (edited && ImGui::IsItemActive())) && windowFocused)
+                    {
+                        if (lightingTransactionActive_ || backgroundTransactionActive_)
+                        {
+                            lightingTransactionActive_ = false;
+                            backgroundTransactionActive_ = false;
+                            operations_.commitTransaction(app.scene(), app.clearColor());
+                        }
+                        operations_.beginTransaction(app.scene(), app.clearColor());
+                    }
+                    if (edited)
+                        operations_.setTransform(app.scene(), app.clearColor(), transform);
+                    entityWidgetActive |= ImGui::IsItemActive();
+                    if (ImGui::IsItemDeactivated())
+                        operations_.commitTransaction(app.scene(), app.clearColor());
+                };
                 ImGui::TextUnformatted("Position");
-                if (ImGui::DragFloat3("##position", &position.x, 0.05f))
-                {
+                bool edited = ImGui::DragFloat3("##position", &position.x, 0.05f);
+                if (edited)
                     transform.setPosition(position);
-                    changed = true;
-                }
+                applyTransformWidget(edited);
                 ImGui::TextUnformatted("Rotation");
-                if (ImGui::SliderFloat3("##rotation", &degrees.x, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp))
-                {
+                edited = ImGui::SliderFloat3("##rotation", &degrees.x, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+                if (edited)
                     transform.setRotation(glm::quat(glm::radians(degrees)));
-                    changed = true;
-                }
+                applyTransformWidget(edited);
                 ImGui::TextUnformatted("Scale");
-                if (ImGui::DragFloat3("##scale", &scale.x, 0.05f))
-                {
+                edited = ImGui::DragFloat3("##scale", &scale.x, 0.05f);
+                if (edited)
                     transform.setScale(scale);
-                    changed = true;
-                }
-                if (changed)
-                    operations_.setTransform(app.scene(), app.clearColor(), transform);
+                applyTransformWidget(edited);
                 if (ImGui::Button("Duplicate"))
                     duplicateSelected(app);
                 ImGui::SameLine();
@@ -679,8 +804,28 @@ namespace Incubator::Editor
         {
             ImGui::TextUnformatted("Background");
             auto clearColor = app.clearColor();
-            if (ImGui::ColorEdit3("##background", clearColor.data(), ImGuiColorEditFlags_NoInputs))
+            const bool colorChanged = ImGui::ColorEdit3("##background", clearColor.data(), ImGuiColorEditFlags_NoInputs);
+            ImGui::PushID("##background");
+            const bool pickerOpen = ImGui::IsPopupOpen("picker");
+            ImGui::PopID();
+            const bool backgroundActive = (ImGui::IsItemActive() || pickerOpen) && windowFocused;
+            if (backgroundActive && !backgroundTransactionActive_)
+            {
+                if (operations_.inTransaction())
+                {
+                    lightingTransactionActive_ = false;
+                    operations_.commitTransaction(app.scene(), app.clearColor());
+                }
+                operations_.beginTransaction(app.scene(), app.clearColor());
+                backgroundTransactionActive_ = true;
+            }
+            if (colorChanged)
                 operations_.setClearColor(app.scene(), app.clearColor(), clearColor);
+            if (!backgroundActive && backgroundTransactionActive_)
+            {
+                operations_.commitTransaction(app.scene(), app.clearColor());
+                backgroundTransactionActive_ = false;
+            }
             auto& shadows = app.shadowSettings();
             ImGui::Checkbox("Shadows", &shadows.enabled);
             if (ImGui::IsItemHovered())
@@ -694,9 +839,35 @@ namespace Incubator::Editor
             ImGui::TextWrapped("Shadow preview settings are not saved in scene files.");
             ImGui::Separator();
             auto lighting = app.scene().lighting();
-            if (App::lightingWidget(lighting).changed)
+            const auto lightingState = App::lightingWidget(lighting);
+            const bool lightingActive = lightingState.active && windowFocused;
+            if (lightingActive && !lightingTransactionActive_)
+            {
+                if (operations_.inTransaction())
+                {
+                    backgroundTransactionActive_ = false;
+                    operations_.commitTransaction(app.scene(), app.clearColor());
+                }
+                operations_.beginTransaction(app.scene(), app.clearColor());
+                lightingTransactionActive_ = true;
+            }
+            if (lightingState.changed)
                 operations_.setLighting(app.scene(), app.clearColor(), lighting);
+            if (!lightingActive && lightingTransactionActive_)
+            {
+                operations_.commitTransaction(app.scene(), app.clearColor());
+                lightingTransactionActive_ = false;
+            }
         }
+        else if (lightingTransactionActive_ || backgroundTransactionActive_)
+        {
+            lightingTransactionActive_ = false;
+            backgroundTransactionActive_ = false;
+            operations_.commitTransaction(app.scene(), app.clearColor());
+        }
+        if (operations_.inTransaction() && !entityWidgetActive && !lightingTransactionActive_ &&
+            !backgroundTransactionActive_)
+            operations_.commitTransaction(app.scene(), app.clearColor());
         ImGui::PopItemWidth();
         ImGui::End();
     }

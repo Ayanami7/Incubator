@@ -43,7 +43,10 @@ namespace Incubator::App
         ImGui::TextUnformatted("Color (linear)");
         changed |= ImGui::ColorEdit3("##lightColor", &lighting.color.x,
                                      ImGuiColorEditFlags_Float | ImGuiColorEditFlags_NoInputs);
-        active |= ImGui::IsItemActive() || ImGui::IsPopupOpen("##lightColorpicker", ImGuiPopupFlags_AnyPopupId);
+        ImGui::PushID("##lightColor");
+        const bool pickerOpen = ImGui::IsPopupOpen("picker");
+        ImGui::PopID();
+        active |= ImGui::IsItemActive() || pickerOpen;
         ImGui::TextUnformatted("Intensity");
         changed |= ImGui::SliderFloat("##intensity", &lighting.intensity, 0, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         active |= ImGui::IsItemActive();

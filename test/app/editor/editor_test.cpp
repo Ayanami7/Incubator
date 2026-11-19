@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <spdlog/sinks/ostream_sink.h>
 
 #include <algorithm>
@@ -285,6 +286,99 @@ namespace
         EXPECT_EQ(undos, Editor::EditorOperations::MAX_HISTORY);
         EXPECT_EQ(boundedScene.find(target)->transform.position().x, 1.0f);
         EXPECT_TRUE(bounded.isDirty());
+    }
+
+    TEST(EditorOperationsHistoryTest, TransactionsMergeNoOpDiscardAndCancelRollback)
+    {
+        Editor::EditorOperations operations;
+        Scene::Scene scene;
+        std::array<float, 4> clearColor{0.12f, 0.16f, 0.22f, 1.0f};
+        const auto entityId = scene.createEntity({}, Scene::Transform({0, 0, 0}), true, "初始名称");
+        operations.select(entityId);
+
+        EXPECT_FALSE(operations.inTransaction());
+        EXPECT_FALSE(operations.commitTransaction(scene, clearColor));
+        EXPECT_FALSE(operations.cancelTransaction(scene, clearColor));
+
+        // 1. 事务中的多次连续属性编辑折叠为 1 条 undo，过程中不压栈。
+        operations.beginTransaction(scene, clearColor);
+        EXPECT_TRUE(operations.inTransaction());
+        ASSERT_TRUE(operations.rename(scene, clearColor, "阶段名称"));
+        ASSERT_TRUE(operations.rename(scene, clearColor, "最终名称"));
+        ASSERT_TRUE(operations.setVisible(scene, clearColor, false));
+        ASSERT_TRUE(operations.setTransform(scene, clearColor, Scene::Transform({1, 2, 3})));
+        ASSERT_TRUE(operations.setTransform(scene, clearColor, Scene::Transform({4, 5, 6})));
+        auto lighting = scene.lighting();
+        lighting.intensity = 2.5f;
+        ASSERT_TRUE(operations.setLighting(scene, clearColor, lighting));
+        lighting.ambient = 0.45f;
+        ASSERT_TRUE(operations.setLighting(scene, clearColor, lighting));
+        ASSERT_TRUE(operations.setClearColor(scene, clearColor, {0.3f, 0.4f, 0.5f, 1.0f}));
+        ASSERT_TRUE(operations.setClearColor(scene, clearColor, {0.6f, 0.7f, 0.8f, 1.0f}));
+        EXPECT_FALSE(operations.canUndo());
+
+        // 重复调用 beginTransaction 不会覆盖最初的事务起点。
+        operations.beginTransaction(scene, clearColor);
+        EXPECT_TRUE(operations.commitTransaction(scene, clearColor));
+        EXPECT_FALSE(operations.inTransaction());
+        EXPECT_TRUE(operations.canUndo());
+        EXPECT_TRUE(operations.isDirty());
+
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        EXPECT_FALSE(operations.canUndo());
+        EXPECT_TRUE(operations.canRedo());
+        EXPECT_FALSE(operations.isDirty());
+        EXPECT_EQ(scene.find(entityId)->name, "初始名称");
+        EXPECT_TRUE(scene.find(entityId)->visible);
+        EXPECT_EQ(scene.find(entityId)->transform.position(), glm::vec3(0, 0, 0));
+        EXPECT_FLOAT_EQ(scene.lighting().intensity, 1.0f);
+        EXPECT_EQ(clearColor, (std::array<float, 4>{0.12f, 0.16f, 0.22f, 1.0f}));
+
+        // 2. 无变化（含修改后再改回初始状态）提交时静默丢弃，不清空 redoStack_ 也不产生冗余历史。
+        operations.beginTransaction(scene, clearColor);
+        ASSERT_TRUE(operations.setTransform(scene, clearColor, Scene::Transform({9, 9, 9})));
+        ASSERT_TRUE(operations.setTransform(scene, clearColor, Scene::Transform({0, 0, 0})));
+        EXPECT_FALSE(operations.commitTransaction(scene, clearColor));
+        EXPECT_FALSE(operations.canUndo());
+        EXPECT_TRUE(operations.canRedo());
+        EXPECT_FALSE(operations.isDirty());
+
+        // 3. cancelTransaction 回滚回起始快照并保留现有历史栈与 redoStack_。
+        operations.beginTransaction(scene, clearColor);
+        ASSERT_TRUE(operations.rename(scene, clearColor, "被取消的修改"));
+        ASSERT_TRUE(operations.setClearColor(scene, clearColor, {0.9f, 0.1f, 0.1f, 1.0f}));
+        EXPECT_TRUE(operations.cancelTransaction(scene, clearColor));
+        EXPECT_FALSE(operations.inTransaction());
+        EXPECT_FALSE(operations.canUndo());
+        EXPECT_TRUE(operations.canRedo());
+        EXPECT_FALSE(operations.isDirty());
+        EXPECT_EQ(scene.find(entityId)->name, "初始名称");
+        EXPECT_EQ(clearColor, (std::array<float, 4>{0.12f, 0.16f, 0.22f, 1.0f}));
+
+        // 重做刚才那条事务并检查离散动作会先结算挂起事务，再执行自身操作。
+        ASSERT_TRUE(operations.redo(scene, clearColor));
+        EXPECT_EQ(scene.find(entityId)->name, "最终名称");
+
+        operations.beginTransaction(scene, clearColor);
+        ASSERT_TRUE(operations.setTransform(scene, clearColor, Scene::Transform({10, 0, 0})));
+        const auto copyId = operations.duplicate(scene, clearColor);
+        ASSERT_TRUE(copyId.valid());
+        EXPECT_FALSE(operations.inTransaction());
+        // 第 1 次撤销先撤掉 duplicate，第 2 次撤销回到事务前位置 (4,5,6)。
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        EXPECT_EQ(scene.find(copyId), nullptr);
+        EXPECT_EQ(scene.find(entityId)->transform.position(), glm::vec3(10, 0, 0));
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        EXPECT_EQ(scene.find(entityId)->transform.position(), glm::vec3(4, 5, 6));
+
+        // undo / redo 在事务未提交时会先结算该事务后再执行撤销。
+        operations.beginTransaction(scene, clearColor);
+        auto modifiedLight = scene.lighting();
+        modifiedLight.intensity = 3.5f;
+        ASSERT_TRUE(operations.setLighting(scene, clearColor, modifiedLight));
+        ASSERT_TRUE(operations.undo(scene, clearColor));
+        EXPECT_FALSE(operations.inTransaction());
+        EXPECT_FLOAT_EQ(scene.lighting().intensity, 2.5f);
     }
 
     TEST(EditorSelectionOverlayTest, ClipHomogeneousSegmentHandlesNearFarBehindCameraOffscreenAndNonFinite)
@@ -3390,6 +3484,651 @@ namespace
             EXPECT_EQ(uis, mode < 2 ? 2 : mode == 2 ? 1 : 0);
             closed(state);
         }
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, ContinuousPropertyEditsAndColorPickersMergeIntoSingleUndoStepAndCancelRollback)
+    {
+        copyShowcaseModels();
+        auto opts = options();
+        opts.window.width = 1280;
+        opts.window.height = 800;
+        Editor::EditorApp session(opts);
+        Editor::EditorScene editor;
+        GLFWmousebuttonfun mouse = nullptr;
+        GLFWcursorposfun cursor = nullptr;
+        GLFWwindowfocusfun focus = nullptr;
+
+        Scene::EntityId targetId;
+        std::string initialName;
+        glm::vec3 initialPos{};
+        Render::Lighting initialLighting{};
+        std::array<float, 4> initialClearColor{};
+
+        enum class Phase
+        {
+            NameActivate,
+            NameType1,
+            NameType2,
+            NameCommit,
+            NameReleaseKey,
+            NameVerifyAndNoOpActivate,
+            NameNoOpCommit,
+            NameNoOpReleaseKey,
+            FindPosition,
+            PositionPress,
+            PositionDrag1,
+            PositionDrag2,
+            PositionRelease,
+            PositionVerify,
+            FindBg,
+            BgPress,
+            BgReleaseToOpenPicker,
+            BgHoverSv,
+            BgPressSv,
+            BgDragSv,
+            BgReleaseSv,
+            BgClosePickerPress,
+            BgClosePickerRelease,
+            BgVerify,
+            FindLightColor,
+            LightColorPress,
+            LightColorReleaseToOpenPicker,
+            LightColorHoverSv,
+            LightColorPressSv,
+            LightColorDragSv,
+            LightColorReleaseSv,
+            LightColorClosePickerPress,
+            LightColorClosePickerRelease,
+            LightColorVerify,
+            FindIntensity,
+            IntensityPress,
+            IntensityDrag,
+            IntensityFocusLost,
+            IntensityRestoreFocus,
+            IntensityVerifyCancelled,
+            Done
+        };
+        Phase phase = Phase::NameActivate;
+        ImGuiID queuedActivateId = 0;
+        float scanY = 0.0f;
+        double foundX = 0.0;
+        double foundY = 0.0;
+        int waitFrames = 0;
+        int totalFrames = 0;
+        bool failed = false;
+
+        auto propsWindow = []() { return ImGui::FindWindowByName("Properties"); };
+        auto itemId = [](ImGuiWindow* win, const char* idStr, const char* child) -> ImGuiID {
+            const ImGuiID base = idStr ? win->GetID(idStr) : win->ID;
+            return ImHashStr(child, 0, base);
+        };
+        auto zeroSubItemId = [](ImGuiWindow* win, const char* parent) -> ImGuiID {
+            const int zero = 0;
+            return ImHashStr("", 0, ImHashData(&zero, sizeof(zero), win->GetID(parent)));
+        };
+        auto scanItem = [&](GLFWwindow* handle, ImGuiWindow* props, ImGuiID target, Phase nextPhase) {
+            if (ImGui::GetHoveredID() == target)
+            {
+                foundX = ImGui::GetIO().MousePos.x;
+                foundY = ImGui::GetIO().MousePos.y;
+                scanY = 0.0f;
+                phase = nextPhase;
+                return;
+            }
+            const float minY = props->InnerRect.Min.y + 8.0f;
+            const float maxY = props->InnerRect.Max.y - 8.0f;
+            if (scanY < minY)
+                scanY = minY;
+            else
+                scanY += 12.0f;
+            if (scanY > maxY)
+            {
+                scanY = minY;
+                props->Scroll.y = props->Scroll.y >= props->ScrollMax.y
+                                      ? 0.0f
+                                      : std::min(props->Scroll.y + 120.0f, props->ScrollMax.y);
+            }
+            cursor(handle, static_cast<double>(props->WorkRect.Min.x + 10.0f), static_cast<double>(scanY));
+        };
+
+        session.run(
+            {[&](auto& app) {
+                 editor.initialize(app, "assets/scenes/shadows.json");
+                 ASSERT_FALSE(app.scene().entities().empty());
+                 targetId = app.scene().entities().front().id;
+                 editor.select(targetId);
+                 initialName = app.scene().find(targetId)->name;
+                 initialPos = app.scene().find(targetId)->transform.position();
+                 initialLighting = app.scene().lighting();
+                 initialClearColor = app.clearColor();
+
+                 auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                 mouse = glfwSetMouseButtonCallback(handle, nullptr);
+                 glfwSetMouseButtonCallback(handle, mouse);
+                 cursor = glfwSetCursorPosCallback(handle, nullptr);
+                 glfwSetCursorPosCallback(handle, cursor);
+                 focus = glfwSetWindowFocusCallback(handle, nullptr);
+                 glfwSetWindowFocusCallback(handle, focus);
+                 focus(handle, GLFW_TRUE);
+             },
+             [&](auto& app, const auto&) {
+                 if (phase == Phase::Done || failed)
+                     return;
+                 if (++totalFrames > 800)
+                 {
+                     failed = true;
+                     ADD_FAILURE() << "Timeout at phase " << static_cast<int>(phase)
+                                   << " hovered=" << ImGui::GetHoveredID()
+                                   << " active=" << ImGui::GetActiveID()
+                                   << " mouse=(" << ImGui::GetIO().MousePos.x << "," << ImGui::GetIO().MousePos.y
+                                   << ") down0=" << ImGui::GetIO().MouseDown[0];
+                     app.requestExit();
+                     return;
+                 }
+                 if (waitFrames > 0)
+                 {
+                     --waitFrames;
+                     return;
+                 }
+                 auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                 auto* props = propsWindow();
+                 if (!props)
+                     return;
+                 const std::string idStr = std::to_string(targetId.value());
+
+                 switch (phase)
+                 {
+                     case Phase::NameActivate:
+                         queuedActivateId = itemId(props, idStr.c_str(), "##entity-name");
+                         phase = Phase::NameType1;
+                         break;
+                     case Phase::NameType1:
+                         ImGui::GetIO().AddInputCharactersUTF8("_A");
+                         phase = Phase::NameType2;
+                         break;
+                     case Phase::NameType2:
+                         ImGui::GetIO().AddInputCharactersUTF8("B");
+                         phase = Phase::NameCommit;
+                         break;
+                     case Phase::NameCommit:
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, true);
+                         phase = Phase::NameReleaseKey;
+                         break;
+                     case Phase::NameReleaseKey:
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, false);
+                         phase = Phase::NameVerifyAndNoOpActivate;
+                         break;
+                     case Phase::NameVerifyAndNoOpActivate:
+                         EXPECT_TRUE(editor.canUndo());
+                         EXPECT_NE(app.scene().find(targetId)->name, initialName);
+                         ASSERT_TRUE(editor.undo(app));
+                         EXPECT_EQ(app.scene().find(targetId)->name, initialName);
+                         EXPECT_FALSE(editor.canUndo());
+                         // 仅聚焦 Name 再离开而不改动内容：不应产生撤销记录。
+                         queuedActivateId = itemId(props, idStr.c_str(), "##entity-name");
+                         phase = Phase::NameNoOpCommit;
+                         break;
+                     case Phase::NameNoOpCommit:
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, true);
+                         phase = Phase::NameNoOpReleaseKey;
+                         break;
+                     case Phase::NameNoOpReleaseKey:
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, false);
+                         phase = Phase::FindPosition;
+                         break;
+                     case Phase::FindPosition:
+                         EXPECT_FALSE(editor.canUndo());
+                         scanItem(handle, props, zeroSubItemId(props, "##position"), Phase::PositionPress);
+                         break;
+                     case Phase::PositionPress:
+                         mouse(handle, 0, GLFW_PRESS, 0);
+                         phase = Phase::PositionDrag1;
+                         break;
+                     case Phase::PositionDrag1:
+                         cursor(handle, foundX + 30.0, foundY);
+                         phase = Phase::PositionDrag2;
+                         break;
+                     case Phase::PositionDrag2:
+                         cursor(handle, foundX + 70.0, foundY);
+                         EXPECT_FALSE(editor.canUndo());
+                         phase = Phase::PositionRelease;
+                         break;
+                     case Phase::PositionRelease:
+                         mouse(handle, 0, GLFW_RELEASE, 0);
+                         phase = Phase::PositionVerify;
+                         break;
+                     case Phase::PositionVerify:
+                         if (app.scene().find(targetId)->transform.position() == initialPos || !editor.undo(app))
+                         {
+                             failed = true;
+                             ADD_FAILURE() << "Position drag/undo failed";
+                             app.requestExit();
+                             return;
+                         }
+                         EXPECT_EQ(app.scene().find(targetId)->transform.position(), initialPos);
+                         EXPECT_FALSE(editor.canUndo());
+                         props->Scroll.y = props->ScrollMax.y;
+                         phase = Phase::FindBg;
+                         break;
+                     case Phase::FindBg:
+                         scanItem(handle, props, itemId(props, "##background", "##ColorButton"), Phase::BgPress);
+                         break;
+                     case Phase::BgPress:
+                         mouse(handle, 0, GLFW_PRESS, 0);
+                         phase = Phase::BgReleaseToOpenPicker;
+                         break;
+                     case Phase::BgReleaseToOpenPicker:
+                         mouse(handle, 0, GLFW_RELEASE, 0);
+                         phase = Phase::BgHoverSv;
+                         break;
+                     case Phase::BgHoverSv:
+                         if (auto* g = ImGui::GetCurrentContext(); !g->OpenPopupStack.empty())
+                         {
+                             const auto* win = g->OpenPopupStack.back().Window;
+                             if (win->Hidden)
+                                 break;
+                             foundX = win->InnerRect.Min.x + 50.0;
+                             foundY = win->InnerRect.Min.y + 50.0;
+                             cursor(handle, foundX, foundY);
+                             phase = Phase::BgPressSv;
+                         }
+                         else
+                         {
+                             failed = true;
+                             ADD_FAILURE() << "Background picker popup did not open";
+                             app.requestExit();
+                         }
+                         break;
+                     case Phase::BgPressSv:
+                         mouse(handle, 0, GLFW_PRESS, 0);
+                         phase = Phase::BgDragSv;
+                         break;
+                     case Phase::BgDragSv:
+                         cursor(handle, foundX + 60.0, foundY + 50.0);
+                         EXPECT_FALSE(editor.canUndo());
+                         phase = Phase::BgReleaseSv;
+                         break;
+                     case Phase::BgReleaseSv:
+                         mouse(handle, 0, GLFW_RELEASE, 0);
+                         phase = Phase::BgClosePickerPress;
+                         break;
+                     case Phase::BgClosePickerPress:
+                         cursor(handle, 10.0, 10.0);
+                         mouse(handle, 0, GLFW_PRESS, 0);
+                         phase = Phase::BgClosePickerRelease;
+                         break;
+                     case Phase::BgClosePickerRelease:
+                         mouse(handle, 0, GLFW_RELEASE, 0);
+                         phase = Phase::BgVerify;
+                         break;
+                     case Phase::BgVerify:
+                         if (app.clearColor() == initialClearColor || !editor.undo(app))
+                         {
+                             const auto* g = ImGui::GetCurrentContext();
+                             failed = true;
+                             ADD_FAILURE() << "Background picker drag/undo failed; clear=(" << app.clearColor()[0]
+                                           << "," << app.clearColor()[1] << "," << app.clearColor()[2]
+                                           << ") canUndo=" << editor.canUndo()
+                                           << " popups=" << g->OpenPopupStack.size()
+                                           << " found=(" << foundX << "," << foundY << ")";
+                             app.requestExit();
+                             return;
+                         }
+                         EXPECT_EQ(app.clearColor(), initialClearColor);
+                         EXPECT_FALSE(editor.canUndo());
+                         phase = Phase::FindLightColor;
+                         break;
+                     case Phase::FindLightColor:
+                         scanItem(handle, props, itemId(props, "##lightColor", "##ColorButton"),
+                                  Phase::LightColorPress);
+                         break;
+                     case Phase::LightColorPress:
+                         mouse(handle, 0, GLFW_PRESS, 0);
+                         phase = Phase::LightColorReleaseToOpenPicker;
+                         break;
+                     case Phase::LightColorReleaseToOpenPicker:
+                         mouse(handle, 0, GLFW_RELEASE, 0);
+                         phase = Phase::LightColorHoverSv;
+                         break;
+                     case Phase::LightColorHoverSv:
+                         if (auto* g = ImGui::GetCurrentContext(); !g->OpenPopupStack.empty())
+                         {
+                             const auto* win = g->OpenPopupStack.back().Window;
+                             if (win->Hidden)
+                                 break;
+                             foundX = win->InnerRect.Min.x + 50.0;
+                             foundY = win->InnerRect.Min.y + 50.0;
+                             cursor(handle, foundX, foundY);
+                             phase = Phase::LightColorPressSv;
+                         }
+                         else
+                         {
+                             failed = true;
+                             ADD_FAILURE() << "LightColor picker popup did not open";
+                             app.requestExit();
+                         }
+                         break;
+                     case Phase::LightColorPressSv:
+                         mouse(handle, 0, GLFW_PRESS, 0);
+                         phase = Phase::LightColorDragSv;
+                         break;
+                     case Phase::LightColorDragSv:
+                         cursor(handle, foundX + 60.0, foundY + 50.0);
+                         EXPECT_FALSE(editor.canUndo());
+                         phase = Phase::LightColorReleaseSv;
+                         break;
+                     case Phase::LightColorReleaseSv:
+                         mouse(handle, 0, GLFW_RELEASE, 0);
+                         phase = Phase::LightColorClosePickerPress;
+                         break;
+                     case Phase::LightColorClosePickerPress:
+                         cursor(handle, 10.0, 10.0);
+                         mouse(handle, 0, GLFW_PRESS, 0);
+                         phase = Phase::LightColorClosePickerRelease;
+                         break;
+                     case Phase::LightColorClosePickerRelease:
+                         mouse(handle, 0, GLFW_RELEASE, 0);
+                         phase = Phase::LightColorVerify;
+                         break;
+                     case Phase::LightColorVerify:
+                         if (app.scene().lighting().color == initialLighting.color || !editor.undo(app))
+                         {
+                             failed = true;
+                             ADD_FAILURE() << "LightColor picker drag/undo failed";
+                             app.requestExit();
+                             return;
+                         }
+                         EXPECT_EQ(app.scene().lighting().color, initialLighting.color);
+                         EXPECT_FALSE(editor.canUndo());
+                         phase = Phase::FindIntensity;
+                         break;
+                     case Phase::FindIntensity:
+                         scanItem(handle, props, props->GetID("##intensity"), Phase::IntensityPress);
+                         break;
+                     case Phase::IntensityPress:
+                         mouse(handle, 0, GLFW_PRESS, 0);
+                         phase = Phase::IntensityDrag;
+                         break;
+                     case Phase::IntensityDrag:
+                         cursor(handle, static_cast<double>(props->WorkRect.Min.x + 120.0f), foundY);
+                         phase = Phase::IntensityFocusLost;
+                         break;
+                     case Phase::IntensityFocusLost:
+                         EXPECT_NE(app.scene().lighting().intensity, initialLighting.intensity);
+                         focus(handle, GLFW_FALSE);
+                         phase = Phase::IntensityRestoreFocus;
+                         break;
+                     case Phase::IntensityRestoreFocus:
+                         mouse(handle, 0, GLFW_RELEASE, 0);
+                         focus(handle, GLFW_TRUE);
+                         phase = Phase::IntensityVerifyCancelled;
+                         break;
+                     case Phase::IntensityVerifyCancelled:
+                         EXPECT_FLOAT_EQ(app.scene().lighting().intensity, initialLighting.intensity);
+                         EXPECT_FALSE(editor.canUndo());
+                         phase = Phase::Done;
+                         app.requestExit();
+                         break;
+                     case Phase::Done:
+                         break;
+                 }
+             },
+             [&](auto& app) {
+                 if (queuedActivateId != 0)
+                 {
+                     ImGui::ActivateItemByID(queuedActivateId);
+                     queuedActivateId = 0;
+                 }
+                 editor.ui(app);
+             },
+             [&](auto& app) { editor.cancelInteraction(app); },
+             [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+             [&](auto& app) { editor.layout(app); }, [&](auto& app) { editor.requestClose(app); }});
+        EXPECT_EQ(phase, Phase::Done);
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, EditMenuAndWindowShortcutsUndoRedoWorkWithoutViewportFocus)
+    {
+        copyShowcaseModels();
+        auto opts = options();
+        opts.window.width = 1280;
+        opts.window.height = 800;
+        Editor::EditorApp session(opts);
+        Editor::EditorScene editor;
+        GLFWwindowfocusfun focus = nullptr;
+
+        Scene::EntityId targetId;
+        glm::vec3 initialPos{};
+        int step = 0;
+        int totalFrames = 0;
+        bool done = false;
+
+        auto injectCombo = [](ImGuiKey key, bool down, bool shift = false) {
+            auto& io = ImGui::GetIO();
+            io.AddKeyEvent(ImGuiMod_Ctrl, down);
+            io.AddKeyEvent(ImGuiKey_LeftCtrl, down);
+            if (shift)
+            {
+                io.AddKeyEvent(ImGuiMod_Shift, down);
+                io.AddKeyEvent(ImGuiKey_LeftShift, down);
+            }
+            io.AddKeyEvent(key, down);
+        };
+        auto clickPopupItem = [](const char* label) {
+            auto* g = ImGui::GetCurrentContext();
+            if (!g || g->OpenPopupStack.empty() || !g->OpenPopupStack.back().Window)
+                return false;
+            ImGui::ActivateItemByID(g->OpenPopupStack.back().Window->GetID(label));
+            return true;
+        };
+        auto menuButtonId = [](ImGuiWindow* bar, const char* label) -> ImGuiID {
+            return ImHashStr("", 0, ImHashStr(label, 0, bar->GetID("##MenuBar")));
+        };
+
+        session.run(
+            {[&](auto& app) {
+                 editor.initialize(app, "assets/scenes/shadows.json");
+                 ASSERT_FALSE(app.scene().entities().empty());
+                 targetId = app.scene().entities().front().id;
+                 editor.select(targetId);
+                 initialPos = app.scene().find(targetId)->transform.position();
+
+                 auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                 focus = glfwSetWindowFocusCallback(handle, nullptr);
+                 glfwSetWindowFocusCallback(handle, focus);
+                 focus(handle, GLFW_TRUE);
+             },
+             [&](auto& app, const auto&) {
+                 if (done)
+                     return;
+                 if (++totalFrames > 800)
+                 {
+                     done = true;
+                     ADD_FAILURE() << "Shortcut test timeout at step " << step;
+                     app.requestExit();
+                     return;
+                 }
+                 auto* handle = static_cast<GLFWwindow*>(app.window().getNativeHandle());
+                 auto* bar = ImGui::FindWindowByName("##MainMenuBar");
+                 auto* props = ImGui::FindWindowByName("Properties");
+                 if (!bar || !props)
+                     return;
+                 const std::string idStr = std::to_string(targetId.value());
+
+                 switch (step)
+                 {
+                     case 0:  // 激活顶部 View 菜单（在 update 中设置，同帧 NewFrame + layout 生效）
+                         ImGui::ActivateItemByID(menuButtonId(bar, "View"));
+                         ++step;
+                         break;
+                     case 1:
+                         if (clickPopupItem("Scene viewport"))
+                             ++step;
+                         break;
+                     case 2:
+                         if (app.sceneExtent().width == 0 && ImGui::GetCurrentContext()->OpenPopupStack.empty())
+                             ++step;
+                         break;
+                     case 3:  // 激活 Name 并输入一次有效改动
+                         ImGui::ActivateItemByID(ImHashStr("##entity-name", 0, props->GetID(idStr.c_str())));
+                         ++step;
+                         break;
+                     case 4:
+                         ImGui::GetIO().AddInputCharactersUTF8("X");
+                         ++step;
+                         break;
+                     case 5:
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, true);
+                         ++step;
+                         break;
+                     case 6:
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, false);
+                         ++step;
+                         break;
+                     case 7:  // 在 Objects 面板聚焦且 Scene 视口已关闭时按 Ctrl+Z 撤销
+                         ImGui::SetWindowFocus("Objects");
+                         EXPECT_TRUE(editor.canUndo());
+                         injectCombo(ImGuiKey_Z, true);
+                         ++step;
+                         break;
+                     case 8:
+                         injectCombo(ImGuiKey_Z, false);
+                         ++step;
+                         break;
+                     case 9:  // 验证已撤销，按 Ctrl+Shift+Z 重做
+                         EXPECT_FALSE(editor.canUndo());
+                         EXPECT_TRUE(editor.canRedo());
+                         injectCombo(ImGuiKey_Z, true, true);
+                         ++step;
+                         break;
+                     case 10:
+                         injectCombo(ImGuiKey_Z, false, true);
+                         ++step;
+                         break;
+                     case 11:  // 验证重做生效，再 Ctrl+Z 然后 Ctrl+Y
+                         EXPECT_TRUE(editor.canUndo());
+                         EXPECT_FALSE(editor.canRedo());
+                         injectCombo(ImGuiKey_Z, true);
+                         ++step;
+                         break;
+                     case 12:
+                         injectCombo(ImGuiKey_Z, false);
+                         ++step;
+                         break;
+                     case 13:
+                         EXPECT_FALSE(editor.canUndo());
+                         injectCombo(ImGuiKey_Y, true);
+                         ++step;
+                         break;
+                     case 14:
+                         injectCombo(ImGuiKey_Y, false);
+                         ++step;
+                         break;
+                     case 15:  // 处于 Name 输入框（WantTextInput）时 Ctrl+Z 不触发编辑器撤销
+                         EXPECT_TRUE(editor.canUndo());
+                         ImGui::ActivateItemByID(ImHashStr("##entity-name", 0, props->GetID(idStr.c_str())));
+                         ++step;
+                         break;
+                     case 16:
+                         injectCombo(ImGuiKey_Z, true);
+                         ++step;
+                         break;
+                     case 17:
+                         injectCombo(ImGuiKey_Z, false);
+                         ++step;
+                         break;
+                     case 18:
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, true);
+                         ++step;
+                         break;
+                     case 19:
+                         ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, false);
+                         ++step;
+                         break;
+                     case 20:
+                         EXPECT_TRUE(editor.canUndo());
+                         // 弹出 Unsaved changes 确认框时 Ctrl+Z 不触发
+                         editor.requestOpen();
+                         ++step;
+                         break;
+                     case 21:
+                         injectCombo(ImGuiKey_Z, true);
+                         ++step;
+                         break;
+                     case 22:
+                         injectCombo(ImGuiKey_Z, false);
+                         ++step;
+                         break;
+                     case 23:
+                         EXPECT_TRUE(editor.canUndo());
+                         if (auto* unsaved = ImGui::FindWindowByName("Unsaved changes"))
+                             ImGui::ActivateItemByID(unsaved->GetID("Cancel"));
+                         ++step;
+                         break;
+                     case 24:  // 按住 Ctrl+Z 失焦再回焦：未松开 Z 前不触发撤销
+                         injectCombo(ImGuiKey_Z, true);
+                         focus(handle, GLFW_FALSE);
+                         ++step;
+                         break;
+                     case 25:
+                         focus(handle, GLFW_TRUE);
+                         ++step;
+                         break;
+                     case 26:
+                         EXPECT_TRUE(editor.canUndo());
+                         injectCombo(ImGuiKey_Z, false);
+                         ++step;
+                         break;
+                     case 27:  // 顶部 Edit 菜单点击 Undo / Redo / Duplicate / Delete
+                         ImGui::ActivateItemByID(menuButtonId(bar, "Edit"));
+                         ++step;
+                         break;
+                     case 28:
+                         if (clickPopupItem("Undo"))
+                             ++step;
+                         break;
+                     case 29:
+                         EXPECT_FALSE(editor.canUndo());
+                         EXPECT_TRUE(editor.canRedo());
+                         ImGui::ActivateItemByID(menuButtonId(bar, "Edit"));
+                         ++step;
+                         break;
+                     case 30:
+                         if (clickPopupItem("Redo"))
+                             ++step;
+                         break;
+                     case 31:
+                         EXPECT_TRUE(editor.canUndo());
+                         ImGui::ActivateItemByID(menuButtonId(bar, "Edit"));
+                         ++step;
+                         break;
+                     case 32:
+                         if (clickPopupItem("Duplicate"))
+                             ++step;
+                         break;
+                     case 33:
+                         EXPECT_EQ(app.scene().entities().size(), 4u);
+                         EXPECT_EQ(app.scene().find(targetId)->transform.position(), initialPos);
+                         ImGui::ActivateItemByID(menuButtonId(bar, "Edit"));
+                         ++step;
+                         break;
+                     case 34:
+                         if (clickPopupItem("Delete"))
+                             ++step;
+                         break;
+                     case 35:
+                         EXPECT_EQ(app.scene().entities().size(), 3u);
+                         done = true;
+                         app.requestExit();
+                         break;
+                 }
+             },
+             [&](auto& app) { editor.ui(app); }, [&](auto& app) { editor.cancelInteraction(app); },
+             [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+             [&](auto& app) { editor.layout(app); }, [&](auto& app) { editor.requestClose(app); }});
+        EXPECT_TRUE(done);
         cleanValidation();
     }
 
