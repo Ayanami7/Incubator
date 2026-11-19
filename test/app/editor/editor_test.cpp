@@ -18,9 +18,11 @@
 #include <stdexcept>
 #include <vector>
 
+#include "app/common/lighting_controls.h"
 #include "app/common/startup_config.h"
 #include "app/editor/editor_app.h"
 #include "app/editor/editor_scene.h"
+#include "app/editor/selection_overlay.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
@@ -30,6 +32,7 @@
 #include "runtime/resource/loader/texture_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
+#include "runtime/scene/scene_file.h"
 #include "runtime/scene/scene_frame.h"
 #include "support/texture_gpu_review.h"
 #include "support/window_capture.h"

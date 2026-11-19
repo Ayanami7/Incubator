@@ -18,7 +18,6 @@ Incubator/
 ├── 3rdparty/           # 第三方依赖库
 ├── assets/             # 项目资产源文件
 ├── cmake/              # 构建辅助与资产部署规则
-├── bin/                # 二进制输出预留目录，实际位置以 CMake 为准
 ├── build/              # 构建产物、部署资产与测试输出
 ├── src/
 │   └── runtime/        # Core、Platform、Resource、Model、Scene、Render 逻辑模块
@@ -26,7 +25,7 @@ Incubator/
 │   └── demo/           # 引擎能力展示程序
 ├── app/
 │   ├── editor/         # 场景编辑工具，目标 Editor
-│   └── common/         # 两个应用实际共用的输入、相机、配置等小组件
+│   └── common/         # 两个应用共用的会话、输入、相机与启动配置
 ├── test/               # 单元测试、集成测试与精确 fixture
 ├── docs/               # 构建、模块接口与使用说明
 ├── .agents/specs/      # 可选方向、当前任务与任务归档

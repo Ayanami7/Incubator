@@ -112,7 +112,7 @@ Scene settings 折叠区提供 Light yaw/pitch、Color (linear)、Intensity 和 
 ## 实现与持有期
 
 `main.cpp` 创建 FileIO、读取启动配置，将同一 FileIO 交给 `EditorApp`，并以启动场景路径创建主循环回调；
-`EditorApp::run()` 无参入口使用默认场景路径，不自行读取配置。`editor_scene.h` 保存模型展示和面板操作。
+`EditorApp::run()` 无参入口使用默认场景路径。`editor_scene.cpp` 组织模型展示和面板操作，编辑与保存操作由 `editor_operations.cpp` 实现。
 `EditorOperations`（继承自 `EditorSelection`，二者头文件均不依赖 ImGui）维护会话模型复用表、唯一选中 `EntityId` 和当前文件关联，不持有 Scene 或实体指针；`EditorScene` 承接面板未确认输入缓冲、弹窗、布局、轨道/点击手势与 `selection_overlay.h` 包围盒辅助线显示，不复制第二份 Scene 或实体状态。实体唯一 Transform、可见性、Camera 及光照由 Scene 保存。角度、TRS 与灯光编辑值在本轮 UI 中临时取得，发生修改才通过操作/Scene 接口写回。
 创建/删除/清空时不跨结构变更保存实体指针；从文件加载成功后清除旧选择。操作规则与纯 CPU 裁剪/投影由单元测试覆盖，面板控件、列表与视口左键点击由真实 ImGui 输入批次集成测试覆盖，独立进程保存与恢复由 `editor_scene_restart` 验证，互不替代。
 
@@ -138,9 +138,9 @@ Debug 示例沿用 Optional Validation，Release 为 Disabled；需要强制验�
 
 ## 构建与代码边界
 
-按 WORKFLOW.md 执行 Debug/all，或单独构建 Editor。Editor 编译 app/editor 的 main.cpp、editor_app.cpp、
-editor_scene.h、editor_operations.h、editor_selection.h、selection_overlay.h、workspace.h 和共用启动配置，链接 Runtime/imgui，依赖 incubator_assets；不编译 Demo 源码。
-EditorApp 具体拥有本应用会话，不进入 Runtime，也不建立 Application 基类。输入、轨道相机、视口换算、光照和启动配置小组件放在 app/common。
+按 WORKFLOW.md 执行 Debug/all，或单独构建 Editor。Editor 编译 main.cpp，链接 `IncubatorEditorSupport` 并依赖 incubator_assets。
+Editor 的应用实现、面板、编辑操作和选中框由 `IncubatorEditorSupport` 编译，供 Editor 及其测试共用。
+`EditorApp` 组合 `IncubatorAppCommon` 的 AppSession，由公共会话持有并驱动当前 Scene。
 
 Editor 消费层测试位于 `test/app/editor/editor_test.cpp`，目标为 `editor_test`，启动 cwd 为构建目录；
 需要修改输入的测试夹具在独立工作副本中运行并恢复 cwd。纯 CPU 轨道相机测试位于 `test/app/common/orbit_camera_test.cpp`。TestMate 和 CTest 的执行约定见 [开发工作流](../../WORKFLOW.md#6-运行测试)。

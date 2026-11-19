@@ -26,7 +26,8 @@ Incubator/
 ├── CMakeLists.txt      # 入口：全局设置、子目录与辅助规则
 ├── incubator.json      # 默认启动配置，部署到构建目录根部
 ├── cmake/
-│   └── assets.cmake    # 运行资产与默认启动配置部署（文件依赖与增量复制）
+│   ├── assets.cmake    # 运行资产与默认启动配置部署
+│   └── shaders.cmake   # 共用生产 Shader 编译
 ├── 3rdparty/
 │   └── CMakeLists.txt  # 第三方依赖库（各库独立 CMakeLists 或子目录）
 ├── src/
@@ -40,6 +41,9 @@ Incubator/
 │       ├── scene/
 │       └── render/
 ├── assets/            # 资产源文件
+├── app/
+│   ├── common/        # 公共会话和启动配置，IncubatorAppCommon
+│   └── editor/        # 编辑器程序及供测试复用的 IncubatorEditorSupport
 ├── test/
 │   └── CMakeLists.txt  # 测试入口（按被测层/模块建子目录与可执行目标）
 └── examples/
@@ -51,7 +55,7 @@ Incubator/
 ### 根 CMakeLists.txt
 
 - 设置全局变量：CMake 版本、C++ 标准、路径变量（`SRC_DIR`、`THIRD_PARTY_DIR` 等）
-- 依次添加 `3rdparty` → `src`，包含 `cmake/assets.cmake`，再添加 `test` → `examples`
+- 添加 `3rdparty`，加载 Shader 与资产部署规则，再依次添加 `src`、`app`、`test` 和 `examples`
 
 ### 运行时库目标（src/runtime/）
 
@@ -67,7 +71,7 @@ Incubator/
 源文件发现规则创建，为不依赖窗口或 GPU 的 CPU 测试。真实模型的 Scene 组合验证复用 model_preparation_test
 及其现有资源部署、串行 GPU 执行约定，使用正式 SceneFrame 提取和 Renderer 提交接口。
 
-EditorApp 位于 app/editor，DemoApp 位于 examples/demo，分别具体组织 Window、FileIO、资源路由、Scene 和 Renderer；共用小组件位于 app/common，Runtime 不提供 Application 模块或依赖应用部署。
+EditorApp 和 DemoApp 均组合 `app/common/` 的 AppSession，由后者管理 Window、FileIO、资源路由、Scene、Renderer 和帧循环。Runtime 提供会话所用能力，应用负责组装。
 
 ### 测试目标（test/ 下）
 
@@ -75,8 +79,8 @@ EditorApp 位于 app/editor，DemoApp 位于 examples/demo，分别具体组织 
 - 链接测试框架与对应的运行时库
 - Runtime 测试使用 `FOLDER "UnitTest/runtime"`，Editor、共用组件和 Demo 测试分别使用 UnitTest/app/editor、UnitTest/app/common、UnitTest/examples/demo 分组
 
-`test/runtime/` 保存 Runtime 模块及跨模块集成测试；`test/app/editor/` 中的 `editor_test` 编译生产 editor_app.cpp，验证编辑会话及面板；
-`test/examples/demo/demo_test` 编译 demo_app.cpp 验证最小展示。`test/app/common/orbit_camera_test` 验证共用轨道相机，
+`test/runtime/` 保存 Runtime 模块及跨模块集成测试。`editor_test` 和 `editor_scene_restart` 链接生产编辑器共用的 `IncubatorEditorSupport`。
+`demo_test` 编译 demo_app.cpp 并链接 `IncubatorAppCommon` 验证最小展示。`orbit_camera_test` 验证共用轨道相机，
 `render_input_test` 验证帧参数与 Vulkan 能力判断；这两个目标不创建窗口或初始化 GPU，也不依赖资产部署。
 共享截图、GPU 回读和渲染样本辅助代码位于 `test/support/`，精确 fixture 保留在 `test/runtime/fixtures/`。
 
@@ -106,15 +110,14 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 - 独立可执行目标，演示引擎模块的实际用法
 - 链接运行时库与所需第三方库
 
-`demo` 编译 examples/demo/main.cpp、demo_app.cpp、showcase.h 和共用启动配置，只提供静态场景与相机、光照和阴影控制。
+`demo` 编译 examples/demo/main.cpp 和 demo_app.cpp，链接 `IncubatorAppCommon`，提供静态场景与相机、光照和阴影控制。
 `demo_test` 验证实际保留的最小展示能力，示例不包含 Editor 的对象面板或文件工作流。
 
 ### 正式应用目标（app/editor）
 
 根 CMake 在 Runtime、共用 Shader/资产目标定义后添加 app，再添加测试和示例。
-`app/CMakeLists.txt` 添加 editor；`app/editor/CMakeLists.txt` 定义 `Editor`，编译本目录 main.cpp、editor_app.cpp、
-editor_scene.h、editor_operations.h、editor_selection.h、selection_overlay.h、workspace.h 及 app/common/startup_config.cpp。只链接 IncubatorRuntime、imgui，私有使用 RapidJSON 头。
-Editor 不包含、编译或链接 examples/demo 源码，也不依赖 demo 可执行目标。
+`app/CMakeLists.txt` 先添加 common，再添加 editor。`Editor` 编译 main.cpp，并链接 `IncubatorEditorSupport`。
+该静态库编译 editor_app.cpp、editor_scene.cpp、editor_operations.cpp 和 selection_overlay.cpp，同时被两个 Editor 测试程序链接。
 
 ```powershell
 # 按 WORKFLOW 进入 MSVC 环境并设置 UTF-8 代码页后执行。
@@ -126,7 +129,7 @@ cd build
 单独目标依赖 incubator_assets，部署模型、Shader、场景、字体和 incubator.json；运行 cwd 为 build，
 VS_DEBUGGER_WORKING_DIRECTORY 及 VS Code Editor 启动项均明确该目录。场景、配置和字体路径保持原语义，不随可执行文件位置改变。
 Editor 布局仅使用 incubator-editor-layout.ini；Demo 不持久化布局，二者不互相覆盖。
-app/common 仅放双方实际共用的参数、输入、相机、光照和配置小组件，不创建 Application 基类或完整工作区库。
+`IncubatorAppCommon` 编译 AppSession 和启动配置，提供双方共用的参数、输入、相机和光照组件。
 
 应用使用方式见 [Editor](./app/editor.md) 和 [Demo](./examples/demo.md)。
 
@@ -139,7 +142,7 @@ app/common 仅放双方实际共用的参数、输入、相机、光照和配置
 - `incubator_config` 在 `cmake/assets.cmake` 中将仓库根目录的 `incubator.json` 增量复制到 `<build>/incubator.json`，Editor 和 Demo 通过 incubator_assets 显式依赖该目标。配置部署与资产部署均为单向复制，运行时保存不回写源文件；新场景仍需显式加入部署规则。
 - `runtime_ui_fonts` 在同一文件中部署 `assets/fonts/NotoSansSC-Regular.otf` 与 `OFL.txt` 到 `<build>/assets/fonts/`，两个应用及独立进程场景恢复程序显式依赖该目标。字体来源与许可见 `assets/fonts/SOURCE.md`，不使用开发机系统字体。
 - `runtime_test_fixtures` 将同一生产字体及许可复制到 `<build>/test-fixtures/assets/fonts/`，GPU 和 Demo 隔离工作目录继续使用该字体。`imgui_integration_test` 按 GPU 测试属性串行运行于 `<build>/test-fixtures/`，覆盖受控 DPI 更新、像素密度与原生窗口字体呈现；模拟缩放与实际显示证据分别保存。
-- 配置解析复用 Assimp 附带的 RapidJSON 头文件，`demo`、`Editor`、`editor_test` 和 `startup_config_test` 分别设置私有包含目录，不对外暴露解析器类型或增加链接库。
+- `IncubatorAppCommon` 私有包含 Assimp 附带的 RapidJSON 头文件，应用和配置测试复用该库编译的启动配置实现。
 - `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。Vulkan review 使用精确纹理 fixture，真实模型集成测试按需读取选定模型；不向 `<build>/assets/` 部署测试输入。
 
 ### Assimp 依赖

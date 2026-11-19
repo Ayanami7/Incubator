@@ -39,9 +39,8 @@ cd E:/Project/VScode/Incubator/build
 
 ## 实现与持有期
 
-`DemoApp` 在示例中具体组织 Window、Renderer、FileIO、Loader 和 Scene；`Showcase` 只负责静态场景准备、
-相机与展示控件。共享输入消费、轨道相机、逻辑视口换算、光照控件及启动配置位于 `app/common/`，
-双方没有公共 Application 基类或 Runtime 应用框架。
+`DemoApp` 通过 `app/common/` 的 AppSession 使用 Window、Renderer、FileIO、Loader 和 Scene。
+`Showcase` 负责静态场景、相机与展示控件。共享输入消费、轨道相机、逻辑视口换算、光照控件及启动配置同样位于 `app/common/`。
 
 布局先确定图像区域与像素 extent，再消费 ImGui 已处理的输入批次、构建控件、提取 SceneFrame 并提交。
 CPU 持有在准备后释放，PreparedModel 拥有 GPU 资源组；展示缓存及当前 Scene 保留模型至结束，

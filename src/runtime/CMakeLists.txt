@@ -153,11 +153,21 @@ set(SCENE_SOURCES
     scene/frustum.cpp
 )
 
-set(ALL_HEADERS
+set(MODEL_HEADERS
     model/model_reference.h
     model/model_manager.h
     model/prepared_model.h
     model/model_instance.h
+)
+set(MODEL_SOURCES
+    model/model_reference.cpp
+    model/model_manager.cpp
+    model/prepared_model.cpp
+    model/model_instance.cpp
+)
+
+set(ALL_HEADERS
+    ${MODEL_HEADERS}
     ${CORE_HEADERS}
     ${PLATFORM_HEADERS}
     ${RESOURCE_HEADERS}
@@ -165,10 +175,7 @@ set(ALL_HEADERS
     ${SCENE_HEADERS}
 )
 set(ALL_SOURCES
-    model/model_reference.cpp
-    model/model_manager.cpp
-    model/prepared_model.cpp
-    model/model_instance.cpp
+    ${MODEL_SOURCES}
     ${CORE_SOURCES}
     ${PLATFORM_SOURCES}
     ${RESOURCE_SOURCES}

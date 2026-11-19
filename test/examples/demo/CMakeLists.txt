@@ -1,6 +1,6 @@
 include(GoogleTest)
 add_executable(demo_test demo_test.cpp "${CMAKE_SOURCE_DIR}/examples/demo/demo_app.cpp")
-target_link_libraries(demo_test PRIVATE GTest::gtest_main IncubatorRuntime vulkan imgui)
+target_link_libraries(demo_test PRIVATE GTest::gtest_main IncubatorAppCommon vulkan)
 target_include_directories(demo_test PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/test")
 add_dependencies(demo_test incubator_assets)
 set_target_properties(demo_test PROPERTIES FOLDER "UnitTest/examples/demo")

@@ -1,2 +1,3 @@
-# 正式应用入口；共用小组件由具体消费者按需编译，不新增应用框架。
+# 应用共享实现先定义，供编辑器、示例及其测试链接。
+add_subdirectory(common)
 add_subdirectory(editor)
