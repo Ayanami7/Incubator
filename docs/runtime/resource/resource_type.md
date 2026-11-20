@@ -9,10 +9,8 @@
 ```cpp
 enum class ResourceType : Utils::Hash
 {
-    TEXT = Utils::constHash("TEXT"),  // 文本资源（配置/JSON/着色器源码）
     TEXTURE = Utils::constHash("TEXTURE"),
     MODEL = Utils::constHash("MODEL"),
-    MATERIAL = Utils::constHash("MATERIAL"),
     SHADER = Utils::constHash("SHADER"),
     INVALID = 0
 };
@@ -21,10 +19,6 @@ enum class ResourceType : Utils::Hash
 - 底层为 `Utils::Hash`（uint64），显式值 = 字符串 `constHash`，跨会话稳定
 - `INVALID = 0` 为无效类型哨兵，任何入口（registerResource / fromPath）遇之拒绝
 - 枚举值使用 **UPPER_CASE**，与 `Log::Level` 约定一致
-
-## TEXT 新值说明
-
-`TEXT` 表示配置、JSON、着色器源码等文本载荷，通过 TextLoader 路由加载，不依赖解码库。
 
 ## 扩展注意
 

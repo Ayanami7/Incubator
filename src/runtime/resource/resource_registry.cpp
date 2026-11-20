@@ -67,7 +67,7 @@ namespace Incubator
                 return pathIt->second == id;
             }
 
-            auto [it, inserted] = idToEntry_.emplace(id.value(), Entry{{id, type, key, 0}, 1, nullptr});
+            auto [it, inserted] = idToEntry_.emplace(id.value(), Entry{{id, type, key}, 1, nullptr});
             if (!inserted)
             {
                 // 碰撞检测：相同 ID 已被不同 (type, key) 占用 → 拒绝注入

@@ -12,7 +12,6 @@ struct AssetInfo
     ResourceId id;                              ///< 资源唯一身份（自包含冗余）
     ResourceType type = ResourceType::INVALID;  ///< 资源类型标签
     std::string virtualPath;                    ///< 规范化后的虚拟路径
-    Utils::Hash contentHash = 0;                ///< 内容指纹；0 = 当前未计算
 
     bool valid() const noexcept;                // 仅校验 id.valid()
 };
@@ -22,11 +21,10 @@ struct AssetInfo
 
 - **`id` 冗余自包含**：id 可由 (type, virtualPath) 重算，但 Entry 携带完整身份，查询/挂载无需反推
 - **`virtualPath`**：是**规范化后的虚拟路径**，而非机器相关的绝对物理路径（真实路径解析是 Loader/VFS 的职责）
-- **`contentHash` 预留**：内容指纹（复用 `hashFileFast` 的热重载检测基础），当前**不参与 ID 计算**，恒为 0
 
 ## 有效性约定
 
-`valid()` 有意保持宽松——只检查 `id.valid()`，**不**验证 type、virtualPath、contentHash 及它们与 id 的一致性。
+`valid()` 有意保持宽松——只检查 `id.valid()`，**不**验证 type、virtualPath 及它们与 id 的一致性。
 完整的完整性不开放在 Registry 登记边界维护（`resource_registry.md`）。
 
 ## 与 Registry 的整合（X3）

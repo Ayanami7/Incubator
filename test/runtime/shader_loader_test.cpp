@@ -64,11 +64,9 @@ namespace
             ASSERT_TRUE(output.good());
         }
 
-        ResourceId registerShader(std::string_view virtualPath = "shaders/test.spv")
+        void registerShaderLoader()
         {
-            auto& manager = ResourceManager::instance();
-            manager.registerLoader(ResourceType::SHADER, std::make_unique<ShaderLoader>(*source_));
-            return manager.registerResource(ResourceType::SHADER, virtualPath);
+            ResourceManager::instance().registerLoader(ResourceType::SHADER, std::make_unique<ShaderLoader>(*source_));
         }
 
         fs::path previousDirectory_;
@@ -82,14 +80,19 @@ namespace
     {
         const std::vector<uint32_t> words = {0x07230203, 0x00010600, 0, 1, 0};
         writeWords(words);
-        const auto id = registerShader();
+        registerShaderLoader();
         auto& manager = ResourceManager::instance();
-        auto* shader = manager.get<ShaderResource>(id);
+        auto first = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/test.spv");
+        ASSERT_TRUE(first);
+        const auto id = first.id();
+        const auto* shader = first.get<ShaderResource>();
         ASSERT_NE(shader, nullptr);
         EXPECT_EQ(shader->words(), words);
-        EXPECT_EQ(shader->state(), ResourceState::READY);
-        EXPECT_EQ(manager.get<ShaderResource>(id), shader);
-        manager.release(id);
+        auto second = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/test.spv");
+        ASSERT_TRUE(second);
+        EXPECT_EQ(second.get<ShaderResource>(), shader);
+        second.reset();
+        first.reset();
         EXPECT_EQ(ResourceRegistry::instance().getObject(id), nullptr);
     }
 
@@ -97,19 +100,23 @@ namespace
     {
         const std::vector<uint32_t> words = {0x07230203, 0x00010600, 0, 1, 0};
         writeWords(words, "着色器/测试.spv");
-        const auto id = registerShader("着色器/测试.spv");
-        const auto* shader = ResourceManager::instance().get<ShaderResource>(id);
+        registerShaderLoader();
+        const auto hold = ResourceManager::instance().hold<ShaderResource>(ResourceType::SHADER, "着色器/测试.spv");
+        ASSERT_TRUE(hold);
+        const auto* shader = hold.get<ShaderResource>();
         ASSERT_NE(shader, nullptr);
         EXPECT_EQ(shader->words(), words);
     }
 
     TEST_F(ShaderLoaderTest, DirectExceptionIsLoggedOnceByManagerAndConvertedToNull)
     {
-        const auto id = registerShader();
+        registerShaderLoader();
+        const auto id = ResourceId::fromPath(ResourceType::SHADER, "shaders/test.spv");
         ShaderLoader directLoader(*source_);
         EXPECT_THROW(directLoader.load(id, "shaders/test.spv"), Error::Exception);
         EXPECT_TRUE(messages_.str().empty());
-        EXPECT_EQ(ResourceManager::instance().load(id), nullptr);
+        const auto hold = ResourceManager::instance().hold<ShaderResource>(ResourceType::SHADER, "shaders/test.spv");
+        EXPECT_FALSE(hold);
         EXPECT_EQ(ResourceRegistry::instance().getObject(id), nullptr);
         const auto messages = messages_.str();
         const auto first = messages.find("load: loader threw:");
@@ -121,8 +128,9 @@ namespace
     TEST_F(ShaderLoaderTest, MissingChinesePathIsPreservedInDiagnostic)
     {
         const std::string virtualPath = "着色器/缺失.spv";
-        const auto id = registerShader(virtualPath);
-        EXPECT_EQ(ResourceManager::instance().load(id), nullptr);
+        registerShaderLoader();
+        const auto hold = ResourceManager::instance().hold<ShaderResource>(ResourceType::SHADER, virtualPath);
+        EXPECT_FALSE(hold);
         EXPECT_NE(messages_.str().find("assets/着色器/缺失.spv"), std::string::npos);
         EXPECT_NE(messages_.str().find("SPIR-V file was not found"), std::string::npos);
     }
@@ -130,23 +138,24 @@ namespace
     TEST_F(ShaderLoaderTest, InvalidPayloadFailsWithoutMountingAndCanBeRetried)
     {
         writeWords({0, 0, 0, 0, 0});
-        const auto id = registerShader();
+        registerShaderLoader();
         auto& manager = ResourceManager::instance();
-        EXPECT_EQ(manager.load(id), nullptr);
+        const auto id = ResourceId::fromPath(ResourceType::SHADER, "shaders/test.spv");
+        EXPECT_FALSE(manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/test.spv"));
         EXPECT_EQ(ResourceRegistry::instance().getObject(id), nullptr);
         EXPECT_NE(messages_.str().find("Invalid SPIR-V magic number"), std::string::npos);
         const std::vector<uint32_t> valid = {0x07230203, 0x00010600, 0, 1, 0};
         writeWords(valid);
-        auto* shader = manager.get<ShaderResource>(id);
-        ASSERT_NE(shader, nullptr);
-        EXPECT_EQ(shader->words(), valid);
+        const auto hold = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/test.spv");
+        ASSERT_TRUE(hold);
+        EXPECT_EQ(hold.get<ShaderResource>()->words(), valid);
     }
 
     TEST_F(ShaderLoaderTest, InvalidChinesePathPayloadPreservesPathAndReason)
     {
         writeWords({0, 0, 0, 0, 0}, "着色器/坏数据.spv");
-        const auto id = registerShader("着色器/坏数据.spv");
-        EXPECT_EQ(ResourceManager::instance().load(id), nullptr);
+        registerShaderLoader();
+        EXPECT_FALSE(ResourceManager::instance().hold<ShaderResource>(ResourceType::SHADER, "着色器/坏数据.spv"));
         EXPECT_NE(messages_.str().find("assets/着色器/坏数据.spv"), std::string::npos);
         EXPECT_NE(messages_.str().find("Invalid SPIR-V magic number"), std::string::npos);
     }

@@ -6,8 +6,6 @@
 #include <fstream>
 
 #include "runtime/core/error/error.h"
-#include "runtime/resource/loader/text_loader.h"
-#include "runtime/resource/loader/text_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
 
@@ -16,6 +14,44 @@ namespace
     using namespace Incubator;
     using namespace Incubator::Resource;
     namespace fs = std::filesystem;
+    constexpr auto TEST_TEXT_TYPE = static_cast<ResourceType>(0x1234);
+
+    class StubTextResource final : public ResourceObject
+    {
+    public:
+        StubTextResource(ResourceId id, std::string text) : ResourceObject(id, TEST_TEXT_TYPE), text_(std::move(text)) {}
+        const std::string& text() const noexcept
+        {
+            return text_;
+        }
+
+    private:
+        std::string text_;
+    };
+
+    class StubTextLoader final : public LoaderBase
+    {
+    public:
+        explicit StubTextLoader(AssetSource& source) : source_(source) {}
+
+        std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view virtualPath) override
+        {
+            auto handle = source_.open(virtualPath);
+            if (!handle)
+                return nullptr;
+            std::string text(static_cast<size_t>(handle->size()), '\0');
+            if (!text.empty())
+            {
+                const auto read =
+                    handle->read(std::span<uint8_t>(reinterpret_cast<uint8_t*>(text.data()), text.size()));
+                text.resize(read);
+            }
+            return std::make_unique<StubTextResource>(id, std::move(text));
+        }
+
+    private:
+        AssetSource& source_;
+    };
 
     class AssetSourceTest : public ::testing::Test
     {
@@ -65,27 +101,28 @@ namespace
         auto& manager = ResourceManager::instance();
         auto& registry = ResourceRegistry::instance();
         manager.bindAssetSource(&a);
-        manager.registerLoader(ResourceType::TEXT, std::make_unique<TextLoader>(a));
-        const auto id = manager.registerResource(ResourceType::TEXT, "value.txt");
-        const auto* original = manager.get<TextResource>(id);
-        ASSERT_NE(original, nullptr);
+        manager.registerLoader(TEST_TEXT_TYPE, std::make_unique<StubTextLoader>(a));
+        auto first = manager.hold<StubTextResource>(TEST_TEXT_TYPE, "value.txt");
+        ASSERT_TRUE(first);
+        const auto id = first.id();
+        const auto* original = first.get<StubTextResource>();
         EXPECT_EQ(original->text(), "root A");
         EXPECT_THROW(manager.bindAssetSource(&b), Error::Exception);
         manager.reset();
         EXPECT_THROW(manager.bindAssetSource(nullptr), Error::Exception);
         EXPECT_THROW(manager.bindAssetSource(&b), Error::Exception);
         EXPECT_EQ(manager.assetSource(), &a);
-        EXPECT_EQ(manager.get<TextResource>(id), original);
-        manager.release(id);
+        EXPECT_EQ(registry.getObject(id), original);
+        first.reset();
         EXPECT_FALSE(registry.hasLiveResources());
         manager.bindAssetSource(nullptr);
         manager.bindAssetSource(&b);
-        manager.registerLoader(ResourceType::TEXT, std::make_unique<TextLoader>(b));
-        EXPECT_EQ(manager.registerResource(ResourceType::TEXT, "value.txt"), id);
-        manager.acquire(id);  // 已有零持有登记需要显式取得本次持有。
-        ASSERT_NE(manager.get<TextResource>(id), nullptr);
-        EXPECT_EQ(manager.get<TextResource>(id)->text(), "root B");
-        manager.release(id);
+        manager.registerLoader(TEST_TEXT_TYPE, std::make_unique<StubTextLoader>(b));
+        auto second = manager.hold<StubTextResource>(TEST_TEXT_TYPE, "value.txt");
+        ASSERT_TRUE(second);
+        EXPECT_EQ(second.id(), id);
+        EXPECT_EQ(second.get<StubTextResource>()->text(), "root B");
+        second.reset();
         manager.reset();
         manager.bindAssetSource(nullptr);
     }
@@ -96,9 +133,12 @@ namespace
         auto& manager = ResourceManager::instance();
         auto& registry = ResourceRegistry::instance();
         manager.bindAssetSource(&source);
-        manager.registerLoader(ResourceType::TEXT, std::make_unique<TextLoader>(source));
-        const auto id = manager.registerResource(ResourceType::TEXT, "value.txt");
-        ASSERT_NE(manager.load(id), nullptr);
+        manager.registerLoader(TEST_TEXT_TYPE, std::make_unique<StubTextLoader>(source));
+        auto hold = manager.hold<StubTextResource>(TEST_TEXT_TYPE, "value.txt");
+        ASSERT_TRUE(hold);
+        const auto id = hold.id();
+        registry.acquire(id);
+        hold.reset();
         registry.release(id);  // Registry 允许零持有且挂载，Manager 解除绑定仍须拒绝。
         manager.reset();
         EXPECT_THROW(manager.bindAssetSource(nullptr), Error::Exception);

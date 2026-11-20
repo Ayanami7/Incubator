@@ -24,7 +24,7 @@ namespace Incubator
         ///
         /// 负责把资源从磁盘加载并构建为 ResourceObject。
         /// 按 ResourceType 注册到 ResourceManager 的路由表。
-        /// @note 失败可返回 nullptr 或透传加载异常；成功对象的 state 由 ResourceManager 置为 READY。
+        /// @note 失败可返回 nullptr 或透传加载异常。
         class LoaderBase
         {
         public:

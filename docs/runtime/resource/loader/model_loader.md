@@ -9,22 +9,26 @@
 using namespace Incubator::Resource;
 
 auto fileIO = Incubator::FileIO::createPlatformFileIO();
+AssetSource assets(*fileIO);
 auto& manager = Incubator::Resource::ResourceManager::instance();
-manager.registerLoader(ResourceType::MODEL, std::make_unique<ModelLoader>(*fileIO));
-const auto id = manager.registerResource(ResourceType::MODEL, "models/avocado/glTF/Avocado.gltf");
-if (const auto* model = manager.get<ModelResource>(id)) {
-    // Read owned CPU geometry, materials, parts and nodes during this holding period.
+manager.bindAssetSource(&assets);
+manager.registerLoader(ResourceType::MODEL, std::make_unique<ModelLoader>(assets));
+{
+    auto held = manager.hold<ModelResource>(ResourceType::MODEL, "models/avocado/glTF/Avocado.gltf");
+    if (const auto* model = held.get<ModelResource>()) {
+        // Read owned CPU geometry, materials, parts and nodes during this holding period.
+    }
 }
-manager.release(id);
-manager.reset();  // Removes all Loader routes; do this before destroying their borrowed FileIO.
+manager.reset();  // Removes all Loader routes; do this before unbinding AssetSource / destroying FileIO.
+manager.bindAssetSource(nullptr);
 ```
 
-ModelLoader 为同步 `final LoaderBase`，借用构造时注入的 FileIO。每次加载创建局部 Importer，
+ModelLoader 为同步 `final LoaderBase`，借用构造时注入的 AssetSource。每次加载创建局部 Importer，
 在返回前把数据复制到 [ModelResource](../model_resource.md) 并释放 Importer 及文件句柄。
-模型载荷不依赖导入器、源文件缓冲或 Loader 的后续存活。ResourceManager 的登记、缓存和引用计数语义不变：
-重复登记不增加持有，已有条目需按约定 acquire，release 到零卸载对象。
+模型载荷不依赖导入器、源文件缓冲或 Loader 的后续存活。ResourceManager 的登记、缓存和引用计数语义通过 `CpuResource` 自动管理：
+重复持有复用已挂载对象，最后持有结束时卸载对象。
 
-失败时 Loader 抛带模型、依赖或材质索引上下文的 IO 异常；Manager 统一记录一次并返回 nullptr，
+失败时 Loader 抛带模型、依赖或材质索引上下文的 IO 异常；Manager 统一记录一次并返回带 `failure()` 的空 `CpuResource`，
 不挂载半成品。直接调用 Loader 时由调用者处理异常。模型导入沿用当前 ResourceManager 的调用方同步约定，
 不并发执行导入；内部临时使用 Assimp 的进程级诊断观察器，调用结束后恢复。
 

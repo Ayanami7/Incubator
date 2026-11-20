@@ -56,7 +56,7 @@ const size_t cached = models.size();            // 缓存条目数，不是 GPU 
 ```
 
 缓存保留强引用；`collectUnused()` 只移除引用计数为 1、仅由缓存持有的条目，返回移除条目数，
-不等于实际释放的 GPU 对象数。Scene、ModelInstance 或其他消费者仍持有的模型保留；提交后的帧槽另保留实际对象至 Fence 完成。
+不等于实际释放的 GPU 对象数。Scene、编辑历史快照或其他消费者仍持有的模型保留；提交后的帧槽另保留实际对象至 Fence 完成。
 没有自动逐帧清理或文件监听，清理后再次请求会重新读取源文件并准备。同一模型多个实体共享同一组对象，
 不同模型不做几何或纹理去重。`resolve` 失败不缓存部分模型，之前完成的缓存条目保持；场景重建失败前已成功缓存的模型按同一显式清理策略处理。
 
@@ -119,52 +119,24 @@ Incubator::Render::DrawItem draw{
 零跨度边界是有效值，不代表空模型。
 
 边界只保存端点副本，不保留 CPU 顶点、像素或 ModelResource 借用；CPU 资源释放后仍可读取。
-多个消费者通过同一 PreparedModel 共享只读结果；实例 Transform 改变不会改写模型边界。
-Scene 帧提取在实体展开前使用此边界进行视锥裁剪；直接 `makeModelDraws` 和 Renderer 提交路径
-保持调用方给定的绘制内容，不自动执行裁剪。
+多个消费者通过同一 PreparedModel 共享只读结果；实体 Transform 改变不会改写模型边界。
+Scene 帧提取在实体展开前使用此边界进行视锥裁剪；Renderer 提交路径保持调用方给定的绘制内容，不自动执行裁剪。
 
-## 实例与绘制展开
-
-```cpp
-using Incubator::Model::ModelInstance;
-using Incubator::Model::makeModelDraws;
-
-std::array instances{
-    ModelInstance{model, glm::translate(glm::mat4(1), glm::vec3(-1, 0, 0))},
-    ModelInstance{model, glm::translate(glm::mat4(1), glm::vec3(1, 0, 0))}};
-auto draws = makeModelDraws(instances);
-renderer.drawFrame({extent, camera, draws}, clearColor);
-// drawFrame 仅在本次调用期间借用 draws，返回后可复用或释放列表存储。
-```
-
-`ModelInstance` 保存 `std::shared_ptr<const PreparedModel> model` 与默认单位矩阵的 `glm::mat4 transform`。
-多个实例可引用同一模型或不同模型。修改一个实例的 transform 不影响其他实例或模型缓存；实例不复制 CPU
-几何、像素或 GPU 对象，也不分配 Entity ID。
+## 实体共享与绘制展开
 
 [Scene](./scene.md#scene-与实体) 实体通过可选 `shared_ptr<const PreparedModel>` 共享准备结果，
-使用独立 EntityId 和唯一 Transform 值。绑定或删除实体仅改变逻辑持有；实体整体矩阵在消费时转换为
-ModelInstance，不改变 PreparedModel 的节点或 Renderer 的 GPU 持有期。
-`Scene::extractSceneFrame` 默认先按实体世界包围体进行视锥筛选，再将保留的可见实体转换为临时 ModelInstance，复用 makeModelDraws 并返回自有
-SceneFrame；应用在提交时借用其 input()，用法与快照持有期见 [场景帧提取](./scene.md#场景帧提取)。
+使用独立 EntityId 和唯一 Transform 值。多个实体可引用同一模型或不同模型；修改一个实体的 Transform 不影响其他实体或模型缓存，绑定或删除实体仅改变逻辑持有，不复制 CPU 几何、像素或 GPU 对象，也不改变 PreparedModel 的节点或 Renderer 的 GPU 持有期。
 
-`makeModelDraws(std::span<const ModelInstance>)` 每次返回一份新的 `std::vector<Render::DrawItem>`：
+`Scene::extractSceneFrame` 直接遍历存活且可见的实体，默认先按实体世界包围体进行视锥筛选，再按实体顺序与 `PreparedModel::draws()` 的缓存节点顺序直接将 `entity.transform.matrix() * cachedDraw.model` 展开进自有 `SceneFrame::draws`（不经过中间实例列表拷贝）；应用在提交时借用其 `input()`，用法与快照持有期见 [场景帧提取](./scene.md#场景帧提取)：
 
-- 外层顺序为输入实例顺序；每个模型从 rootNode 开始，先输出当前节点的全部部分，再按 children 的原顺序
-  深度优先访问子树；部分顺序与 node.parts 一致。重复引用的部分在每个所属节点各生成一个 DrawItem。
-- 准备时以非递归遍历计算 `parent * localTransform`，根矩阵只包含一次。逐帧展开仅计算
-  `instance.transform * cachedDraw.model`，不重新遍历静态树、不读盘、解码、上传或创建材质。
-- 空输入或所有模型均无可绘制部分时返回空列表；实例数量变化不保留上次结果。每个实例必须持有非空 model，
-  空模型指针抛 CONFIG；合法但无可绘制部分的 PreparedModel 可以正常引用。
-- 相机和投影不参与实例展开，UV 与投影 Y 不再次适配。应用继续从 beginUiFrame 取得实际 extent 并生成相机；
-  空列表也可交给 Renderer 清屏和绘制 UI。
-- 输出持有普通的 Mesh/Material 弱引用和矩阵副本，借用期遵循 [Render](./render.md)。返回后修改实例不影响
-  已生成列表；提取至提交返回期间须保留模型，不在此期间清理所用资源。提交返回后可立即修改或销毁列表，在途 GPU 依赖由 Renderer 持有。
-- 展开不逐帧检查 GPU 引用或重验模型结构。Renderer 关闭后，实例仍可保有元数据并生成列表，但其中 GPU
-  引用已失效，再次提交由 Renderer 明确拒绝；实例不会延长设备寿命。
+- 准备时以非递归深度优先遍历计算 `parent * localTransform`，根矩阵只包含一次；重复引用的部分在每个所属节点各生成一个缓存项。逐帧展开仅左乘实体矩阵，不重新遍历静态树、不读盘、解码、上传或创建材质。
+- 相机和投影不参与模型内部矩阵展开，UV 与投影 Y 不再次适配。应用继续从 `beginUiFrame` 取得实际 extent 并生成相机；空列表也可交给 Renderer 清屏和绘制 UI。
+- 展开结果持有普通的 Mesh/Material 非拥有引用和矩阵副本，借用期遵循 [Render](./render.md)。提取至提交返回期间须保留模型，不在此期间清理所用资源；提交返回后可立即修改或销毁列表，在途 GPU 依赖由 Renderer 持有。
+- 展开不逐帧检查 GPU 引用或重验模型结构。Renderer 关闭后，模型仍可保有元数据，但其中 GPU 引用已失效，再次提交由 Renderer 明确拒绝；模型持有不会延长设备寿命。
 
 最终 FrameInput、相机和 DrawItem 列表仍由应用提交；模型消费层不引入另一套帧同步。
 
-启用阴影时，Scene 使用同一展开入口另行生成投射物列表，保持实体矩阵与模型内部累计矩阵的组合顺序。
+启用阴影时，`Scene::extractSceneFrame` 在主相机视锥裁剪前按同一展开规则另行生成投射物列表 `shadowDraws`，保持实体矩阵与模型内部累计矩阵的组合顺序。
 PreparedModel 不保存阴影开关、光源范围或另一份几何；主相机外及 Unlit 模型也可投影。
 阴影深度绘制仅消费网格和模型矩阵，接收阴影只影响 Lambert 直接光，具体提交约定见 [Render](./render.md#阴影帧参数)。
 

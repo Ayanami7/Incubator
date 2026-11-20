@@ -1,6 +1,8 @@
 #define TESTING_ENABLED
 
+#include "runtime/resource/asset_info.h"
 #include "runtime/resource/resource_registry.h"
+#include <type_traits>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -173,20 +175,20 @@ TEST_F(ResourceRegistryTest, LookupById)
 TEST_F(ResourceRegistryTest, LookupByTypeAndPath)
 {
     auto& reg = ResourceRegistry::instance();
-    ResourceId id = reg.registerResource(ResourceType::MATERIAL, "materials/gold.mat");
+    ResourceId id = reg.registerResource(ResourceType::MODEL, "materials/gold.mat");
 
-    EXPECT_EQ(reg.lookup(ResourceType::MATERIAL, "materials/gold.mat"), id);
-    EXPECT_FALSE(reg.lookup(ResourceType::MATERIAL, "materials/silver.mat").valid());
+    EXPECT_EQ(reg.lookup(ResourceType::MODEL, "materials/gold.mat"), id);
+    EXPECT_FALSE(reg.lookup(ResourceType::MODEL, "materials/silver.mat").valid());
     EXPECT_FALSE(reg.lookup(ResourceType::TEXTURE, "materials/gold.mat").valid());
 }
 
 TEST_F(ResourceRegistryTest, ClearResetsState)
 {
     auto& reg = ResourceRegistry::instance();
-    ResourceId id = reg.registerResource(ResourceType::MATERIAL, "materials/gold.mat");
+    ResourceId id = reg.registerResource(ResourceType::MODEL, "materials/gold.mat");
     reg.clear();
     EXPECT_EQ(reg.refCount(id), 0u);
-    EXPECT_FALSE(reg.lookup(ResourceType::MATERIAL, "materials/gold.mat").valid());
+    EXPECT_FALSE(reg.lookup(ResourceType::MODEL, "materials/gold.mat").valid());
 }
 
 TEST_F(ResourceRegistryTest, AttachObjectReturnsSamePointerAndKeepsRefCount)
@@ -312,3 +314,29 @@ TEST_F(ResourceRegistryTest, InjectEntryRejectsInvalidInput)
     EXPECT_FALSE(reg.lookup(ResourceType::TEXTURE, "textures/conflict").valid());
     EXPECT_EQ(reg.refCount(byType), 0u);
 }
+
+TEST(ResourceObjectTest, IdentityPolymorphicDestructionAndAssetInfoValidity)
+{
+    static_assert(!std::is_copy_constructible_v<ResourceObject>);
+    static_assert(!std::is_copy_assignable_v<ResourceObject>);
+
+    const ResourceId id = ResourceId::fromPath(ResourceType::TEXTURE, "textures/player.png");
+    bool destroyed = false;
+    {
+        std::unique_ptr<ResourceObject> resource = std::make_unique<FakeResource>(id, ResourceType::TEXTURE, &destroyed);
+        EXPECT_EQ(resource->id(), id);
+        EXPECT_EQ(resource->type(), ResourceType::TEXTURE);
+    }
+    EXPECT_TRUE(destroyed);
+
+    AssetInfo info;
+    EXPECT_FALSE(info.valid());
+    info.id = id;
+    EXPECT_TRUE(info.valid());
+    EXPECT_EQ(info.type, ResourceType::INVALID);
+    EXPECT_TRUE(info.virtualPath.empty());
+}
+#if 0
+}
+
+#endif

@@ -22,8 +22,8 @@ namespace Incubator
         /// 负责资源去重、哈希碰撞检测与引用计数，并作为运行时对象的唯一挂载点。
         /// 全局单例，线程安全由调用方保证。
         ///
-        /// refCount 契约：注册即 refCount = 1；load() 不加引用；
-        /// release() 降到 0 时由调用方（ResourceManager）卸载对象（detachObject），登记保留。
+        /// refCount 契约：注册即 refCount = 1；release() 降到 0 时由调用方（ResourceManager）
+        /// 卸载对象（detachObject），登记保留。
         /// Registry 自身允许 refCount == 0 且暂持有 object 的纯存储态，不做自动卸载。
         class ResourceRegistry
         {
@@ -94,7 +94,7 @@ namespace Incubator
         private:
             struct Entry
             {
-                AssetInfo info;                          // 身份信息（id/type/path/contentHash）
+                AssetInfo info;                          // 身份信息（id/type/path）
                 uint32_t refCount = 1;                   // 引用计数
                 std::unique_ptr<ResourceObject> object;  // 运行时对象（null = 未加载）
             };

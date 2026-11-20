@@ -141,7 +141,6 @@ namespace
         const auto model = makeModel({});
         EXPECT_EQ(model->id(), MODEL_ID);
         EXPECT_EQ(model->type(), ResourceType::MODEL);
-        EXPECT_EQ(model->state(), ResourceState::UNLOADED);
         EXPECT_EQ(model->rootNode(), 0u);
         ASSERT_EQ(model->materials().size(), 1u);
         EXPECT_FALSE(model->materials()[0].texturePath.has_value());

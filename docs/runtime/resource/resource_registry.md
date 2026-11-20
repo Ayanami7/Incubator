@@ -10,7 +10,7 @@
 ```cpp
 struct Entry
 {
-    AssetInfo info;                          // 身份信息（id/type/path/contentHash）
+    AssetInfo info;                          // 身份信息（id/type/virtualPath）
     uint32_t refCount = 1;                   // 引用计数（注册即持有 1）
     std::unique_ptr<ResourceObject> object;  // 运行时对象（null = 未加载）
 };
@@ -61,4 +61,4 @@ public:
 ## 与同步加载的关系
 
 同步加载下 `load()` 失败**不挂载任何对象**（直接返回 nullptr），因此不会产生 ERROR 状态的对象；
-条目保持 `object == nullptr` 的未加载态，可随时再次尝试加载（`text_loader_test` 的 `ReloadAfterUnloadRebuildsObject` 覆盖该路径）。
+条目保持 `object == nullptr` 的未加载态，可随时再次尝试加载（`resource_access_test` 与 `runtime_cpu_test` 覆盖该路径）。

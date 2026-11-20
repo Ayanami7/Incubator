@@ -40,7 +40,6 @@ set(RESOURCE_HEADERS
     resource/resource_type.h
     resource/resource_id.h
     resource/resource_registry.h
-    resource/resource_state.h
     resource/asset_source.h
     resource/asset_info.h
     resource/resource_object.h
@@ -51,8 +50,6 @@ set(RESOURCE_HEADERS
     resource/loader/detail/assimp_fileio.h
     resource/loader/detail/model_source.h
     resource/loader/loader_base.h
-    resource/loader/text_loader.h
-    resource/loader/text_resource.h
     resource/loader/spirv_reader.h
     resource/loader/shader_resource.h
     resource/loader/shader_loader.h
@@ -69,8 +66,6 @@ set(RESOURCE_SOURCES
     resource/loader/model_loader.cpp
     resource/loader/detail/assimp_fileio.cpp
     resource/loader/detail/model_source.cpp
-    resource/loader/text_loader.cpp
-    resource/loader/text_resource.cpp
     resource/loader/spirv_reader.cpp
     resource/loader/shader_resource.cpp
     resource/loader/shader_loader.cpp
@@ -157,13 +152,11 @@ set(MODEL_HEADERS
     model/model_reference.h
     model/model_manager.h
     model/prepared_model.h
-    model/model_instance.h
 )
 set(MODEL_SOURCES
     model/model_reference.cpp
     model/model_manager.cpp
     model/prepared_model.cpp
-    model/model_instance.cpp
 )
 
 set(ALL_HEADERS

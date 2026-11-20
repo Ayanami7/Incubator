@@ -36,8 +36,7 @@ public:
 Manager 通过 `loadResult` 取得 `LoaderResult{object, failure, reported}`。失败原因字符串由结果拥有，
 reported 表示错误已记录；尚未记录时由 Manager 记录一次。默认适配器调用原 load，旧空返回仍视为已诊断，
 以保持已有扩展 Loader 的行为；需要在空返回时提供具体原因的 Loader 覆盖 loadResult。
-TextLoader 的新入口返回具体打开失败原因且不记错；其直接 load 保留原来的日志加 nullptr 行为。
-其他现有 Loader 透传具体读取或解析异常，Manager 保存原原因及虚拟路径，并通过 CpuResource 传递给消费者。
+现有 Loader 透传具体读取或解析异常，Manager 保存原原因及虚拟路径，并通过 CpuResource 传递给消费者。
 
 ## 虚拟路径解析最小约定
 
@@ -50,7 +49,7 @@ TextLoader 的新入口返回具体打开失败原因且不记错；其直接 lo
 
 ## FileIO 注入
 
-Loader 构造函数注入 `AssetSource&`（例如 `TextLoader(source)`）；源借用消费者的 FileIO：
+Loader 构造函数注入 `AssetSource&`（例如 `ShaderLoader(source)` / `TextureLoader(source)`）；源借用消费者的 FileIO：
 
 - 生产与测试共用同一套真实 FileIO（`createPlatformFileIO()`）
 - 顺序为释放全部 CPU 持有及载荷 → reset 清除 Loader → bindAssetSource(nullptr) 解除绑定 → 销毁源 → 销毁 FileIO。reset 不替代 release；未清理完毕时更换或解除绑定抛 CONFIG，并保留原绑定及对象。
@@ -63,11 +62,10 @@ Loader 构造函数注入 `AssetSource&`（例如 `TextLoader(source)`）；源�
 2. 若引入新载荷类型，另建 `<name>_resource.h/.cpp`（继承 `ResourceObject`，`final`）；载荷可复用则跳过
 3. 若为新资源种，在 `ResourceType` 增量添加显式 `constHash` 枚举值（需重编译）
 4. `CMakeLists.txt` 登记头文件/源文件
-5. 编写测试：真实 FileIO + 临时目录模式（参照 `text_loader_test.cpp`）
+5. 编写测试：真实 FileIO + 临时目录模式（归入 `runtime_cpu_test`）
 
 ## 文档索引
 
-- [text_loader.md](./text_loader.md) - 首个实现（文本资源全链路）
 - [shader_loader.md](./shader_loader.md) - SPIR-V CPU 载荷与异常门面接通
 - [texture_loader.md](./texture_loader.md) - PNG 完整读取、RGBA8 CPU 载荷与失败边界
 - [model_loader.md](./model_loader.md) - Assimp 经 FileIO 导入静态 glTF/OBJ，输出模型自有 CPU 数据

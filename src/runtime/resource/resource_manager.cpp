@@ -9,7 +9,6 @@
 #include "runtime/core/utils/utf8.h"
 #include "runtime/resource/asset_source.h"
 #include "runtime/resource/resource_registry.h"
-#include "runtime/resource/resource_state.h"
 
 namespace Incubator
 {
@@ -57,11 +56,6 @@ namespace Incubator
         void ResourceManager::reset()
         {
             loaders_.clear();
-        }
-
-        ResourceId ResourceManager::registerResource(ResourceType type, std::string_view virtualPath)
-        {
-            return ResourceRegistry::instance().registerResource(type, virtualPath);
         }
 
         CpuResource::~CpuResource()
@@ -144,7 +138,6 @@ namespace Incubator
                 auto result = route->second->loadResult(id, path);
                 if (!result.object)
                     return fail(std::move(result.failure), result.reported);
-                result.object->setState(ResourceState::READY);
                 if (!reg.attachObject(id, std::move(result.object)))
                     return fail("Cannot mount CPU resource", true);
                 Log::Registry::get("resource").debug("Loaded CPU resource '{}' (type {:#x})", path, uint64_t(type));
@@ -160,21 +153,15 @@ namespace Incubator
             }
         }
 
-        ResourceObject* ResourceManager::load(ResourceId id)
-        {
-            std::optional<ResourceFailure> failure;
-            return loadResource(id, failure);
-        }
-
         CpuResource ResourceManager::holdResource(ResourceType type, std::string_view path)
         {
             CpuResource result;
             auto& reg = ResourceRegistry::instance();
             result.id_ = reg.lookup(type, path);
             if (result.id_.valid())
-                acquire(result.id_);
+                reg.acquire(result.id_);
             else
-                result.id_ = registerResource(type, path);
+                result.id_ = reg.registerResource(type, path);
             if (!result.id_.valid())
             {
                 result.failure_ = ResourceFailure{std::string(path), "Cannot register CPU resource"};
@@ -185,11 +172,6 @@ namespace Incubator
             if (!result.object_)
                 result.reset();
             return result;
-        }
-
-        void ResourceManager::acquire(ResourceId id)
-        {
-            ResourceRegistry::instance().acquire(id);
         }
 
         void ResourceManager::release(ResourceId id)

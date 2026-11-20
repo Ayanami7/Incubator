@@ -16,9 +16,9 @@ ResourceId ──► ResourceRegistry ──► ResourceManager ──► Loader
 
 - **身份**：`(类型, 规范化虚拟路径)` 哈希，跨会话稳定
 - **登记**：全局户口本，去重、哈希碰撞检测、引用计数、运行时对象唯一挂载点
-- **门面**：Loader 路由、同步加载、生命周期（acquire/release）与异常边界
+- **门面**：Loader 路由、同步加载、RAII 持有生命周期（`hold<T>()` / `CpuResource`）与异常边界
 - **桥**：把磁盘数据解析并构建为 ResourceObject，按 ResourceType 路由
-- **实例**：薄基类承载 id/type/state，具体载荷由派生类持有
+- **实例**：薄基类承载 id/type，具体载荷由派生类持有
 
 ## 组件索引
 
@@ -33,10 +33,9 @@ CPU 资产 release 与路由销毁分别管理，运行期间可再次显式准�
 | ResourceRegistry + Entry（X3） | [resource_registry.md](./resource_registry.md) | ✅ 已实现 |
 | AssetSource 单目录根、虚拟路径与目录发现 | [本页](#单目录资产源)、[查询与持有](./resource_manager.md#目录发现与状态查询) | ✅ 已实现 |
 | AssetInfo 描述壳 | [asset_info.md](./asset_info.md) | ✅ 已实现 |
-| ResourceObject 薄基类 + ResourceState | [resource_object.md](./resource_object.md) | ✅ 已实现 |
+| ResourceObject 薄基类 | [resource_object.md](./resource_object.md) | ✅ 已实现 |
 | ResourceManager 门面 | [resource_manager.md](./resource_manager.md) | ✅ 已实现 |
 | LoaderBase + 虚拟路径解析约定 | [loader/loader.md](./loader/loader.md) | ✅ 已实现 |
-| TextLoader 首个实现 | [loader/text_loader.md](./loader/text_loader.md) | ✅ 已实现 |
 | ShaderResource + ShaderLoader（SPIR-V CPU 载荷） | [loader/shader_loader.md](./loader/shader_loader.md) | ✅ 已实现 |
 | TextureResource + TextureLoader（PNG / RGBA8 CPU 载荷） | [loader/texture_loader.md](./loader/texture_loader.md) | ✅ 已实现 |
 | MeshData + ModelResource（CPU 几何、材质与节点组合） | [model_resource.md](./model_resource.md) | ✅ 已实现 |
@@ -48,7 +47,6 @@ CPU 资产 release 与路由销毁分别管理，运行期间可再次显式准�
 src/runtime/resource/
 ├── resource_type.h
 ├── resource_id.h/.cpp
-├── resource_state.h
 ├── asset_info.h
 ├── asset_source.h/.cpp
 ├── resource_object.h/.cpp
@@ -57,8 +55,6 @@ src/runtime/resource/
 ├── mesh_data.h
 └── loader/
     ├── loader_base.h
-    ├── text_loader.h/.cpp
-    ├── text_resource.h/.cpp
     ├── spirv_reader.h/.cpp
     ├── shader_loader.h/.cpp
     ├── shader_resource.h/.cpp
@@ -86,7 +82,7 @@ ModelLoader 通过现有 FileIO 和固定 Assimp 导入外部 bin/PNG 的静态 
 
 `AssetSource(FileIO&, root = "assets")` 是具体目录源，借用文件服务并在构造时捕获绝对根。
 resolve/open/exists 接收相对 UTF-8 文件路径；真实物理根不进入 ResourceId、ModelReference 或场景保存。
-Text/Shader/Texture/Model Loader 都借用同一源，Assimp 主文件及 bin/mtl 与后续 PNG 准备使用相同根。
+Shader/Texture/Model Loader 都借用同一源，Assimp 主文件及 bin/mtl 与后续 PNG 准备使用相同根。
 源保证非空相对文件路径的词法边界；根视为本地受信任目录，不承诺链接解析后的文件访问隔离。
 `ResourceManager::listDirectory()` 列出根目录，传相对虚拟路径列出子目录；每次重新枚举直接子项并按规范化路径排序。
 目录链接和目录重解析点从结果中排除，直接请求其后代路径也被拒绝。空目录返回空列表，枚举失败抛 IO。
@@ -107,7 +103,7 @@ Registry::hasLiveResources 检查持有或挂载状态，不强制销毁外部�
 | 项目 | 触发条件 |
 |---|---|
 | 异步加载（启用 LOADING/ERROR 态） | 出现跨帧加载或后台流式加载需求 |
-| 热重载（contentHash 变更检测） | 需要运行时资源迭代的工作流 |
+| 热重载（内容变更检测） | 需要运行时资源迭代的工作流 |
 | VFS（虚拟路径 → 真实文件解析 / 打包） | .pak 打包、多资源根需求 |
 | ResourceHandle / LOD / 流式加载 | 一个 Asset 多实例需求时引入 |
 | 异步加载、热重载、Cook、资产清单 | 按具体资源管线需求另行规划 |
@@ -117,5 +113,5 @@ Registry::hasLiveResources 检查持有或挂载状态，不强制销毁外部�
 1. **身份稳定**：ID 由 (类型, 规范化虚拟路径) 哈希，不依赖运行时顺序，跨会话可复现
 2. **单一真源**：虚拟路径唯一真源在 AssetInfo；refCount 与对象挂载在 Registry::Entry
 3. **封闭类型**：ResourceType 为封闭枚举，同时充当类型 tag 与 Loader 路由键
-4. **失败走返回值**：预期失败（未注册/无 Loader/文件缺失）返回 `nullptr`；Loader 抛异常由 Manager 门面统一捕获，`load()` 保证不向外抛异常
-5. **同步原语**：当前即用即得；LOADING/ERROR 状态为异步预留
+4. **失败走返回值**：预期失败（无 Loader/文件缺失/解析失败）返回带 `failure()` 的空 `CpuResource`；Loader 抛异常由 Manager 门面统一捕获，`hold<T>()` 保证不向外抛异常
+5. **同步原语**：当前即用即得，不保留未实现的异步状态机

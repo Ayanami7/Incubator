@@ -23,7 +23,7 @@ scene.destroyEntity(first);
 Scene 不可复制或移动，使用一个 vector 保存实体，属于单线程 Runtime；当前不提供 ECS 或实体父子树。
 场景内容捕获、JSON 文件读写和重建由同模块的独立接口提供，见下文。
 Entity 保存 `id`、UTF-8 `name`、`transform`、`visible` 和可空的 `shared_ptr<const PreparedModel> model`。名称允许为空或重复，不参与身份识别；非法 UTF-8 或内嵌 NUL 被拒绝。
-Transform 是实体整体变换的唯一真源，实体不另存 ModelInstance 或可修改的整体矩阵。
+Transform 是实体整体变换的唯一真源，实体不另存可修改的整体矩阵。
 模型内部节点仍属于 PreparedModel，不按节点创建实体。
 
 | 接口 | 行为 |
@@ -149,20 +149,20 @@ SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera`、`v
 - 读取当前 Camera，按实际 extent 生成一次最终相机矩阵，供视锥判断和返回结果共用；不再次翻转 Y。
 - 复制当前光照值；后续修改 Scene 光照或替换 Scene 不影响已提取帧，复制/移动后的帧也独立持有光照。
 - 按存活实体创建顺序遍历，跳过隐藏及无模型实体；默认以当前实体 Transform 变换模型整体边界，
-  只排除世界 AABB 完全位于视锥外的实体，再组装保留实体的临时 ModelInstance，调用现有 makeModelDraws。
+  只排除世界 AABB 完全位于视锥外的实体，再直接从 `PreparedModel::draws()` 展开绘制项。
   每个模型沿用其缓存的节点/部分顺序；最终矩阵为 `entity.transform.matrix() * cachedDraw.model`，源根只包含一次。
 - 每次返回新列表；空 Scene、全部隐藏、全部被裁剪、无模型或无可绘制部分时返回有效的空 draws，仍可清屏和显示 UI。
 - 两个结果可并存，默认复制/移动同时处理各自的值和 vector。Scene 更新、clear、下一次提取及 Scene 销毁
   不回写旧结果；快照不持有 Scene、Entity 或 PreparedModel 指针，绘制项只保存 GPU 引用和矩阵值。
 
 第四个参数默认关闭阴影，保持原有调用；启用时在主相机剔除之前从全部 visible 且有模型的实体收集投射物，
-沿用 `makeModelDraws` 展开顺序及矩阵乘法。主相机外、光源范围外及 Unlit 几何仍进入投射列表，
+按相同的 `PreparedModel::draws()` 顺序与矩阵乘法直接展开。主相机外、光源范围外及 Unlit 几何仍进入投射列表，
 隐藏和无模型实体不进入；不在 CPU 上另做光源裁剪。关闭时 shadow 为空，不展开第二份绘制列表。
 有效尺寸下，无效阴影参数抛 CONFIG；零尺寸仍优先跳过。固定范围与坐标规则见 [阴影帧参数](render.md#阴影帧参数)。
 阴影设置属于消费者预览状态，不进入 Scene、SceneDescription、场景 JSON v1 或启动配置。
 
 关闭 `frustumCulling` 时恢复原有可见实体的完整展开语义，隐藏及无模型过滤始终保留。
-裁剪仅发生在本提取入口；直接调用 `makeModelDraws` 或 Renderer 不自动裁剪。
+裁剪仅发生在本提取入口；直接调用 Renderer 提交不自动裁剪。
 模型整体边界不可用、世界变换无法产生有限仿射边界或视锥不可用时保留原绘制路径。
 边界接触和相交的判断沿用下述 [视锥约定](#视锥与-aabb-判断)。
 世界边界每次由实体当前 Transform 派生，不缓存、不改写 `Entity.visible`，不删除实体。

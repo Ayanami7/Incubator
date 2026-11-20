@@ -76,72 +76,62 @@ endforeach()
 add_custom_target(runtime_test_shaders DEPENDS ${RUNTIME_TEST_SHADER_OUTPUTS})
 add_dependencies(runtime_test_shaders incubator_shaders)
 
-# Create test source file list.
+include(GoogleTest)
+
+# 收集并归并全部无窗口纯 CPU 测试为单一 runtime_cpu_test 目标。
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS "*.cpp")
+set(RUNTIME_GPU_WINDOW_TESTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/imgui_integration_test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/model_preparation_test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/render_input_test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/vulkan_review_test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/window_test.cpp"
+)
+set(RUNTIME_CPU_SOURCES ${TEST_SOURCES})
+list(REMOVE_ITEM RUNTIME_CPU_SOURCES ${RUNTIME_GPU_WINDOW_TESTS})
 
-foreach(TEST_SOURCE ${TEST_SOURCES})
+add_executable(runtime_cpu_test ${RUNTIME_CPU_SOURCES})
+target_link_libraries(runtime_cpu_test PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime assimp::assimp)
+target_include_directories(runtime_cpu_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
+target_include_directories(runtime_cpu_test SYSTEM PRIVATE "${THIRD_PARTY_DIR}/assimp/contrib/rapidjson/include")
+target_compile_definitions(runtime_cpu_test PRIVATE
+    SCENE_FIXTURE_DIR="${RUNTIME_TEST_ASSET_DIR}/scenes"
+    MODEL_BUILD_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}"
+    MODEL_DEMO_ASSET_DIR="${CMAKE_BINARY_DIR}/assets"
+    TEXTURE_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/textures"
+    TEXTURE_REFERENCE_FILE="${RUNTIME_TEST_ASSET_DIR}/textures/reference_rgba.png"
+    TEXTURE_BUILD_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}"
+)
+add_dependencies(runtime_cpu_test runtime_test_fixtures runtime_test_shaders incubator_models)
+set_target_properties(runtime_cpu_test PROPERTIES FOLDER "UnitTest/runtime")
+gtest_discover_tests(runtime_cpu_test)
+
+# 需要窗口或 Vulkan GPU 的独立测试目标保持按工作目录与串行属性注册。
+foreach(TEST_SOURCE IN LISTS RUNTIME_GPU_WINDOW_TESTS)
     get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
-
     add_executable(${TEST_NAME} ${TEST_SOURCE})
-
-    target_link_libraries(
-        ${TEST_NAME} PRIVATE
-        GTest::gtest_main
-        GTest::gmock_main
-        IncubatorRuntime
-    )
-
-    target_include_directories(
-        ${TEST_NAME} PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/test
-    )
-
+    target_link_libraries(${TEST_NAME} PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime)
+    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
     set_target_properties(${TEST_NAME} PROPERTIES FOLDER "UnitTest/runtime")
 
-    include(GoogleTest)
     if(TEST_NAME STREQUAL "render_input_test")
         target_link_libraries(${TEST_NAME} PRIVATE vulkan)
-    endif()
-    if(TEST_NAME STREQUAL "vulkan_review_test" OR TEST_NAME STREQUAL "model_preparation_test"
-       OR TEST_NAME STREQUAL "imgui_integration_test")
+        gtest_discover_tests(${TEST_NAME})
+    elseif(TEST_NAME STREQUAL "window_test")
+        gtest_discover_tests(${TEST_NAME})
+    else()
         target_link_libraries(${TEST_NAME} PRIVATE vulkan imgui)
         add_dependencies(${TEST_NAME} runtime_test_fixtures runtime_test_shaders)
         target_compile_definitions(${TEST_NAME} PRIVATE RUNTIME_TEST_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}")
         if(TEST_NAME STREQUAL "model_preparation_test")
             add_dependencies(${TEST_NAME} incubator_models)
-        endif()
-        if(TEST_NAME STREQUAL "vulkan_review_test" OR TEST_NAME STREQUAL "imgui_integration_test")
-            gtest_discover_tests(${TEST_NAME}
-                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/test-fixtures"
-                PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
-        else()
             gtest_discover_tests(${TEST_NAME}
                 WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
                 PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
+        else()
+            gtest_discover_tests(${TEST_NAME}
+                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/test-fixtures"
+                PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
         endif()
-    else()
-        if(TEST_NAME STREQUAL "scene_file_test")
-            target_compile_definitions(${TEST_NAME} PRIVATE SCENE_FIXTURE_DIR="${RUNTIME_TEST_ASSET_DIR}/scenes")
-            add_dependencies(${TEST_NAME} runtime_test_fixtures)
-        endif()
-        if(TEST_NAME STREQUAL "assimp_fileio_test" OR TEST_NAME STREQUAL "model_loader_test")
-            target_link_libraries(${TEST_NAME} PRIVATE assimp::assimp)
-        endif()
-        if(TEST_NAME STREQUAL "model_loader_test")
-            target_include_directories(${TEST_NAME} SYSTEM PRIVATE "${THIRD_PARTY_DIR}/assimp/contrib/rapidjson/include")
-            target_compile_definitions(${TEST_NAME} PRIVATE
-                MODEL_BUILD_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}"
-                MODEL_DEMO_ASSET_DIR="${CMAKE_BINARY_DIR}/assets")
-            add_dependencies(${TEST_NAME} runtime_test_fixtures incubator_models)
-        endif()
-        if(TEST_NAME STREQUAL "texture_loader_test")
-            target_compile_definitions(${TEST_NAME} PRIVATE
-                TEXTURE_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/textures"
-                TEXTURE_REFERENCE_FILE="${RUNTIME_TEST_ASSET_DIR}/textures/reference_rgba.png"
-                TEXTURE_BUILD_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}")
-            add_dependencies(${TEST_NAME} runtime_test_fixtures runtime_test_shaders)
-        endif()
-        gtest_discover_tests(${TEST_NAME})
     endif()
 endforeach()

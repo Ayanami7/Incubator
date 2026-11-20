@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -12,98 +11,83 @@
 #include "runtime/resource/loader/texture_loader.h"
 #include "runtime/resource/loader/texture_resource.h"
 #include "runtime/resource/resource_manager.h"
-#include "runtime/resource/resource_registry.h"
 
-namespace Incubator
+namespace Incubator::Demo
 {
-    namespace Demo
+    struct SceneAssetPaths
     {
-        struct SceneAssetPaths
+        std::string_view vertex = "shaders/cube.vert.spv";
+        std::string_view fragment = "shaders/cube.frag.spv";
+        std::string_view texture = "textures/reference_rgba.png";
+    };
+
+    // 在此作用域内，渲染测试独占 Manager 的 Shader/Texture Loader 路由。
+    class SceneAssets
+    {
+    public:
+        explicit SceneAssets(SceneAssetPaths paths = {},
+                             std::unique_ptr<FileIO::FileIO> fileIO = FileIO::createPlatformFileIO())
+            : fileIO_(std::move(fileIO)), source_(*fileIO_)
         {
-            std::string_view vertex = "shaders/cube.vert.spv";
-            std::string_view fragment = "shaders/cube.frag.spv";
-            std::string_view texture = "textures/reference_rgba.png";
+            auto& manager = Resource::ResourceManager::instance();
+            manager.registerLoader(Resource::ResourceType::SHADER, std::make_unique<Resource::ShaderLoader>(source_));
+            manager.registerLoader(Resource::ResourceType::TEXTURE, std::make_unique<Resource::TextureLoader>(source_));
+            vertexHold_ = hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.vertex);
+            fragmentHold_ = hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.fragment);
+            textureHold_ = hold<Resource::TextureResource>(Resource::ResourceType::TEXTURE, paths.texture);
+            vertex = vertexHold_.get<Resource::ShaderResource>();
+            fragment = fragmentHold_.get<Resource::ShaderResource>();
+            texture = textureHold_.get<Resource::TextureResource>();
+        }
+
+        SceneAssets(const SceneAssets&) = delete;
+        SceneAssets& operator=(const SceneAssets&) = delete;
+
+        void releaseCpuResources()
+        {
+            vertex = nullptr;
+            fragment = nullptr;
+            texture = nullptr;
+            textureHold_.reset();
+            fragmentHold_.reset();
+            vertexHold_.reset();
+            routeCleanup_.finish();
+        }
+
+        Resource::ShaderResource* vertex = nullptr;
+        Resource::ShaderResource* fragment = nullptr;
+        Resource::TextureResource* texture = nullptr;
+
+    private:
+        struct RouteCleanup
+        {
+            ~RouteCleanup() { finish(); }
+
+            void finish()
+            {
+                if (!active)
+                    return;
+                Resource::ResourceManager::instance().reset();
+                active = false;
+            }
+
+            bool active = true;
         };
 
-        // 在此作用域内，渲染测试独占 Manager 的 Shader/Texture Loader 路由。
-        // 已构造的清理成员也能处理外层构造函数失败的情况。
-        class SceneAssets
+        template <class T>
+        static Resource::CpuResource hold(Resource::ResourceType type, std::string_view path)
         {
-        private:
-            struct Cleanup
-            {
-                ~Cleanup()
-                {
-                    finish();
-                }
+            auto resource = Resource::ResourceManager::instance().hold<T>(type, path);
+            if (!resource.template get<T>())
+                throw Error::Exception(Error::Code::RENDER, fmt::format("Cannot load scene asset: {}", path));
+            return resource;
+        }
 
-                void finish()
-                {
-                    if (!active)
-                        return;
-                    auto& manager = Resource::ResourceManager::instance();
-                    for (size_t index = 0; index < count; ++index)
-                        manager.release(ids[index]);
-                    manager.reset();
-                    active = false;
-                }
-
-                std::array<Resource::ResourceId, 3> ids{};
-                size_t count = 0;
-                bool active = true;
-            };
-
-            template <class T>
-            T* load(Resource::ResourceType type, std::string_view path)
-            {
-                auto& manager = Resource::ResourceManager::instance();
-                auto id = Resource::ResourceRegistry::instance().lookup(type, path);
-                if (id.valid())
-                    manager.acquire(id);
-                else
-                    id = manager.registerResource(type, path);
-                if (!id.valid())
-                    throw Error::Exception(Error::Code::RENDER, fmt::format("Cannot register scene asset: {}", path));
-                cleanup_.ids[cleanup_.count++] = id;
-                auto* object = manager.get<T>(id);
-                if (!object)
-                    throw Error::Exception(Error::Code::RENDER, fmt::format("Cannot load scene asset: {}", path));
-                return object;
-            }
-
-            std::unique_ptr<FileIO::FileIO> fileIO_;
-            Resource::AssetSource source_;
-            Cleanup cleanup_;
-
-        public:
-            explicit SceneAssets(SceneAssetPaths paths = {},
-                                 std::unique_ptr<FileIO::FileIO> fileIO = FileIO::createPlatformFileIO())
-                : fileIO_(std::move(fileIO)), source_(*fileIO_)
-            {
-                auto& manager = Resource::ResourceManager::instance();
-                manager.registerLoader(Resource::ResourceType::SHADER,
-                                       std::make_unique<Resource::ShaderLoader>(source_));
-                manager.registerLoader(Resource::ResourceType::TEXTURE,
-                                       std::make_unique<Resource::TextureLoader>(source_));
-                vertex = load<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.vertex);
-                fragment = load<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.fragment);
-                texture = load<Resource::TextureResource>(Resource::ResourceType::TEXTURE, paths.texture);
-            }
-
-            SceneAssets(const SceneAssets&) = delete;
-            SceneAssets& operator=(const SceneAssets&) = delete;
-
-            void releaseCpuResources()
-            {
-                cleanup_.finish();
-                vertex = nullptr;
-                fragment = nullptr;
-                texture = nullptr;
-            }
-
-            Resource::ShaderResource* vertex = nullptr;
-            Resource::ShaderResource* fragment = nullptr;
-            Resource::TextureResource* texture = nullptr;
-        };
-    }  // namespace Demo
-}  // namespace Incubator
+        std::unique_ptr<FileIO::FileIO> fileIO_;
+        Resource::AssetSource source_;
+        RouteCleanup routeCleanup_;
+        Resource::CpuResource vertexHold_;
+        Resource::CpuResource fragmentHold_;
+        Resource::CpuResource textureHold_;
+    };
+}  // namespace Incubator::Demo

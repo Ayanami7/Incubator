@@ -10,42 +10,12 @@
 #include "runtime/render/vulkan/vulkan_image.h"
 #include "runtime/render/vulkan/vulkan_shadow_target.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
-#include "support/render_demo/scene_frame.h"
 
 namespace
 {
     using namespace Incubator;
     using namespace Incubator::Render;
     using namespace Incubator::Render::Vulkan;
-
-    TEST(RenderFrameInputTest, ApplicationOwnsTransformsAndFinalProjection)
-    {
-        const auto wide = Demo::makeSceneFrame({800, 400}, {});
-        const auto square = Demo::makeSceneFrame({400, 400}, {});
-        EXPECT_EQ(Demo::makeSceneModel({}), glm::mat4(1.0f));
-        Demo::SceneTransform transform;
-        transform.position = {1.0f, 2.0f, 3.0f};
-        transform.rotationDegrees.z = 90.0f;
-        transform.scale = {2.0f, 3.0f, 4.0f};
-        const auto model = Demo::makeSceneModel(transform);
-        const auto point = model * glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-        EXPECT_NEAR(point.x, 1.0f, 0.00001f);
-        EXPECT_NEAR(point.y, 4.0f, 0.00001f);
-        EXPECT_NEAR(point.z, 3.0f, 0.00001f);
-        EXPECT_EQ(Demo::makeSceneModel(transform), model);
-        transform.rotationDegrees = {90, 90, 90};
-        const auto rotated = Demo::makeSceneModel(transform) * glm::vec4(1, 2, 3, 1);
-        EXPECT_NEAR(rotated.x, 13, 0.00001f);
-        EXPECT_NEAR(rotated.y, 8, 0.00001f);
-        EXPECT_NEAR(rotated.z, 1, 0.00001f);
-        EXPECT_NEAR(wide.camera.projection[0][0] * 2.0f, square.camera.projection[0][0], 0.00001f);
-        EXPECT_EQ(wide.camera.projection[1][1], square.camera.projection[1][1]);
-        EXPECT_LT(wide.camera.projection[1][1], 0.0f);
-        const auto nearPoint = wide.camera.projection * glm::vec4(0.0f, 0.0f, -0.1f, 1.0f);
-        const auto farPoint = wide.camera.projection * glm::vec4(0.0f, 0.0f, -50.0f, 1.0f);
-        EXPECT_NEAR(nearPoint.z / nearPoint.w, 0.0f, 0.00001f);
-        EXPECT_NEAR(farPoint.z / farPoint.w, 1.0f, 0.00001f);
-    }
 
     TEST(RenderFrameInputTest, FrameUniformPacksOwnedLightingAndUnitPropagationDirection)
     {

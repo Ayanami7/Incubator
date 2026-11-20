@@ -225,13 +225,13 @@ namespace
             source_ = std::make_unique<AssetSource>(*fileIO_);
             ResourceManager::instance().registerLoader(ResourceType::TEXTURE,
                                                        std::make_unique<TextureLoader>(*source_));
-            id_ = ResourceManager::instance().registerResource(ResourceType::TEXTURE, "纹理/测试.png");
+            id_ = ResourceId::fromPath(ResourceType::TEXTURE, "纹理/测试.png");
             ASSERT_TRUE(id_.valid());
         }
 
         void TearDown() override
         {
-            ResourceManager::instance().release(id_);
+            hold_.reset();
             ResourceManager::instance().reset();
             ResourceRegistry::instance().clear();
             Log::Registry::reset();
@@ -250,10 +250,12 @@ namespace
             ASSERT_TRUE(output.good());
         }
 
-        TextureResource* loadFixture(std::string_view name)
+        const TextureResource* loadFixture(std::string_view name)
         {
+            hold_.reset();
             writeBytes(fixture(name));
-            return ResourceManager::instance().get<TextureResource>(id_);
+            hold_ = ResourceManager::instance().hold<TextureResource>(ResourceType::TEXTURE, "纹理/测试.png");
+            return hold_.get<TextureResource>();
         }
 
         fs::path previousDirectory_;
@@ -261,6 +263,7 @@ namespace
         std::unique_ptr<FileIO::FileIO> fileIO_;
         std::unique_ptr<AssetSource> source_;
         ResourceId id_;
+        CpuResource hold_;
         std::ostringstream messages_;
     };
 
@@ -270,7 +273,6 @@ namespace
         ASSERT_NE(texture, nullptr);
         EXPECT_EQ(texture->id(), id_);
         EXPECT_EQ(texture->type(), ResourceType::TEXTURE);
-        EXPECT_EQ(texture->state(), ResourceState::READY);
         EXPECT_EQ(texture->width(), 4u);
         EXPECT_EQ(texture->height(), 3u);
         EXPECT_EQ(texture->pixels(), REFERENCE_PIXELS);
@@ -282,24 +284,27 @@ namespace
         auto& manager = ResourceManager::instance();
         const auto* first = loadFixture("rgba8");
         ASSERT_NE(first, nullptr);
-        EXPECT_EQ(manager.registerResource(ResourceType::TEXTURE, "纹理/测试.png"), id_);
         EXPECT_EQ(ResourceRegistry::instance().refCount(id_), 1u);
         // 修改文件不会使已挂载对象失效。
         writeBytes(fixture("rgb8"));
-        EXPECT_EQ(manager.get<TextureResource>(id_), first);
-        EXPECT_EQ(first->pixels(), REFERENCE_PIXELS);
-        manager.release(id_);
+        {
+            auto second = manager.hold<TextureResource>(ResourceType::TEXTURE, "纹理/测试.png");
+            ASSERT_TRUE(second);
+            EXPECT_EQ(second.get<TextureResource>(), first);
+            EXPECT_EQ(first->pixels(), REFERENCE_PIXELS);
+            EXPECT_EQ(ResourceRegistry::instance().refCount(id_), 2u);
+        }
+        hold_.reset();
         EXPECT_EQ(ResourceRegistry::instance().getObject(id_), nullptr);
         EXPECT_EQ(ResourceRegistry::instance().refCount(id_), 0u);
-        ResourceType type = ResourceType::INVALID;
-        std::string path;
-        ASSERT_TRUE(ResourceRegistry::instance().lookup(id_, type, path));
-        EXPECT_EQ(type, ResourceType::TEXTURE);
-        EXPECT_EQ(path, "纹理/测试.png");
-        EXPECT_EQ(manager.registerResource(ResourceType::TEXTURE, path), id_);
-        EXPECT_EQ(ResourceRegistry::instance().refCount(id_), 0u);
-        manager.acquire(id_);
-        const auto* rebuilt = manager.get<TextureResource>(id_);
+        const auto info = manager.query(ResourceType::TEXTURE, "纹理/测试.png");
+        ASSERT_TRUE(info);
+        EXPECT_EQ(info->id, id_);
+        EXPECT_EQ(info->type, ResourceType::TEXTURE);
+        EXPECT_EQ(info->path, "纹理/测试.png");
+        EXPECT_EQ(info->references, 0u);
+        hold_ = manager.hold<TextureResource>(ResourceType::TEXTURE, info->path);
+        const auto* rebuilt = hold_.get<TextureResource>();
         ASSERT_NE(rebuilt, nullptr);
         EXPECT_EQ(rebuilt->width(), 2u);
         EXPECT_EQ(rebuilt->pixels(), (std::vector<uint8_t>{255, 0, 0, 255, 128, 128, 128, 255}));
@@ -310,7 +315,7 @@ namespace
         TextureLoader direct(*source_);
         EXPECT_THROW(direct.load(id_, "纹理/测试.png"), Error::Exception);
         EXPECT_TRUE(messages_.str().empty());
-        EXPECT_EQ(ResourceManager::instance().load(id_), nullptr);
+        EXPECT_FALSE(ResourceManager::instance().hold<TextureResource>(ResourceType::TEXTURE, "纹理/测试.png"));
         EXPECT_EQ(ResourceRegistry::instance().getObject(id_), nullptr);
         expectSingleFailure(messages_.str(), "PNG file was not found", "assets/纹理/测试.png");
     }
@@ -398,7 +403,6 @@ namespace
 
     TEST_F(TextureLoaderTest, AcceptsMaximumWidthOrHeightWithSmallPayloads)
     {
-        auto& manager = ResourceManager::instance();
         const auto* wide = loadFixture("max_width");
         ASSERT_NE(wide, nullptr);
         EXPECT_EQ(wide->width(), 4096u);
@@ -406,8 +410,6 @@ namespace
         EXPECT_EQ(wide->pixels().size(), 16384u);
         EXPECT_EQ(wide->pixels()[0], 128);
         EXPECT_EQ(wide->pixels()[3], 255);
-        manager.release(id_);
-        manager.acquire(id_);
         const auto* tall = loadFixture("max_height");
         ASSERT_NE(tall, nullptr);
         EXPECT_EQ(tall->width(), 1u);
@@ -476,12 +478,12 @@ namespace
             source_ = std::make_unique<AssetSource>(fileIO_);
             ResourceManager::instance().registerLoader(ResourceType::TEXTURE,
                                                        std::make_unique<TextureLoader>(*source_));
-            id_ = ResourceManager::instance().registerResource(ResourceType::TEXTURE, "纹理/短读.png");
+            id_ = ResourceId::fromPath(ResourceType::TEXTURE, "纹理/短读.png");
         }
 
         void TearDown() override
         {
-            ResourceManager::instance().release(id_);
+            hold_.reset();
             ResourceManager::instance().reset();
             ResourceRegistry::instance().clear();
             Log::Registry::reset();
@@ -500,7 +502,7 @@ namespace
 
         void expectFailure(std::string_view reason)
         {
-            EXPECT_EQ(ResourceManager::instance().load(id_), nullptr);
+            EXPECT_FALSE(ResourceManager::instance().hold<TextureResource>(ResourceType::TEXTURE, "纹理/短读.png"));
             EXPECT_EQ(ResourceRegistry::instance().getObject(id_), nullptr);
             expectSingleFailure(messages_.str(), reason, "assets/纹理/短读.png");
         }
@@ -508,6 +510,7 @@ namespace
         ::testing::StrictMock<MockFileIO> fileIO_;
         std::unique_ptr<AssetSource> source_;
         ResourceId id_;
+        CpuResource hold_;
         std::ostringstream messages_;
     };
 
@@ -522,7 +525,8 @@ namespace
             offset += count;
             return count;
         });
-        const auto* texture = ResourceManager::instance().get<TextureResource>(id_);
+        hold_ = ResourceManager::instance().hold<TextureResource>(ResourceType::TEXTURE, "纹理/短读.png");
+        const auto* texture = hold_.get<TextureResource>();
         ASSERT_NE(texture, nullptr);
         EXPECT_EQ(offset, 119u);
         EXPECT_EQ(texture->pixels(), REFERENCE_PIXELS);

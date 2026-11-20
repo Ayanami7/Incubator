@@ -20,7 +20,6 @@ namespace
         input[0] = 255;
         EXPECT_EQ(texture.id(), id);
         EXPECT_EQ(texture.type(), ResourceType::TEXTURE);
-        EXPECT_EQ(texture.state(), ResourceState::UNLOADED);
         EXPECT_EQ(texture.width(), 1u);
         EXPECT_EQ(texture.height(), 1u);
         EXPECT_EQ(texture.pixels(), (std::vector<uint8_t>{17, 34, 51, 0}));

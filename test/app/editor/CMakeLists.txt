@@ -1,4 +1,10 @@
 include(GoogleTest)
+add_executable(editor_cpu_test editor_cpu_test.cpp)
+target_link_libraries(editor_cpu_test PRIVATE GTest::gtest_main IncubatorEditorSupport)
+target_include_directories(editor_cpu_test PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/test")
+set_target_properties(editor_cpu_test PROPERTIES FOLDER "UnitTest/app/editor")
+gtest_discover_tests(editor_cpu_test WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
+
 add_executable(editor_test editor_test.cpp)
 target_link_libraries(editor_test PRIVATE GTest::gtest_main IncubatorEditorSupport vulkan)
 target_include_directories(editor_test PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/test")

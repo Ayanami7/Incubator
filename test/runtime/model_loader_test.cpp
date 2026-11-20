@@ -193,6 +193,7 @@ namespace
         }
         void TearDown() override
         {
+            holds_.clear();
             ResourceManager::instance().reset();
             ResourceRegistry::instance().clear();
             Log::Registry::reset();
@@ -224,10 +225,11 @@ namespace
             source.Accept(writer);
             write(path, buffer.GetString());
         }
-        ModelResource* load(std::string_view path)
+        const ModelResource* load(std::string_view path)
         {
-            id_ = ResourceManager::instance().registerResource(ResourceType::MODEL, path);
-            return ResourceManager::instance().get<ModelResource>(id_);
+            holds_.push_back(ResourceManager::instance().hold<ModelResource>(ResourceType::MODEL, path));
+            id_ = ResourceRegistry::instance().lookup(ResourceType::MODEL, path);
+            return holds_.back().get<ModelResource>();
         }
         void expectClosed()
         {
@@ -238,7 +240,7 @@ namespace
         {
             EXPECT_EQ(load(path), nullptr);
             EXPECT_EQ(ResourceRegistry::instance().getObject(id_), nullptr);
-            EXPECT_EQ(ResourceRegistry::instance().refCount(id_), 1u);
+            EXPECT_EQ(ResourceRegistry::instance().refCount(id_), 0u);
             EXPECT_NE(messages_.str().find(reason), std::string::npos) << messages_.str();
             EXPECT_NE(messages_.str().find(path), std::string::npos) << messages_.str();
             expectClosed();
@@ -255,6 +257,7 @@ namespace
         TrackedFileIO fileIO_;
         std::unique_ptr<AssetSource> source_;
         ResourceId id_;
+        std::vector<CpuResource> holds_;
         std::ostringstream messages_;
     };
 
@@ -263,7 +266,6 @@ namespace
         const auto* model = load(GLTF);
         ASSERT_NE(model, nullptr) << messages_.str();
         EXPECT_EQ(model->type(), ResourceType::MODEL);
-        EXPECT_EQ(model->state(), ResourceState::READY);
         EXPECT_EQ(model->geometries().size(), 2u);
         EXPECT_EQ(model->parts().size(), 2u);
         EXPECT_EQ(model->nodes().size(), 4u);
@@ -480,9 +482,9 @@ namespace
             EXPECT_EQ(gltf->geometries()[0].vertices[i].position, obj->geometries()[0].vertices[i].position);
         }
         ResourceManager::instance().registerLoader(ResourceType::TEXTURE, std::make_unique<TextureLoader>(*source_));
-        const auto textureId =
-            ResourceManager::instance().registerResource(ResourceType::TEXTURE, "textures/direction_rgba.png");
-        const auto* texture = ResourceManager::instance().get<TextureResource>(textureId);
+        const auto textureHold =
+            ResourceManager::instance().hold<TextureResource>(ResourceType::TEXTURE, "textures/direction_rgba.png");
+        const auto* texture = textureHold.get<TextureResource>();
         ASSERT_NE(texture, nullptr);
         EXPECT_GT(texture->width(), 1u);
         EXPECT_GT(texture->height(), 1u);
@@ -562,7 +564,9 @@ namespace
         expectFailure(GLTF, "Invalid glTF JSON");
         const auto failedId = id_;
         write(GLTF, valid);
-        ASSERT_NE(ResourceManager::instance().get<ModelResource>(failedId), nullptr);
+        const auto* retried = load(GLTF);
+        ASSERT_NE(retried, nullptr);
+        EXPECT_EQ(retried->id(), failedId);
         expectClosed();
     }
     class ModelGltfFailureTest : public ModelLoaderTest, public ::testing::WithParamInterface<std::string>

@@ -76,14 +76,13 @@ namespace Incubator
         /// 线程安全由调用方保证（与 Registry 约定一致）。
         ///
         /// ## 引用计数所有权模型
-        /// - `registerResource` 首次登记即持有 refCount = 1；重复登记幂等，**不再 +1**
-        /// - 额外的持有者必须显式调用 `acquire()`；`load()`/`get()` 不改变引用计数
-        /// - `release()` 递减计数，归零时由本类卸载对象（`detachObject`），登记保留
-        /// - `load()`/`get()` 返回的裸指针**仅在对应持有期（登记持有 + acquire）内有效**，
-        ///   持有期满后不得再访问
+        /// - 消费者统一通过 `hold<T>(type, path)` 取得只可移动的 `CpuResource` 持有
+        /// - 首次登记或重复持有增加引用计数，共享已挂载的 CPU 对象
+        /// - `CpuResource` 析构或 `reset()` 时递减计数，归零时卸载对象（`detachObject`），登记保留
+        /// - 通过 `CpuResource::get<T>()` 借用的裸指针**仅在对应持有存活期内有效**
         ///
         /// ## 异常边界
-        /// `load()` 保证不向外抛异常：任何 Loader 抛出的异常视为该资源加载失败（日志 + nullptr）。
+        /// `hold<T>()` 保证不向外抛异常：任何 Loader 抛出的异常视为该资源加载失败（日志 + `failure()`）。
         class ResourceManager
         {
         public:
@@ -115,21 +114,6 @@ namespace Incubator
             /// @brief 清除全部 Loader（测试隔离 / 引擎关闭）
             void reset();
 
-            /// @brief 门面：注册资源（委托 Registry 幂等语义）
-            /// @return 既有或新建的资源 ID；非法输入返回无效 ID
-            ResourceId registerResource(ResourceType type, std::string_view virtualPath);
-
-            /// @brief 同步加载
-            ///
-            /// 已挂载对象直接返回；否则按类型路由到 Loader 构建并挂载。
-            /// @param id 资源 ID
-            /// @return 成功返回 READY 对象；未注册 / 无 Loader / 加载失败 / Loader 抛异常 均返回 nullptr
-            ResourceObject* load(ResourceId id);
-
-            /// @brief 类型安全取回（load + dynamic_cast；类型不符返回 nullptr）
-            template <typename T>
-            T* get(ResourceId id);
-
             /// @brief 列出当前资产源目录；不登记、不加载；未绑定或访问失败抛异常。
             std::vector<AssetEntry> listDirectory(std::string_view directory = {}) const;
             /// @brief 查询既有登记，未登记返回空值；不加载或改变计数。
@@ -149,25 +133,15 @@ namespace Incubator
                 return result;
             }
 
-            /// @brief 增加引用（额外持有者使用；未注册 ID 记录错误日志）
-            void acquire(ResourceId id);
-
-            /// @brief 释放引用：委托 Registry 计数；归零时卸载对象（登记保留）
-            void release(ResourceId id);
-
         private:
+            friend class CpuResource;
             ResourceManager() = default;
             CpuResource holdResource(ResourceType type, std::string_view path);
             ResourceObject* loadResource(ResourceId id, std::optional<ResourceFailure>& failure);
+            void release(ResourceId id);
             static void reportFailure(const ResourceFailure& failure);
             AssetSource* source_ = nullptr;
             std::map<ResourceType, std::unique_ptr<LoaderBase>> loaders_;
         };
-
-        template <typename T>
-        T* ResourceManager::get(ResourceId id)
-        {
-            return dynamic_cast<T*>(load(id));
-        }
     }  // namespace Resource
 }  // namespace Incubator

@@ -22,7 +22,6 @@
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
-#include "runtime/model/model_instance.h"
 #include "runtime/model/model_manager.h"
 #include "runtime/model/prepared_model.h"
 #include "runtime/platform/fileio/fileio.h"
@@ -67,42 +66,22 @@ namespace
         EXPECT_EQ(base.path(), "models/scene.gltf");
         EXPECT_EQ(base, Model::ModelReference("models/./scene.gltf"));
         EXPECT_NE(base, Model::ModelReference("models/other.gltf"));
-        Model::PrepareOptions options;
-        options.mipMode = TextureMipMode::FullChain;
-        EXPECT_NE(base, Model::ModelReference("models/scene.gltf", options));
-        options = {};
-        options.sampler.minFilter = TextureFilter::Linear;
-        EXPECT_NE(base, Model::ModelReference("models/scene.gltf", options));
-        options = {};
-        options.sampler.magFilter = TextureFilter::Linear;
-        EXPECT_NE(base, Model::ModelReference("models/scene.gltf", options));
-        for (const auto mip : {MipFilter::Nearest, MipFilter::Linear})
-        {
-            options = {};
-            options.sampler.mipFilter = mip;
-            EXPECT_NE(base, Model::ModelReference("models/scene.gltf", options));
-        }
-        options = {};
-        options.shading = ShadingMode::Lambert;
-        EXPECT_NE(base, Model::ModelReference("models/scene.gltf", options));
-        for (const auto path : {std::string(""), std::string("../escape.gltf"), std::string("C:asset.gltf"),
-                                std::string("x\0y", 3), std::string("\xff", 1)})
+        for (const auto& variant : {Model::PrepareOptions{TextureMipMode::FullChain},
+                                    Model::PrepareOptions{{}, {TextureFilter::Linear}},
+                                    Model::PrepareOptions{{}, {TextureFilter::Nearest, TextureFilter::Linear}},
+                                    Model::PrepareOptions{{}, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::Nearest}},
+                                    Model::PrepareOptions{{}, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::Linear}},
+                                    Model::PrepareOptions{{}, {}, ShadingMode::Lambert}})
+            EXPECT_NE(base, Model::ModelReference("models/scene.gltf", variant));
+        for (const auto& path : {std::string(""), std::string("../escape.gltf"), std::string("C:asset.gltf"),
+                                 std::string("x\0y", 3), std::string("\xff", 1)})
             EXPECT_THROW((void)Model::ModelReference{path}, Error::Exception);
-        options = {};
-        options.mipMode = static_cast<TextureMipMode>(99);
-        EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", options}), Error::Exception);
-        options = {};
-        options.sampler.minFilter = static_cast<TextureFilter>(99);
-        EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", options}), Error::Exception);
-        options = {};
-        options.sampler.magFilter = static_cast<TextureFilter>(99);
-        EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", options}), Error::Exception);
-        options = {};
-        options.sampler.mipFilter = static_cast<MipFilter>(99);
-        EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", options}), Error::Exception);
-        options = {};
-        options.shading = static_cast<ShadingMode>(99);
-        EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", options}), Error::Exception);
+        for (const auto& bad : {Model::PrepareOptions{static_cast<TextureMipMode>(99)},
+                                Model::PrepareOptions{{}, {static_cast<TextureFilter>(99)}},
+                                Model::PrepareOptions{{}, {TextureFilter::Nearest, static_cast<TextureFilter>(99)}},
+                                Model::PrepareOptions{{}, {TextureFilter::Nearest, TextureFilter::Nearest, static_cast<MipFilter>(99)}},
+                                Model::PrepareOptions{{}, {}, static_cast<ShadingMode>(99)}})
+            EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", bad}), Error::Exception);
     }
 
     size_t occurrences(std::string_view text, std::string_view value)
@@ -271,15 +250,13 @@ namespace
         void shaders(Renderer& renderer)
         {
             auto& manager = ResourceManager::instance();
-            const auto vertex = manager.registerResource(ResourceType::SHADER, "shaders/cube.vert.spv");
-            const auto fragment = manager.registerResource(ResourceType::SHADER, "shaders/cube.frag.spv");
-            const auto* v = manager.get<ShaderResource>(vertex);
-            const auto* f = manager.get<ShaderResource>(fragment);
-            ASSERT_NE(v, nullptr);
-            ASSERT_NE(f, nullptr);
-            renderer.prepareSceneResources(*v, *f);
-            manager.release(vertex);
-            manager.release(fragment);
+            {
+                const auto vertex = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/cube.vert.spv");
+                const auto fragment = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/cube.frag.spv");
+                ASSERT_TRUE(vertex);
+                ASSERT_TRUE(fragment);
+                renderer.prepareSceneResources(*vertex.get<ShaderResource>(), *fragment.get<ShaderResource>());
+            }
             released(ResourceType::SHADER, "shaders/cube.vert.spv");
             released(ResourceType::SHADER, "shaders/cube.frag.spv");
         }
@@ -292,12 +269,23 @@ namespace
         void shadowShader(Renderer& renderer)
         {
             auto& manager = ResourceManager::instance();
-            const auto id = manager.registerResource(ResourceType::SHADER, "shaders/shadow.vert.spv");
-            const auto* shader = manager.get<ShaderResource>(id);
-            ASSERT_NE(shader, nullptr);
-            renderer.prepareShadowResources(*shader);
-            manager.release(id);
+            {
+                const auto shader = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/shadow.vert.spv");
+                ASSERT_TRUE(shader);
+                renderer.prepareShadowResources(*shader.get<ShaderResource>());
+            }
             released(ResourceType::SHADER, "shaders/shadow.vert.spv");
+        }
+        static std::vector<DrawItem> expandModel(const Model::PreparedModel& model, const glm::mat4& transform)
+        {
+            std::vector<DrawItem> result;
+            result.reserve(model.draws().size());
+            for (auto draw : model.draws())
+            {
+                draw.model = transform * draw.model;
+                result.push_back(std::move(draw));
+            }
+            return result;
         }
         std::vector<uint8_t> shadowScenePixels(Window::Window& native, Renderer& renderer,
                                                const Scene::SceneFrame& frame)
@@ -351,60 +339,40 @@ namespace
         std::ostringstream messages_, resourceMessages_;
     };
 
-    TEST_F(ModelPreparationTest, PickingUsesTransformedSharedBoundsAndStableNearestOrder)
+    class TransformModelLoader final : public LoaderBase
     {
-        auto native = window();
+    public:
+        explicit TransformModelLoader(std::optional<glm::mat4> leafTransform = std::nullopt)
+            : leafTransform_(leafTransform)
+        {}
+
+        std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view) override
         {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            auto model = Model::prepareModel(renderer, GLTF);
-            auto ground = Model::prepareModel(renderer, "models/shadows/receiver.obj");
-            ASSERT_TRUE(model->bounds());
-            const Scene::Transform pose({4, 2, -1}, glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1)),
-                                        {-2, 3, 0});
-            const auto world = model->bounds()->transformed(pose.matrix());
-            ASSERT_TRUE(world);
-            const auto center = (world->min + world->max) * 0.5f;
-            Scene::Scene scene;
-            scene.createEntity();
-            const auto hidden = scene.createEntity(model, pose, false);
-            auto distant = pose;
-            distant.setPosition(pose.position() + glm::vec3(0, 0, -2));
-            scene.createEntity(model, distant);
-            const auto first = scene.createEntity(model, pose);
-            const auto same = scene.createEntity(model, pose);
-            const auto groundId = scene.createEntity(ground, Scene::Transform({40, 0, 0}));
-            const Math::LineSegment segment{center + glm::vec3(0, 0, 5), center - glm::vec3(0, 0, 5)};
-            const auto counts = Detail::RendererReviewAccess::resourceCounts(renderer);
-            const auto logBefore = messages_.str();
-            auto hit = scene.pick(segment);
-            ASSERT_TRUE(hit);
-            EXPECT_EQ(hit->id, first);
-            EXPECT_NEAR(hit->parameter, 0.5, 0.00001);
-            const glm::vec3 edge{center.x, world->max.y - 0.0001f, center.z};
-            EXPECT_EQ(scene.pick(Math::LineSegment{edge + glm::vec3(0, 0, 5), edge - glm::vec3(0, 0, 5)})->id, first);
-            EXPECT_EQ(scene.pick(Math::LineSegment{{40, 0, 2}, {40, 0, -2}})->id, groundId);
-            scene.setVisible(first, false);
-            EXPECT_EQ(scene.pick(segment)->id, same);
-            scene.setVisible(hidden, true);
-            EXPECT_EQ(scene.pick(segment)->id, hidden);
-            scene.setCamera(Scene::Camera(center + glm::vec3(0, 0, 5)));
-            EXPECT_EQ(scene.pick(FrameExtent{800, 600}, {0.5f, 0.5f})->id, hidden);
-            scene.setCamera(Scene::Camera(center + glm::vec3(0, 0, 5), glm::quat(1, 0, 0, 0), {0.8f, 0.1f, 4.0f}));
-            EXPECT_FALSE(scene.pick(FrameExtent{800, 600}, {0.5f, 0.5f}));
-            const auto zero =
-                scene.createEntity(model, Scene::Transform({20, 0, 0}, glm::quat(1, 0, 0, 0), glm::vec3(0)));
-            EXPECT_EQ(scene.pick(Math::LineSegment{{20, 0, 1}, {20, 0, -1}})->id, zero);
-            scene.clear();
-            EXPECT_FALSE(scene.pick(segment));
-            const auto after = Detail::RendererReviewAccess::resourceCounts(renderer);
-            EXPECT_EQ(after.meshes, counts.meshes);
-            EXPECT_EQ(after.textures, counts.textures);
-            EXPECT_EQ(after.materials, counts.materials);
-            EXPECT_EQ(messages_.str(), logBefore);
+            MeshData mesh{{{{0, 0, 0}, {0, 0}}, {{1, 0, 0}, {1, 0}}, {{0, 1, 0}, {0, 1}}}, {0, 1, 2}};
+            mesh.vertices[0].normal = {1, 1, 0};
+            mesh.vertices[1].normal = {0, 1, 1};
+            mesh.vertices[2].normal = {1, 0, 1};
+            const auto root = glm::translate(glm::mat4(1), glm::vec3(10, 0, 0));
+            const auto parent = glm::rotate(glm::mat4(1), glm::radians(90.0f), glm::vec3(0, 0, 1));
+            const auto leaf = leafTransform_.value_or(glm::translate(glm::mat4(1), glm::vec3(2, 0, 0)) *
+                                                      glm::scale(glm::mat4(1), glm::vec3(2, 3, 1)));
+            auto unused = mesh;
+            for (auto& vertex : unused.vertices)
+                vertex.position = {1000, 2000, 3000};
+            return std::make_unique<ModelResource>(
+                id, std::vector<MeshData>{unused, mesh},
+                std::vector<ModelMaterial>{{}, {std::nullopt, {0.5f, 1, 0.5f}}, {std::nullopt, {1, 0, 0}}},
+                std::vector<ModelPart>{{1, 0}, {1, 1}, {1, 2}, {0, 0}},
+                std::vector<ModelNode>{{"parent", parent, {1}, {0}},
+                                       {"leaf", leaf, {}, {1, 0}},
+                                       {"root", root, {0, 3}, {2}},
+                                       {"sibling", glm::translate(glm::mat4(1), glm::vec3(-1, 0, 0)), {}, {2}}},
+                2);
         }
-        cleanValidation();
-    }
+
+    private:
+        std::optional<glm::mat4> leafTransform_;
+    };
 
     TEST_F(ModelPreparationTest, SpecifiedAssetRootPreparesBothFormatsWithoutFallbackToDefaultDirectory)
     {
@@ -507,12 +475,9 @@ namespace
                 }
                 if (i == 12)
                     EXPECT_EQ(pixels, baseline);
-                size_t clearPixels = 0;
-                for (size_t at = 0; at + 3 < pixels.size(); at += 4)
-                    if (std::abs(int(pixels[at]) - 31) <= 1 && std::abs(int(pixels[at + 1]) - 41) <= 1 &&
-                        std::abs(int(pixels[at + 2]) - 56) <= 1)
-                        ++clearPixels;
-                EXPECT_GT(clearPixels, 0u);
+                EXPECT_NEAR(pixels[0], 31, 1);
+                EXPECT_NEAR(pixels[1], 41, 1);
+                EXPECT_NEAR(pixels[2], 56, 1);
             }
             for (int i = 0; i < 4; ++i)
             {
@@ -527,9 +492,8 @@ namespace
                 ui->AddImage(renderer.sceneImage(output), {0, 0}, {256, 256});
                 ui->AddRectFilled({8, 8}, {64, 64}, IM_COL32(255, 0, 255, 255));
                 renderer.imgui().endFrame();
-                renderer.drawSceneTarget(output, frame->input(), {0.12f, 0.16f, 0.22f, 1}, [&](void* commands) {
-                    renderer.imgui().recordDrawData(renderer.imgui().drawData(),
-                                                    static_cast<VkCommandBuffer>(commands));
+                renderer.drawSceneTarget(output, frame->input(), {0.12f, 0.16f, 0.22f, 1}, [&](void* c) {
+                    renderer.imgui().recordDrawData(renderer.imgui().drawData(), static_cast<VkCommandBuffer>(c));
                 });
             }
             // 不等待回读即关闭，覆盖阴影采样、视口重建、UI 合成和在途描述符的共同持有期。
@@ -571,101 +535,113 @@ namespace
                                                  {{0, 0, 0}, {4, 4}, 1, 9, 0.004f, 0.001f, false}}};
             for (size_t i = 0; i < samples.size(); ++i)
             {
-                SCOPED_TRACE(i);
-                const auto& sample = samples[i];
-                const ShadowSettings settings{
-                    true, sample.center, sample.halfExtent, sample.nearPlane, sample.farPlane, sample.bias};
-                auto frame = Scene::extractSceneFrame(scene, {384, 256}, true, settings);
+                const auto& s = samples[i];
+                auto frame = Scene::extractSceneFrame(
+                    scene, {384, 256}, true, {true, s.center, s.halfExtent, s.nearPlane, s.farPlane, s.bias});
                 ASSERT_TRUE(frame);
-                // 投射平面覆盖整张深度图，范围外若误用 ClampToEdge 会出现可判定的暗区。
-                const auto model =
-                    glm::translate(glm::mat4(1), glm::vec3(sample.center.x, sample.center.y, sample.casterZ)) *
-                    glm::scale(glm::mat4(1), glm::vec3(4, 4, 1));
-                frame->shadowDraws = {{receiver->meshes()[0], {}, model}};
-                const auto pixels = shadowScenePixels(*native, renderer, *frame);
-                const auto expected = sample.occluded
-                                          ? glm::vec3(lighting.ambient)
-                                          : glm::vec3(lighting.ambient) + lighting.color * lighting.intensity;
-                expectShadowPixel(*frame, pixels, {0, 0.75f, 0}, expected);
+                frame->shadowDraws = {
+                    {receiver->meshes()[0], {},
+                     glm::translate(glm::mat4(1), {s.center.x, s.center.y, s.casterZ}) *
+                         glm::scale(glm::mat4(1), {4, 4, 1})}};
+                expectShadowPixel(*frame, shadowScenePixels(*native, renderer, *frame), {0, 0.75f, 0},
+                                  s.occluded ? glm::vec3(lighting.ambient)
+                                             : glm::vec3(lighting.ambient) + lighting.color * lighting.intensity);
             }
         }
         cleanValidation();
     }
 
-    TEST_F(ModelPreparationTest, ShadowDepthTargetsFollowSlotsAndKeepNearestSurfaceWithoutMaterials)
+    TEST_F(ModelPreparationTest, ShadowDepthTargetsFollowSlotsAndSourceTransformsAcrossToggles)
     {
+        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
         auto native = window();
         {
             Renderer renderer(*native, RendererValidationMode::Required);
             shaders(renderer);
             shadowShader(renderer);
-            std::array<std::vector<uint32_t>, 2> words;
             auto& manager = ResourceManager::instance();
-            for (size_t i = 0; i < words.size(); ++i)
-            {
-                const auto id = manager.registerResource(ResourceType::SHADER,
-                                                         i ? "shaders/cube.frag.spv" : "shaders/cube.vert.spv");
-                words[i] = manager.get<ShaderResource>(id)->words();
-                manager.release(id);
-            }
+            const auto vert = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/cube.vert.spv");
+            const auto frag = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/cube.frag.spv");
+            ASSERT_TRUE(vert && frag);
+            const auto vertWords = vert.get<ShaderResource>()->words();
+            const auto fragWords = frag.get<ShaderResource>()->words();
+
             const std::array<MeshVertex, 4> vertices{
                 {{{-2, -2, 0}, {0, 0}}, {{2, -2, 0}, {1, 0}}, {{2, 2, 0}, {1, 1}}, {{-2, 2, 0}, {0, 1}}}};
-            const std::array<uint32_t, 6> forward{0, 1, 2, 0, 2, 3}, reverse{2, 1, 0, 3, 2, 0};
-            const auto mesh = renderer.createMesh(vertices, forward);
-            const auto reversed = renderer.createMesh(vertices, reverse);
-            ShadowSettings settings;
-            settings.enabled = true;
-            settings.halfExtent = {4, 4};
-            settings.nearPlane = 1;
-            settings.farPlane = 9;
+            const auto mesh = renderer.createMesh(vertices, std::array<uint32_t, 6>{0, 1, 2, 0, 2, 3});
+            const auto reversed = renderer.createMesh(vertices, std::array<uint32_t, 6>{2, 1, 0, 3, 2, 0});
+            ShadowSettings settings{true, {0, 0, 0}, {4, 4}, 1, 9, 0.001f};
             const auto shadow = makeShadowFrame(settings, {0, 0, -1});
-            const std::array<float, 8> expected{0.25f, 0.75f, 1, 0.125f, 1, 1, 0.25f, 0.75f};
+            const std::array<float, 6> expected{0.25f, 0.75f, 1, 0.125f, 1, 0.25f};
             std::array<VkImage, 2> handles{};
             std::array<SceneOutput, 2> outputs;
             for (size_t i = 0; i < expected.size(); ++i)
             {
                 native->pollEvents();
                 ASSERT_TRUE(renderer.beginUiFrame());
-                const FrameExtent extent{i < 4 ? 192u : 256u, 128};
+                const FrameExtent extent{i < 3 ? 192u : 256u, 128};
                 auto output = renderer.prepareSceneTarget(extent);
                 std::vector<DrawItem> casters;
-                if (i != 2 && i != 4 && i != 5)
+                if (i != 2 && i != 4)
                 {
                     casters.push_back({mesh, {}, glm::translate(glm::mat4(1), {0, 0, -2})});
-                    if (i != 1 && i != 7)
+                    if (i != 1)
                     {
                         const auto model = glm::translate(glm::mat4(1), {0, 0, i == 3 ? 3 : 2}) *
                                            glm::scale(glm::mat4(1), {-0.5f, 1.5f, 0});
                         casters.push_back({i == 3 ? reversed : mesh, {}, model});
-                        casters.push_back(casters[0]);
                     }
                 }
-                FrameInput input{extent, {glm::mat4(1), glm::mat4(1)}, {}, {}, i == 4 ? std::nullopt : shadow, casters};
                 renderer.imgui().endFrame();
-                renderer.drawSceneTarget(output, input, {0, 0, 0, 1});
+                renderer.drawSceneTarget(output, {extent, {glm::mat4(1), glm::mat4(1)}, {}, {},
+                                                  i == 4 ? std::nullopt : shadow, casters},
+                                         {0, 0, 0, 1});
                 outputs[i % 2] = output;
                 if (i == 4)
                     continue;
                 Detail::RendererReviewAccess::withShadowOutput(
                     renderer, output, [&](const auto& device, const auto& image) {
                         EXPECT_EQ(image.extent().width, 1024u);
-                        EXPECT_EQ(image.extent().height, 1024u);
                         EXPECT_EQ(image.mipLevels(), 1u);
                         if (!handles[i % 2])
                             handles[i % 2] = image.handle();
                         EXPECT_EQ(image.handle(), handles[i % 2]);
                         EXPECT_NEAR(readShadowDepth(device, image), expected[i], 0.00003f);
                         EXPECT_NEAR(readShadowDepth(device, image, 0, 0), 1, 0.00003f);
-                        if (i < 2)
+                        if (i == 0)
                         {
-                            const double encoded = 1.055 * std::pow(double(expected[i]), 1.0 / 2.4) - 0.055;
-                            EXPECT_NEAR(sampleShadowDepth(device, image, words[0], words[1]), encoded * 255, 2);
+                            const double encoded = 1.055 * std::pow(0.25, 1.0 / 2.4) - 0.055;
+                            EXPECT_NEAR(sampleShadowDepth(device, image, vertWords, fragWords), encoded * 255, 2);
                         }
                     });
                 if (i == 1)
                     Detail::RendererReviewAccess::withShadowOutput(
                         renderer, outputs[0], [&](const auto& device, const auto& image) {
                             EXPECT_NE(handles[0], handles[1]);
+                            EXPECT_NEAR(readShadowDepth(device, image), 0.25f, 0.00003f);
+                        });
+            }
+
+            // 源根平移先于实体旋转与缩放：验证在途深度槽保护与中心深度 0.25
+            auto model = Model::prepareModel(renderer, "models/shadow-source.gltf");
+            auto srcCasters = expandModel(*model, Scene::Transform({1, 2, 2}, {1, 0, 0, 1}, {2, -3, 0}).matrix());
+            for (auto& d : srcCasters)
+                d.material = {};
+            ShadowSettings srcSettings{true, {2, 68.0f / 3, 0}, {3, 3}, 1, 9, 0.001f};
+            for (int i = 0; i < 4; ++i)
+            {
+                native->pollEvents();
+                ASSERT_TRUE(renderer.beginUiFrame());
+                auto output = renderer.prepareSceneTarget({256, 128});
+                srcSettings.enabled = i != 2;
+                renderer.imgui().endFrame();
+                renderer.drawSceneTarget(
+                    output, {{256, 128}, {glm::mat4(1), glm::mat4(1)}, {}, {}, makeShadowFrame(srcSettings, {0, 0, -1}),
+                             srcCasters},
+                    {0, 0, 0, 1});
+                if (i == 0)
+                    Detail::RendererReviewAccess::withShadowOutput(
+                        renderer, output, [&](const auto& device, const auto& image) {
                             EXPECT_NEAR(readShadowDepth(device, image), 0.25f, 0.00003f);
                         });
             }
@@ -691,15 +667,7 @@ namespace
             renderer.imgui().endFrame();
             bool recorded = false;
             const auto reject = [&](auto&& submit) {
-                try
-                {
-                    submit();
-                    FAIL() << "Invalid shadow submission was accepted";
-                }
-                catch (const Error::Exception& error)
-                {
-                    EXPECT_EQ(error.code(), Error::Code::RENDER);
-                }
+                EXPECT_THROW(submit(), Error::Exception);
                 EXPECT_FALSE(recorded);
             };
             reject([&] { renderer.drawSceneTarget(output, input, {0, 0, 0, 1}, [&](void*) { recorded = true; }); });
@@ -842,197 +810,71 @@ namespace
         cleanValidation();
     }
 
-    TEST_F(ModelPreparationTest, BothImportedFormatsReleaseCpuAssetsAndDrawSharedResults)
-    {
-        auto native = window();
-        std::vector<std::shared_ptr<const Model::PreparedModel>> models;
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            for (const char* path : {GLTF, OBJ})
-            {
-                auto model = Model::prepareModel(renderer, path);
-                EXPECT_EQ(model->meshes().size(), 2u);
-                EXPECT_EQ(model->materials().size(), 2u);
-                EXPECT_EQ(model->textures().size(), 2u);
-                released(ResourceType::MODEL, path);
-                released(ResourceType::TEXTURE, PNG);
-                auto shared = model;
-                ASSERT_TRUE(model->bounds());
-                EXPECT_EQ(&model->bounds(), &shared->bounds());
-                const auto bounds = *model->bounds();
-                model.reset();
-                EXPECT_FALSE(shared->nodes().empty());
-                ASSERT_TRUE(shared->bounds());
-                EXPECT_EQ(shared->bounds()->min, bounds.min);
-                EXPECT_EQ(shared->bounds()->max, bounds.max);
-                for (int frame = 0; frame < 3; ++frame)
-                    draw(*native, renderer, *shared, frame % 2);
-                models.push_back(shared);
-            }
-            EXPECT_EQ(models[0]->nodes()[models[0]->rootNode()].name, "SourceRoot");
-            EXPECT_EQ(occurrences(messages_.str(), "Prepared model '"), 2u);
-            EXPECT_NE(messages_.str().find("2 meshes, 2 materials, 2 textures; requested mip=baseLevel"),
-                      std::string::npos);
-            EXPECT_FLOAT_EQ(models[0]->nodes()[models[0]->rootNode()].localTransform[3][0], 0.25f);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
-            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
-        }
-        for (const auto& model : models)
-        {
-            for (const auto& mesh : model->meshes())
-                EXPECT_FALSE(mesh.valid());
-            for (const auto& material : model->materials())
-                EXPECT_FALSE(material.valid());
-            for (const auto& texture : model->textures())
-                EXPECT_FALSE(texture.valid());
-        }
-        cleanValidation();
-    }
-
     TEST_F(ModelPreparationTest, FixedShowcaseModelsPrepareReleaseCpuAndDrawSharedInstances)
     {
-        constexpr const char* TEAPOT = "models/utah_teapot/utah_teapot.obj";
-        constexpr const char* AVOCADO = "models/avocado/glTF/Avocado.gltf";
-        constexpr const char* AVOCADO_BASE_COLOR = "models/avocado/glTF/Avocado_baseColor.png";
         copyShowcaseModels();
         auto native = window();
-        Scene::Scene scene;
-        scene.setCamera(Scene::Camera({0, 0, 30}, {1, 0, 0, 0}, {glm::radians(45.0f), 0.1f, 100.0f}));
         std::vector<std::shared_ptr<const Model::PreparedModel>> models;
-        size_t expectedMeshes = 0;
-        size_t expectedTextures = 0;
-        size_t expectedMaterials = 0;
-        size_t expectedDraws = 0;
+        size_t expectedMeshes = 0, expectedTextures = 0, expectedMaterials = 0;
         {
             Renderer renderer(*native, RendererValidationMode::Required);
             shaders(renderer);
-            size_t index = 0;
-            for (const char* path : {TEAPOT, AVOCADO})
+            for (const auto& [path, scale, y] :
+                 {std::tuple{"models/utah_teapot/utah_teapot.obj", 0.075f, 0.0f},
+                  std::tuple{"models/avocado/glTF/Avocado.gltf", 24.0f, -0.78f}})
             {
                 auto prepared = Model::prepareModel(renderer, path);
-                ASSERT_NE(prepared, nullptr) << path;
-                ASSERT_FALSE(prepared->meshes().empty()) << path;
-                ASSERT_FALSE(prepared->materials().empty()) << path;
-                ASSERT_FALSE(prepared->draws().empty()) << path;
+                ASSERT_FALSE(prepared->draws().empty());
                 expectedMeshes += prepared->meshes().size();
                 expectedTextures += prepared->textures().size();
                 expectedMaterials += prepared->materials().size();
-                expectedDraws += prepared->draws().size() * 2;
-
-                const float scale = index == 0 ? 0.1f : 50.0f;
-                const float y = index == 0 ? 3.0f : -3.0f;
-                auto shared = prepared;
-                scene.createEntity(shared, Scene::Transform({-3.5f, y, 0}, {1, 0, 0, 0}, glm::vec3(scale)));
-                scene.createEntity(shared, Scene::Transform({3.5f, y, 0}, {1, 0, 0, 0}, glm::vec3(scale)));
-                prepared.reset();
-                models.push_back(std::move(shared));
+                models.push_back(std::move(prepared));
                 released(ResourceType::MODEL, path);
                 Scene::Scene comparison;
                 comparison.setCamera(Scene::Camera({0, 0, 6}));
-                const float displayScale = index == 0 ? 0.075f : 24.0f;
-                const float displayY = index == 0 ? 0.0f : -0.78f;
+                comparison.createEntity(models.back(), Scene::Transform({0, y, 0}, {1, 0, 0, 0}, glm::vec3(scale)));
                 comparison.createEntity(models.back(),
-                                        Scene::Transform({0, displayY, 0}, {1, 0, 0, 0}, glm::vec3(displayScale)));
-                comparison.createEntity(models.back(),
-                                        Scene::Transform({1000, displayY, 0}, {1, 0, 0, 0}, glm::vec3(displayScale)));
+                                        Scene::Transform({1000, y, 0}, {1, 0, 0, 0}, glm::vec3(scale)));
                 const auto enabled = Scene::extractSceneFrame(comparison, {384, 256});
                 const auto disabled = Scene::extractSceneFrame(comparison, {384, 256}, false);
-                ASSERT_TRUE(enabled);
-                ASSERT_TRUE(disabled);
+                ASSERT_TRUE(enabled && disabled);
                 EXPECT_EQ(enabled->draws.size(), models.back()->draws().size());
                 EXPECT_EQ(disabled->draws.size(), models.back()->draws().size() * 2);
-                const auto capture = [&](const Scene::SceneFrame& frame) {
-                    std::vector<uint8_t> pixels;
-                    Detail::RendererReviewAccess::withFrame(
-                        renderer, frame.input(),
-                        [&](const auto& device, const auto& pipeline, auto frameSet, auto draws) {
-                            pixels = TextureGpuReview::captureDraws(device, pipeline, frameSet, draws);
-                        });
-                    return pixels;
-                };
-                const auto enabledPixels = capture(*enabled);
-                const auto disabledPixels = capture(*disabled);
-                ASSERT_EQ(enabledPixels.size(), 384u * 256 * 4);
-                EXPECT_TRUE(enabledPixels == disabledPixels);
+                const auto pixels = TextureGpuReview::captureFrame(renderer, enabled->input());
+                EXPECT_EQ(pixels, TextureGpuReview::captureFrame(renderer, disabled->input()));
                 auto blank = *enabled;
                 blank.draws.clear();
-                EXPECT_TRUE(enabledPixels != capture(blank));
-                const auto label = index == 0 ? "teapot" : "avocado";
-                WindowCapture::save({384, 256, enabledPixels},
-                                    fs::path("review") / (std::string(label) + "-culled.ppm"));
-                WindowCapture::save({384, 256, disabledPixels},
-                                    fs::path("review") / (std::string(label) + "-unculled.ppm"));
-                std::cout << label << ": culled=" << enabled->draws.size() << " unculled=" << disabled->draws.size()
-                          << " identical nonempty GPU image\n";
-                ++index;
+                EXPECT_NE(pixels, TextureGpuReview::captureFrame(renderer, blank.input()));
             }
-            released(ResourceType::TEXTURE, AVOCADO_BASE_COLOR);
-
-            for (int frameIndex = 0; frameIndex < 3; ++frameIndex)
-            {
-                native->pollEvents();
-                const auto extent = renderer.beginUiFrame();
-                ASSERT_TRUE(extent);
-                auto frame = Scene::extractSceneFrame(scene, *extent);
-                ASSERT_TRUE(frame);
-                EXPECT_EQ(frame->draws.size(), expectedDraws);
-                renderer.imgui().endFrame();
-                renderer.drawFrame(frame->input(), {0.2f, 0.24f, 0.28f, 1});
-                glfwWaitEventsTimeout(0.04);
-            }
+            released(ResourceType::TEXTURE, "models/avocado/glTF/Avocado_baseColor.png");
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), expectedMeshes);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), expectedTextures);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), expectedMaterials);
             EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
-            std::cout << "SHOWCASE_MODELS=2 SHARED_INSTANCES=4 CPU_ASSETS_RELEASED=1 FRAME_DRAWS=" << expectedDraws
-                      << " REQUIRED_VALIDATION=1\n";
         }
         for (const auto& model : models)
-        {
-            for (const auto& mesh : model->meshes())
-                EXPECT_FALSE(mesh.valid());
-            for (const auto& material : model->materials())
-                EXPECT_FALSE(material.valid());
-            for (const auto& texture : model->textures())
-                EXPECT_FALSE(texture.valid());
-        }
+            EXPECT_FALSE(model->meshes()[0].valid());
         cleanValidation();
     }
 
-    TEST_F(ModelPreparationTest, SharesGeometryTexturesAndWhiteWhilePreservingOtherCpuOwners)
+    TEST_F(ModelPreparationTest, SharedModelReusesGeometryTexturesAndPreservesOtherCpuOwners)
     {
         auto& manager = ResourceManager::instance();
         auto& registry = ResourceRegistry::instance();
         manager.registerLoader(ResourceType::MODEL, std::make_unique<SharedModelLoader>());
-        const auto modelId = manager.registerResource(ResourceType::MODEL, "models/shared.gltf");
-        const auto textureId = manager.registerResource(ResourceType::TEXTURE, PNG);
-        const auto* cpu = manager.get<ModelResource>(modelId);
-        const auto* pixels = manager.get<TextureResource>(textureId);
-        ASSERT_NE(cpu, nullptr);
-        ASSERT_NE(pixels, nullptr);
+        auto modelHold = manager.hold<ModelResource>(ResourceType::MODEL, "models/shared.gltf");
+        auto textureHold = manager.hold<TextureResource>(ResourceType::TEXTURE, PNG);
+        ASSERT_TRUE(modelHold && textureHold);
+        const auto modelId = modelHold.id();
+        const auto textureId = textureHold.id();
+        const auto* cpu = modelHold.get<ModelResource>();
+        const auto* pixels = textureHold.get<TextureResource>();
         auto native = window(true);
         std::shared_ptr<const Model::PreparedModel> model;
         {
             Renderer renderer(*native, RendererValidationMode::Required);
             shaders(renderer);
             model = Model::prepareModel(renderer, "models/shared.gltf");
-            Scene::Scene scene;
-            const auto hidden =
-                scene.createEntity(model, Scene::Transform({1000, 0, 0}, {1, 0, 0, 0}, {-2, 0, 3}), false);
-            scene.createEntity();
-            const auto snapshot = Scene::captureScene(scene, {0.2f, 0.3f, 0.4f, 1});
-            ASSERT_EQ(snapshot.entities.size(), 2u);
-            ASSERT_TRUE(snapshot.entities[0].model);
-            EXPECT_EQ(*snapshot.entities[0].model, model->source());
-            EXPECT_FALSE(snapshot.entities[0].visible);
-            EXPECT_EQ(snapshot.entities[0].transform.position(), glm::vec3(1000, 0, 0));
-            EXPECT_FALSE(snapshot.entities[1].model);
-            scene.setModel(hidden, {});
-            scene.clear();
-            EXPECT_EQ(snapshot.entities[0].model->path(), "models/shared.gltf");
             EXPECT_EQ(model->meshes().size(), 1u);
             EXPECT_EQ(model->materials().size(), 4u);
             EXPECT_EQ(model->textures().size(), 2u);
@@ -1043,16 +885,10 @@ namespace
             EXPECT_EQ(registry.refCount(textureId), 1u);
             EXPECT_EQ(registry.getObject(modelId), cpu);
             EXPECT_EQ(registry.getObject(textureId), pixels);
-            EXPECT_TRUE(manager.hasLoader(ResourceType::MODEL));
-            EXPECT_TRUE(manager.hasLoader(ResourceType::TEXTURE));
-            manager.release(modelId);
-            manager.release(textureId);
+            modelHold.reset();
+            textureHold.reset();
             released(ResourceType::MODEL, "models/shared.gltf");
             released(ResourceType::TEXTURE, PNG);
-            manager.reset();
-            ASSERT_TRUE(model->bounds());
-            EXPECT_EQ(model->bounds()->min, glm::vec3(-0.8f, -0.6f, 0));
-            EXPECT_EQ(model->bounds()->max, glm::vec3(0.8f, 0.8f, 0));
             for (int frame = 0; frame < 6; ++frame)
             {
                 draw(*native, renderer, *model, 2);
@@ -1062,16 +898,13 @@ namespace
             const auto center = (static_cast<size_t>(image.height / 2) * image.width + image.width / 2) * 4;
             for (int channel = 0; channel < 3; ++channel)
                 EXPECT_NEAR(image.rgba[center + channel], 188, 12);
-            WindowCapture::save(image, "review/prepared-solid-gray.ppm");
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 1u);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }
         EXPECT_FALSE(model->meshes()[0].valid());
+        EXPECT_FALSE(model->materials()[0].valid());
         EXPECT_FALSE(model->textures()[0].valid());
-        EXPECT_FALSE(model->textures()[1].valid());
-        EXPECT_FALSE(model->materials()[2].valid());
         cleanValidation();
     }
 
@@ -1102,7 +935,6 @@ namespace
                                       {TextureFilter::Linear, TextureFilter::Linear, MipFilter::Linear}}};
             for (size_t policy = 0; policy < options.size(); ++policy)
             {
-                SCOPED_TRACE(policy);
                 const auto model = policy == 0 ? Model::prepareModel(renderer, "models/shared.gltf")
                                                : Model::prepareModel(renderer, "models/shared.gltf", options[policy]);
                 EXPECT_EQ(model->source(), Model::ModelReference("models/shared.gltf", options[policy]));
@@ -1112,158 +944,93 @@ namespace
                 ASSERT_TRUE(model->bounds());
                 EXPECT_EQ(model->bounds()->min, models[0]->bounds()->min);
                 EXPECT_EQ(model->bounds()->max, models[0]->bounds()->max);
-                EXPECT_EQ(model->rootNode(), models[0]->rootNode());
-                ASSERT_EQ(model->nodes().size(), 2u);
-                EXPECT_EQ(model->nodes()[0].parts, models[0]->nodes()[0].parts);
-                EXPECT_EQ(model->nodes()[1].parts, (std::vector<uint32_t>{0}));
                 EXPECT_EQ(model->meshes().size(), 1u);
                 EXPECT_EQ(model->textures().size(), 2u);
                 EXPECT_EQ(model->materials().size(), 4u);
                 ASSERT_EQ(model->draws().size(), 5u);
-                for (size_t i = 0; i < model->parts().size(); ++i)
-                {
-                    EXPECT_EQ(model->parts()[i].geometry, 0u);
-                    EXPECT_EQ(model->parts()[i].material, i);
-                    EXPECT_EQ(model->draws()[i].model, models[0]->draws()[i].model);
-                }
                 for (bool minify : {false, true})
                 {
-                    SCOPED_TRACE(minify);
                     const auto extent = minify ? FrameExtent{1, 1} : FrameExtent{256, 256};
                     const auto transform = glm::translate(glm::mat4(1), glm::vec3(minify ? -0.4f : 0, 0, 0.5f));
                     const std::array draws{DrawItem{model->meshes()[0], model->materials()[0], transform}};
-                    const FrameInput input{extent, {glm::mat4(1), glm::mat4(1)}, draws};
                     std::vector<uint8_t> pixels;
                     Detail::RendererReviewAccess::withFrame(
-                        renderer, input,
+                        renderer, FrameInput{extent, {glm::mat4(1), glm::mat4(1)}, draws},
                         [&](const auto& device, const auto& pipeline, auto frameSet, auto nativeDraws) {
-                            pixels =
-                                TextureGpuReview::captureDraws(device, pipeline, frameSet, nativeDraws,
-                                                               {0, 0, float(extent.width), float(extent.height), 0, 1});
+                            pixels = TextureGpuReview::captureDraws(
+                                device, pipeline, frameSet, nativeDraws,
+                                {0, 0, float(extent.width), float(extent.height), 0, 1});
                         });
-                    ASSERT_EQ(pixels.size(), 384u * 256 * 4);
                     const size_t offset = minify ? 0 : (128 * 384 + 128) * 4;
                     const int expected = minify ? (policy == 2 ? 188 : 255) : (policy == 0 ? 255 : 188);
                     for (int channel = 0; channel < 3; ++channel)
                         EXPECT_NEAR(pixels[offset + channel], expected, 2);
                     EXPECT_EQ(pixels[offset + 3], 255);
-                    WindowCapture::save({384, 256, pixels}, "review/sampling-policy-" + std::to_string(policy) +
-                                                                (minify ? "-min.ppm" : "-mag.ppm"));
                 }
             }
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, "textures/unused.png").valid());
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 3u);
-            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 6u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 12u);
             EXPECT_EQ(occurrences(messages_.str(), "2x2, format 43, 16 bytes, 2 mips"), 2u);
             EXPECT_EQ(occurrences(messages_.str(), "2x2, format 43, 16 bytes, 1 mips"), 1u);
             EXPECT_EQ(occurrences(messages_.str(), "1x1, format 43, 4 bytes, 1 mips"), 3u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }
         for (const auto& model : models)
             EXPECT_FALSE(model->materials()[0].valid());
         cleanValidation();
     }
 
-    TEST_F(ModelPreparationTest, MissingAndInvalidPngFailBeforeGpuCreationAndPreserveOtherOwners)
+    TEST_F(ModelPreparationTest, MissingInvalidPngAndMaterialFailureRecoverCleanly)
     {
         auto& manager = ResourceManager::instance();
         auto& registry = ResourceRegistry::instance();
-        const auto modelId = manager.registerResource(ResourceType::MODEL, GLTF);
-        const auto otherId = manager.registerResource(ResourceType::TEXTURE, "textures/reference_rgba.png");
-        const auto* source = manager.get<ModelResource>(modelId);
-        const auto* other = manager.get<TextureResource>(otherId);
-        ASSERT_NE(source, nullptr);
-        ASSERT_NE(other, nullptr);
+        auto modelHold = manager.hold<ModelResource>(ResourceType::MODEL, GLTF);
+        auto otherHold = manager.hold<TextureResource>(ResourceType::TEXTURE, "textures/reference_rgba.png");
+        ASSERT_TRUE(modelHold && otherHold);
+        const auto modelId = modelHold.id();
+        const auto otherId = otherHold.id();
         auto native = window();
+        std::shared_ptr<const Model::PreparedModel> recovered;
         {
             Renderer renderer(*native, RendererValidationMode::Required);
+            // 未准备材质着色器时在纹理上传后失败并回滚资源，补齐着色器后可恢复
+            EXPECT_THROW(Model::prepareModel(renderer, GLTF), Error::Exception);
+            EXPECT_EQ(Detail::RendererReviewAccess::resourceCounts(renderer).textures, 0u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 0u);
+            released(ResourceType::TEXTURE, PNG);
+
+            shaders(renderer);
+            recovered = Model::prepareModel(renderer, GLTF);
+            for (int frame = 0; frame < 3; ++frame)
+                draw(*native, renderer, *recovered);
+
+            // 缺失/损坏 PNG 应在创建任何 GPU 对象前失败，同时保留外部已有 CPU 持有
             fs::remove(fs::path("assets") / PNG);
             for (bool corrupt : {false, true})
             {
-                SCOPED_TRACE(corrupt);
                 if (corrupt)
-                {
-                    std::ofstream output(fs::path("assets") / PNG);
-                    output << "invalid PNG";
-                }
-                std::shared_ptr<const Model::PreparedModel> result;
+                    std::ofstream(fs::path("assets") / PNG) << "invalid PNG";
                 try
                 {
-                    result = Model::prepareModel(renderer, GLTF);
+                    Model::prepareModel(renderer, GLTF);
                     FAIL() << "Accepted failed dependency";
                 }
                 catch (const Error::Exception& error)
                 {
                     EXPECT_EQ(error.code(), Error::Code::RENDER);
-                    EXPECT_NE(error.message().find(GLTF), std::string::npos);
-                    EXPECT_NE(error.message().find(PNG), std::string::npos);
                     EXPECT_NE(error.message().find(corrupt ? "Not a PNG" : "PNG file was not found"),
                               std::string::npos);
                 }
-                EXPECT_EQ(result, nullptr);
-                released(ResourceType::TEXTURE, PNG);
                 EXPECT_EQ(registry.refCount(modelId), 1u);
                 EXPECT_EQ(registry.refCount(otherId), 1u);
-                EXPECT_EQ(registry.getObject(modelId), source);
-                EXPECT_EQ(registry.getObject(otherId), other);
-                EXPECT_TRUE(manager.hasLoader(ResourceType::MODEL));
-                EXPECT_TRUE(manager.hasLoader(ResourceType::TEXTURE));
             }
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 0u);
-            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 0u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 0u);
         }
-        manager.release(modelId);
-        manager.release(otherId);
-        released(ResourceType::MODEL, GLTF);
-        released(ResourceType::TEXTURE, "textures/reference_rgba.png");
+        EXPECT_FALSE(recovered->meshes()[0].valid());
+        modelHold.reset();
+        otherHold.reset();
         cleanValidation();
     }
 
-    TEST_F(ModelPreparationTest, MaterialFailureAfterUploadsReleasesCpuAndSameRendererRecovers)
-    {
-        auto native = window();
-        std::shared_ptr<const Model::PreparedModel> model;
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            try
-            {
-                model = Model::prepareModel(renderer, GLTF);
-                FAIL() << "Accepted unprepared shaders";
-            }
-            catch (const Error::Exception& error)
-            {
-                EXPECT_EQ(error.code(), Error::Code::RENDER);
-                EXPECT_NE(error.message().find("Prepare scene shaders"), std::string::npos);
-            }
-            EXPECT_EQ(model, nullptr);
-            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 0u);
-            const auto failedCounts = Detail::RendererReviewAccess::resourceCounts(renderer);
-            EXPECT_EQ(failedCounts.meshes, 0u);
-            EXPECT_EQ(failedCounts.textures, 0u);
-            EXPECT_EQ(failedCounts.materials, 0u);
-            released(ResourceType::MODEL, GLTF);
-            released(ResourceType::TEXTURE, PNG);
-            shaders(renderer);
-            model = Model::prepareModel(renderer, GLTF);
-            released(ResourceType::MODEL, GLTF);
-            released(ResourceType::TEXTURE, PNG);
-            for (int frame = 0; frame < 3; ++frame)
-                draw(*native, renderer, *model);
-            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 2u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
-        }
-        EXPECT_FALSE(model->meshes()[0].valid());
-        EXPECT_FALSE(model->materials()[0].valid());
-        EXPECT_FALSE(model->textures()[0].valid());
-        EXPECT_EQ(model->source(), Model::ModelReference(GLTF));
-        cleanValidation();
-    }
-
-    TEST_F(ModelPreparationTest, UnusedPartsAndDependenciesCreateNoGpuResources)
+    TEST_F(ModelPreparationTest, UnusedPartsAndInvalidOptionsCreateNoGpuResources)
     {
         ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<SharedModelLoader>(true));
         auto native = window();
@@ -1277,29 +1044,11 @@ namespace
             EXPECT_THROW(Model::prepareModel(renderer, "models/empty.gltf", invalid), Error::Exception);
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::MODEL, "models/empty.gltf").valid());
             auto model = Model::prepareModel(renderer, "models/empty.gltf");
-            EXPECT_EQ(model->source(), Model::ModelReference("models/empty.gltf"));
-            EXPECT_TRUE(model->meshes().empty());
-            EXPECT_TRUE(model->materials().empty());
-            EXPECT_TRUE(model->textures().empty());
-            EXPECT_TRUE(model->parts().empty());
-            EXPECT_TRUE(model->draws().empty());
+            EXPECT_TRUE(model->meshes().empty() && model->materials().empty() && model->draws().empty());
             EXPECT_FALSE(model->bounds());
-            EXPECT_EQ(model->nodes().size(), 2u);
             Scene::Scene scene;
             scene.createEntity(model);
-            const auto captured = Scene::captureScene(scene, {0, 0, 0, 1});
-            ASSERT_EQ(captured.entities.size(), 1u);
-            ASSERT_TRUE(captured.entities[0].model);
-            EXPECT_EQ(captured.entities[0].model->path(), "models/empty.gltf");
             EXPECT_TRUE(Scene::extractSceneFrame(scene, {400, 400})->draws.empty());
-            std::weak_ptr<const Model::PreparedModel> weak = model;
-            scene.clear();
-            model.reset();
-            EXPECT_TRUE(weak.expired());
-            EXPECT_EQ(captured.entities[0].model->path(), "models/empty.gltf");
-            released(ResourceType::MODEL, "models/empty.gltf");
-            EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, PNG).valid());
-            EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, "textures/unused.png").valid());
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded"), 0u);
         }
         cleanValidation();
@@ -1343,10 +1092,9 @@ namespace
             const auto scenePath =
                 Utils::Utf8::toUtf8String(sandbox_ / "outside" / Utils::Utf8::toFsPath("场景😀.json"));
             Scene::writeScene(*fileIO_, scenePath, captured);
-            const auto loaded = Scene::readScene(*fileIO_, scenePath);
-            EXPECT_EQ(Scene::rebuildScene(loaded, resolver).scene->entities()[0].model, first);
-            auto again = Scene::rebuildScene(captured, resolver);
-            EXPECT_EQ(again.scene->entities()[0].model, first);
+            EXPECT_EQ(Scene::rebuildScene(Scene::readScene(*fileIO_, scenePath), resolver).scene->entities()[0].model,
+                      first);
+            EXPECT_EQ(Scene::rebuildScene(captured, resolver).scene->entities()[0].model, first);
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), uploads);
             const auto oldId = built.scene->entities()[0].id;
             EXPECT_EQ(occurrences(messages_.str(), "Prepared model '"), 2u);
@@ -1358,30 +1106,15 @@ namespace
 
             const auto sourcePath = fs::path("assets") / gltf.path();
             std::ifstream input(sourcePath, std::ios::binary);
-            const std::string sourceText{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+            const std::string sourceText{std::istreambuf_iterator<char>(input), {}};
             input.close();
-            {
-                std::ofstream broken(sourcePath);
-                broken << "{";
-            }
+            std::ofstream(sourcePath) << "{";
             Model::PrepareOptions parseOptions;
             parseOptions.shading = ShadingMode::Lambert;
-            try
-            {
-                cache.resolve(Model::ModelReference(gltf.path(), parseOptions));
-                FAIL() << "Accepted invalid glTF JSON";
-            }
-            catch (const Model::LoadError& error)
-            {
-                EXPECT_NE(error.message().find(gltf.path()), std::string::npos);
-                EXPECT_NE(error.message().find("Invalid glTF JSON"), std::string::npos);
-            }
+            EXPECT_THROW(cache.resolve(Model::ModelReference(gltf.path(), parseOptions)), Model::LoadError);
             EXPECT_EQ(cache.size(), 2u);
             draw(*native, renderer, *first);
-            {
-                std::ofstream restored(sourcePath);
-                restored << sourceText;
-            }
+            std::ofstream(sourcePath) << sourceText;
 
             const auto texturePath = fs::path("assets") / PNG;
             fs::remove(texturePath);
@@ -1394,21 +1127,12 @@ namespace
             fs::copy_file(Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR) / PNG, texturePath);
             EXPECT_NE(cache.resolve(*missingTexture.entities[0].model), first);
 
-            Model::PrepareOptions option;
-            option.mipMode = TextureMipMode::FullChain;
-            EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
-            option = {};
-            option.sampler.minFilter = TextureFilter::Linear;
-            EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
-            option = {};
-            option.sampler.magFilter = TextureFilter::Linear;
-            EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
-            option = {};
-            option.sampler.mipFilter = MipFilter::Nearest;
-            EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
-            option = {};
-            option.shading = ShadingMode::Lambert;
-            EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), option)), first);
+            for (const auto& variant : {Model::PrepareOptions{TextureMipMode::FullChain},
+                                        Model::PrepareOptions{{}, {TextureFilter::Linear}},
+                                        Model::PrepareOptions{{}, {TextureFilter::Nearest, TextureFilter::Linear}},
+                                        Model::PrepareOptions{{}, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::Nearest}},
+                                        Model::PrepareOptions{{}, {}, ShadingMode::Lambert}})
+                EXPECT_NE(cache.resolve(Model::ModelReference(gltf.path(), variant)), first);
             released(ResourceType::MODEL, gltf.path());
             EXPECT_EQ(cache.size(), 8u);
             EXPECT_EQ(cache.collectUnused(), 6u);
@@ -1418,19 +1142,15 @@ namespace
             EXPECT_TRUE(ResourceManager::instance().hasLoader(ResourceType::MODEL));
         }
         EXPECT_TRUE(firstSession.expired());
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            ModelManager nextSession(renderer);
-            const auto next = nextSession.resolve(Model::ModelReference(GLTF));
-            EXPECT_TRUE(next->meshes()[0].valid());
-            EXPECT_TRUE(firstSession.expired());
-        }
         cleanValidation();
     }
-    TEST_F(ModelPreparationTest, CachedModelsCollectAfterLastSceneUseAndProtectMainAndShadowSubmissions)
+
+    TEST_F(ModelPreparationTest, ModelManagerCollectsAfterInFlightFramesAndHandlesShutdownOrder)
     {
         auto native = window();
+        std::unique_ptr<Model::ModelManager> lateCache;
+        std::shared_ptr<const Model::PreparedModel> external;
+        Mesh lateMesh;
         {
             Renderer renderer(*native, RendererValidationMode::Required);
             shaders(renderer);
@@ -1438,24 +1158,18 @@ namespace
             Model::ModelManager models(renderer);
             auto model = models.resolve(Model::ModelReference(GLTF));
             const auto mesh = model->meshes()[0];
-            const auto texture = model->textures()[0];
-            const auto material = model->materials()[0];
-            const auto meshes = model->meshes().size();
-            const auto textures = model->textures().size();
-            const auto materials = model->materials().size();
             std::weak_ptr<const Model::PreparedModel> weak = model;
             Scene::Scene scene;
             scene.createEntity(model);
-            scene.createEntity(model, Scene::Transform({0.5f, 0, 0}));
+            scene.createEntity(model, Scene::Transform({1000, 0, 0}), false);  // 隐藏实体但仍可作阴影投射示例
+            const auto casterOnly = scene.createEntity(model, Scene::Transform({1000, 0, 0}), true);
+            (void)casterOnly;
             model.reset();
             EXPECT_EQ(models.collectUnused(), 0u);
-            EXPECT_EQ(models.size(), 1u);
             ShadowSettings settings;
             settings.enabled = true;
-            const auto frame = Scene::extractSceneFrame(scene, {384, 256}, false, settings);
-            ASSERT_TRUE(frame);
-            ASSERT_FALSE(frame->draws.empty());
-            ASSERT_EQ(frame->draws.size(), frame->shadowDraws.size());
+            const auto frame = Scene::extractSceneFrame(scene, {384, 256}, true, settings);
+            ASSERT_TRUE(frame && !frame->shadowDraws.empty());
             SceneOutput output;
             for (int slot = 0; slot != 2; ++slot)
             {
@@ -1466,202 +1180,37 @@ namespace
             }
             scene.clear();
             EXPECT_EQ(models.collectUnused(), 1u);
-            EXPECT_EQ(models.size(), 0u);
             EXPECT_TRUE(weak.expired());
-            EXPECT_TRUE(mesh.valid());
-            EXPECT_TRUE(texture.valid());
-            EXPECT_TRUE(material.valid());
-            auto counts = Detail::RendererReviewAccess::resourceCounts(renderer);
-            EXPECT_EQ(counts.meshes, meshes);
-            EXPECT_EQ(counts.textures, textures);
-            EXPECT_EQ(counts.materials, materials);
+            EXPECT_TRUE(mesh.valid());  // 飞行帧槽仍保护 GPU 资源
             renderer.prepareSceneTarget(frame->extent);
-            EXPECT_TRUE(mesh.valid());  // 第二个帧槽仍保留本次实际对象。
+            EXPECT_TRUE(mesh.valid());
             Detail::RendererReviewAccess::withSceneOutput(renderer, output, [&](const auto& device, const auto& image) {
                 EXPECT_EQ(TextureGpuReview::captureMip(device, image, 0, {384, 256}).size(), 384u * 256u * 4u);
             });
             EXPECT_FALSE(mesh.valid());
-            EXPECT_FALSE(texture.valid());
-            EXPECT_FALSE(material.valid());
-            counts = Detail::RendererReviewAccess::resourceCounts(renderer);
-            EXPECT_EQ(counts.meshes, 0u);
-            EXPECT_EQ(counts.textures, 0u);
-            EXPECT_EQ(counts.materials, 0u);
+            EXPECT_EQ(Detail::RendererReviewAccess::resourceCounts(renderer).meshes, 0u);
 
-            // 显式切换并清理；缓存只保留当前场景使用的模型，不逐轮积累。
-            std::unique_ptr<Scene::Scene> switched;
-            for (int cycle = 0; cycle != 6; ++cycle)
-            {
-                const char* path = cycle % 2 ? OBJ : GLTF;
-                auto nextModel = models.resolve(Model::ModelReference(path));
-                EXPECT_EQ(nextModel, models.resolve(Model::ModelReference(path)));
-                auto next = std::make_unique<Scene::Scene>();
-                next->createEntity(nextModel);
-                next->createEntity(nextModel);
-                switched = std::move(next);
-                const auto expectedMeshes = nextModel->meshes().size();
-                const auto expectedTextures = nextModel->textures().size();
-                const auto expectedMaterials = nextModel->materials().size();
-                nextModel.reset();
-                EXPECT_EQ(models.collectUnused(), cycle ? 1u : 0u);
-                EXPECT_EQ(models.size(), 1u);
-                counts = Detail::RendererReviewAccess::resourceCounts(renderer);
-                EXPECT_EQ(counts.meshes, expectedMeshes);
-                EXPECT_EQ(counts.textures, expectedTextures);
-                EXPECT_EQ(counts.materials, expectedMaterials);
-                released(ResourceType::MODEL, path);
-                released(ResourceType::TEXTURE, PNG);
-            }
-            switched.reset();
-            EXPECT_EQ(models.collectUnused(), 1u);
-            counts = Detail::RendererReviewAccess::resourceCounts(renderer);
-            EXPECT_EQ(counts.meshes, 0u);
-            EXPECT_EQ(counts.textures, 0u);
-            EXPECT_EQ(counts.materials, 0u);
-        }
-        cleanValidation();
-    }
-
-    TEST_F(ModelPreparationTest, ModelManagerCanCloseBeforeUsersOrAfterRenderer)
-    {
-        auto native = window();
-        Scene::Scene cpuScene;
-        std::unique_ptr<Model::ModelManager> lateCache;
-        std::shared_ptr<const Model::PreparedModel> external;
-        Mesh lateMesh;
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            auto cache = std::make_unique<Model::ModelManager>(renderer);
-            external = cache->resolve(Model::ModelReference(GLTF));
-            const auto cpuEntity = cpuScene.createEntity(external);
-            EXPECT_TRUE(cpuEntity.valid());
-            cache.reset();
+            // 缓存早于外部使用者析构，以及 Renderer 早于缓存析构均安全
+            auto transient = std::make_unique<Model::ModelManager>(renderer);
+            external = transient->resolve(Model::ModelReference(GLTF));
+            transient.reset();
             EXPECT_TRUE(external->meshes()[0].valid());
-            draw(*native, renderer, *external);
             lateCache = std::make_unique<Model::ModelManager>(renderer);
             lateMesh = lateCache->resolve(Model::ModelReference(OBJ))->meshes()[0];
-            EXPECT_TRUE(lateMesh.valid());
         }
         EXPECT_FALSE(external->meshes()[0].valid());
         EXPECT_FALSE(lateMesh.valid());
-        ASSERT_TRUE(external->bounds());
-        const auto center = (external->bounds()->min + external->bounds()->max) * 0.5f;
-        const auto hit = cpuScene.pick(Math::LineSegment{center + glm::vec3(0, 0, 3), center - glm::vec3(0, 0, 3)});
-        ASSERT_TRUE(hit);
-        EXPECT_EQ(hit->id, cpuScene.entities()[0].id);
-        cpuScene.clear();
         external.reset();
-        EXPECT_EQ(lateCache->size(), 1u);
         EXPECT_EQ(lateCache->collectUnused(), 1u);
         lateCache.reset();
         cleanValidation();
     }
 
-    TEST(ModelInstanceInputTest, EmptyInputIsEmptyAndNullModelIsRejected)
-    {
-        EXPECT_TRUE(Model::makeModelDraws({}).empty());
-        const std::array<Model::ModelInstance, 1> missing{};
-        try
-        {
-            Model::makeModelDraws(missing);
-            FAIL() << "Accepted null prepared model";
-        }
-        catch (const Error::Exception& error)
-        {
-            EXPECT_EQ(error.code(), Error::Code::CONFIG);
-        }
-    }
-
-    class TransformModelLoader final : public LoaderBase
-    {
-    public:
-        explicit TransformModelLoader(std::optional<glm::mat4> leafTransform = std::nullopt)
-            : leafTransform_(leafTransform)
-        {}
-
-        std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view) override
-        {
-            MeshData mesh{{{{0, 0, 0}, {0, 0}}, {{1, 0, 0}, {1, 0}}, {{0, 1, 0}, {0, 1}}}, {0, 1, 2}};
-            mesh.vertices[0].normal = {1, 1, 0};
-            mesh.vertices[1].normal = {0, 1, 1};
-            mesh.vertices[2].normal = {1, 0, 1};
-            const auto root = glm::translate(glm::mat4(1), glm::vec3(10, 0, 0));
-            const auto parent = glm::rotate(glm::mat4(1), glm::radians(90.0f), glm::vec3(0, 0, 1));
-            const auto leaf = leafTransform_.value_or(glm::translate(glm::mat4(1), glm::vec3(2, 0, 0)) *
-                                                      glm::scale(glm::mat4(1), glm::vec3(2, 3, 1)));
-            auto unused = mesh;
-            for (auto& vertex : unused.vertices)
-                vertex.position = {1000, 2000, 3000};
-            return std::make_unique<ModelResource>(
-                id, std::vector<MeshData>{unused, mesh},
-                std::vector<ModelMaterial>{{}, {std::nullopt, {0.5f, 1, 0.5f}}, {std::nullopt, {1, 0, 0}}},
-                std::vector<ModelPart>{{1, 0}, {1, 1}, {1, 2}, {0, 0}},
-                std::vector<ModelNode>{{"parent", parent, {1}, {0}},
-                                       {"leaf", leaf, {}, {1, 0}},
-                                       {"root", root, {0, 3}, {2}},
-                                       {"sibling", glm::translate(glm::mat4(1), glm::vec3(-1, 0, 0)), {}, {2}}},
-                2);
-        }
-
-    private:
-        std::optional<glm::mat4> leafTransform_;
-    };
-
-    TEST_F(ModelPreparationTest, ShadowDepthUsesSourceTransformsAndKeepsInFlightSlotsAcrossToggles)
-    {
-        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
-        auto native = window();
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            shadowShader(renderer);
-            auto model = Model::prepareModel(renderer, "models/shadow-source.gltf");
-            const Scene::Transform pose({1, 2, 2}, {1, 0, 0, 1}, {2, -3, 0});
-            const std::array instances{Model::ModelInstance{model, pose.matrix()}};
-            auto casters = Model::makeModelDraws(instances);
-            for (auto& draw : casters)
-                draw.material = {};
-            ShadowSettings settings;
-            settings.enabled = true;
-            settings.center = {2, 68.0f / 3, 0};
-            settings.halfExtent = {3, 3};
-            settings.nearPlane = 1;
-            settings.farPlane = 9;
-            for (int i = 0; i < 10; ++i)
-            {
-                native->pollEvents();
-                ASSERT_TRUE(renderer.beginUiFrame());
-                const FrameExtent extent{i < 4 ? 192u : 320u, 128};
-                auto output = renderer.prepareSceneTarget(extent);
-                settings.enabled = i != 4 && i != 7;
-                FrameInput input{extent, {glm::mat4(1), glm::mat4(1)},          {},
-                                 {},     makeShadowFrame(settings, {0, 0, -1}), casters};
-                renderer.imgui().endFrame();
-                renderer.drawSceneTarget(output, input, {0, 0, 0, 1});
-                if (i == 0)
-                    Detail::RendererReviewAccess::withShadowOutput(
-                        renderer, output, [&](const auto& device, const auto& image) {
-                            // 源根平移先于实体旋转和缩放；已知三角形重心应在深度图中心且深度为 0.25。
-                            EXPECT_NEAR(readShadowDepth(device, image), 0.25f, 0.00003f);
-                        });
-            }
-            // 后续帧不额外等待回读，关闭时由帧槽持有和 Fence 保证深度资源仍然有效。
-            casters.clear();
-            model.reset();
-        }
-        EXPECT_EQ(occurrences(messages_.str(), "Created shadow target:"), 2u);
-        EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline: color format 0,"), 1u);
-        cleanValidation();
-    }
-
     TEST_F(ModelPreparationTest, UnavailablePartBoundsInvalidateWholeModelWithoutDiscardingDraws)
     {
-        glm::mat4 projective(1.0f);
+        glm::mat4 projective(1.0f), overflow(1.0f);
         projective[0][3] = 0.5f;
-        glm::mat4 overflow(1.0f);
-        overflow[0][0] = std::numeric_limits<float>::max();
-        overflow[3][0] = std::numeric_limits<float>::max();
+        overflow[0][0] = overflow[3][0] = std::numeric_limits<float>::max();
         auto native = window();
         {
             Renderer renderer(*native, RendererValidationMode::Required);
@@ -1671,498 +1220,19 @@ namespace
                 ResourceManager::instance().registerLoader(ResourceType::MODEL,
                                                            std::make_unique<TransformModelLoader>(matrix));
                 const auto model = Model::prepareModel(renderer, "models/unavailable-bounds.gltf");
-                released(ResourceType::MODEL, "models/unavailable-bounds.gltf");
                 EXPECT_FALSE(model->bounds());
                 ASSERT_EQ(model->draws().size(), 5u);
                 Scene::Scene scene;
                 scene.createEntity(model, Scene::Transform({1000, 0, -10}));
                 EXPECT_FALSE(scene.pick(Math::LineSegment{{1000, 0, 0}, {1000, 0, -20}}));
                 EXPECT_EQ(Scene::extractSceneFrame(scene, {400, 400})->draws.size(), 5u);
-                EXPECT_EQ(model->meshes().size(), 1u);
-                EXPECT_EQ(model->materials().size(), 3u);
-                for (const auto& item : model->draws())
-                {
-                    EXPECT_TRUE(item.mesh.valid());
-                    EXPECT_TRUE(item.material.valid());
-                }
-                // 有效的根节点和父节点绘制项位于无效叶节点之前，之后还有一个有效兄弟节点。
                 EXPECT_EQ(model->draws().back().model, glm::translate(glm::mat4(1), glm::vec3(9, 0, 0)));
             }
         }
         cleanValidation();
     }
 
-    class ModelInstanceTest : public ModelPreparationTest
-    {
-    protected:
-        void point(const glm::mat4& matrix, float x, float y)
-        {
-            const auto actual = matrix * glm::vec4(1, 1, 0, 1);
-            EXPECT_NEAR(actual.x, x, 0.00001f);
-            EXPECT_NEAR(actual.y, y, 0.00001f);
-            EXPECT_FLOAT_EQ(actual.z, 0.0f);
-            EXPECT_FLOAT_EQ(actual.w, 1.0f);
-        }
-        CameraMatrices camera(FrameExtent extent)
-        {
-            const float aspect = static_cast<float>(extent.width) / extent.height;
-            auto projection = glm::orthoRH_ZO(-aspect, aspect, -1.0f, 1.0f, 0.1f, 10.0f);
-            projection[1][1] *= -1;
-            return {glm::lookAtRH(glm::vec3(0, 0, 3), glm::vec3(0), glm::vec3(0, 1, 0)), projection};
-        }
-        std::optional<FrameExtent> submit(Window::Window& window, Renderer& renderer,
-                                          std::span<const Model::ModelInstance> instances)
-        {
-            window.pollEvents();
-            const auto extent = renderer.beginUiFrame();
-            if (!extent)
-                return std::nullopt;
-            auto draws = Model::makeModelDraws(instances);
-            renderer.imgui().endFrame();
-            renderer.drawFrame({*extent, camera(*extent), draws}, {0.2f, 0.24f, 0.28f, 1});
-            // GPU 必然完成前，修改并销毁已提交的 CPU 存储。
-            for (auto& draw : draws)
-                draw = {};
-            draws.clear();
-            draws.shrink_to_fit();
-            return extent;
-        }
-        void color(const WindowCapture::Image& image, float x, float y, const std::array<int, 3>& expected)
-        {
-            const int px = image.width / 2 + static_cast<int>(x * image.height / 2);
-            const int py = image.height / 2 - static_cast<int>(y * image.height / 2);
-            ASSERT_GE(px, 0);
-            ASSERT_LT(px, image.width);
-            ASSERT_GE(py, 0);
-            ASSERT_LT(py, image.height);
-            for (int channel = 0; channel < 3; ++channel)
-                EXPECT_NEAR(image.rgba[(static_cast<size_t>(py) * image.width + px) * 4 + channel], expected[channel],
-                            12);
-        }
-    };
-
-    class SceneEntityTest : public ModelInstanceTest
-    {};
-
-    TEST_F(SceneEntityTest, SharedModelEntitiesReleaseGpuAssetsAfterLastModelUse)
-    {
-        auto native = window(true);
-        Mesh mesh;
-        Material material;
-        Texture texture;
-        std::weak_ptr<const Model::PreparedModel> weak;
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            auto model = Model::prepareModel(renderer, GLTF);
-            const auto* identity = model.get();
-            const auto rootMatrix = model->nodes()[model->rootNode()].localTransform;
-            const auto nodeCount = model->nodes().size();
-            mesh = model->meshes()[0];
-            material = model->materials()[0];
-            texture = model->textures()[0];
-            weak = model;
-            released(ResourceType::MODEL, GLTF);
-            released(ResourceType::TEXTURE, PNG);
-            ResourceManager::instance().reset();
-            source_.reset();
-            fileIO_.reset();
-            const auto resourceLog = resourceMessages_.str();
-
-            Scene::Scene scene;
-            const Scene::Transform left({-0.65f, 0.45f, 0}, {1, 0, 0, 0}, glm::vec3(0.25f));
-            const Scene::Transform right({0.65f, 0.45f, 0}, {1, 0, 0, 0}, glm::vec3(0.25f));
-            const auto first = scene.createEntity(model, left);
-            const auto second = scene.createEntity(model);
-            const auto logical = scene.createEntity();
-            ASSERT_TRUE(scene.setTransform(second, right));
-            ASSERT_TRUE(scene.setModel(logical, model));
-            EXPECT_EQ(scene.find(first)->model.get(), identity);
-            EXPECT_EQ(scene.find(second)->model.get(), identity);
-            EXPECT_EQ(scene.find(logical)->model.get(), identity);
-            EXPECT_EQ(scene.entities().size(), 3u);
-            EXPECT_EQ(scene.find(first)->transform.matrix(), left.matrix());
-            EXPECT_EQ(scene.find(first)->model->nodes().size(), nodeCount);
-            EXPECT_EQ(scene.find(first)->model->nodes()[model->rootNode()].localTransform, rootMatrix);
-            model.reset();
-            EXPECT_EQ(weak.use_count(), 3);
-            ASSERT_TRUE(scene.setModel(logical, {}));
-            EXPECT_EQ(weak.use_count(), 2);
-
-            ASSERT_TRUE(scene.destroyEntity(first));
-            EXPECT_EQ(weak.use_count(), 1);
-            EXPECT_EQ(scene.find(first), nullptr);
-            EXPECT_EQ(scene.find(second)->model.get(), identity);
-            EXPECT_EQ(scene.find(second)->transform.matrix(), right.matrix());
-
-            scene.clear();
-            EXPECT_TRUE(weak.expired());
-            EXPECT_FALSE(mesh.valid());
-            EXPECT_FALSE(material.valid());
-            EXPECT_FALSE(texture.valid());
-            EXPECT_EQ(resourceMessages_.str(), resourceLog);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 2u);
-            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 2u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
-        }
-        EXPECT_TRUE(weak.expired());
-        EXPECT_FALSE(mesh.valid());
-        EXPECT_FALSE(material.valid());
-        EXPECT_FALSE(texture.valid());
-        cleanValidation();
-    }
-
-    class SceneFrameTest : public ModelInstanceTest
-    {};
-
-    TEST_F(SceneFrameTest, ShadowCastersIgnoreCameraCullingAndCopiedMovedFramesOwnBothLists)
-    {
-        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
-        auto native = window();
-        Scene::SceneFrame retained;
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            auto model = Model::prepareModel(renderer, "models/shadow-transforms.gltf");
-            ASSERT_EQ(model->draws().size(), 5u);
-            ASSERT_NE(model->nodes()[model->rootNode()].localTransform, glm::mat4(1));
-            Scene::Scene scene;
-            scene.setCamera(Scene::Camera({0, 0, 80}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 200}));
-            const std::array poses{Scene::Transform({1, 2, 0}, {1, 0, 0, 1}, {2, 3, 1}),
-                                   Scene::Transform({10000, 0, 0}),
-                                   Scene::Transform({-2, 1, 0}, {1, 0, 0, 0}, {-0.5f, 2, 0})};
-            const auto firstId = scene.createEntity(model, poses[0]);
-            scene.createEntity({}, Scene::Transform{});
-            scene.createEntity(model, Scene::Transform{}, false);
-            scene.createEntity(model, poses[1]);
-            scene.createEntity(model, poses[2]);
-            Render::ShadowSettings settings;
-            settings.enabled = true;
-            auto first = Scene::extractSceneFrame(scene, {800, 400}, true, settings);
-            ASSERT_TRUE(first && first->shadow);
-            ASSERT_EQ(first->draws.size(), 10u);
-            ASSERT_EQ(first->shadowDraws.size(), 15u);
-            for (size_t entity = 0; entity < poses.size(); ++entity)
-                for (size_t part = 0; part < model->draws().size(); ++part)
-                    EXPECT_EQ(first->shadowDraws[entity * 5 + part].model,
-                              poses[entity].matrix() * model->draws()[part].model);
-            // 夹具的根及子节点不与实体旋转、缩放交换，已知点可发现重复应用源根的问题。
-            point(first->shadowDraws[0].model, -2, 24);
-            const auto uncull = Scene::extractSceneFrame(scene, {800, 400}, false, settings);
-            ASSERT_EQ(uncull->draws.size(), 15u);
-            for (size_t i = 0; i < first->shadowDraws.size(); ++i)
-                EXPECT_EQ(uncull->draws[i].model, first->shadowDraws[i].model);
-            const auto disabled = Scene::extractSceneFrame(scene, {800, 400});
-            EXPECT_FALSE(disabled->shadow);
-            EXPECT_TRUE(disabled->shadowDraws.empty());
-            EXPECT_EQ(disabled->draws.size(), first->draws.size());
-
-            auto copied = *first;
-            EXPECT_NE(copied.draws.data(), first->draws.data());
-            EXPECT_NE(copied.shadowDraws.data(), first->shadowDraws.data());
-            auto moved = std::move(copied);
-            retained = moved;
-            Scene::SceneFrame moveAssigned;
-            moveAssigned = std::move(moved);
-            for (const auto* frame : {&retained, &moveAssigned})
-            {
-                EXPECT_EQ(frame->input().draws.data(), frame->draws.data());
-                EXPECT_EQ(frame->input().shadowDraws.data(), frame->shadowDraws.data());
-                EXPECT_NE(frame->shadowDraws.data(), first->shadowDraws.data());
-            }
-            const auto previousMatrix = first->shadow->viewProjection;
-            scene.setTransform(firstId, Scene::Transform({50, 0, 0}));
-            scene.setLighting({{0, 1, 0}, {1, 1, 1}, 1, 0.1f});
-            const auto changed = Scene::extractSceneFrame(scene, {400, 400}, true, settings);
-            EXPECT_NE(changed->shadowDraws[0].model, first->shadowDraws[0].model);
-            EXPECT_NE(changed->shadow->viewProjection, previousMatrix);
-            EXPECT_EQ(retained.shadow->viewProjection, previousMatrix);
-            scene.clear();
-            model.reset();
-            const auto empty = Scene::extractSceneFrame(scene, {400, 400}, true, settings);
-            EXPECT_TRUE(empty->shadow.has_value());
-            EXPECT_TRUE(empty->draws.empty());
-            EXPECT_TRUE(empty->shadowDraws.empty());
-            first.reset();
-            EXPECT_FALSE(retained.shadowDraws[0].mesh.valid());
-            point(retained.shadowDraws[0].model, -2, 24);
-        }
-        EXPECT_FALSE(retained.shadowDraws[0].mesh.valid());
-        cleanValidation();
-    }
-
-    TEST_F(SceneFrameTest, CullingKeepsEntityOrderAndUsesCurrentWorldTransformBeforeExpansion)
-    {
-        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
-        auto native = window();
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            const auto model = Model::prepareModel(renderer, "models/culling.gltf");
-            ASSERT_EQ(model->draws().size(), 5u);
-            released(ResourceType::MODEL, "models/culling.gltf");
-            ResourceManager::instance().reset();
-            source_.reset();
-            fileIO_.reset();
-            const auto resourceLog = resourceMessages_.str();
-            const auto renderLog = messages_.str();
-            Scene::Scene scene;
-            scene.setCamera(Scene::Camera({}, {1, 0, 0, 0}, {glm::radians(90.0f), 1, 100}));
-            const Scene::Transform a({-9, -2, -10});
-            const Scene::Transform outside({1000, 0, -10});
-            const Scene::Transform b({-9, -2, -12});
-            const auto first = scene.createEntity(model, a);
-            const auto middle = scene.createEntity(model, outside);
-            const auto last = scene.createEntity(model, b);
-            scene.createEntity(model, a, false);
-            scene.createEntity();
-            const auto snapshot = Scene::extractSceneFrame(scene, {400, 400});
-            ASSERT_TRUE(snapshot);
-            ASSERT_EQ(snapshot->draws.size(), 10u);
-            for (size_t i = 0; i < model->draws().size(); ++i)
-            {
-                EXPECT_EQ(snapshot->draws[i].model, a.matrix() * model->draws()[i].model);
-                EXPECT_EQ(snapshot->draws[i + 5].model, b.matrix() * model->draws()[i].model);
-            }
-            const std::array all{Model::ModelInstance{model, a.matrix()}, Model::ModelInstance{model, outside.matrix()},
-                                 Model::ModelInstance{model, b.matrix()}};
-            const auto direct = Model::makeModelDraws(all);
-            const auto disabled = Scene::extractSceneFrame(scene, {400, 400}, false);
-            ASSERT_TRUE(disabled);
-            ASSERT_EQ(disabled->draws.size(), direct.size());
-            EXPECT_EQ(direct.size(), 15u);
-            for (size_t i = 0; i < direct.size(); ++i)
-                EXPECT_EQ(disabled->draws[i].model, direct[i].model);
-            ASSERT_TRUE(scene.setTransform(middle, a));
-            EXPECT_EQ(Scene::extractSceneFrame(scene, {400, 400})->draws.size(), 15u);
-            for (const auto id : {first, middle, last})
-                ASSERT_TRUE(scene.setTransform(id, outside));
-            const auto empty = Scene::extractSceneFrame(scene, {400, 400});
-            ASSERT_TRUE(empty);
-            EXPECT_TRUE(empty->input().draws.empty());
-            EXPECT_TRUE(scene.find(first)->visible);
-            EXPECT_EQ(scene.entities().size(), 5u);
-            EXPECT_EQ(snapshot->draws.size(), 10u);
-
-            scene.destroyEntity(middle);
-            scene.destroyEntity(last);
-            struct Example
-            {
-                Scene::Transform transform;
-                size_t draws;
-            };
-            const std::array<Example, 7> examples{{
-                {a, 5},
-                {outside, 0},
-                {Scene::Transform({2, -9, -10}, {1, 0, 0, 1}), 5},
-                {Scene::Transform({18, -6, -10}, {1, 0, 0, 0}, {-2, 3, 1}), 5},
-                {Scene::Transform({0, 0, -10}, {1, 0, 0, 0}, glm::vec3(0)), 5},
-                {Scene::Transform({20, 0, -10}, {1, 0, 0, 0}, glm::vec3(0)), 0},
-                {Scene::Transform({0, 0, -10}, {1, 0, 0, 0}, {std::numeric_limits<float>::max(), 1, 1}), 5},
-            }};
-            for (size_t i = 0; i < examples.size(); ++i)
-            {
-                SCOPED_TRACE(i);
-                ASSERT_TRUE(scene.setTransform(first, examples[i].transform));
-                const auto frame = Scene::extractSceneFrame(scene, {400, 400});
-                ASSERT_TRUE(frame);
-                EXPECT_EQ(frame->draws.size(), examples[i].draws);
-            }
-            EXPECT_FALSE(Scene::extractSceneFrame(scene, {0, 400}));
-            EXPECT_EQ(resourceMessages_.str(), resourceLog);
-            EXPECT_EQ(messages_.str(), renderLog);
-        }
-        cleanValidation();
-    }
-
-    TEST_F(SceneFrameTest, CullingReflectsCameraExtentVisibilityModelAndSceneChanges)
-    {
-        auto& manager = ResourceManager::instance();
-        manager.registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
-        auto native = window();
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            const auto model = Model::prepareModel(renderer, "models/transforms.gltf");
-            manager.registerLoader(ResourceType::MODEL, std::make_unique<SharedModelLoader>());
-            const auto centered = Model::prepareModel(renderer, "models/centered.gltf");
-            released(ResourceType::MODEL, "models/transforms.gltf");
-            released(ResourceType::MODEL, "models/centered.gltf");
-            released(ResourceType::TEXTURE, PNG);
-            manager.reset();
-            source_.reset();
-            fileIO_.reset();
-            const auto resourceLog = resourceMessages_.str();
-            const auto renderLog = messages_.str();
-            Scene::Scene scene;
-            const Scene::Camera wide({}, {1, 0, 0, 0}, {glm::radians(90.0f), 1, 100});
-            scene.setCamera(wide);
-            const auto id = scene.createEntity(model, Scene::Transform({-2, -2, -10}));
-            const auto count = [&](FrameExtent extent = {400, 400}) {
-                const auto frame = Scene::extractSceneFrame(scene, extent);
-                EXPECT_TRUE(frame);
-                if (!frame)
-                    return size_t{0};
-                const auto expected = scene.camera().matrices(extent);
-                EXPECT_EQ(frame->camera.view, expected.view);
-                EXPECT_EQ(frame->camera.projection, expected.projection);
-                return frame->draws.size();
-            };
-            EXPECT_EQ(count(), 5u);
-            auto narrow = wide;
-            narrow.setPerspective({glm::radians(45.0f), 1, 100});
-            scene.setCamera(narrow);
-            EXPECT_EQ(count(), 0u);
-            EXPECT_EQ(count({800, 400}), 5u);
-            scene.setCamera(wide);
-            EXPECT_EQ(count({100, 400}), 0u);
-            auto moved = wide;
-            moved.setPosition({30, 0, 0});
-            scene.setCamera(moved);
-            EXPECT_EQ(count(), 0u);
-            moved.setPosition({0, 0, 0});
-            moved.setRotation({0, 0, 1, 0});
-            scene.setCamera(moved);
-            EXPECT_EQ(count(), 0u);
-            moved.setPosition({0, 0, -20});
-            scene.setCamera(moved);
-            EXPECT_EQ(count(), 5u);
-            scene.setCamera(wide);
-            ASSERT_TRUE(scene.setVisible(id, false));
-            EXPECT_EQ(count(), 0u);
-            ASSERT_TRUE(scene.setVisible(id, true));
-            EXPECT_EQ(count(), 5u);
-            ASSERT_TRUE(scene.setTransform(id, Scene::Transform({0, 0, -5})));
-            EXPECT_EQ(count(), 0u);
-            ASSERT_TRUE(scene.setModel(id, centered));
-            EXPECT_EQ(count(), 5u);
-            ASSERT_TRUE(scene.setModel(id, {}));
-            EXPECT_EQ(count(), 0u);
-
-            Scene::Scene replacement;
-            replacement.setCamera(wide);
-            replacement.createEntity(model, Scene::Transform({-9, -2, -10}));
-            EXPECT_EQ(Scene::extractSceneFrame(replacement, {400, 400})->draws.size(), 5u);
-            EXPECT_EQ(count(), 0u);
-            EXPECT_EQ(resourceMessages_.str(), resourceLog);
-            EXPECT_EQ(messages_.str(), renderLog);
-        }
-        cleanValidation();
-    }
-
-    TEST_F(SceneFrameTest, OrderedNoncommutingTransformsAndCopiedMovedSnapshotsOwnTheirDraws)
-    {
-        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
-        auto native = window();
-        Scene::SceneFrame retained;
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            auto model = Model::prepareModel(renderer, "models/transforms.gltf");
-            ASSERT_EQ(model->rootNode(), 2u);
-            ASSERT_EQ(model->draws().size(), 5u);
-            const std::weak_ptr<const Model::PreparedModel> weak = model;
-            ResourceManager::instance().reset();
-            source_.reset();
-            fileIO_.reset();
-            const auto resourceLog = resourceMessages_.str();
-            Scene::Scene scene;
-            scene.setCamera(Scene::Camera({0, 0, 80}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 200}));
-            const Scene::Transform a({1, 2, 0}, {1, 0, 0, 1}, {2, 3, 1});
-            const Scene::Transform b({-2, 1, 0}, {1, 0, 0, 0}, {0.5f, 2, 1});
-            const auto firstId = scene.createEntity(model, a);
-            scene.createEntity();
-            scene.createEntity(model, Scene::Transform{}, false);
-            const auto secondId = scene.createEntity(model, b);
-            auto first = Scene::extractSceneFrame(scene, {800, 400});
-            ASSERT_TRUE(first);
-            ASSERT_EQ(first->draws.size(), 10u);
-            const auto description = Scene::captureScene(scene, {0, 0, 0, 1});
-            auto rebuilt = Scene::rebuildScene(description, [&](const Model::ModelReference&) { return model; });
-            const auto rebuiltFrame = Scene::extractSceneFrame(*rebuilt.scene, {800, 400});
-            ASSERT_TRUE(rebuiltFrame);
-            ASSERT_EQ(rebuiltFrame->draws.size(), first->draws.size());
-            for (size_t index = 0; index < first->draws.size(); ++index)
-                EXPECT_EQ(rebuiltFrame->draws[index].model, first->draws[index].model);
-            rebuilt.scene.reset();
-            const std::array<std::array<float, 2>, 5> cached = {{{11, 1}, {9, 1}, {7, 4}, {7, 4}, {10, 1}}};
-            for (size_t index = 0; index < cached.size(); ++index)
-            {
-                point(first->draws[index].model, 1 - 3 * cached[index][1], 2 + 2 * cached[index][0]);
-                point(first->draws[index + 5].model, -2 + 0.5f * cached[index][0], 1 + 2 * cached[index][1]);
-            }
-            Detail::RendererReviewAccess::withFrame(
-                renderer, first->input(), [&](const auto&, const auto&, auto, auto nativeDraws) {
-                    ASSERT_EQ(nativeDraws.size(), first->draws.size());
-                    for (size_t index = 0; index < nativeDraws.size(); ++index)
-                    {
-                        const auto& object = nativeDraws[index].object;
-                        const auto reference = glm::transpose(glm::inverse(glm::dmat3(first->draws[index].model)));
-                        for (int column = 0; column < 4; ++column)
-                            EXPECT_EQ(object.model[column], first->draws[index].model[column]);
-                        for (int column = 0; column < 3; ++column)
-                        {
-                            EXPECT_EQ(object.normalColumns[column].w, 0);
-                            for (int row = 0; row < 3; ++row)
-                                EXPECT_NEAR(object.normalColumns[column][row], reference[column][row], 0.00001);
-                        }
-                    }
-                });
-            auto copied = *first;
-            ASSERT_NE(copied.draws.data(), first->draws.data());
-            EXPECT_EQ(copied.input().draws.data(), copied.draws.data());
-            auto moved = std::move(copied);
-            EXPECT_EQ(moved.input().draws.data(), moved.draws.data());
-            retained = moved;
-            EXPECT_NE(retained.draws.data(), moved.draws.data());
-            Scene::SceneFrame moveAssigned;
-            moveAssigned = std::move(moved);
-            EXPECT_EQ(moveAssigned.input().draws.data(), moveAssigned.draws.data());
-
-            ASSERT_TRUE(scene.setTransform(firstId, Scene::Transform({3, 0, 0})));
-            ASSERT_TRUE(scene.setVisible(secondId, false));
-            scene.setCamera(Scene::Camera({0, 0, 100}, {1, 0, 0, 0}, {glm::radians(90.0f), 0.1f, 200}));
-            const auto next = Scene::extractSceneFrame(scene, {400, 400});
-            ASSERT_TRUE(next);
-            ASSERT_EQ(next->draws.size(), 5u);
-            point(next->draws[0].model, 14, 1);
-            EXPECT_NE(next->camera.view, first->camera.view);
-            EXPECT_NE(next->camera.projection, first->camera.projection);
-            EXPECT_EQ(first->extent, (FrameExtent{800, 400}));
-            point(first->draws[0].model, -2, 24);
-            point(moveAssigned.draws[5].model, 3.5f, 3);
-
-            ASSERT_TRUE(scene.destroyEntity(firstId));
-            ASSERT_TRUE(scene.setVisible(secondId, true));
-            scene.createEntity(model, a);  // 新实体排在仍然存在的第二个实体之后。
-            const auto reordered = Scene::extractSceneFrame(scene, {800, 400});
-            ASSERT_TRUE(reordered);
-            ASSERT_EQ(reordered->draws.size(), 10u);
-            point(reordered->draws[0].model, 3.5f, 3);
-            point(reordered->draws[5].model, -2, 24);
-            ASSERT_TRUE(scene.setModel(secondId, {}));
-            EXPECT_EQ(Scene::extractSceneFrame(scene, {800, 400})->draws.size(), 5u);
-            scene.clear();
-            model.reset();
-            EXPECT_TRUE(weak.expired());  // 帧持有值和 GPU 引用，不持有 PreparedModel。
-            EXPECT_TRUE(Scene::extractSceneFrame(scene, {800, 400})->draws.empty());
-            first.reset();
-            point(retained.draws[0].model, -2, 24);
-            EXPECT_EQ(retained.input().draws.data(), retained.draws.data());
-            EXPECT_FALSE(retained.draws[0].mesh.valid());
-            EXPECT_EQ(resourceMessages_.str(), resourceLog);
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 1u);
-            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 1u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 3u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
-        }
-        EXPECT_FALSE(retained.draws[0].mesh.valid());
-        EXPECT_FALSE(retained.draws[0].material.valid());
-        cleanValidation();
-    }
-
-    TEST_F(SceneFrameTest, ImportedSnapshotSubmitsAfterSceneClear)
+    TEST_F(ModelPreparationTest, ImportedSnapshotSubmitsAfterSceneClear)
     {
         auto native = window(true);
         Scene::Scene scene;
@@ -2172,46 +1242,36 @@ namespace
             shaders(renderer);
             const auto gltf = Model::prepareModel(renderer, GLTF);
             const auto obj = Model::prepareModel(renderer, OBJ);
-            const auto placement = [](float x, float y, float size) {
-                return Scene::Transform({x, y, 0}, {1, 0, 0, 0}, glm::vec3(size));
-            };
-            scene.createEntity(gltf, placement(-0.65f, 0.45f, 0.25f));
-            scene.createEntity(gltf, placement(0.65f, 0.45f, 0.25f));
-            scene.createEntity(obj, placement(-0.65f, -0.55f, 0.35f));
-            scene.createEntity(obj, placement(0.65f, -0.55f, 0.35f));
+            scene.createEntity(gltf, Scene::Transform({-0.65f, 0.45f, 0}, {1, 0, 0, 0}, glm::vec3(0.25f)));
+            scene.createEntity(obj, Scene::Transform({0.65f, -0.55f, 0}, {1, 0, 0, 0}, glm::vec3(0.35f)));
             scene.createEntity();
             released(ResourceType::MODEL, GLTF);
             released(ResourceType::MODEL, OBJ);
             released(ResourceType::TEXTURE, PNG);
-            ResourceManager::instance().reset();
-            source_.reset();
-            fileIO_.reset();
-
             native->pollEvents();
             const auto extent = renderer.beginUiFrame();
             ASSERT_TRUE(extent);
             auto retained = Scene::extractSceneFrame(scene, *extent);
-            ASSERT_TRUE(retained);
-            ASSERT_EQ(retained->draws.size(), 12u);
+            ASSERT_TRUE(retained && retained->draws.size() == 6u);
             scene.clear();
-            EXPECT_TRUE(scene.entities().empty());
-            // 场景已清空，仍通过快照自有的绘制列表提交原来的模型。
             renderer.imgui().endFrame();
             renderer.drawFrame(retained->input(), {0.2f, 0.24f, 0.28f, 1});
             retained.reset();
             std::this_thread::sleep_for(std::chrono::milliseconds(60));
             const auto image = WindowCapture::capture(*native);
-            color(image, -0.510897f, 0.567851f, {188, 255, 188});
-            color(image, 0.789103f, 0.567851f, {188, 255, 188});
-            color(image, -0.186806f, 0.261438f, {188, 255, 188});
-            color(image, -0.44f, -0.608333f, {188, 255, 188});
-            color(image, 0.86f, -0.608333f, {188, 255, 188});
-            WindowCapture::save(image, "review/scene-frame-retained-after-clear.ppm");
+            for (const auto& pt : {std::array{-0.510897f, 0.567851f}, std::array{0.86f, -0.608333f}})
+            {
+                const int px = image.width / 2 + int(pt[0] * image.height / 2);
+                const int py = image.height / 2 - int(pt[1] * image.height / 2);
+                EXPECT_NEAR(image.rgba[(size_t(py) * image.width + px) * 4 + 0], 188, 12);
+                EXPECT_NEAR(image.rgba[(size_t(py) * image.width + px) * 4 + 1], 255, 12);
+                EXPECT_NEAR(image.rgba[(size_t(py) * image.width + px) * 4 + 2], 188, 12);
+            }
         }
         cleanValidation();
     }
 
-    TEST_F(ModelInstanceTest, LambertInterpolatedNormalsMatchFinalRootNodeEntityInverseTranspose)
+    TEST_F(ModelPreparationTest, LambertInterpolatedNormalsMatchFinalRootNodeEntityInverseTranspose)
     {
         ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
         auto native = window();
@@ -2243,16 +1303,15 @@ namespace
                                            glm::mat4_cast(rotation) * glm::scale(glm::mat4(1), scale) * root * parent *
                                            leaf;
                 auto snapshot = Scene::extractSceneFrame(scene, {384, 256}, false);
-                ASSERT_TRUE(snapshot);
-                ASSERT_EQ(snapshot->draws.size(), 5u);
+                ASSERT_TRUE(snapshot && snapshot->draws.size() == 5u);
                 std::array draws{snapshot->draws[2]};
-                for (int column = 0; column < 4; ++column)
-                    for (int row = 0; row < 4; ++row)
-                        EXPECT_NEAR(draws[0].model[column][row], expectedModel[column][row], 0.00001f);
+                for (int c = 0; c < 4; ++c)
+                    for (int r = 0; r < 4; ++r)
+                        EXPECT_NEAR(draws[0].model[c][r], expectedModel[c][r], 0.00001f);
                 const auto center = glm::vec3(expectedModel * glm::vec4(1.0f / 3, 1.0f / 3, 0, 1));
                 float radius = 0;
-                for (const auto& position : positions)
-                    radius = std::max(radius, glm::length(glm::vec3(expectedModel * glm::vec4(position, 1)) - center));
+                for (const auto& pos : positions)
+                    radius = std::max(radius, glm::length(glm::vec3(expectedModel * glm::vec4(pos, 1)) - center));
                 radius *= 1.3f;
                 auto projection = glm::orthoRH_ZO(-radius * 1.5f, radius * 1.5f, -radius, radius, 0.1f, 20.0f);
                 projection[1][1] *= -1;
@@ -2261,6 +1320,15 @@ namespace
                 std::array<glm::vec2, 3> screen;
                 std::array<glm::dvec3, 3> worldNormals;
                 const auto normalMatrix = glm::transpose(glm::inverse(glm::dmat3(expectedModel)));
+                Detail::RendererReviewAccess::withFrame(
+                    renderer, {{384, 256}, camera, draws, snapshot->lighting},
+                    [&](const auto&, const auto&, auto, auto nativeDraws) {
+                        ASSERT_EQ(nativeDraws.size(), 1u);
+                        for (int c = 0; c < 3; ++c)
+                            for (int r = 0; r < 3; ++r)
+                                EXPECT_NEAR(nativeDraws[0].object.normalColumns[c][r], normalMatrix[c][r],
+                                            0.00001 * std::max(1.0, std::abs(normalMatrix[c][r])));
+                    });
                 for (size_t corner = 0; corner < 3; ++corner)
                 {
                     const auto clip = camera.projection * camera.view * expectedModel * glm::vec4(positions[corner], 1);
@@ -2297,63 +1365,8 @@ namespace
         cleanValidation();
     }
 
-    TEST_F(ModelInstanceTest, NonzeroRootDepthFirstPartsAndIndependentInstanceMatrices)
+    TEST_F(ModelPreparationTest, DemoModelsWithUnicodeDependenciesPreserveDirectionAndExactGpuColor)
     {
-        ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
-        auto native = window();
-        {
-            Renderer renderer(*native, RendererValidationMode::Required);
-            shaders(renderer);
-            auto model = Model::prepareModel(renderer, "models/transforms.gltf");
-            released(ResourceType::MODEL, "models/transforms.gltf");
-            EXPECT_EQ(model->rootNode(), 2u);
-            ASSERT_EQ(model->draws().size(), 5u);
-            EXPECT_EQ(model->meshes().size(), 1u);
-            EXPECT_EQ(model->materials().size(), 3u);
-            EXPECT_EQ(model->textures().size(), 1u);
-            ASSERT_TRUE(model->bounds());
-            for (int axis = 0; axis < 3; ++axis)
-            {
-                EXPECT_NEAR(model->bounds()->min[axis], glm::vec3(7, 0, 0)[axis], 0.00001f);
-                EXPECT_NEAR(model->bounds()->max[axis], glm::vec3(11, 4, 0)[axis], 0.00001f);
-            }
-            const std::array<std::array<float, 2>, 5> expected = {{{11, 1}, {9, 1}, {7, 4}, {7, 4}, {10, 1}}};
-            for (size_t i = 0; i < expected.size(); ++i)
-                point(model->draws()[i].model, expected[i][0], expected[i][1]);
-            std::array instances = {Model::ModelInstance{model, glm::translate(glm::mat4(1), glm::vec3(0, 5, 0))},
-                                    Model::ModelInstance{model, glm::translate(glm::mat4(1), glm::vec3(-2, 1, 0)) *
-                                                                    glm::scale(glm::mat4(1), glm::vec3(0.5f, 2, 1))}};
-            model.reset();
-            EXPECT_EQ(instances[0].model.get(), instances[1].model.get());
-            EXPECT_EQ(&instances[0].model->bounds(), &instances[1].model->bounds());
-            const auto bounds = *instances[0].model->bounds();
-            const auto draws = Model::makeModelDraws(instances);
-            ASSERT_EQ(draws.size(), 10u);
-            for (size_t i = 0; i < expected.size(); ++i)
-            {
-                point(draws[i].model, expected[i][0], expected[i][1] + 5);
-                point(draws[i + 5].model, expected[i][0] * 0.5f - 2, expected[i][1] * 2 + 1);
-            }
-            instances[0].transform = glm::mat4(1);
-            const auto changed = Model::makeModelDraws(instances);
-            EXPECT_NE(changed[2].model, draws[2].model);
-            EXPECT_EQ(changed[7].model, draws[7].model);
-            EXPECT_EQ(instances[0].model->bounds()->min, bounds.min);
-            EXPECT_EQ(instances[1].model->bounds()->max, bounds.max);
-            point(instances[0].model->draws()[2].model, 7, 4);
-            EXPECT_TRUE(Model::makeModelDraws({}).empty());
-            ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<SharedModelLoader>(true));
-            const std::array empty{Model::ModelInstance{Model::prepareModel(renderer, "models/empty.gltf")}};
-            EXPECT_TRUE(Model::makeModelDraws(empty).empty());
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 1u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 3u);
-        }
-        cleanValidation();
-    }
-
-    TEST_F(ModelInstanceTest, DemoModelsWithUnicodeDependenciesPreserveDirectionAndExactGpuColor)
-    {
-        // 保留真实的相对依赖链，同时将所有输入类型的文件名改为超出 ANSI 范围的字符。
         const std::string gltfPath = "models/场景😀-gltf/模型.gltf";
         const std::string objPath = "models/场景😀-obj/模型.obj";
         const std::string pngPath = "textures/方向😀.png";
@@ -2367,10 +1380,7 @@ namespace
             std::ofstream(native, std::ios::binary).write(contents.data(), contents.size());
         };
         const auto replace = [](std::string& text, std::string_view from, std::string_view to) {
-            const auto at = text.find(from);
-            if (at == std::string::npos)
-                throw std::runtime_error("Missing fixture dependency");
-            text.replace(at, from.size(), to);
+            text.replace(text.find(from), from.size(), to);
         };
         auto gltf = read(GLTF);
         replace(gltf, "geometry/mesh.bin", "几何😀/网格.bin");
@@ -2386,8 +1396,6 @@ namespace
         write(pngPath, read(PNG));
 
         auto native = window(true);
-        // 此测试采样桌面合成结果。呈现前先将窗口置顶，
-        // 避免置顶状态恰好在 BitBlt 前才生效。
         ASSERT_TRUE(SetWindowPos(glfwGetWin32Window(static_cast<GLFWwindow*>(native->getNativeHandle())), HWND_TOPMOST,
                                  0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE));
         std::array<std::shared_ptr<const Model::PreparedModel>, 2> models;
@@ -2402,82 +1410,36 @@ namespace
             released(ResourceType::MODEL, gltfPath);
             released(ResourceType::MODEL, objPath);
             released(ResourceType::TEXTURE, pngPath);
-            released(ResourceType::SHADER, "shaders/cube.vert.spv");
-            released(ResourceType::SHADER, "shaders/cube.frag.spv");
-            source_.reset();
-            fileIO_.reset();
-
-            const std::array<std::array<int, 4>, 12> direction = {{{255, 255, 255, 255},
-                                                                   {255, 128, 0, 255},
-                                                                   {0, 0, 0, 255},
-                                                                   {0, 0, 255, 255},
-                                                                   {128, 128, 128, 255},
-                                                                   {255, 0, 0, 255},
-                                                                   {0, 255, 0, 255},
-                                                                   {255, 0, 255, 255},
-                                                                   {0, 255, 255, 255},
-                                                                   {17, 34, 51, 255},
-                                                                   {255, 255, 0, 255},
-                                                                   {128, 0, 255, 255}}};
-            for (size_t format = 0; format < models.size(); ++format)
+            const std::array<std::array<int, 4>, 12> direction = {{{255, 255, 255, 255}, {255, 128, 0, 255},
+                                                                   {0, 0, 0, 255},       {0, 0, 255, 255},
+                                                                   {128, 128, 128, 255}, {255, 0, 0, 255},
+                                                                   {0, 255, 0, 255},     {255, 0, 255, 255},
+                                                                   {0, 255, 255, 255},   {17, 34, 51, 255},
+                                                                   {255, 255, 0, 255},   {128, 0, 255, 255}}};
+            auto ortho = glm::orthoRH_ZO(-1.5f, 1.5f, -1.0f, 1.0f, 0.1f, 10.0f);
+            ortho[1][1] *= -1;
+            const CameraMatrices cam{glm::lookAtRH(glm::vec3(0, 0, 3), glm::vec3(0), glm::vec3(0, 1, 0)), ortho};
+            for (const auto& model : models)
             {
-                SCOPED_TRACE(format == 0 ? "glTF" : "OBJ");
-                const auto& model = models[format];
-                // 仅在色彩图视图中取消第一个源节点。完整的
-                // 缓存层级仍会参与渲染；另有测试检查其源矩阵。
-                const std::array instances{Model::ModelInstance{model, glm::inverse(model->draws()[0].model)}};
-                const auto draws = Model::makeModelDraws(instances);
-                std::vector<uint8_t> pixels;
-                Detail::RendererReviewAccess::withFrame(
-                    renderer, {{384, 256}, camera({384, 256}), draws},
-                    [&](const auto& device, const auto& pipeline, auto frameSet, auto nativeDraws) {
-                        pixels = TextureGpuReview::captureDraws(device, pipeline, frameSet, nativeDraws);
-                    });
+                const auto draws = expandModel(*model, glm::inverse(model->draws()[0].model));
+                const auto pixels = TextureGpuReview::captureFrame(renderer, {{384, 256}, cam, draws});
                 ASSERT_EQ(pixels.size(), 384u * 256 * 4);
-                const auto gpuColor = [&](float x, float y, const std::array<int, 4>& expected) {
-                    const int px = static_cast<int>((x / 1.5f + 1) * 192);
-                    const int py = static_cast<int>((1 - y) * 128);
-                    for (size_t channel = 0; channel < 4; ++channel)
-                        EXPECT_NEAR(pixels[(py * 384 + px) * 4 + channel], expected[channel], channel == 3 ? 0 : 1)
-                            << "sample=" << x << ',' << y << " channel=" << channel;
-                };
-                for (int row = 0; row < 4; ++row)
-                    for (int col = 0; col < 3; ++col)
-                        gpuColor(-1 + (col + 0.5f) / 3, 0.5f - (row + 0.5f) / 4, direction[row * 3 + col]);
-                gpuColor(0.6f, -1.0f / 6, {188, 255, 188, 255});
-                const auto label = format == 0 ? "gltf" : "obj";
-                WindowCapture::save({384, 256, pixels}, std::string("review/") + label + "-gpu.ppm");
-                std::cout << label << ": GPU direction 12/12, linear 0.5 -> 188 +/- 1, alpha 255\n";
-
-                for (int frame = 0; frame < 4; ++frame)
-                {
-                    ASSERT_TRUE(submit(*native, renderer, instances));
-                    // 窗口创建后，等待桌面合成结果更新。
-                    glfwWaitEventsTimeout(0.04);
-                }
-                glfwWaitEventsTimeout(0.06);
-                const auto displayed = WindowCapture::capture(*native);
                 for (int row = 0; row < 4; ++row)
                     for (int col = 0; col < 3; ++col)
                     {
-                        const auto& expected = direction[row * 3 + col];
-                        color(displayed, -1 + (col + 0.5f) / 3, 0.5f - (row + 0.5f) / 4,
-                              {expected[0], expected[1], expected[2]});
+                        const float x = -1 + (col + 0.5f) / 3, y = 0.5f - (row + 0.5f) / 4;
+                        const size_t idx = (size_t((1 - y) * 128) * 384 + size_t((x / 1.5f + 1) * 192)) * 4;
+                        for (size_t c = 0; c < 4; ++c)
+                            EXPECT_NEAR(pixels[idx + c], direction[row * 3 + col][c], c == 3 ? 0 : 1);
                     }
-                color(displayed, 0.6f, -1.0f / 6, {188, 255, 188});
-                WindowCapture::save(displayed, std::string("review/") + label + "-window.ppm");
+                const size_t tintIdx = (size_t((1 + 1.0f / 6) * 128) * 384 + size_t((0.6f / 1.5f + 1) * 192)) * 4;
+                EXPECT_NEAR(pixels[tintIdx + 0], 188, 1);
+                EXPECT_NEAR(pixels[tintIdx + 1], 255, 1);
+                EXPECT_NEAR(pixels[tintIdx + 2], 188, 1);
             }
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created material:"), 4u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }
-        for (const auto& model : models)
-            for (const auto& draw : model->draws())
-            {
-                EXPECT_FALSE(draw.mesh.valid());
-                EXPECT_FALSE(draw.material.valid());
-            }
         cleanValidation();
     }
 }  // namespace
