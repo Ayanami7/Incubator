@@ -119,7 +119,9 @@ namespace
         uniforms[0]->write(0, std::as_bytes(std::span(&frame, 1)));
         Vulkan::VulkanBindingSet bindings(device, uniforms);
         Vulkan::VulkanSampler sampler(device, {});
-        Vulkan::VulkanMaterialBinding material(device, bindings.materialLayout(), image, sampler, {1, 1, 1});
+        Vulkan::VulkanMaterialBinding material(device, bindings.materialLayout(), image, sampler,
+                                               bindings.normalFallback(), sampler,
+                                               bindings.metallicRoughnessFallback(), sampler, {1, 1, 1});
         Vulkan::VulkanPipeline pipeline(device, VK_FORMAT_R8G8B8A8_UNORM, device.findDepthFormat(), bindings.layout(),
                                         bindings.materialLayout(), vertex, fragment);
         auto mesh = Demo::makePlaneMesh();

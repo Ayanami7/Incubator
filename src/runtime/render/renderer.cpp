@@ -137,34 +137,86 @@ namespace Incubator
 
         struct Texture::Impl
         {
-            Impl(const Vulkan::VulkanDevice& device, const Resource::TextureResource& texture, TextureMipMode mipMode)
-                : owner(&device)
+            Impl(const Vulkan::VulkanDevice& device, const Resource::TextureResource& texture, TextureMipMode mipMode,
+                 TextureColorSpace space)
+                : owner(&device), colorSpace(space)
             {
-                image = Vulkan::VulkanImage::uploadRgba8(device, {texture.width(), texture.height()},
-                                                         VK_FORMAT_R8G8B8A8_SRGB, texture.pixels(),
-                                                         VK_IMAGE_USAGE_SAMPLED_BIT, mipMode);
+                VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
+                switch (colorSpace)
+                {
+                    case TextureColorSpace::Srgb:
+                        format = VK_FORMAT_R8G8B8A8_SRGB;
+                        break;
+                    case TextureColorSpace::Linear:
+                        format = VK_FORMAT_R8G8B8A8_UNORM;
+                        break;
+                    default:
+                        throw Error::Exception(Error::Code::RENDER, "Invalid texture color space");
+                }
+                image = Vulkan::VulkanImage::uploadRgba8(device, {texture.width(), texture.height()}, format,
+                                                         texture.pixels(), VK_IMAGE_USAGE_SAMPLED_BIT, mipMode);
             }
 
             const Vulkan::VulkanDevice* owner;
+            TextureColorSpace colorSpace = TextureColorSpace::Srgb;
             std::shared_ptr<Vulkan::VulkanImage> image;
         };
 
         struct Material::Impl
         {
             Impl(const Vulkan::VulkanDevice& device, std::shared_ptr<Texture::Impl> source,
-                 VkDescriptorSetLayout layout, const std::array<float, 3>& color, SamplerDesc sampling,
-                 ShadingMode shading)
+                 std::shared_ptr<Texture::Impl> normalSource, std::shared_ptr<Texture::Impl> mrSource,
+                 const Vulkan::VulkanBindingSet& bindingSet, const MaterialDesc& desc)
                 : owner(&device),
                   texture(std::move(source)),
-                  samplerDesc(sampling),
-                  sampler(device, sampling, texture->image->mipLevels()),
-                  binding(device, layout, *texture->image, sampler, color, shading)
+                  normalTexture(std::move(normalSource)),
+                  metallicRoughnessTexture(std::move(mrSource)),
+                  samplerDesc(desc.sampler),
+                  colorSampler(std::make_shared<Vulkan::VulkanSampler>(device, desc.sampler, texture->image->mipLevels())),
+                  normalSampler(selectSampler(device, desc.sampler,
+                                              normalImage(bindingSet).mipLevels(), colorSampler,
+                                              texture->image->mipLevels())),
+                  mrSampler(selectSampler(device, desc.sampler,
+                                          metallicRoughnessImage(bindingSet).mipLevels(), colorSampler,
+                                          texture->image->mipLevels(), normalSampler,
+                                          normalImage(bindingSet).mipLevels())),
+                  binding(device, bindingSet.materialLayout(), *texture->image, *colorSampler,
+                          normalImage(bindingSet), *normalSampler, metallicRoughnessImage(bindingSet), *mrSampler,
+                          desc.color, desc.shading, normalTexture ? desc.normalScale : 0.0f, desc.roughness,
+                          desc.metallic)
             {}
+
+            const Vulkan::VulkanImage& normalImage(const Vulkan::VulkanBindingSet& bindingSet) const noexcept
+            {
+                return normalTexture ? *normalTexture->image : bindingSet.normalFallback();
+            }
+
+            const Vulkan::VulkanImage& metallicRoughnessImage(const Vulkan::VulkanBindingSet& bindingSet) const noexcept
+            {
+                return metallicRoughnessTexture ? *metallicRoughnessTexture->image
+                                                : bindingSet.metallicRoughnessFallback();
+            }
+
+            static std::shared_ptr<Vulkan::VulkanSampler> selectSampler(
+                const Vulkan::VulkanDevice& device, SamplerDesc desc, uint32_t mipLevels,
+                const std::shared_ptr<Vulkan::VulkanSampler>& first, uint32_t firstMips,
+                const std::shared_ptr<Vulkan::VulkanSampler>& second = {}, uint32_t secondMips = 0)
+            {
+                if (mipLevels == firstMips)
+                    return first;
+                if (second && mipLevels == secondMips)
+                    return second;
+                return std::make_shared<Vulkan::VulkanSampler>(device, desc, mipLevels);
+            }
 
             const Vulkan::VulkanDevice* owner;
             std::shared_ptr<Texture::Impl> texture;
+            std::shared_ptr<Texture::Impl> normalTexture;
+            std::shared_ptr<Texture::Impl> metallicRoughnessTexture;
             const SamplerDesc samplerDesc;
-            Vulkan::VulkanSampler sampler;
+            std::shared_ptr<Vulkan::VulkanSampler> colorSampler;
+            std::shared_ptr<Vulkan::VulkanSampler> normalSampler;
+            std::shared_ptr<Vulkan::VulkanSampler> mrSampler;
             Vulkan::VulkanMaterialBinding binding;
         };
 
@@ -276,6 +328,23 @@ namespace Incubator
                     if (length > 0)
                         for (auto& value : vertex.normal)
                             value = static_cast<float>(value / length);
+
+                    for (const float value : vertex.tangent)
+                        if (!std::isfinite(value))
+                            throw Error::Exception(Error::Code::RENDER, "Mesh tangent must be finite");
+                    const double tangentLength =
+                        std::hypot(double(vertex.tangent[0]), double(vertex.tangent[1]), double(vertex.tangent[2]));
+                    if (tangentLength > 0.0 && vertex.tangent[3] != 0.0f)
+                    {
+                        for (size_t i = 0; i < 3; ++i)
+                            vertex.tangent[i] = static_cast<float>(vertex.tangent[i] / tangentLength);
+                        vertex.tangent[3] = vertex.tangent[3] < 0.0f ? -1.0f : 1.0f;
+                    }
+                    else
+                    {
+                        for (float& value : vertex.tangent)
+                            value = 0.0f;
+                    }
                 }
                 auto mesh = std::make_shared<Mesh::Impl>(device_, uploadVertices, indices);
                 std::erase_if(meshes_, [](const auto& entry) { return entry.object.expired(); });
@@ -289,9 +358,10 @@ namespace Incubator
             }
 
             Texture createTexture(const Resource::TextureResource& texture, TextureMipMode mipMode,
+                                  TextureColorSpace colorSpace,
                                   const std::shared_ptr<GpuResources::Impl>& resources = {})
             {
-                auto gpuTexture = std::make_shared<Texture::Impl>(device_, texture, mipMode);
+                auto gpuTexture = std::make_shared<Texture::Impl>(device_, texture, mipMode, colorSpace);
                 std::erase_if(textures_, [](const auto& entry) { return entry.object.expired(); });
                 textures_.push_back({gpuTexture, resources ? nullptr : gpuTexture});
                 if (resources)
@@ -340,24 +410,61 @@ namespace Incubator
                 auto texture = desc.texture.impl_.lock();
                 if (!texture || texture->owner != &device_)
                     throw Error::Exception(Error::Code::RENDER, "Texture is invalid or belongs to another Renderer");
+                if (texture->colorSpace != TextureColorSpace::Srgb)
+                    throw Error::Exception(Error::Code::RENDER, "Material base color texture must use Srgb color space");
+
+                const auto resolveOptionalLinearTexture = [&](const Texture& handle, const char* name) {
+                    std::shared_ptr<Texture::Impl> resolved;
+                    if (!handle.isUnset())
+                    {
+                        resolved = handle.impl_.lock();
+                        if (!resolved || resolved->owner != &device_)
+                            throw Error::Exception(
+                                Error::Code::RENDER,
+                                fmt::format("{} texture is invalid or belongs to another Renderer", name));
+                        if (resolved->colorSpace != TextureColorSpace::Linear)
+                            throw Error::Exception(
+                                Error::Code::RENDER,
+                                fmt::format("{} texture must use Linear color space", name));
+                    }
+                    return resolved;
+                };
+                auto normalTexture = resolveOptionalLinearTexture(desc.normalTexture, "Normal");
+                auto mrTexture = resolveOptionalLinearTexture(desc.metallicRoughnessTexture, "Metallic-roughness");
+
                 for (const auto value : desc.color)
                     if (!std::isfinite(value) || value < 0.0f || value > 1.0f)
                         throw Error::Exception(Error::Code::RENDER,
                                                "Material color must be finite linear RGB in [0, 1]");
-                if (desc.shading != ShadingMode::Unlit && desc.shading != ShadingMode::Lambert)
+                if (!std::isfinite(desc.normalScale) || desc.normalScale < 0.0f)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "Material normal scale must be finite and nonnegative");
+                if (!std::isfinite(desc.metallic) || desc.metallic < 0.0f || desc.metallic > 1.0f)
+                    throw Error::Exception(Error::Code::RENDER, "Material metallic factor must be finite in [0, 1]");
+                if (!std::isfinite(desc.roughness) || desc.roughness < 0.0f || desc.roughness > 1.0f)
+                    throw Error::Exception(Error::Code::RENDER, "Material roughness factor must be finite in [0, 1]");
+                if (desc.shading != ShadingMode::Unlit && desc.shading != ShadingMode::Lambert &&
+                    desc.shading != ShadingMode::Pbr)
                     throw Error::Exception(Error::Code::RENDER, "Material shading mode is invalid");
-                if (desc.sampler.minFilter == TextureFilter::Linear ||
-                    desc.sampler.magFilter == TextureFilter::Linear ||
-                    (desc.sampler.mipFilter == MipFilter::Linear && texture->image->mipLevels() > 1))
-                {
-                    VkFormatProperties properties{};
-                    vkGetPhysicalDeviceFormatProperties(device_.physicalDevice(), texture->image->format(),
-                                                        &properties);
-                    if (!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
-                        throw Error::Exception(Error::Code::RENDER, "Texture format does not support linear filtering");
-                }
-                auto material = std::make_shared<Material::Impl>(
-                    device_, std::move(texture), bindingSet_->materialLayout(), desc.color, desc.sampler, desc.shading);
+
+                const auto checkLinearFiltering = [&](const Vulkan::VulkanImage& image) {
+                    if (desc.sampler.minFilter == TextureFilter::Linear ||
+                        desc.sampler.magFilter == TextureFilter::Linear ||
+                        (desc.sampler.mipFilter == MipFilter::Linear && image.mipLevels() > 1))
+                    {
+                        VkFormatProperties properties{};
+                        vkGetPhysicalDeviceFormatProperties(device_.physicalDevice(), image.format(), &properties);
+                        if (!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+                            throw Error::Exception(Error::Code::RENDER,
+                                                   "Texture format does not support linear filtering");
+                    }
+                };
+                checkLinearFiltering(*texture->image);
+                checkLinearFiltering(normalTexture ? *normalTexture->image : bindingSet_->normalFallback());
+                checkLinearFiltering(mrTexture ? *mrTexture->image : bindingSet_->metallicRoughnessFallback());
+
+                auto material = std::make_shared<Material::Impl>(device_, std::move(texture), std::move(normalTexture),
+                                                                 std::move(mrTexture), *bindingSet_, desc);
                 std::erase_if(materials_, [](const auto& entry) { return entry.object.expired(); });
                 materials_.push_back({material, resources ? nullptr : material});
                 if (resources)
@@ -725,11 +832,11 @@ namespace Incubator
         }
 
         Texture Renderer::createTexture(GpuResources& resources, const Resource::TextureResource& texture,
-                                        TextureMipMode mipMode)
+                                        TextureMipMode mipMode, TextureColorSpace colorSpace)
         {
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
-            return impl_->createTexture(texture, mipMode, impl_->checkResources(resources));
+            return impl_->createTexture(texture, mipMode, colorSpace, impl_->checkResources(resources));
         }
 
         Material Renderer::createMaterial(GpuResources& resources, const MaterialDesc& desc)
@@ -756,11 +863,12 @@ namespace Incubator
             return impl_->createMesh(vertices, indices);
         }
 
-        Texture Renderer::createTexture(const Resource::TextureResource& texture, TextureMipMode mipMode)
+        Texture Renderer::createTexture(const Resource::TextureResource& texture, TextureMipMode mipMode,
+                                        TextureColorSpace colorSpace)
         {
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
-            return impl_->createTexture(texture, mipMode);
+            return impl_->createTexture(texture, mipMode, colorSpace);
         }
 
         void Renderer::prepareSceneResources(const Resource::ShaderResource& vertexShader,

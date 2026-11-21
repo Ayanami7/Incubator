@@ -12,13 +12,15 @@ namespace Incubator
         {
             float position[3];
             float uv[2];
-            float normal[3]{};  ///< 几何局部法线；零向量表示无可用法线。
+            float normal[3]{};   ///< 几何局部法线；零向量表示无可用法线。
+            float tangent[4]{};  ///< 局部切线（xyz）与副切线手性符号（w = ±1）；零向量或 w = 0 表示无可用切线。
         };
         static_assert(std::is_standard_layout_v<MeshVertex>);
-        static_assert(sizeof(MeshVertex) == 8 * sizeof(float));
+        static_assert(sizeof(MeshVertex) == 12 * sizeof(float));
         static_assert(offsetof(MeshVertex, position) == 0);
         static_assert(offsetof(MeshVertex, uv) == 3 * sizeof(float));
         static_assert(offsetof(MeshVertex, normal) == 5 * sizeof(float));
+        static_assert(offsetof(MeshVertex, tangent) == 8 * sizeof(float));
 
         /// @brief 可复制的网格上传资源引用。
         /// @note 非拥有引用；实际对象由 Renderer 或 GpuResources 及在途帧持有，不延长设备生命周期。

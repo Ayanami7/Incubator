@@ -87,7 +87,8 @@ namespace Incubator
                     constexpr VkVertexInputAttributeDescription vertexAttributes[] = {
                         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, position)},
                         {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)},
-                        {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)}};
+                        {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)},
+                        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshVertex, tangent)}};
                     vertexInput.vertexBindingDescriptionCount = 1;
                     vertexInput.pVertexBindingDescriptions = &vertexBinding;
                     vertexInput.vertexAttributeDescriptionCount =

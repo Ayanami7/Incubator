@@ -1595,4 +1595,199 @@ namespace
         EXPECT_THROW(VulkanInstance(requiredExtensions(), ValidationMode::Required), Error::Exception);
         EXPECT_FALSE(VulkanInstance(requiredExtensions(), ValidationMode::Disabled).validationEnabled());
     }
+
+    TEST_F(VulkanReviewTest, MeshTangentValidationAndNormalization)
+    {
+        auto window = createWindow();
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            SceneAssets assets;
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const auto tex = renderer.createTexture(*assets.texture);
+            const auto mat = renderer.createMaterial({tex});
+
+            const std::array<uint32_t, 3> indices{0, 1, 2};
+            for (size_t component = 0; component < 4; ++component)
+            {
+                for (const float bad : {std::numeric_limits<float>::quiet_NaN(),
+                                        std::numeric_limits<float>::infinity(),
+                                        -std::numeric_limits<float>::infinity()})
+                {
+                    std::array<MeshVertex, 3> badVerts{{{{0, 0, 0}, {0, 0}, {0, 0, 1}, {1, 0, 0, 1}},
+                                                        {{1, 0, 0}, {1, 0}, {0, 0, 1}, {1, 0, 0, 1}},
+                                                        {{0, 1, 0}, {0, 1}, {0, 0, 1}, {1, 0, 0, 1}}}};
+                    badVerts[1].tangent[component] = bad;
+                    EXPECT_THROW(renderer.createMesh(badVerts, indices), Error::Exception);
+                }
+            }
+
+            // 覆盖超大向量双精度归一化、手性符号规范化、零向量/零手性归零。
+            const std::array<MeshVertex, 4> validVerts{{
+                {{-1, -1, 0}, {0, 0}, {0, 0, 1}, {3e20f, 4e20f, 0.0f, -2.5f}},
+                {{1, -1, 0}, {1, 0}, {0, 0, 1}, {0.0f, 5.0f, 0.0f, 0.25f}},
+                {{1, 1, 0}, {1, 1}, {0, 0, 1}, {0.0f, 0.0f, 0.0f, 1.0f}},
+                {{-1, 1, 0}, {0, 1}, {0, 0, 1}, {1.0f, 0.0f, 0.0f, 0.0f}},
+            }};
+            const std::array<uint32_t, 6> quadIndices{0, 1, 2, 2, 3, 0};
+            const auto mesh = renderer.createMesh(validVerts, quadIndices);
+            std::vector<uint8_t> pixels;
+            Detail::RendererReviewAccess::withFrame(
+                renderer,
+                FrameInput{{256, 256}, {glm::mat4(1), glm::mat4(1)}, std::array{DrawItem{mesh, mat, glm::mat4(1)}}},
+                [&](const auto& d, const auto& p, auto fs, auto nd) {
+                    pixels = TextureGpuReview::captureDraws(d, p, fs, nd, {0, 0, 256, 256, 0, 1});
+                });
+            EXPECT_FALSE(pixels.empty());
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, TextureColorSpaceAndPbrMaterialValidation)
+    {
+        auto window = createWindow();
+        auto otherWindow = createWindow();
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            SceneAssets assets;
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+
+            const Resource::TextureResource srgb1x1({}, 1, 1, {255, 255, 255, 255});
+            const Resource::TextureResource linear4x4({}, 4, 4, std::vector<uint8_t>(4 * 4 * 4, 128));
+            EXPECT_THROW(renderer.createTexture(srgb1x1, TextureMipMode::BaseLevel,
+                                                static_cast<TextureColorSpace>(99)),
+                         Error::Exception);
+
+            const auto baseColor = renderer.createTexture(srgb1x1, TextureMipMode::BaseLevel, TextureColorSpace::Srgb);
+            const auto linearBase =
+                renderer.createTexture(srgb1x1, TextureMipMode::BaseLevel, TextureColorSpace::Linear);
+            const auto normalFullMip =
+                renderer.createTexture(linear4x4, TextureMipMode::FullChain, TextureColorSpace::Linear);
+            const auto mrLinear =
+                renderer.createTexture(linear4x4, TextureMipMode::FullChain, TextureColorSpace::Linear);
+
+            // 基色纹理必须为 Srgb；法线与金属粗糙度纹理必须为 Linear。
+            EXPECT_THROW(renderer.createMaterial({linearBase}), Error::Exception);
+            {
+                MaterialDesc desc{baseColor};
+                desc.normalTexture = baseColor;
+                EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
+            }
+            {
+                MaterialDesc desc{baseColor};
+                desc.metallicRoughnessTexture = baseColor;
+                EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
+            }
+            // 属于其他 Renderer 或已过期的非空句柄必须被拒绝。
+            {
+                struct RestoreContext
+                {
+                    ImGuiContext* previous;
+                    ~RestoreContext() { ImGui::SetCurrentContext(previous); }
+                } restore{ImGui::GetCurrentContext()};
+                ImGui::SetCurrentContext(nullptr);
+                Renderer otherRenderer(*otherWindow, RendererValidationMode::Required);
+                const auto otherLinear =
+                    otherRenderer.createTexture(srgb1x1, TextureMipMode::BaseLevel, TextureColorSpace::Linear);
+                MaterialDesc desc{baseColor};
+                desc.normalTexture = otherLinear;
+                EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
+            }
+            {
+                Texture expiredLinear;
+                {
+                    auto tempGroup = renderer.createResources();
+                    expiredLinear = renderer.createTexture(tempGroup, srgb1x1, TextureMipMode::BaseLevel,
+                                                           TextureColorSpace::Linear);
+                }
+                ASSERT_FALSE(expiredLinear.valid());
+                MaterialDesc desc{baseColor};
+                desc.metallicRoughnessTexture = expiredLinear;
+                EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
+            }
+
+            // 越界或非有限 PBR 参数与非法着色模式必须抛出 RENDER。
+            for (const float badScale : {-0.1f, std::numeric_limits<float>::quiet_NaN(),
+                                         std::numeric_limits<float>::infinity()})
+            {
+                MaterialDesc desc{baseColor};
+                desc.shading = ShadingMode::Pbr;
+                desc.normalScale = badScale;
+                EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
+            }
+            for (const float badFactor : {-0.01f, 1.01f, std::numeric_limits<float>::quiet_NaN(),
+                                          std::numeric_limits<float>::infinity()})
+            {
+                MaterialDesc desc{baseColor};
+                desc.shading = ShadingMode::Pbr;
+                desc.metallic = badFactor;
+                EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
+                desc.metallic = 0.5f;
+                desc.roughness = badFactor;
+                EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
+            }
+            {
+                MaterialDesc desc{baseColor};
+                desc.shading = static_cast<ShadingMode>(99);
+                EXPECT_THROW(renderer.createMaterial(desc), Error::Exception);
+            }
+
+            // 资源组持有期：材质强持有 normalTexture 与 metallicRoughnessTexture，释放纹理组后仍存活。
+            {
+                auto texGroup = renderer.createResources();
+                auto matGroup = renderer.createResources();
+                const auto scopedNormal =
+                    renderer.createTexture(texGroup, linear4x4, TextureMipMode::FullChain, TextureColorSpace::Linear);
+                const auto scopedMr =
+                    renderer.createTexture(texGroup, linear4x4, TextureMipMode::BaseLevel, TextureColorSpace::Linear);
+                MaterialDesc desc{baseColor};
+                desc.shading = ShadingMode::Pbr;
+                desc.normalTexture = scopedNormal;
+                desc.metallicRoughnessTexture = scopedMr;
+                desc.normalScale = 1.0f;
+                desc.metallic = 0.2f;
+                desc.roughness = 0.6f;
+                const auto scopedMat = renderer.createMaterial(matGroup, desc);
+                texGroup.reset();
+                EXPECT_TRUE(scopedNormal.valid());
+                EXPECT_TRUE(scopedMr.valid());
+                EXPECT_EQ(Detail::RendererReviewAccess::resourceCounts(renderer).textures, 6u);
+                matGroup.reset();
+                EXPECT_FALSE(scopedMat.valid());
+                EXPECT_FALSE(scopedNormal.valid());
+                EXPECT_FALSE(scopedMr.valid());
+                EXPECT_EQ(Detail::RendererReviewAccess::resourceCounts(renderer).textures, 4u);
+            }
+
+            // Required Validation 下分别使用共享回退贴图与实际 FullChain 数据贴图完成绘制（含 1x1 基色 + FullChain 法线）。
+            MaterialDesc fallbackPbr{baseColor};
+            fallbackPbr.shading = ShadingMode::Pbr;
+            fallbackPbr.sampler = {TextureFilter::Linear, TextureFilter::Linear, MipFilter::Linear};
+            const auto matFallback = renderer.createMaterial(fallbackPbr);
+
+            MaterialDesc fullPbr{baseColor};
+            fullPbr.shading = ShadingMode::Pbr;
+            fullPbr.sampler = {TextureFilter::Linear, TextureFilter::Linear, MipFilter::Linear};
+            fullPbr.normalTexture = normalFullMip;
+            fullPbr.metallicRoughnessTexture = mrLinear;
+            fullPbr.normalScale = 1.0f;
+            fullPbr.metallic = 0.8f;
+            fullPbr.roughness = 0.3f;
+            const auto matFull = renderer.createMaterial(fullPbr);
+
+            const auto quad = Demo::makePlaneMesh();
+            const auto mesh = renderer.createMesh(quad.vertices, quad.indices);
+            const std::array draws{
+                DrawItem{mesh, matFallback, glm::translate(glm::mat4(1), glm::vec3(-0.5f, 0, 0))},
+                DrawItem{mesh, matFull, glm::translate(glm::mat4(1), glm::vec3(0.5f, 0, 0))},
+            };
+            std::vector<uint8_t> pixels;
+            Detail::RendererReviewAccess::withFrame(
+                renderer, FrameInput{{256, 256}, {glm::mat4(1), glm::mat4(1)}, draws},
+                [&](const auto& d, const auto& p, auto fs, auto nd) {
+                    pixels = TextureGpuReview::captureDraws(d, p, fs, nd, {0, 0, 256, 256, 0, 1});
+                });
+            EXPECT_FALSE(pixels.empty());
+        }
+        expectCleanValidation();
+    }
 }  // namespace

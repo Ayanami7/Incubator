@@ -64,6 +64,14 @@ namespace Incubator
                                                    fmt::format("Model geometry {} has non-finite normal", geometry));
                         }
                     }
+                    for (float value : vertex.tangent)
+                    {
+                        if (!std::isfinite(value))
+                        {
+                            throw Error::Exception(Error::Code::CONFIG,
+                                                   fmt::format("Model geometry {} has non-finite tangent", geometry));
+                        }
+                    }
                 }
                 return bounds;
             }

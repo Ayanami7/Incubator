@@ -15,7 +15,10 @@ layout(set = 1, binding = 0) uniform sampler2D colorTexture;
 layout(set = 1, binding = 1, std140) uniform MaterialData
 {
     vec4 colorShading;
+    vec4 surfaceParams;
 } material;
+layout(set = 1, binding = 2) uniform sampler2D normalTexture;
+layout(set = 1, binding = 3) uniform sampler2D metallicRoughnessTexture;
 layout(location = 0) in vec2 uv;
 layout(location = 1) in vec3 worldNormal;
 layout(location = 2) in vec3 worldPosition;

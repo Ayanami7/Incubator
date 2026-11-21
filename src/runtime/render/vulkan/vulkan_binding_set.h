@@ -61,6 +61,10 @@ namespace Incubator
                 /// @brief 更新阴影绑定；空指针选择已初始化的全亮白图。
                 /// @note 调用前须完成对应帧槽的 GPU 工作；外部图像须存活至改绑或绑定集销毁。
                 void setShadowImage(uint32_t frameIndex, const VulkanImage* image = nullptr);
+                /// @brief 返回 1×1 线性平坦法线回退图像（{128, 128, 255, 255}）。
+                const VulkanImage& normalFallback() const noexcept;
+                /// @brief 返回 1×1 线性金属粗糙度回退图像（{255, 255, 255, 255}）。
+                const VulkanImage& metallicRoughnessFallback() const noexcept;
 
             private:
                 const VulkanDevice& device_;
@@ -69,6 +73,8 @@ namespace Incubator
                 VkDescriptorPool pool_ = VK_NULL_HANDLE;
                 std::vector<VkDescriptorSet> descriptorSets_;
                 std::shared_ptr<VulkanImage> shadowFallback_;
+                std::shared_ptr<VulkanImage> normalFallback_;
+                std::shared_ptr<VulkanImage> metallicRoughnessFallback_;
                 VkSampler shadowSampler_ = VK_NULL_HANDLE;
                 std::vector<VkImageView> shadowViews_;
             };

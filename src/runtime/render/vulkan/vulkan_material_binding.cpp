@@ -25,13 +25,27 @@ namespace Incubator
             }  // namespace
 
             VulkanMaterialBinding::VulkanMaterialBinding(const VulkanDevice& device, VkDescriptorSetLayout layout,
-                                                         const VulkanImage& texture, const VulkanSampler& sampler,
-                                                         const std::array<float, 3>& color, ShadingMode shading)
+                                                         const VulkanImage& colorImage,
+                                                         const VulkanSampler& colorSampler,
+                                                         const VulkanImage& normalImage,
+                                                         const VulkanSampler& normalSampler,
+                                                         const VulkanImage& metallicRoughnessImage,
+                                                         const VulkanSampler& metallicRoughnessSampler,
+                                                         const std::array<float, 3>& color, ShadingMode shading,
+                                                         float normalScale, float roughness, float metallic)
                 : device_(device)
             {
-                // std140 vec4：RGB 为线性颜色，w 精确编码 0（Unlit）或 1（Lambert），不是 alpha。
-                const std::array<float, 4> parameters{color[0], color[1], color[2], static_cast<float>(shading)};
-                static_assert(sizeof(parameters) == 16);
+                struct MaterialUniformData
+                {
+                    std::array<float, 4> colorShading;
+                    std::array<float, 4> surfaceParams;
+                };
+                static_assert(sizeof(MaterialUniformData) == 32);
+                // std140：colorShading.w 编码 ShadingMode，surfaceParams 依次为 normalScale、roughness、metallic。
+                const MaterialUniformData parameters{
+                    {color[0], color[1], color[2], static_cast<float>(shading)},
+                    {normalScale, roughness, metallic, 0.0f},
+                };
                 uniform_ = std::make_unique<VulkanBuffer>(
                     device_, sizeof(parameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -39,7 +53,7 @@ namespace Incubator
                 try
                 {
                     constexpr std::array<VkDescriptorPoolSize, 2> poolSizes = {{
-                        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1},
+                        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3},
                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
                     }};
                     VkDescriptorPoolCreateInfo poolInfo{};
@@ -56,14 +70,23 @@ namespace Incubator
                     allocateInfo.pSetLayouts = &layout;
                     checkVk(vkAllocateDescriptorSets(device_.handle(), &allocateInfo, &descriptorSet_),
                             "vkAllocateDescriptorSets(material)");
-                    const VkDescriptorImageInfo imageInfo{sampler.handle(), texture.view(),
+                    const VkDescriptorImageInfo colorInfo{colorSampler.handle(), colorImage.view(),
                                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                    const VkDescriptorImageInfo normalInfo{normalSampler.handle(), normalImage.view(),
+                                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                    const VkDescriptorImageInfo mrInfo{metallicRoughnessSampler.handle(),
+                                                       metallicRoughnessImage.view(),
+                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
                     const VkDescriptorBufferInfo bufferInfo{uniform_->handle(), 0, sizeof(parameters)};
-                    const std::array<VkWriteDescriptorSet, 2> writes = {{
+                    const std::array<VkWriteDescriptorSet, 4> writes = {{
                         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptorSet_, 0, 0, 1,
-                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &imageInfo, nullptr, nullptr},
+                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &colorInfo, nullptr, nullptr},
                         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptorSet_, 1, 0, 1,
                          VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &bufferInfo, nullptr},
+                        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptorSet_, 2, 0, 1,
+                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo, nullptr, nullptr},
+                        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptorSet_, 3, 0, 1,
+                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &mrInfo, nullptr, nullptr},
                     }};
                     vkUpdateDescriptorSets(device_.handle(), static_cast<uint32_t>(writes.size()), writes.data(), 0,
                                            nullptr);

@@ -23,8 +23,12 @@ namespace Incubator
             {
             public:
                 VulkanMaterialBinding(const VulkanDevice& device, VkDescriptorSetLayout layout,
-                                      const VulkanImage& texture, const VulkanSampler& sampler,
-                                      const std::array<float, 3>& color, ShadingMode shading = ShadingMode::Unlit);
+                                      const VulkanImage& colorImage, const VulkanSampler& colorSampler,
+                                      const VulkanImage& normalImage, const VulkanSampler& normalSampler,
+                                      const VulkanImage& metallicRoughnessImage,
+                                      const VulkanSampler& metallicRoughnessSampler, const std::array<float, 3>& color,
+                                      ShadingMode shading = ShadingMode::Unlit, float normalScale = 0.0f,
+                                      float roughness = 1.0f, float metallic = 0.0f);
                 ~VulkanMaterialBinding();
 
                 VulkanMaterialBinding(const VulkanMaterialBinding&) = delete;

@@ -306,7 +306,9 @@ namespace TextureGpuReview
                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
         uniforms[0]->write(0, std::as_bytes(std::span(&transforms, 1)));
         VulkanBindingSet bindings(device, uniforms);
-        VulkanMaterialBinding material(device, bindings.materialLayout(), *texture, sampler, tint);
+        VulkanMaterialBinding material(device, bindings.materialLayout(), *texture, sampler,
+                                       bindings.normalFallback(), sampler,
+                                       bindings.metallicRoughnessFallback(), sampler, tint);
         const auto depthFormat = device.findDepthFormat();
         const auto vertexWords = assets.vertex->words();
         const auto fragmentWords = assets.fragment->words();

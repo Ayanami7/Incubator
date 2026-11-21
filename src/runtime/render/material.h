@@ -11,11 +11,12 @@ namespace Incubator
 {
     namespace Render
     {
-        /// @brief 最小材质着色模式；Lambert 为方向光漫反射预览。
+        /// @brief 材质着色模式。
         enum class ShadingMode : uint32_t
         {
             Unlit = 0,
-            Lambert = 1
+            Lambert = 1,
+            Pbr = 2
         };
 
         struct MaterialDesc
@@ -25,6 +26,11 @@ namespace Incubator
             std::array<float, 3> color{1.0f, 1.0f, 1.0f};
             SamplerDesc sampler;
             ShadingMode shading = ShadingMode::Unlit;
+            Texture normalTexture{};             ///< 可选线性法线贴图（切线空间）。
+            Texture metallicRoughnessTexture{};  ///< 可选线性金属粗糙度贴图（G=粗糙度，B=金属度）。
+            float normalScale = 1.0f;            ///< 法线贴图 XY 缩放系数，有限且 >= 0。
+            float metallic = 0.0f;               ///< 金属度因子，有限且位于 [0, 1]。
+            float roughness = 1.0f;              ///< 粗糙度因子，有限且位于 [0, 1]。
         };
 
         /// @brief 不可变材质的非拥有引用，副本指向同一份实际对象。

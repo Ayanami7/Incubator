@@ -63,8 +63,13 @@ namespace Incubator
                 try
                 {
                     constexpr std::array<uint8_t, 4> white{255, 255, 255, 255};
+                    constexpr std::array<uint8_t, 4> flatNormal{128, 128, 255, 255};
                     shadowFallback_ = VulkanImage::uploadRgba8(device_, {1, 1}, VK_FORMAT_R8G8B8A8_UNORM, white,
                                                                VK_IMAGE_USAGE_SAMPLED_BIT);
+                    normalFallback_ = VulkanImage::uploadRgba8(device_, {1, 1}, VK_FORMAT_R8G8B8A8_UNORM, flatNormal,
+                                                               VK_IMAGE_USAGE_SAMPLED_BIT);
+                    metallicRoughnessFallback_ = VulkanImage::uploadRgba8(
+                        device_, {1, 1}, VK_FORMAT_R8G8B8A8_UNORM, white, VK_IMAGE_USAGE_SAMPLED_BIT);
                     VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
                     sampler.magFilter = sampler.minFilter = VK_FILTER_NEAREST;
                     sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
@@ -84,9 +89,11 @@ namespace Incubator
                     checkVk(vkCreateDescriptorSetLayout(device_.handle(), &layoutInfo, nullptr, &layout_),
                             "vkCreateDescriptorSetLayout");
 
-                    constexpr std::array<VkDescriptorSetLayoutBinding, 2> materialBindings = {{
+                    constexpr std::array<VkDescriptorSetLayoutBinding, 4> materialBindings = {{
                         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
                         {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
                     }};
                     layoutInfo.bindingCount = static_cast<uint32_t>(materialBindings.size());
                     layoutInfo.pBindings = materialBindings.data();
@@ -193,6 +200,16 @@ namespace Incubator
             VkDescriptorSet VulkanBindingSet::descriptorSet(uint32_t frameIndex) const noexcept
             {
                 return descriptorSets_[frameIndex];
+            }
+
+            const VulkanImage& VulkanBindingSet::normalFallback() const noexcept
+            {
+                return *normalFallback_;
+            }
+
+            const VulkanImage& VulkanBindingSet::metallicRoughnessFallback() const noexcept
+            {
+                return *metallicRoughnessFallback_;
             }
         }  // namespace Vulkan
     }  // namespace Render

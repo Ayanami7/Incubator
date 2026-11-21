@@ -75,18 +75,21 @@ namespace Incubator
             Mesh createMesh(GpuResources& resources, std::span<const MeshVertex> vertices,
                             std::span<const uint32_t> indices);
 
-            /// @brief 同步上传 RGBA8 sRGB 像素。
+            /// @brief 同步上传 RGBA8 像素。
             /// @param texture CPU 纹理，仅在本次调用期间借用。
             /// @param mipMode mip 链生成方式。
+            /// @param colorSpace 纹理像素色彩空间，默认 Srgb；数据贴图应使用 Linear。
             /// @return 由此 Renderer 持有的纹理引用。
             /// @note FullChain 会在返回前生成完整 GPU mip 链；默认只上传第 0 级。
             /// 返回的 Texture 仅可用于此 Renderer。
             Texture createTexture(const Resource::TextureResource& texture,
-                                  TextureMipMode mipMode = TextureMipMode::BaseLevel);
+                                  TextureMipMode mipMode = TextureMipMode::BaseLevel,
+                                  TextureColorSpace colorSpace = TextureColorSpace::Srgb);
 
             /// @brief 同步上传并由指定资源组持有纹理；组须有效且属于本 Renderer。
             Texture createTexture(GpuResources& resources, const Resource::TextureResource& texture,
-                                  TextureMipMode mipMode = TextureMipMode::BaseLevel);
+                                  TextureMipMode mipMode = TextureMipMode::BaseLevel,
+                                  TextureColorSpace colorSpace = TextureColorSpace::Srgb);
 
             /// @brief 准备共享场景着色器以及帧和材质布局。
             /// @param vertexShader 顶点着色器资源。

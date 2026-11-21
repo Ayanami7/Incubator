@@ -460,4 +460,18 @@ namespace
         EXPECT_EQ(model->nodes().size(), 4096u);
         EXPECT_TRUE(model->nodes().back().children.empty());
     }
+
+    TEST(ModelResourceTest, RejectsNonFiniteVertexTangent)
+    {
+        for (size_t component = 0; component < 4; ++component)
+        {
+            for (const float bad : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+                                    -std::numeric_limits<float>::infinity()})
+            {
+                ModelInput input;
+                input.geometries[0].vertices[0].tangent[component] = bad;
+                expectInvalid(input, "non-finite tangent");
+            }
+        }
+    }
 }  // namespace
