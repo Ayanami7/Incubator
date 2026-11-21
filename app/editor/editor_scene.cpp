@@ -207,6 +207,11 @@ namespace Incubator::Editor
         return controller_.redo(app);
     }
 
+    bool EditorScene::setEntityShading(Editor::EditorApp& app, Render::ShadingMode shading)
+    {
+        return controller_.setEntityShading(app, shading);
+    }
+
     Scene::EntityId EditorScene::duplicateSelected(Editor::EditorApp& app)
     {
         return controller_.duplicateSelected(app);
@@ -852,6 +857,32 @@ namespace Incubator::Editor
                 rowLabel("Visible");
                 if (ImGui::Checkbox("##visible", &visible))
                     operations.setVisible(app.scene(), app.clearColor(), visible);
+                if (entity->model)
+                {
+                    int shadingIndex = 1;
+                    switch (entity->model->source().options().shading)
+                    {
+                        case Render::ShadingMode::Unlit:
+                            shadingIndex = 0;
+                            break;
+                        case Render::ShadingMode::Lambert:
+                            shadingIndex = 1;
+                            break;
+                        case Render::ShadingMode::Pbr:
+                            shadingIndex = 2;
+                            break;
+                    }
+                    rowLabel("Shading");
+                    ImGui::SetNextItemWidth(controlWidth);
+                    if (ImGui::Combo("##entity-shading", &shadingIndex, "Unlit\0Lambert\0PBR\0"))
+                    {
+                        const Render::ShadingMode targetShading =
+                            shadingIndex == 0 ? Render::ShadingMode::Unlit
+                                              : (shadingIndex == 2 ? Render::ShadingMode::Pbr
+                                                                   : Render::ShadingMode::Lambert);
+                        controller_.setEntityShading(app, targetShading);
+                    }
+                }
                 const auto applyTransformWidget = [&](bool edited) {
                     const bool activateStart = ImGui::IsItemActivated();
                     const bool entityActive = controller_.activePanelTransaction() == PanelTransactionKind::Entity;

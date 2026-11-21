@@ -56,15 +56,15 @@ IOStream 累积短读，保留完整元素计数、seek/tell/size 语义；提�
 |---|---|
 | 静态 `.gltf` 2.0 | 外部 bin/PNG，保留源根、节点局部矩阵、部分及共享 aiMesh 关系 |
 | `.obj` + 外部 `.mtl`/PNG | 三角化，保留导入器提供的根/物体节点，读取 Kd/map_Kd |
-| 几何 | position、UV0、局部 normal、三角形列表；源顶点数量须能由 Assimp 表示，源索引转换为内部 uint32，越界索引拒绝 |
+| 几何 | position、UV0、局部 normal、tangent[4]（xyz 切线方向 + w 手性 $\pm 1$）、三角形列表；源顶点数量须能由 Assimp 表示，源索引转换为内部 uint32，越界索引拒绝 |
 | 无贴图材质 | 默认白色或显式 0–1 线性 RGB；无 UV 时补固定 `(0,0)` |
-| 基色贴图 | 仅一张外部 PNG、UV0；贴图材质缺少 UV0、非 UV0、显式 UV 变换（包括恒等）或多重基色贴图均拒绝 |
+| 纹理槽（基色 / 法线 / 金属粗糙度） | 仅外部 PNG、UV0；glTF 额外解析 `normalTexture`（含 `scale`）、`metallicRoughnessTexture`、`metallicFactor`（省略取 `1.0`）与 `roughnessFactor`（省略取 `1.0`），OBJ 默认 `normalScale = 1.0`、`metallic = 0.0`、`roughness = 0.45`；贴图材质缺少 UV0、非 UV0、显式 UV 变换（包括恒等）或同槽多重贴图均拒绝 |
 | glTF 透明字段 | 仅缺省/OPAQUE；忽略基色 alpha，不用通用 opacity 反向拒绝 OPAQUE；MASK/BLEND/未知模式失败 |
 | OBJ 透明字段 | 最终 opacity 必须有限且等于 1，拒绝 map_d；d 直接赋值，Tr 赋 `1-Tr`，固定版本按最后声明覆盖 |
 | 其他特征 | 拒绝动画、骨骼、Morph、GLB/嵌入图像或缓冲、压缩几何/图片及未支持的必需扩展；仅支持无需额外实现的 KHR_materials_unlit 必需扩展 |
 
-普通光照、法线、金属度和其他非基色材质参数不进入当前顶点与 Shader 链路，只作基色预览。
-源 sampler 和双面参数不导入，不承诺完整 PBR 外观；opaque、无剔除的显示条件保持。
+若源网格自带 `TANGENT` 与副切线，按双精度对顶点法线执行 Gram-Schmidt 正交化并求解手性 $w = \pm 1$；若无原生切线但具有 `UV0` 与法线，基于最终 V 翻转后的 `UV0` 与三角形索引累加切线/副切线并正交化；无 `UV0` 或退化几何输出零切线 `{0, 0, 0, 0}`。
+源 sampler 和双面参数不导入，不承诺完整环境贴图 IBL 外观；opaque、无剔除的显示条件保持。
 glTF 必需或可选的 `KHR_materials_unlit` 通过 Assimp 的 `AI_MATKEY_SHADING_MODEL` / `aiShadingMode_Unlit`
 保存到 `ModelMaterial::unlit`；普通 glTF 和 OBJ 默认 false，不扩展 MTL 光照模型映射。
 模型准备入口默认 nearest/repeat/LOD=0，消费者可通过 [PrepareOptions](../../model.md) 显式选择

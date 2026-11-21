@@ -87,6 +87,7 @@ namespace Incubator::Editor
         }
         bool undo(Editor::EditorApp& app);
         bool redo(Editor::EditorApp& app);
+        bool setEntityShading(Editor::EditorApp& app, Render::ShadingMode shading);
         std::string statusText() const;
         const std::string& message() const;
         /// @brief 获取当前关联场景文件的 UTF-8 路径。

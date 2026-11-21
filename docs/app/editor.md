@@ -68,6 +68,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | 未保存修改确认 | 文档处于脏状态（状态栏显示 `*`）时触发 `Open`、`Clear scene`、`Exit` 或窗口关闭按钮将弹出确认弹窗，支持 `Save`（无关联时衔接 `Save As` 成功再继续，取消则中止原操作）、`Discard` 与 `Cancel` |
 | Edit：Undo / Redo / Duplicate / Delete | 撤销/重做最近编辑动作（上限 64 步，回退至已保存修订号自动清除脏标记）；支持窗口级 `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z`（无需视口聚焦，文本输入、弹窗及活动事务期间不误触发） |
 | Visible | 显示/隐藏当前实体，保留其变换 |
+| Shading | 为带模型的选中实体切换模型准备着色模式（`Unlit` / `Lambert` / `PBR`，控件 `##entity-shading`）；先结算 Gizmo 与面板事务，通过 `ModelManager` 解析并复用缓存，纳入单步 Undo/Redo（资产自带 `unlit` 材质仍按 Unlit 渲染）；准备失败保留原模型与历史 |
 | Position / Rotation / Scale | 双列对齐布局（含 X/Y/Z 轴色标），独立编辑实体的真实 TRS 与右侧 `R##reset-pos/rot/scale` 分项重置按钮；支持零、负值及非均匀缩放，旋转使用角度并转换为四元数；连续拖动合并为单步 Undo |
 | Duplicate | 复制并选中实体，保持变换、可见性和共享模型；名称追加“ 副本”，空名使用“未命名 副本” |
 | Delete selected | 删除选中实体，撤销可恢复原 `EntityId` 与共享模型；其他实体保持 |

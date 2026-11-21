@@ -78,8 +78,8 @@ UI 字体从 `<cwd>/assets/fonts/NotoSansSC-Regular.otf` 经平台 FileIO 读取
 
 ## 外部纹理与颜色约定
 
-Renderer 通过 `createTexture(const TextureResource&, TextureMipMode = TextureMipMode::BaseLevel)`
-独立上传纹理，返回 `texture.h` 中的 `Texture` 引用。每次调用同步上传为 `VK_FORMAT_R8G8B8A8_SRGB`，返回后不保留
+Renderer 通过 `createTexture(const TextureResource&, TextureMipMode = TextureMipMode::BaseLevel, TextureColorSpace = TextureColorSpace::Srgb)`
+独立上传纹理，返回 `texture.h` 中的 `Texture` 引用。默认按 `TextureColorSpace::Srgb`（`VK_FORMAT_R8G8B8A8_SRGB`）上传基色/漫反射纹理，显式传入 `TextureColorSpace::Linear` 时按 `VK_FORMAT_R8G8B8A8_UNORM` 上传法线、金属粗糙度等线性数据纹理。每次调用同步上传，返回后不保留
 TextureResource 指针或 CPU 像素副本，应用可在下一次绘制前 release 到零。
 GPU Image、Sampler、Descriptor 由 Render 持有，在途帧另持有所用 Material 及其 Texture 依赖至 Fence 完成；
 交换链重建复用这些纹理，不重新读取、解码或上传。立方体 +Z 面顶部 UV 指向 PNG 首行，
@@ -154,8 +154,8 @@ Texture 仅标识 GPU 上传结果，与 CPU ResourceId 分别管理，也不使
 
 ## 最小材质与绑定
 
-`material.h` 定义 `MaterialDesc { Texture texture; std::array<float, 3> color; SamplerDesc sampler; ShadingMode shading; }` 与 `Material` 引用。
-纹理是必需输入，color 是有限的 0–1 线性 RGB，默认 `{1, 1, 1}`。例如：
+`material.h` 定义 `MaterialDesc { Texture texture; std::array<float, 3> color; SamplerDesc sampler; ShadingMode shading; Texture normalTexture; Texture metallicRoughnessTexture; float normalScale; float metallic; float roughness; }` 与 `Material` 引用。
+基色纹理 `texture` 是必需输入且必须为 `TextureColorSpace::Srgb`，color 是有限的 0–1 线性 RGB，默认 `{1, 1, 1}`。可选的 `normalTexture` 与 `metallicRoughnessTexture` 若非空则必须属于同一 Renderer 且为 `TextureColorSpace::Linear`（未指定时自动绑定共享 1×1 线性回退纹理，分别对应平坦法线 `{128,128,255,255}` 与白色 `{255,255,255,255}`）。`normalScale` 须有限且 `>= 0`（默认 `1.0f`），`metallic`（默认 `0.0f`）与 `roughness`（默认 `1.0f`）须有限且位于 `[0, 1]`。例如：
 
 ```cpp
 MaterialDesc desc{texture, {0.25f, 0.5f, 1.0f}};
@@ -190,16 +190,17 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 
 `createMaterial` 要求先准备共享 Shader，并在分配 GPU 资源前检查颜色和 Texture 从属关系。
 空、过期、跨 Renderer 纹理，NaN、无穷或越界颜色均明确失败，不替换白图或钳制非法输入。
-创建时将 RGB 复制进 16 字节 std140 `vec4 colorShading` Uniform，第四分量精确编码模式（0 为 Unlit、1 为 Lambert），不是 alpha；之后不改写该 Buffer
+创建时将参数复制进 32 字节 std140 `MaterialData`（`vec4 colorShading` 与 `vec4 surfaceParams`），`colorShading.w` 精确编码模式（0 为 Unlit、1 为 Lambert、2 为 Pbr），不是 alpha；之后不改写该 Buffer
 或 Descriptor。无论 PNG alpha 或颜色参数如何，场景输出 alpha 始终为 1，不启用透明混合。
 
-`ShadingMode` 仅包含默认 `Unlit` 和显式 `Lambert`；旧 `{texture}`、`{texture,color}`、
+`ShadingMode` 包含默认 `Unlit`、显式 `Lambert` 与 `Pbr`；旧 `{texture}`、`{texture,color}`、
 `{texture,color,sampler}` 初始化保持 Unlit，非法模式在分配材质前按 RENDER 拒绝。
-例如 `MaterialDesc{texture, {1,1,1}, {}, ShadingMode::Lambert}`，创建后修改描述不会改变材质。
-模式与颜色共用同一参数块和固定 Pipeline，不引入 Shader 变体。
+例如 `MaterialDesc{texture, {1,1,1}, {}, ShadingMode::Pbr}`，创建后修改描述不会改变材质。
+三种模式共用同一参数块和固定 Pipeline，不引入 Shader 变体。
 
 设 `B = textureLinearRGB * materialColor`，`D` 为单位光线传播方向，`N` 为单位世界法线：
-Unlit 输出 `B`；Lambert 输出 `B * (ambient + lightColor * intensity * max(dot(N,-D),0))`。
+Unlit 输出 `B`；Lambert 输出 `B * (ambient + lightColor * intensity * max(dot(N,-D),0) * shadowVisibility)`；
+Pbr 在切线空间法线扰动后（`normalScale > 0` 且切线与法线均非退化时构造正交 TBN，否则安全回退至几何法线）结合金属粗糙度贴图（`G` 通道为粗糙度并钳制至 `[0.04, 1]`，`B` 通道为金属度）与相机世界坐标 `cameraPosition`，计算能量守恒漫反射 `kD * B / PI` 与 Cook-Torrance GGX 镜面高光及阴影衰减。
 计算在线性空间进行，最后 clamp 至 `[0,1]` 并使用原有精确 sRGB 编码一次，alpha 固定 1。
 零法线没有直接光贡献，仍保留环境项；直接光强度与环境系数同时为零时为黑色。
 这是最小漫反射预览，支持可选的单方向光硬阴影，不包含 PBR、源灯光或背面法线翻转。
@@ -280,13 +281,13 @@ ImGui 接入后，应用通过 UI 适配层开始 UI 帧、构建界面并结束
 
 ## 应用网格与持有期
 
-`mesh.h` 的 `MeshVertex` 依次为 `float position[3]`、`float uv[2]`、默认零的 `float normal[3]`，
-紧密 32 字节，偏移分别为 0、12、20；旧两字段聚合初始化的法线为零。
-Pipeline 按该类型的大小和字段偏移绑定位置、UV 和法线（location 0、1、2）。索引固定为 `uint32_t`，拓扑为不透明三角形列表。
+`mesh.h` 的 `MeshVertex` 依次为 `float position[3]`、`float uv[2]`、默认零的 `float normal[3]` 与默认零的 `float tangent[4]`，
+紧密 48 字节，偏移分别为 0、12、20、32；旧两字段或三字段聚合初始化的法线/切线为零。
+Pipeline 按该类型的大小和字段偏移绑定位置、UV、法线和切线（location 0、1、2、3；阴影深度 Pipeline 仅读取 location 0 位置）。索引固定为 `uint32_t`，拓扑为不透明三角形列表。
 公共输入不包含 Vulkan 类型。
 
-normal 位于几何局部空间，可以为非单位向量；上传时以双精度长度归一化非零法线，避免其幅值导致 GPU 变换溢出，不修改调用方数组。零向量表示无可用法线，上传时不补造方向。
-Renderer 从最终 `DrawItem::model` 的线性部分计算逆转置，平移不影响结果，也不另存 Scene 法线状态。
+normal 位于几何局部空间，可以为非单位向量；上传时以双精度长度归一化非零法线，避免其幅值导致 GPU 变换溢出，不修改调用方数组。零向量表示无可用法线，上传时不补造方向。`tangent` 的 `xyz` 为局部切线方向、`w` 为副切线手性符号（$\pm 1$）；非有限分量抛 RENDER 拒绝，上传前以双精度长度归一化 `xyz` 并将 `w` 规范化为 $\pm 1$（切线长度为零或 `w == 0` 时四分量归零）。
+Renderer 从最终 `DrawItem::model` 的线性部分计算逆转置，并将行列式符号（$\pm 1$ 或奇异时 `0`）随 `VulkanObjectData` 传给顶点 Shader，平移不影响结果，也不另存 Scene 法线状态。
 可逆仿射变换支持非均匀、负缩放及正常的小比例缩放，不用固定绝对行列式阈值判定奇异。
 奇异或非仿射矩阵使用零法线变换，保留原模型矩阵和绘制；求逆结果无法有限表示时同样置零。
 顶点阶段在变换后归一化非零法线并输出世界法线，保留零向量；Lambert 在片元插值后再次归一化，零法线不贡献直接光。

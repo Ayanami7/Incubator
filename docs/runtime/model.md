@@ -27,10 +27,10 @@ options.shading = Incubator::Render::ShadingMode::Lambert;
 auto filtered = Incubator::Model::prepareModel(renderer, "models/avocado/glTF/Avocado.gltf", options);
 ```
 
-显式设置 `options.shading = Render::ShadingMode::Lambert` 可选择最小方向光漫反射预览；
+显式设置 `options.shading = Render::ShadingMode::Lambert` 或 `Render::ShadingMode::Pbr` 可选择方向光漫反射或 TBN 法线贴图 + GGX PBR 着色；
 源 `ModelMaterial::unlit` 为 true 的材质始终使用 Unlit。不同模式仍共用生产 Pipeline，
 同次准备的几何、纹理、白图及采样共享规则保持；选项创建时复制，之后修改不改变已有材质。
-非法 mip、采样或着色选项在加载或 GPU 创建前抛 RENDER，空绘制模型也遵守此约定。该模式不导入源灯光，也不代表 glTF PBR 或完整 MTL 材质还原。
+非法 mip、采样或着色选项在加载或 GPU 创建前抛 RENDER，空绘制模型也遵守此约定。仅在目标材质实际使用 `ShadingMode::Pbr` 时按 `TextureColorSpace::Linear` 按需上传 `normalTexturePath` 与 `metallicRoughnessTexturePath`（同模型内按 `(path, colorSpace)` 复合键去重）；`Unlit` 与 `Lambert` 准备路径不加载这两张附加贴图。该模式不导入源灯光或环境贴图，也不扩展 MTL 光照模型映射。
 
 `ModelReference(path, options)` 拥有规范化的 UTF-8 虚拟路径和完整准备配置；构造时拒绝非法路径和选项，
 值相等比较包含路径、mip、全部采样选项和着色模式。`PreparedModel::source()` 返回只读来源，保存调用时请求的配置；
@@ -78,7 +78,7 @@ GPU 准备在 Renderer 所在线程完成，FileIO 至少覆盖 CPU 导入与依
 
 未被任何节点使用的部分、几何、材质及其纹理不准备；源 ModelResource 已在构造时校验结构，
 准备层不重复校验不可变图。顶点从 `Resource::MeshVertexData` 显式转换为 `Render::MeshVertex`，
-逐分量复制 position、uv 和几何局部 normal，不提前应用节点矩阵；索引保持 uint32。
+逐分量复制 position、uv、几何局部 normal 与 tangent[4]，不提前应用节点矩阵；索引保持 uint32。
 Renderer 在提交时由最终 DrawItem::model 计算法线逆转置，包含实例、源根和内部节点累计变换，源根只计算一次。
 共享以源几何/材质索引及纹理规范化路径为准，不按内容合并不同的源描述。再次显式调用准备允许产生另一组 GPU 对象。
 

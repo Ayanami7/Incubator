@@ -168,6 +168,43 @@ namespace Incubator::Editor
         return true;
     }
 
+    bool EditorOperations::setEntityShading(Scene::Scene& scene, const std::array<float, 4>& clearColor,
+                                            Render::ShadingMode shading)
+    {
+        const auto* entity = scene.find(selection_.selected());
+        if (!entity || !entity->model)
+            return false;
+        const auto& source = entity->model->source();
+        if (source.options().shading == shading)
+            return false;
+        Model::PrepareOptions options = source.options();
+        options.shading = shading;
+        const std::string path = source.path();
+        try
+        {
+            auto model = cache_->resolve(Model::ModelReference(path, options));
+            auto before = captureSnapshot(scene, clearColor, currentRevision_);
+            if (!scene.setModel(entity->id, std::move(model)))
+                return false;
+            pushUndoSnapshot(std::move(before));
+            messageError_ = false;
+            message_ = fmt::format("Updated shading for '{}' to {}", entity->name,
+                                   shading == Render::ShadingMode::Unlit ? "Unlit"
+                                   : shading == Render::ShadingMode::Pbr ? "PBR"
+                                                                         : "Lambert");
+            Log::Registry::get("editor").info("{}", message_);
+            return true;
+        }
+        catch (const Error::Exception& error)
+        {
+            messageError_ = true;
+            message_ = "Cannot update shading for '" + path + "': " + error.message();
+            if (!dynamic_cast<const Model::LoadError*>(&error))
+                Log::Registry::get("editor").error("{}", message_);
+            return false;
+        }
+    }
+
     bool EditorOperations::setTransform(Scene::Scene& scene, const std::array<float, 4>& clearColor,
                                         Scene::Transform transform)
     {

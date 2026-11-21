@@ -2542,4 +2542,216 @@ namespace
         }
         cleanValidation();
     }
+
+    TEST_F(EditorAppTest, EntityShadingComboSwitchPbrUndoRedoFailureCacheAndScreenshotUnderValidation)
+    {
+        copyShowcaseModels();
+        {
+            Editor::EditorApp session(options(true, 1280, 800));
+            Editor::EditorScene editor;
+            Scene::EntityId avocadoId{}, teapotId{}, unlitId{};
+            int frame = 0, step = 0;
+            bool done = false;
+            size_t initialCached = 0, afterPbrCached = 0;
+            WindowCapture::Image lambertShot{}, pbrShot{};
+            std::vector<uint8_t> unlitBaselineScene{}, unlitAsPbrScene{};
+            auto* handle = static_cast<GLFWwindow*>(session.window().getNativeHandle());
+
+            session.run(
+                {[&](auto& app) {
+                     editor.initialize(app);
+                     EditorTest::setSharedEditorScene(app, editor, false);
+                     avocadoId = editor.selected();
+                     // 添加 Utah Teapot 并排展示。
+                     editor.selectModel(true);
+                     teapotId = editor.createEntity(app);
+                     app.scene().setTransform(teapotId,
+                                              Scene::Transform({0.25f, 0.0f, 0.0f}, {1, 0, 0, 0}, {0.1f, 0.1f, 0.1f}));
+                     // 将 minimal_gltf 的 bin 拷贝到相对位置供 unlit.gltf 引用。
+                     std::filesystem::create_directories("assets/models/minimal_gltf/geometry");
+                     std::filesystem::copy_file(
+                         Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR) / "models/minimal_gltf/geometry/mesh.bin",
+                         "assets/models/minimal_gltf/geometry/mesh.bin",
+                         std::filesystem::copy_options::overwrite_existing);
+                     const auto binSize = std::filesystem::file_size("assets/models/minimal_gltf/geometry/mesh.bin");
+                     // 添加自带 KHR_materials_unlit 的测试 glTF，验证资产自带 unlit 材质优先级。
+                     const std::string unlitGltf = fmt::format(R"({{
+  "asset": {{ "version": "2.0" }},
+  "extensionsUsed": ["KHR_materials_unlit"],
+  "extensionsRequired": ["KHR_materials_unlit"],
+  "buffers": [{{ "uri": "../minimal_gltf/geometry/mesh.bin", "byteLength": {} }}],
+  "bufferViews": [
+    {{ "buffer": 0, "byteOffset": 0, "byteLength": 48 }},
+    {{ "buffer": 0, "byteOffset": 80, "byteLength": 12 }}
+  ],
+  "accessors": [
+    {{ "bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3" }},
+    {{ "bufferView": 1, "componentType": 5123, "count": 6, "type": "SCALAR" }}
+  ],
+  "materials": [{{
+    "pbrMetallicRoughness": {{ "baseColorFactor": [0.9, 0.2, 0.2, 1.0] }},
+    "extensions": {{ "KHR_materials_unlit": {{}} }}
+  }}],
+  "meshes": [{{ "primitives": [{{ "attributes": {{ "POSITION": 0 }}, "indices": 1, "material": 0 }}] }}],
+  "nodes": [{{ "mesh": 0 }}],
+  "scenes": [{{ "nodes": [0] }}],
+  "scene": 0
+}})", binSize);
+                     std::filesystem::create_directories("assets/models/test_unlit");
+                     {
+                         std::ofstream out("assets/models/test_unlit/unlit.gltf", std::ios::binary);
+                         out << unlitGltf;
+                     }
+                     ASSERT_TRUE(editor.addModel(app, "models/test_unlit/unlit.gltf",
+                                                 Scene::Transform({-0.35f, 0.0f, 0.0f}, {1, 0, 0, 0}, {0.2f, 0.2f, 0.2f})));
+                     unlitId = editor.selected();
+                     editor.select(app, avocadoId);
+                     initialCached = editor.cachedModels();
+                     enableGlfwCallbacks(handle, false);
+                 },
+                 [&](auto& app, const auto&) {
+                     if (++frame > 180)
+                     {
+                         ADD_FAILURE() << "EntityShading test timeout at step=" << step;
+                         app.requestExit();
+                     }
+                     auto* propWin = ImGui::FindWindowByName("Properties");
+                     if (frame < 5 || !propWin || app.sceneExtent().width == 0)
+                         return;
+
+                     switch (step)
+                     {
+                         case 0:
+                             glfwWaitEventsTimeout(0.06);
+                             lambertShot = WindowCapture::capture(app.window());
+                             // 实际激活 Properties 面板中的 ##entity-shading 下拉框。
+                             ImGui::ActivateItemByID(propWin->GetID("##entity-shading"));
+                             ++step;
+                             break;
+                         case 1:
+                             if (!ImGui::GetCurrentContext()->OpenPopupStack.empty())
+                             {
+                                 auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
+                                 if (popup)
+                                 {
+                                     ImGui::ActivateItemByID(ImHashStr("PBR", 0, popup->GetID(2)));
+                                     ++step;
+                                 }
+                             }
+                             break;
+                         case 2:
+                             ASSERT_EQ(app.scene().find(avocadoId)->model->source().options().shading,
+                                       Render::ShadingMode::Pbr);
+                             // 将 Teapot 也通过 ##entity-shading 切换为 PBR。
+                             editor.select(app, teapotId);
+                             ++step;
+                             break;
+                         case 3:
+                             ImGui::ActivateItemByID(propWin->GetID("##entity-shading"));
+                             ++step;
+                             break;
+                         case 4:
+                             if (!ImGui::GetCurrentContext()->OpenPopupStack.empty())
+                             {
+                                 auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
+                                 if (popup)
+                                 {
+                                     ImGui::ActivateItemByID(ImHashStr("PBR", 0, popup->GetID(2)));
+                                     ++step;
+                                 }
+                             }
+                             break;
+                         case 5:
+                             ASSERT_EQ(app.scene().find(teapotId)->model->source().options().shading,
+                                       Render::ShadingMode::Pbr);
+                             // 等待下一帧完整呈现 PBR 画面后截图，并校验与 Lambert 截图存在明显像素差异。
+                             ++step;
+                             break;
+                         case 6: {
+                             glfwWaitEventsTimeout(0.06);
+                             pbrShot = WindowCapture::capture(app.window());
+                             WindowCapture::save(pbrShot, "review/editor-pbr.ppm");
+                             EXPECT_NE(lambertShot.rgba, pbrShot.rgba);
+                             afterPbrCached = editor.cachedModels();
+                             EXPECT_GT(afterPbrCached, initialCached);
+
+                             // Undo -> 回到 Lambert，Redo -> 回到 PBR，缓存条目不增长（零重复上传）。
+                             EXPECT_TRUE(editor.undo(app));
+                             EXPECT_EQ(app.scene().find(teapotId)->model->source().options().shading,
+                                       Render::ShadingMode::Lambert);
+                             EXPECT_TRUE(editor.redo(app));
+                             EXPECT_EQ(app.scene().find(teapotId)->model->source().options().shading,
+                                       Render::ShadingMode::Pbr);
+                             EXPECT_EQ(editor.cachedModels(), afterPbrCached);
+
+                             // 验证资产自带 unlit 材质切换为 PBR 后像素不变，且成功切换会清空旧 Redo 分支。
+                             editor.select(app, unlitId);
+                             EXPECT_TRUE(editor.setEntityShading(app, Render::ShadingMode::Unlit));
+                             ++step;
+                             break;
+                         }
+                         case 7:
+                             unlitBaselineScene = TextureGpuReview::captureFrame(
+                                 app.renderer(), Scene::extractSceneFrame(app.scene(), {384, 256})->input());
+                             EXPECT_TRUE(editor.setEntityShading(app, Render::ShadingMode::Pbr));
+                             ++step;
+                             break;
+                         case 8: {
+                             unlitAsPbrScene = TextureGpuReview::captureFrame(
+                                 app.renderer(), Scene::extractSceneFrame(app.scene(), {384, 256})->input());
+                             EXPECT_EQ(unlitBaselineScene, unlitAsPbrScene);
+
+                             // 验证旧 Redo 分支在成功切换后被清空。
+                             EXPECT_TRUE(editor.undo(app));
+                             EXPECT_TRUE(editor.canRedo());
+                             EXPECT_TRUE(editor.setEntityShading(app, Render::ShadingMode::Lambert));
+                             EXPECT_FALSE(editor.canRedo());
+
+                             // 验证在未提交面板事务下切换着色模式失败时：先结算面板事务，再保留原模型、修改状态与历史。
+                             std::filesystem::copy_file("assets/models/test_unlit/unlit.gltf",
+                                                        "assets/models/test_unlit/fail_switch.gltf",
+                                                        std::filesystem::copy_options::overwrite_existing);
+                             ASSERT_TRUE(editor.addModel(app, "models/test_unlit/fail_switch.gltf"));
+                             const Scene::EntityId failId = editor.selected();
+                             editor.controller().beginPanelTransaction(app, Editor::PanelTransactionKind::Entity);
+                             editor.controller().operations().rename(app.scene(), app.clearColor(), "RenamedBeforeFail");
+                             ASSERT_TRUE(editor.controller().operations().inTransaction());
+                             std::filesystem::remove("assets/models/test_unlit/fail_switch.gltf");
+                             Resource::ResourceManager::instance().reset();
+                             EXPECT_FALSE(editor.setEntityShading(app, Render::ShadingMode::Pbr));
+                             EXPECT_FALSE(editor.controller().operations().inTransaction());
+                             EXPECT_TRUE(editor.isDirty());
+                             EXPECT_TRUE(editor.canUndo());
+                             EXPECT_EQ(app.scene().find(failId)->name, "RenamedBeforeFail");
+                             EXPECT_EQ(app.scene().find(failId)->model->source().options().shading,
+                                       Render::ShadingMode::Lambert);
+                             EXPECT_TRUE(editor.undo(app));
+                             EXPECT_NE(app.scene().find(failId)->name, "RenamedBeforeFail");
+                             ++step;
+                             break;
+                         }
+                         case 9: {
+                             // 验证保存并重新加载场景后，Avocado 和 Teapot 均保持 ShadingMode::Pbr。
+                             const std::string savedScene = "assets/scenes/pbr_roundtrip.json";
+                             ASSERT_TRUE(editor.save(app, savedScene));
+                             ASSERT_TRUE(editor.load(app, savedScene));
+                             EXPECT_EQ(app.scene().find(app.scene().entities()[0].id)->model->source().options().shading,
+                                       Render::ShadingMode::Pbr);
+                             EXPECT_EQ(app.scene().find(app.scene().entities()[2].id)->model->source().options().shading,
+                                       Render::ShadingMode::Pbr);
+                             done = true;
+                             app.requestExit();
+                             break;
+                         }
+                     }
+                 },
+                 [&](auto& app) { editor.ui(app); },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            EXPECT_TRUE(done);
+        }
+        cleanValidation();
+    }
 }  // namespace

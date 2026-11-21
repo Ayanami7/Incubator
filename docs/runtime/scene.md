@@ -111,7 +111,7 @@ JSON v1 的 `name` 为可选字符串，旧文件缺省时为空；新文件保�
 
 字段均必需，`model` 可为 `null`；四元数顺序为 xyzw，FOV 使用弧度。枚举区分大小写：
 `mipMode` 为 `baseLevel/fullChain`，min/mag 过滤为 `nearest/linear`，mip 过滤为
-`baseLevel/nearest/linear`，`shading` 为 `unlit/lambert`。未知字段忽略；错误格式、非法值及其他版本抛 IO，
+`baseLevel/nearest/linear`，`shading` 为 `unlit/lambert/pbr`。未知字段忽略；错误格式、非法值及其他版本抛 IO，
 错误含字段上下文。内存描述无效时编码抛 CONFIG。编解码不加载模型或创建 GPU 资源。
 
 文件接口接收 UTF-8 原生路径；模型路径仍相对资产根，与场景文件所在目录无关。

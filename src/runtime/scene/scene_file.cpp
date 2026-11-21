@@ -112,8 +112,9 @@ namespace Incubator::Scene
             o.sampler.mipFilter = choice<MipFilter>(
                 member(sampler, "mipFilter", s), s + ".mipFilter",
                 {{"baseLevel", MipFilter::BaseLevel}, {"nearest", MipFilter::Nearest}, {"linear", MipFilter::Linear}});
-            o.shading = choice<ShadingMode>(member(prep, "shading", q), q + ".shading",
-                                            {{"unlit", ShadingMode::Unlit}, {"lambert", ShadingMode::Lambert}});
+            o.shading = choice<ShadingMode>(
+                member(prep, "shading", q), q + ".shading",
+                {{"unlit", ShadingMode::Unlit}, {"lambert", ShadingMode::Lambert}, {"pbr", ShadingMode::Pbr}});
             return checked(p + ".path", [&] { return Model::ModelReference(path, o); });
         }
         void vec(Writer& w, glm::vec3 v)
@@ -205,7 +206,9 @@ namespace Incubator::Scene
                                                                             : "linear");
                 w.EndObject();
                 key(w, "shading");
-                text(w, o.shading == Render::ShadingMode::Unlit ? "unlit" : "lambert");
+                text(w, o.shading == Render::ShadingMode::Unlit ? "unlit"
+                        : o.shading == Render::ShadingMode::Pbr ? "pbr"
+                                                                : "lambert");
                 w.EndObject();
                 w.EndObject();
             }

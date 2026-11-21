@@ -302,4 +302,26 @@ namespace
             EXPECT_NE(e.message().find("invalid-camera.json"), std::string::npos);
         }
     }
+
+    TEST(SceneFileTest, RoundTripsPbrShadingAndRejectsInvalidShading)
+    {
+        auto d = sample();
+        d.entities[0].model = Model::ModelReference(
+            "models/avocado/glTF/Avocado.gltf",
+            {Render::TextureMipMode::FullChain,
+             {Render::TextureFilter::Linear, Render::TextureFilter::Linear, Render::MipFilter::Linear},
+             Render::ShadingMode::Pbr});
+        const std::string encoded = Scene::encodeScene(d);
+        EXPECT_NE(encoded.find("\"pbr\""), std::string::npos);
+        const auto decoded = Scene::decodeScene(encoded);
+        compare(d, decoded);
+        ASSERT_TRUE(decoded.entities[0].model.has_value());
+        EXPECT_EQ(decoded.entities[0].model->options().shading, Render::ShadingMode::Pbr);
+
+        std::string invalid = encoded;
+        const size_t pos = invalid.find("\"pbr\"");
+        ASSERT_NE(pos, std::string::npos);
+        invalid.replace(pos, 5, "\"phong\"");
+        EXPECT_THROW((void)Scene::decodeScene(invalid), Error::Exception);
+    }
 }  // namespace

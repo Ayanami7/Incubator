@@ -71,8 +71,12 @@ namespace
                                     Model::PrepareOptions{{}, {TextureFilter::Nearest, TextureFilter::Linear}},
                                     Model::PrepareOptions{{}, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::Nearest}},
                                     Model::PrepareOptions{{}, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::Linear}},
-                                    Model::PrepareOptions{{}, {}, ShadingMode::Lambert}})
+                                    Model::PrepareOptions{{}, {}, ShadingMode::Lambert},
+                                    Model::PrepareOptions{{}, {}, ShadingMode::Pbr}})
             EXPECT_NE(base, Model::ModelReference("models/scene.gltf", variant));
+        const Model::ModelReference pbr("models/scene.gltf", {{}, {}, ShadingMode::Pbr});
+        EXPECT_EQ(pbr, Model::ModelReference("Models\\Scene.GLTF", {{}, {}, ShadingMode::Pbr}));
+        EXPECT_NE(pbr, Model::ModelReference("models/scene.gltf", {{}, {}, ShadingMode::Lambert}));
         for (const auto& path : {std::string(""), std::string("../escape.gltf"), std::string("C:asset.gltf"),
                                  std::string("x\0y", 3), std::string("\xff", 1)})
             EXPECT_THROW((void)Model::ModelReference{path}, Error::Exception);

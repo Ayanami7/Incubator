@@ -106,6 +106,8 @@ int main(int argc, char** argv)
                              {Incubator::Render::TextureFilter::Linear, Incubator::Render::TextureFilter::Linear,
                               Incubator::Render::MipFilter::Linear},
                              Incubator::Render::ShadingMode::Lambert};
+                         auto expectedPbr = expected;
+                         expectedPbr.shading = Incubator::Render::ShadingMode::Pbr;
                          if (d.entities.size() != 7 || !d.entities[0].model || !d.entities[2].model ||
                              !d.entities[3].model || d.entities[2].name != "茶壶 ## 一" ||
                              d.entities[3].name != "茶壶 ## 一 副本" || d.entities[4].name != "空 ### 对象" ||
@@ -123,7 +125,8 @@ int main(int argc, char** argv)
                              d.entities[5].model->options() != expected ||
                              d.entities[0].model->path() != "models/avocado/gltf/avocado.gltf" ||
                              d.entities[2].model->path() != "models/utah_teapot/utah_teapot.obj" ||
-                             d.entities[0].model->options() != expected || d.entities[2].model->options() != expected ||
+                             d.entities[0].model->options() != expectedPbr ||
+                             d.entities[2].model->options() != expected ||
                              d.camera.position() != glm::vec3(1, 2, 8) || d.camera.perspective().verticalFov != 0.9f ||
                              d.camera.perspective().nearPlane != 0.2f || d.camera.perspective().farPlane != 90 ||
                              d.lighting.direction != glm::vec3(0, -2, -3) ||
@@ -271,6 +274,13 @@ int main(int argc, char** argv)
                          !demo.addModel(session, "models/restart-import/sculpture.obj"))
                      {
                          std::cerr << demo.message();
+                         result = 1;
+                     }
+                     // 将 Avocado（entities[0]）切换为 PBR 着色模式以验证跨进程持久化恢复。
+                     demo.select(session, session.scene().entities()[0].id);
+                     if (!demo.setEntityShading(session, Incubator::Render::ShadingMode::Pbr))
+                     {
+                         std::cerr << "Failed to switch Avocado shading to PBR: " << demo.message() << "\n";
                          result = 1;
                      }
                      session.scene().setCamera(Incubator::Scene::Camera({1, 2, 8}, {1, 0, 0, 0}, {0.9f, 0.2f, 90}));
