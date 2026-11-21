@@ -6,6 +6,7 @@
 #include <thread>
 #include <utility>
 
+#include "app/common/ui_input.h"
 #include "app/common/viewport.h"
 #include "runtime/core/error/error.h"
 #include "runtime/render/integration/imgui_renderer.h"

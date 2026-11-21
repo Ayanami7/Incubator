@@ -1,6 +1,11 @@
-// 编译期确认操作接口与 Gizmo 头文件独立于 ImGui 与 Vulkan。
+// 编译期确认控制器、操作接口与 Gizmo 头文件独立于 ImGui 与 Vulkan。
+#include "app/editor/editor_controller.h"
 #include "app/editor/editor_operations.h"
 #include "app/editor/gizmo.h"
+
+#ifdef IMGUI_VERSION
+#error "editor_controller.h and viewport_input.h must not include imgui.h"
+#endif
 
 #include <gtest/gtest.h>
 
@@ -14,7 +19,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "app/common/ui_input.h"
+#include "app/common/viewport_input.h"
 #include "app/editor/selection_overlay.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/utils/utf8.h"
@@ -681,5 +686,174 @@ namespace
             EXPECT_EQ(zeroRecovered.position(), entity->transform.position());
             EXPECT_EQ(zeroRecovered.rotation(), entity->transform.rotation());
         }
+    }
+
+    TEST(EditorControllerTest, UnsavedGuardTransitionsAndFileActionsWorkWithoutWindow)
+    {
+        Scene::Scene scene;
+        std::array<float, 4> clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+        Editor::EditorController controller;
+
+        // 干净状态下直接进入 Open / Exit，不触发未保存挂起。
+        EXPECT_FALSE(controller.requestOpen(scene, clearColor));
+        EXPECT_EQ(controller.fileAction(), Editor::FileAction::Open);
+        EXPECT_EQ(controller.pendingAction(), Editor::PendingAction::None);
+        controller.cancelFileAction();
+        EXPECT_EQ(controller.fileAction(), Editor::FileAction::None);
+
+        EXPECT_TRUE(controller.requestExit(scene, clearColor));
+        EXPECT_TRUE(controller.exitRequested());
+        controller.clearExitRequested();
+
+        // 产生脏状态后，requestOpen / requestClear / requestExit 均挂起 PendingAction。
+        const auto entityId = scene.createEntity();
+        controller.select(entityId);
+        EXPECT_TRUE(controller.operations().rename(scene, clearColor, "ControllerNode"));
+        ASSERT_TRUE(controller.isDirty());
+
+        EXPECT_TRUE(controller.requestOpen(scene, clearColor));
+        EXPECT_EQ(controller.pendingAction(), Editor::PendingAction::Open);
+        controller.cancelPendingAction();
+        EXPECT_EQ(controller.pendingAction(), Editor::PendingAction::None);
+
+        // 未关联文件时点击 Save，转入 pendingSaveAs_ + FileAction::SaveAs。
+        EXPECT_TRUE(controller.requestClear(scene, clearColor));
+        EXPECT_EQ(controller.pendingAction(), Editor::PendingAction::Clear);
+        EXPECT_FALSE(controller.resolveUnsavedSave(scene, clearColor, nullptr));
+        EXPECT_TRUE(controller.pendingSaveAs());
+        EXPECT_EQ(controller.fileAction(), Editor::FileAction::SaveAs);
+
+        // 取消文件对话框时同步清理挂起状态。
+        controller.cancelFileAction();
+        controller.cancelPendingAction();
+        EXPECT_EQ(controller.fileAction(), Editor::FileAction::None);
+        EXPECT_EQ(controller.pendingAction(), Editor::PendingAction::None);
+
+        // 保存到沙盒文件后完成挂起动作（Clear）。
+        const auto tempRoot = fs::temp_directory_path() / "incubator_editor_controller_guard_test";
+        fs::remove_all(tempRoot);
+        fs::create_directories(tempRoot);
+        auto fileIO = FileIO::createPlatformFileIO();
+        const auto savedPath = (tempRoot / "saved_scene.json").string();
+        EXPECT_TRUE(controller.requestClear(scene, clearColor));
+        EXPECT_FALSE(controller.resolveUnsavedSave(scene, clearColor, fileIO.get()));
+        controller.operationPath(savedPath);
+        EXPECT_TRUE(controller.confirmFileAction(scene, clearColor, fileIO.get()));
+        EXPECT_EQ(controller.fileAction(), Editor::FileAction::None);
+        EXPECT_EQ(controller.pendingAction(), Editor::PendingAction::None);
+        EXPECT_TRUE(scene.entities().empty());
+        EXPECT_TRUE(controller.isDirty());
+
+        // 脏状态下 Discard 立即执行 Exit。
+        scene.createEntity();
+        controller.operations().setClearColor(scene, clearColor, {0.3f, 0.2f, 0.1f, 1.0f});
+        EXPECT_FALSE(controller.requestExit(scene, clearColor));
+        EXPECT_EQ(controller.pendingAction(), Editor::PendingAction::Exit);
+        EXPECT_TRUE(controller.discardPendingAction(scene, clearColor));
+        EXPECT_TRUE(controller.exitRequested());
+        fs::remove_all(tempRoot);
+    }
+
+    TEST(EditorControllerTest, PanelTransactionsSwitchCleanlyAndCancelOnFocusLoss)
+    {
+        Scene::Scene scene;
+        std::array<float, 4> clearColor{0.1f, 0.2f, 0.3f, 1.0f};
+        Editor::EditorController controller;
+        const auto id = scene.createEntity(nullptr, Scene::Transform({1.0f, 0.0f, 0.0f}), true, "PanelTarget");
+        controller.select(id);
+
+        // Entity 通道连续修改并切换到 Lighting，自动提交前一条 Entity 历史。
+        ASSERT_TRUE(controller.beginPanelTransaction(scene, clearColor, Editor::PanelTransactionKind::Entity));
+        EXPECT_EQ(controller.activePanelTransaction(), Editor::PanelTransactionKind::Entity);
+        controller.operations().rename(scene, clearColor, "RenamedA");
+        controller.operations().rename(scene, clearColor, "RenamedB");
+
+        ASSERT_TRUE(controller.beginPanelTransaction(scene, clearColor, Editor::PanelTransactionKind::Lighting));
+        EXPECT_EQ(controller.activePanelTransaction(), Editor::PanelTransactionKind::Lighting);
+        EXPECT_TRUE(controller.canUndo());
+        EXPECT_EQ(scene.find(id)->name, "RenamedB");
+
+        auto lighting = scene.lighting();
+        lighting.intensity = 2.5f;
+        controller.operations().setLighting(scene, clearColor, lighting);
+
+        // 切换到 Background 通道，自动提交 Lighting 事务。
+        ASSERT_TRUE(controller.beginPanelTransaction(scene, clearColor, Editor::PanelTransactionKind::Background));
+        EXPECT_EQ(controller.activePanelTransaction(), Editor::PanelTransactionKind::Background);
+        controller.operations().setClearColor(scene, clearColor, {0.8f, 0.7f, 0.6f, 1.0f});
+
+        // 窗口失焦触发 cancelInteraction，应回滚未提交的 Background 事务并保留前两条已提交历史。
+        controller.cancelInteraction(scene, clearColor, true, true);
+        EXPECT_EQ(controller.activePanelTransaction(), Editor::PanelTransactionKind::None);
+        EXPECT_FALSE(controller.operations().inTransaction());
+        EXPECT_FLOAT_EQ(clearColor[0], 0.1f);
+        EXPECT_FLOAT_EQ(scene.lighting().intensity, 2.5f);
+
+        EXPECT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_NE(scene.lighting().intensity, 2.5f);
+        EXPECT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_EQ(scene.find(id)->name, "PanelTarget");
+    }
+
+    TEST(EditorControllerTest, ViewportInputGizmoDragAndOverlayAssemblyWorkWithoutWindow)
+    {
+        Scene::Scene scene;
+        scene.setCamera(Scene::Camera({0.0f, 0.0f, 6.0f}));
+        std::array<float, 4> clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+        Editor::EditorController controller;
+
+        const auto id = scene.createEntity(nullptr, Scene::Transform({0.0f, 0.0f, 0.0f}), true, "GizmoNode");
+        controller.select(id);
+
+        const Render::FrameExtent extent{1280, 720};
+        const App::ViewportRegion region{{100.0, 50.0}, {800.0, 600.0}, true, true};
+        const auto projected = Editor::projectGizmo(scene, id, Editor::GizmoMode::Translate, extent, region);
+        ASSERT_TRUE(projected.visible && !projected.segments.empty());
+
+        // 找到 X 轴线段中点作为悬停和拖拽起点。
+        auto xSegIt = std::find_if(projected.segments.begin(), projected.segments.end(),
+                                   [](const auto& s) { return s.axis == Editor::GizmoAxis::X; });
+        ASSERT_NE(xSegIt, projected.segments.end());
+        const glm::vec2 xMidScreen = (xSegIt->segment.start + xSegIt->segment.end) * 0.5f;
+
+        App::UiInput hoverInput{};
+        hoverInput.position = {xMidScreen.x - region.origin.x, xMidScreen.y - region.origin.y};
+        controller.input(scene, clearColor, extent, region, {1280.0, 720.0}, hoverInput);
+        EXPECT_EQ(controller.hoveredGizmoAxis(), Editor::GizmoAxis::X);
+        EXPECT_FALSE(controller.gizmoDragging());
+
+        // 无模型实体仅生成 Gizmo 图元，且高亮 X 轴线段排在末尾并以 3.5px 高亮色输出。
+        const auto overlay = controller.buildViewportOverlay(scene, extent, region);
+        EXPECT_FLOAT_EQ(overlay.clipMin.x, 100.0f);
+        EXPECT_FLOAT_EQ(overlay.clipMin.y, 50.0f);
+        ASSERT_FALSE(overlay.lines.empty());
+        EXPECT_FLOAT_EQ(overlay.lines.back().thickness, 3.5f);
+        EXPECT_EQ(overlay.lines.back().color.r, 255);
+        EXPECT_EQ(overlay.lines.back().color.g, 240);
+        EXPECT_EQ(overlay.lines.back().color.b, 100);
+
+        // 按下开始拖拽，拖拽期间锁定 GizmoMode 切换。
+        App::UiInput pressInput = hoverInput;
+        pressInput.select = {true, true, false};
+        controller.input(scene, clearColor, extent, region, {1280.0, 720.0}, pressInput);
+        EXPECT_TRUE(controller.gizmoDragging());
+        EXPECT_EQ(controller.activeGizmoAxis(), Editor::GizmoAxis::X);
+        controller.setGizmoMode(Editor::GizmoMode::Rotate);
+        EXPECT_EQ(controller.gizmoMode(), Editor::GizmoMode::Translate);
+
+        // 拖动并释放提交单步历史。
+        App::UiInput dragInput = hoverInput;
+        dragInput.position.x += 60.0;
+        dragInput.select = {true, false, false};
+        controller.input(scene, clearColor, extent, region, {1280.0, 720.0}, dragInput);
+        EXPECT_GT(scene.find(id)->transform.position().x, 0.2f);
+
+        App::UiInput releaseInput = dragInput;
+        releaseInput.select = {false, false, true};
+        controller.input(scene, clearColor, extent, region, {1280.0, 720.0}, releaseInput);
+        EXPECT_FALSE(controller.gizmoDragging());
+        EXPECT_TRUE(controller.canUndo());
+        EXPECT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_FLOAT_EQ(scene.find(id)->transform.position().x, 0.0f);
     }
 }  // namespace

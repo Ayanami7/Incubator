@@ -12,7 +12,7 @@
 #include <limits>
 #include <utility>
 
-#include "app/common/ui_input.h"
+#include "app/common/viewport_input.h"
 #include "runtime/scene/scene.h"
 
 namespace Incubator::Editor

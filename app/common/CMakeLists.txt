@@ -9,6 +9,7 @@ add_library(IncubatorAppCommon STATIC
     ui_input.h
     validation_mode.h
     viewport.h
+    viewport_input.h
 )
 target_link_libraries(IncubatorAppCommon PUBLIC IncubatorRuntime imgui)
 target_include_directories(IncubatorAppCommon PUBLIC "${CMAKE_SOURCE_DIR}")

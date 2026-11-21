@@ -13,7 +13,7 @@
 #include "runtime/resource/asset_source.h"
 #include "runtime/scene/scene.h"
 #include "session_options.h"
-#include "ui_input.h"
+#include "viewport_input.h"
 
 struct ImDrawList;
 

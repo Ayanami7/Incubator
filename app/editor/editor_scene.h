@@ -4,20 +4,26 @@
 #include <string_view>
 #include <vector>
 
-#include "app/common/orbit_camera.h"
 #include "editor_app.h"
-#include "editor_operations.h"
-#include "gizmo.h"
-#include "runtime/resource/asset_source.h"
+#include "editor_controller.h"
 #include "workspace.h"
 
 namespace Incubator::Editor
 {
-    /// @brief 实现 Editor 中的模型场景交互和 UI。
-    /// @note 此类只保存使用方状态；实体 Transform、Camera 和光照值由 Runtime Scene 持有。
+    /// @brief 实现 Editor 中的模型场景 ImGui 视图与交互转发。
+    /// @note 业务逻辑与状态机由 EditorController 持有，实体与相机数据由 Runtime Scene 持有。
     class EditorScene
     {
     public:
+        EditorController& controller() noexcept
+        {
+            return controller_;
+        }
+        const EditorController& controller() const noexcept
+        {
+            return controller_;
+        }
+
         void initialize(Editor::EditorApp& app, std::string_view path = "assets/scenes/mixed.json");
 
         Scene::EntityId createEntity(Editor::EditorApp& app);
@@ -39,12 +45,12 @@ namespace Incubator::Editor
         /// @brief 返回已准备模型的缓存项数。
         size_t cachedModels() const
         {
-            return operations_.cachedModels();
+            return controller_.cachedModels();
         }
         /// @brief 显式清理未使用的模型缓存。
         size_t collectUnusedModels()
         {
-            return operations_.collectUnusedModels();
+            return controller_.collectUnusedModels();
         }
 
         void selectModel(bool useObj);
@@ -69,15 +75,15 @@ namespace Incubator::Editor
 
         bool isDirty() const noexcept
         {
-            return operations_.isDirty();
+            return controller_.isDirty();
         }
         bool canUndo() const noexcept
         {
-            return operations_.canUndo();
+            return controller_.canUndo();
         }
         bool canRedo() const noexcept
         {
-            return operations_.canRedo();
+            return controller_.canRedo();
         }
         bool undo(Editor::EditorApp& app);
         bool redo(Editor::EditorApp& app);
@@ -118,25 +124,6 @@ namespace Incubator::Editor
         void ui(Editor::EditorApp& app);
 
     private:
-        enum class FileAction
-        {
-            None,
-            Open,
-            SaveAs
-        };
-        enum class PendingAction
-        {
-            None,
-            Open,
-            Clear,
-            Exit
-        };
-        void executePendingAction(Editor::EditorApp& app);
-        void clearPendingAction() noexcept;
-        void clearPanelTransactionFlags() noexcept;
-        void commitPanelTransactions(Editor::EditorApp& app);
-        void cancelGizmoDrag(Editor::EditorApp& app);
-        bool settleForDirtyCheck(Editor::EditorApp& app);
         void handleShortcuts(Editor::EditorApp& app);
 
         void drawSelectionOverlay(Editor::EditorApp& app) const;
@@ -151,34 +138,9 @@ namespace Incubator::Editor
 
         void properties(Editor::EditorApp& app);
 
-        static std::vector<char> pathBuffer(std::string_view path);
-
-        static std::string_view creationPath(bool useObj);
-
-        static Scene::Transform initialTransform(bool useObj);
-
-        FileAction fileAction_ = FileAction::None;
-        PendingAction pendingAction_ = PendingAction::None;
-        bool pendingSaveAs_ = false;
+        EditorController controller_;
         Workspace workspace_;
         bool viewportOpen_ = true;
-        EditorOperations operations_;
-        std::string assetDirectory_;
-        std::vector<Resource::AssetEntry> assetEntries_;
-        std::string assetError_;
-        bool useObj_ = false;
-        bool saveRequested_ = false;
-        std::vector<char> scenePath_ = pathBuffer("");
-        App::OrbitCamera orbit_;
-        bool clickCandidate_ = false;
-        Render::FrameExtent extent_{0, 0};
-        bool entityTransactionActive_ = false;
-        bool lightingTransactionActive_ = false;
-        bool backgroundTransactionActive_ = false;
-        bool shortcutSuspended_ = false;
-        GizmoMode gizmoMode_ = GizmoMode::Translate;
-        GizmoAxis hoveredGizmoAxis_ = GizmoAxis::None;
-        GizmoDragState gizmoDrag_{};
     };
 
     Editor::Callbacks makeCallbacks(std::string startupScene = "assets/scenes/shadows.json");

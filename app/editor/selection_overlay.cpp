@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include "app/common/ui_input.h"
+#include "app/common/viewport_input.h"
 #include "runtime/model/prepared_model.h"
 #include "runtime/render/frame_input.h"
 #include "runtime/scene/scene.h"

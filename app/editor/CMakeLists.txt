@@ -4,6 +4,7 @@ set(TARGET_NAME Editor)
 # 编辑工具自身的头文件与源文件。
 set(EDITOR_HEADERS
     editor_app.h
+    editor_controller.h
     editor_scene.h
     editor_operations.h
     editor_selection.h
@@ -13,6 +14,7 @@ set(EDITOR_HEADERS
 )
 set(EDITOR_SOURCES
     editor_app.cpp
+    editor_controller.cpp
     editor_scene.cpp
     editor_operations.cpp
     gizmo.cpp

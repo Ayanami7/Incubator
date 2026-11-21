@@ -1,6 +1,7 @@
 #include "editor_scene.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <memory>
@@ -10,239 +11,112 @@
 
 #include "app/common/lighting_controls.h"
 #include "app/common/viewport.h"
-#include "runtime/core/error/error.h"
-#include "runtime/core/log/logger.h"
-#include "runtime/model/prepared_model.h"
-#include "runtime/resource/resource_manager.h"
-#include "selection_overlay.h"
 
 namespace Incubator::Editor
 {
     bool EditorScene::addModel(Editor::EditorApp& app, std::string_view path, const Scene::Transform& transform)
     {
-        cancelGizmoDrag(app);
-        return operations_.addModel(app.scene(), app.clearColor(), path, transform);
+        return controller_.addModel(app, path, transform);
     }
 
     void EditorScene::initialize(Editor::EditorApp& app, std::string_view path)
     {
-        operations_.initialize(app.renderer());
-        if (!path.empty())
-            load(app, path, true);
-        browseDirectory();
+        controller_.initialize(app, path);
     }
 
     Scene::EntityId EditorScene::createEntity(Editor::EditorApp& app)
     {
-        return addModel(app, creationPath(useObj_), initialTransform(useObj_)) ? operations_.selected()
-                                                                               : Scene::EntityId{};
+        return controller_.createEntity(app);
     }
 
     bool EditorScene::browseDirectory(std::string_view path)
     {
-        try
-        {
-            auto entries = Resource::ResourceManager::instance().listDirectory(path);
-            assetDirectory_ = path;
-            assetEntries_ = std::move(entries);
-            assetError_.clear();
-            return true;
-        }
-        catch (const Error::Exception& error)
-        {
-            assetEntries_.clear();
-            assetError_ = "Cannot browse '" + std::string(path) + "': " + error.message();
-            Log::Registry::get("editor").error("{}", assetError_);
-            return false;
-        }
+        return controller_.browseDirectory(path);
     }
 
     const std::string& EditorScene::assetDirectory() const
     {
-        return assetDirectory_;
+        return controller_.assetDirectory();
     }
 
     const std::vector<Resource::AssetEntry>& EditorScene::assetEntries() const
     {
-        return assetEntries_;
+        return controller_.assetEntries();
     }
 
     const std::string& EditorScene::assetError() const
     {
-        return assetError_;
+        return controller_.assetError();
     }
 
     bool EditorScene::parentDirectory()
     {
-        const auto slash = assetDirectory_.find_last_of('/');
-        return browseDirectory(slash == std::string::npos ? std::string{} : assetDirectory_.substr(0, slash));
+        return controller_.parentDirectory();
     }
 
     void EditorScene::selectModel(bool useObj)
     {
-        useObj_ = useObj;
+        controller_.selectModel(useObj);
     }
 
     bool EditorScene::save(Editor::EditorApp& app, std::string_view path)
     {
-        return operations_.save(app.fileIO(), app.scene(), app.clearColor(), path);
+        return controller_.save(app, path);
     }
 
     bool EditorScene::load(Editor::EditorApp& app, std::string_view path, bool rethrow)
     {
-        auto rebuilt = operations_.load(app.fileIO(), path, rethrow);
-        if (!rebuilt)
-            return false;
-        app.setScene(std::move(rebuilt->scene));
-        app.clearColor() = rebuilt->clearColor;
-        cancelInteraction(app);
-        clearPendingAction();
-        orbit_.synchronize(app.scene().camera());
-        scenePath_ = pathBuffer(path);
-        return true;
+        return controller_.load(app, path, rethrow);
     }
 
     bool EditorScene::save(Editor::EditorApp& app)
     {
-        if (operations_.currentFile().empty())
-        {
-            beginSaveAs();
-            return false;
-        }
-        return save(app, operations_.currentFile());
+        return controller_.save(app);
     }
 
     void EditorScene::beginSaveAs()
     {
-        fileAction_ = FileAction::SaveAs;
+        controller_.beginSaveAs();
     }
 
     void EditorScene::beginOpen()
     {
-        fileAction_ = FileAction::Open;
+        controller_.beginOpen();
     }
 
     void EditorScene::cancelFileAction()
     {
-        fileAction_ = FileAction::None;
+        controller_.cancelFileAction();
     }
 
     void EditorScene::requestOpen(Editor::EditorApp& app)
     {
-        if (!settleForDirtyCheck(app))
-        {
-            beginOpen();
-            return;
-        }
-        pendingAction_ = PendingAction::Open;
-        pendingSaveAs_ = false;
+        controller_.requestOpen(app);
     }
 
     void EditorScene::requestClear(Editor::EditorApp& app)
     {
-        if (!settleForDirtyCheck(app))
-        {
-            clear(app);
-            return;
-        }
-        pendingAction_ = PendingAction::Clear;
-        pendingSaveAs_ = false;
+        controller_.requestClear(app);
     }
 
     void EditorScene::requestExit(Editor::EditorApp& app)
     {
-        if (!settleForDirtyCheck(app))
-        {
-            app.requestExit();
-            return;
-        }
-        pendingAction_ = PendingAction::Exit;
-        pendingSaveAs_ = false;
+        controller_.requestExit(app);
     }
 
     void EditorScene::requestClose(Editor::EditorApp& app)
     {
-        if (!settleForDirtyCheck(app))
-            return;
-        app.window().setShouldClose(false);
-        pendingAction_ = PendingAction::Exit;
-        pendingSaveAs_ = false;
-    }
-
-    void EditorScene::executePendingAction(Editor::EditorApp& app)
-    {
-        switch (pendingAction_)
-        {
-            case PendingAction::Open:
-                beginOpen();
-                break;
-            case PendingAction::Clear:
-                clear(app);
-                break;
-            case PendingAction::Exit:
-                app.requestExit();
-                break;
-            case PendingAction::None:
-                break;
-        }
-    }
-
-    void EditorScene::clearPendingAction() noexcept
-    {
-        pendingAction_ = PendingAction::None;
-        pendingSaveAs_ = false;
-    }
-
-    void EditorScene::clearPanelTransactionFlags() noexcept
-    {
-        entityTransactionActive_ = false;
-        lightingTransactionActive_ = false;
-        backgroundTransactionActive_ = false;
-    }
-
-    void EditorScene::commitPanelTransactions(Editor::EditorApp& app)
-    {
-        if (!entityTransactionActive_ && !lightingTransactionActive_ && !backgroundTransactionActive_)
-            return;
-        clearPanelTransactionFlags();
-        operations_.commitTransaction(app.scene(), app.clearColor());
-    }
-
-    void EditorScene::cancelGizmoDrag(Editor::EditorApp& app)
-    {
-        hoveredGizmoAxis_ = GizmoAxis::None;
-        if (!gizmoDrag_.active)
-            return;
-        gizmoDrag_ = {};
-        operations_.cancelTransaction(app.scene(), app.clearColor());
-    }
-
-    bool EditorScene::settleForDirtyCheck(Editor::EditorApp& app)
-    {
-        if (operations_.inTransaction())
-        {
-            gizmoDrag_ = {};
-            hoveredGizmoAxis_ = GizmoAxis::None;
-            clearPanelTransactionFlags();
-            operations_.commitTransaction(app.scene(), app.clearColor());
-        }
-        return operations_.isDirty();
+        controller_.requestClose(app);
     }
 
     void EditorScene::operationPath(std::string_view path)
     {
-        scenePath_ = pathBuffer(path);
+        controller_.operationPath(path);
     }
 
     bool EditorScene::confirmFileAction(Editor::EditorApp& app)
     {
-        const std::string path(scenePath_.data());
-        const bool success = fileAction_ == FileAction::Open     ? load(app, path)
-                             : fileAction_ == FileAction::SaveAs ? save(app, path)
-                                                                 : false;
-        if (success)
-            fileAction_ = FileAction::None;
-        return success;
+        return controller_.confirmFileAction(app);
     }
 
     void EditorScene::layout(Editor::EditorApp& app)
@@ -260,267 +134,102 @@ namespace Incubator::Editor
 
     std::string EditorScene::statusText() const
     {
-        std::string text = operations_.currentFile().empty() ? "(unsaved)" : operations_.currentFile();
-        if (operations_.isDirty())
-            text += " *";
-        text += " | ";
-        text += operations_.message();
-        return text;
+        return controller_.statusText();
     }
 
     const std::string& EditorScene::message() const
     {
-        return operations_.message();
+        return controller_.message();
     }
 
     std::string_view EditorScene::scenePath() const
     {
-        return operations_.currentFile();
+        return controller_.scenePath();
     }
 
     Scene::EntityId EditorScene::selected() const
     {
-        return operations_.selected();
+        return controller_.selected();
     }
 
     void EditorScene::select(Scene::EntityId id)
     {
-        if (id != operations_.selected())
-        {
-            gizmoDrag_ = {};
-            hoveredGizmoAxis_ = GizmoAxis::None;
-        }
-        operations_.select(id);
+        controller_.select(id);
     }
 
     void EditorScene::select(Editor::EditorApp& app, Scene::EntityId id)
     {
-        if (id != operations_.selected())
-            cancelGizmoDrag(app);
-        operations_.select(id);
+        controller_.select(app, id);
     }
 
     GizmoMode EditorScene::gizmoMode() const noexcept
     {
-        return gizmoMode_;
+        return controller_.gizmoMode();
     }
 
     void EditorScene::setGizmoMode(GizmoMode mode) noexcept
     {
-        // 拖拽进行中锁定模式，避免在单次几何求解过程中切换分支或坐标轴定义。
-        if (gizmoDrag_.active)
-            return;
-        gizmoMode_ = mode;
+        controller_.setGizmoMode(mode);
     }
 
     GizmoAxis EditorScene::hoveredGizmoAxis() const noexcept
     {
-        return hoveredGizmoAxis_;
+        return controller_.hoveredGizmoAxis();
     }
 
     bool EditorScene::gizmoDragging() const noexcept
     {
-        return gizmoDrag_.active;
+        return controller_.gizmoDragging();
     }
 
     GizmoAxis EditorScene::activeGizmoAxis() const noexcept
     {
-        return gizmoDrag_.active ? gizmoDrag_.axis : GizmoAxis::None;
+        return controller_.activeGizmoAxis();
     }
 
     void EditorScene::deleteSelected(Editor::EditorApp& app)
     {
-        cancelGizmoDrag(app);
-        operations_.remove(app.scene(), app.clearColor());
-        clickCandidate_ = false;
+        controller_.deleteSelected(app);
     }
 
     bool EditorScene::undo(Editor::EditorApp& app)
     {
-        cancelGizmoDrag(app);
-        if (!operations_.undo(app.scene(), app.clearColor()))
-            return false;
-        clearPanelTransactionFlags();
-        clickCandidate_ = false;
-        orbit_.synchronize(app.scene().camera());
-        return true;
+        return controller_.undo(app);
     }
 
     bool EditorScene::redo(Editor::EditorApp& app)
     {
-        cancelGizmoDrag(app);
-        if (!operations_.redo(app.scene(), app.clearColor()))
-            return false;
-        clearPanelTransactionFlags();
-        clickCandidate_ = false;
-        orbit_.synchronize(app.scene().camera());
-        return true;
+        return controller_.redo(app);
     }
 
     Scene::EntityId EditorScene::duplicateSelected(Editor::EditorApp& app)
     {
-        cancelGizmoDrag(app);
-        return operations_.duplicate(app.scene(), app.clearColor());
+        return controller_.duplicateSelected(app);
     }
 
     void EditorScene::clear(Editor::EditorApp& app)
     {
-        cancelGizmoDrag(app);
-        operations_.clear(app.scene(), app.clearColor());
-        clickCandidate_ = false;
+        controller_.clear(app);
     }
 
     void EditorScene::cancelInteraction(Editor::EditorApp& app)
     {
-        orbit_.cancel();
-        clickCandidate_ = false;
-        const bool wasGizmoDragging = gizmoDrag_.active;
-        gizmoDrag_ = {};
-        hoveredGizmoAxis_ = GizmoAxis::None;
-        extent_ = {0, 0};
-        int fbWidth = 0;
-        int fbHeight = 0;
-        app.window().getFramebufferSize(fbWidth, fbHeight);
-        const auto& raw = app.window().input();
-        const bool windowUnavailable = !raw.focused() || raw.focusLost() || fbWidth <= 0 || fbHeight <= 0;
-        const bool viewportVisible = app.sceneExtent().width > 0 && app.sceneExtent().height > 0;
-        if (!raw.focused() || raw.focusLost())
-            shortcutSuspended_ = true;
-        // 仅因 Scene 视口折叠或关闭触发的取消只重置视口手势（含 Gizmo 拖拽），保留 Properties 面板正在进行的属性事务。
-        if (windowUnavailable || viewportVisible || wasGizmoDragging)
-        {
-            clearPanelTransactionFlags();
-            operations_.cancelTransaction(app.scene(), app.clearColor());
-        }
-        else if (!operations_.inTransaction())
-        {
-            clearPanelTransactionFlags();
-        }
+        controller_.cancelInteraction(app);
     }
 
     bool EditorScene::focusSelected(Editor::EditorApp& app, Render::FrameExtent extent)
     {
-        const auto* entity = app.scene().find(operations_.selected());
-        if (!entity || !entity->model || !entity->model->bounds())
-            return false;
-        const auto bounds = entity->model->bounds()->transformed(entity->transform.matrix());
-        auto camera = app.scene().camera();
-        if (!orbit_.focus(camera, bounds, extent))
-            return false;
-        app.scene().setCamera(camera);
-        return true;
+        return controller_.focusSelected(app, extent);
     }
 
     void EditorScene::input(Editor::EditorApp& app, Render::FrameExtent extent, const App::UiInput& input)
     {
-        extent_ = extent;
-        int width, height;
-        app.window().getWindowSize(width, height);
-        auto camera = app.scene().camera();
-        const auto& region = app.viewportRegion();
-        const auto logicalSize =
-            region.size.x > 0 && region.size.y > 0 ? region.size : Input::PointerValue{double(width), double(height)};
-        const glm::vec2 cursorScreenPos(static_cast<float>(region.origin.x + input.position.x),
-                                        static_cast<float>(region.origin.y + input.position.y));
-        const bool cameraGesture = input.rotate.down || input.rotate.pressed || input.rotate.released ||
-                                   input.pan.down || input.pan.pressed || input.pan.released ||
-                                   input.scroll.y != 0 || orbit_.dragging();
-
-        if (gizmoDrag_.active)
-        {
-            if (gizmoDrag_.entity != operations_.selected() || !app.scene().find(gizmoDrag_.entity))
-            {
-                cancelGizmoDrag(app);
-                return;
-            }
-            hoveredGizmoAxis_ = gizmoDrag_.axis;
-            if (input.select.down)
-            {
-                const auto updated = updateGizmoDrag(gizmoDrag_, camera, extent, region, cursorScreenPos);
-                operations_.setTransform(app.scene(), app.clearColor(), updated);
-            }
-            if (input.select.released || !input.select.down)
-            {
-                gizmoDrag_ = {};
-                operations_.commitTransaction(app.scene(), app.clearColor());
-                if (!cameraGesture && !input.captureMouse && operations_.selected().valid())
-                {
-                    const auto gizmo = projectGizmo(app.scene(), operations_.selected(), gizmoMode_, extent, region);
-                    hoveredGizmoAxis_ = pickGizmoAxis(cursorScreenPos, gizmo);
-                }
-                else
-                {
-                    hoveredGizmoAxis_ = GizmoAxis::None;
-                }
-            }
-            // Gizmo 拖拽活跃帧独占视口交互，屏蔽左键点选、相机轨道旋转/平移/滚轮缩放与 F 键聚焦。
-            return;
-        }
-
-        if (!cameraGesture && !input.captureMouse && operations_.selected().valid())
-        {
-            const auto gizmo = projectGizmo(app.scene(), operations_.selected(), gizmoMode_, extent, region);
-            hoveredGizmoAxis_ = pickGizmoAxis(cursorScreenPos, gizmo);
-        }
-        else
-        {
-            hoveredGizmoAxis_ = GizmoAxis::None;
-        }
-
-        const float threshold = ImGui::GetIO().MouseDragThreshold;
-        if (input.select.pressed && !input.captureMouse && !cameraGesture)
-        {
-            if (hoveredGizmoAxis_ != GizmoAxis::None)
-            {
-                if (const auto* entity = app.scene().find(operations_.selected()))
-                {
-                    const auto drag = beginGizmoDrag(operations_.selected(), gizmoMode_, hoveredGizmoAxis_,
-                                                     entity->transform, camera, extent, region, cursorScreenPos);
-                    if (drag.active)
-                    {
-                        commitPanelTransactions(app);
-                        operations_.beginTransaction(app.scene(), app.clearColor());
-                        gizmoDrag_ = drag;
-                        clickCandidate_ = false;
-                    }
-                    else
-                    {
-                        clickCandidate_ = true;
-                    }
-                }
-                else
-                {
-                    clickCandidate_ = true;
-                }
-            }
-            else
-            {
-                clickCandidate_ = true;
-            }
-        }
-        if (clickCandidate_ &&
-            (input.captureMouse || cameraGesture || input.selectDragDistanceSquared > threshold * threshold))
-            clickCandidate_ = false;
-        if (clickCandidate_ && input.select.released)
-        {
-            const glm::vec2 position(static_cast<float>(input.position.x / region.size.x),
-                                     static_cast<float>(input.position.y / region.size.y));
-            const auto hit = app.scene().pick(extent, position);
-            operations_.select(hit ? hit->id : Scene::EntityId{});
-            clickCandidate_ = false;
-        }
-        else if (clickCandidate_ && !input.select.down && !input.select.pressed)
-            clickCandidate_ = false;
-        if (orbit_.apply(camera, input, logicalSize))
-            app.scene().setCamera(camera);
-        if (input.focusPressed && !input.captureKeyboard)
-            focusSelected(app, extent);
+        controller_.input(app, extent, input, ImGui::GetIO().MouseDragThreshold);
     }
 
     void EditorScene::resetCamera(Editor::EditorApp& app)
     {
-        app.scene().setCamera(Scene::Camera({0, 0, 6}));
-        orbit_.synchronize(app.scene().camera());
+        controller_.resetCamera(app);
     }
 
     void EditorScene::ui(Editor::EditorApp& app)
@@ -528,57 +237,43 @@ namespace Incubator::Editor
         objects(app);
         assets(app);
         properties(app);
-        if (pendingAction_ != PendingAction::None && !pendingSaveAs_)
+        if (controller_.pendingAction() != PendingAction::None && !controller_.pendingSaveAs())
         {
             bool open = true;
             ImGui::SetNextWindowSize({ImGui::GetFontSize() * 26, 0}, ImGuiCond_Appearing);
             if (ImGui::Begin("Unsaved changes", &open,
                              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking))
             {
+                const auto file = controller_.scenePath();
                 ImGui::TextWrapped("Save changes to %s before continuing?",
-                                   operations_.currentFile().empty() ? "(unsaved)"
-                                                                     : operations_.currentFile().c_str());
+                                   file.empty() ? "(unsaved)" : std::string(file).c_str());
                 if (ImGui::Button("Save"))
-                {
-                    if (!operations_.currentFile().empty())
-                    {
-                        if (save(app))
-                            executePendingAction(app);
-                        clearPendingAction();
-                    }
-                    else
-                    {
-                        pendingSaveAs_ = true;
-                        beginSaveAs();
-                    }
-                }
+                    controller_.resolveUnsavedSave(app);
                 ImGui::SameLine();
                 if (ImGui::Button("Discard"))
-                {
-                    executePendingAction(app);
-                    clearPendingAction();
-                }
+                    controller_.discardPendingAction(app);
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel"))
                     open = false;
             }
             ImGui::End();
             if (!open)
-                clearPendingAction();
+                controller_.cancelPendingAction();
         }
         bool confirm = false;
-        if (fileAction_ != FileAction::None)
+        if (controller_.fileAction() != FileAction::None)
         {
             bool open = true;
             ImGui::SetNextWindowSize({ImGui::GetFontSize() * 30, 0}, ImGuiCond_Appearing);
-            ImGui::Begin(fileAction_ == FileAction::Open ? "Open scene" : "Save scene as", &open,
+            ImGui::Begin(controller_.fileAction() == FileAction::Open ? "Open scene" : "Save scene as", &open,
                          ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
-            ImGui::TextWrapped("Current file: %s",
-                               operations_.currentFile().empty() ? "(unsaved)" : operations_.currentFile().c_str());
+            const auto file = controller_.scenePath();
+            ImGui::TextWrapped("Current file: %s", file.empty() ? "(unsaved)" : std::string(file).c_str());
             ImGui::TextUnformatted("Target path");
             ImGui::SetNextItemWidth(-1);
-            ImGui::InputText("##path", scenePath_.data(), scenePath_.size());
-            if (ImGui::Button(fileAction_ == FileAction::Open ? "Open" : "Save"))
+            auto& pathBuf = controller_.pathBufferData();
+            ImGui::InputText("##path", pathBuf.data(), pathBuf.size());
+            if (ImGui::Button(controller_.fileAction() == FileAction::Open ? "Open" : "Save"))
                 confirm = true;
             ImGui::SameLine();
             if (ImGui::Button("Cancel"))
@@ -586,36 +281,24 @@ namespace Incubator::Editor
             ImGui::TextWrapped(
                 "Saving a deployed copy does not update source assets. Build cleanup deletes it; "
                 "asset redeployment may overwrite it.");
-            if (operations_.messageError())
+            if (controller_.messageError())
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
-                ImGui::TextWrapped("%s", operations_.message().c_str());
+                ImGui::TextWrapped("%s", controller_.message().c_str());
                 ImGui::PopStyleColor();
             }
             ImGui::End();
             if (!open)
             {
-                cancelFileAction();
-                clearPendingAction();
+                controller_.cancelFileAction();
+                controller_.cancelPendingAction();
                 confirm = false;
             }
         }
-        if (saveRequested_)
-        {
-            saveRequested_ = false;
+        if (controller_.consumeSaveRequested())
             save(app);
-        }
         if (confirm)
-        {
-            const bool wasSaveAs = fileAction_ == FileAction::SaveAs;
-            const bool success = confirmFileAction(app);
-            if (wasSaveAs && pendingSaveAs_)
-            {
-                if (success)
-                    executePendingAction(app);
-                clearPendingAction();
-            }
-        }
+            confirmFileAction(app);
         handleShortcuts(app);
         drawSelectionOverlay(app);
     }
@@ -623,45 +306,30 @@ namespace Incubator::Editor
     void EditorScene::handleShortcuts(Editor::EditorApp& app)
     {
         const auto& raw = app.window().input();
-        if (!raw.focused() || raw.focusLost())
-        {
-            shortcutSuspended_ = true;
-            return;
-        }
-        if (shortcutSuspended_)
-        {
-            if (ImGui::GetCurrentContext()->InputEventsQueue.empty() && !raw.key(Input::KeyCode::W).down &&
-                !raw.key(Input::KeyCode::E).down && !raw.key(Input::KeyCode::R).down &&
-                !raw.key(Input::KeyCode::Z).down && !raw.key(Input::KeyCode::Y).down &&
-                !ImGui::IsKeyDown(ImGuiKey_W) && !ImGui::IsKeyDown(ImGuiKey_E) && !ImGui::IsKeyDown(ImGuiKey_R) &&
-                !ImGui::IsKeyDown(ImGuiKey_Z) && !ImGui::IsKeyDown(ImGuiKey_Y))
-                shortcutSuspended_ = false;
-            return;
-        }
         const ImGuiIO& io = ImGui::GetIO();
-        if (io.WantTextInput || fileAction_ != FileAction::None || pendingAction_ != PendingAction::None ||
-            ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) ||
-            operations_.inTransaction() || orbit_.dragging() || gizmoDrag_.active)
-            return;
-        if (io.KeyAlt || io.KeySuper)
-            return;
-        if (io.KeyCtrl)
-        {
-            if (!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))
-                undo(app);
-            else if ((!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Y, false)) ||
-                     (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))
-                redo(app);
-            return;
-        }
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle))
-            return;
-        if (ImGui::IsKeyPressed(ImGuiKey_W, false))
-            setGizmoMode(GizmoMode::Translate);
-        else if (ImGui::IsKeyPressed(ImGuiKey_E, false))
-            setGizmoMode(GizmoMode::Rotate);
-        else if (ImGui::IsKeyPressed(ImGuiKey_R, false))
-            setGizmoMode(GizmoMode::Scale);
+        ShortcutInput state;
+        state.focused = raw.focused();
+        state.focusLost = raw.focusLost();
+        state.inputQueueEmpty = ImGui::GetCurrentContext()->InputEventsQueue.empty();
+        state.wantTextInput = io.WantTextInput;
+        state.popupOpen = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        state.keyAlt = io.KeyAlt;
+        state.keySuper = io.KeySuper;
+        state.keyCtrl = io.KeyCtrl;
+        state.keyShift = io.KeyShift;
+        state.mouseRightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+        state.mouseMiddleDown = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+        state.wDown = raw.key(Input::KeyCode::W).down || ImGui::IsKeyDown(ImGuiKey_W);
+        state.eDown = raw.key(Input::KeyCode::E).down || ImGui::IsKeyDown(ImGuiKey_E);
+        state.rDown = raw.key(Input::KeyCode::R).down || ImGui::IsKeyDown(ImGuiKey_R);
+        state.zDown = raw.key(Input::KeyCode::Z).down || ImGui::IsKeyDown(ImGuiKey_Z);
+        state.yDown = raw.key(Input::KeyCode::Y).down || ImGui::IsKeyDown(ImGuiKey_Y);
+        state.wPressed = ImGui::IsKeyPressed(ImGuiKey_W, false);
+        state.ePressed = ImGui::IsKeyPressed(ImGuiKey_E, false);
+        state.rPressed = ImGui::IsKeyPressed(ImGuiKey_R, false);
+        state.zPressed = ImGui::IsKeyPressed(ImGuiKey_Z, false);
+        state.yPressed = ImGui::IsKeyPressed(ImGuiKey_Y, false);
+        controller_.handleShortcuts(app, state);
     }
 
     void EditorScene::drawSelectionOverlay(Editor::EditorApp& app) const
@@ -669,44 +337,15 @@ namespace Incubator::Editor
         auto* drawList = app.sceneDrawList();
         if (!drawList)
             return;
-        const auto& region = app.viewportRegion();
-        const auto boxSegments = projectSelectionBox(app.scene(), operations_.selected(), app.sceneExtent(), region);
-        const auto gizmo = projectGizmo(app.scene(), operations_.selected(), gizmoMode_, app.sceneExtent(), region);
-        if (boxSegments.empty() && gizmo.segments.empty())
+        const auto overlay = controller_.buildViewportOverlay(app);
+        if (overlay.lines.empty())
             return;
-        const ImVec2 clipMin(static_cast<float>(region.origin.x), static_cast<float>(region.origin.y));
-        const ImVec2 clipMax(static_cast<float>(region.origin.x + region.size.x),
-                             static_cast<float>(region.origin.y + region.size.y));
-        const ImU32 boxColor = IM_COL32(255, 200, 64, 255);
-        const GizmoAxis highlightedAxis = gizmoDrag_.active ? gizmoDrag_.axis : hoveredGizmoAxis_;
-        const auto axisDefaultColor = [](GizmoAxis axis) {
-            switch (axis)
-            {
-                case GizmoAxis::X: return IM_COL32(230, 70, 70, 255);
-                case GizmoAxis::Y: return IM_COL32(70, 210, 90, 255);
-                case GizmoAxis::Z: return IM_COL32(70, 140, 245, 255);
-                case GizmoAxis::None: break;
-            }
-            return IM_COL32(255, 255, 255, 255);
-        };
-
-        drawList->PushClipRect(clipMin, clipMax, true);
-        for (const auto& segment : boxSegments)
-            drawList->AddLine({segment.start.x, segment.start.y}, {segment.end.x, segment.end.y}, boxColor, 2.0f);
-        for (const bool drawHighlighted : {false, true})
+        drawList->PushClipRect({overlay.clipMin.x, overlay.clipMin.y}, {overlay.clipMax.x, overlay.clipMax.y}, true);
+        for (const auto& line : overlay.lines)
         {
-            for (const auto& gizmoSegment : gizmo.segments)
-            {
-                const bool highlighted =
-                    gizmoSegment.axis != GizmoAxis::None && gizmoSegment.axis == highlightedAxis;
-                if (highlighted != drawHighlighted)
-                    continue;
-                const ImU32 color =
-                    highlighted ? IM_COL32(255, 240, 100, 255) : axisDefaultColor(gizmoSegment.axis);
-                const float thickness = highlighted ? 3.5f : 2.5f;
-                drawList->AddLine({gizmoSegment.segment.start.x, gizmoSegment.segment.start.y},
-                                  {gizmoSegment.segment.end.x, gizmoSegment.segment.end.y}, color, thickness);
-            }
+            const ImU32 color = IM_COL32(line.color.r, line.color.g, line.color.b, line.color.a);
+            drawList->AddLine({line.segment.start.x, line.segment.start.y}, {line.segment.end.x, line.segment.end.y},
+                              color, line.thickness);
         }
         drawList->PopClipRect();
     }
@@ -715,16 +354,16 @@ namespace Incubator::Editor
     {
         ImGui::SetNextWindowSize({ImGui::GetFontSize() * 22, ImGui::GetFontSize() * 22}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Assets");
-        ImGui::TextWrapped("Directory: /%s", assetDirectory_.c_str());
-        if (!assetDirectory_.empty())
+        ImGui::TextWrapped("Directory: /%s", controller_.assetDirectory().c_str());
+        if (!controller_.assetDirectory().empty())
         {
             if (ImGui::Button("Up"))
                 parentDirectory();
             ImGui::SameLine();
         }
         if (ImGui::Button("Refresh"))
-            browseDirectory(assetDirectory_);
-        ImGui::Text("Listed: %zu | Cached: %zu", assetEntries_.size(), cachedModels());
+            browseDirectory(controller_.assetDirectory());
+        ImGui::Text("Listed: %zu | Cached: %zu", controller_.assetEntries().size(), cachedModels());
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(
                 "Listed: directory entries only. Cached: prepared models.\n"
@@ -732,16 +371,16 @@ namespace Incubator::Editor
                 "Submitted frames retain GPU resources until completion.");
         if (ImGui::Button("Clear unused models", {-1, 0}))
             collectUnusedModels();
-        if (!assetError_.empty())
+        if (!controller_.assetError().empty())
         {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
-            ImGui::TextWrapped("%s", assetError_.c_str());
+            ImGui::TextWrapped("%s", controller_.assetError().c_str());
             ImGui::PopStyleColor();
         }
-        if (operations_.messageError())
+        if (controller_.messageError())
         {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
-            ImGui::TextWrapped("%s", operations_.message().c_str());
+            ImGui::TextWrapped("%s", controller_.message().c_str());
             ImGui::PopStyleColor();
         }
         std::string enter;
@@ -750,7 +389,7 @@ namespace Incubator::Editor
             ImGui::TableSetupColumn("Name / type", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 3.5f);
             ImGui::TableHeadersRow();
-            for (const auto& entry : assetEntries_)
+            for (const auto& entry : controller_.assetEntries())
             {
                 ImGui::PushID(entry.path.c_str());
                 ImGui::TableNextRow();
@@ -787,7 +426,7 @@ namespace Incubator::Editor
             if (ImGui::MenuItem("Open..."))
                 requestOpen(app);
             if (ImGui::MenuItem("Save"))
-                saveRequested_ = true;
+                controller_.requestSave();
             if (ImGui::MenuItem("Save As..."))
                 beginSaveAs();
             ImGui::Separator();
@@ -809,8 +448,7 @@ namespace Incubator::Editor
             if (ImGui::MenuItem("Redo", "Ctrl+Y", false, canRedo()))
                 redo(app);
             ImGui::Separator();
-            const bool hasSelection =
-                operations_.selected().valid() && app.scene().find(operations_.selected()) != nullptr;
+            const bool hasSelection = selected().valid() && app.scene().find(selected()) != nullptr;
             if (ImGui::MenuItem("Duplicate", nullptr, false, hasSelection))
                 duplicateSelected(app);
             if (ImGui::MenuItem("Delete", nullptr, false, hasSelection))
@@ -834,17 +472,18 @@ namespace Incubator::Editor
         if (ImGui::BeginViewportSideBar("##status", ImGui::GetMainViewport(), ImGuiDir_Down, ImGui::GetFrameHeight(),
                                         flags))
         {
-            if (operations_.messageError())
+            if (controller_.messageError())
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
             const auto text = statusText();
             ImGui::TextUnformatted(text.c_str());
-            if (operations_.messageError())
+            if (controller_.messageError())
                 ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
             {
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35);
-                ImGui::TextWrapped("%s\n%s", operations_.currentFile().c_str(), operations_.message().c_str());
+                ImGui::TextWrapped("%s\n%s", std::string(controller_.scenePath()).c_str(),
+                                   controller_.message().c_str());
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }
@@ -858,9 +497,9 @@ namespace Incubator::Editor
         ImGui::Begin("Objects");
         ImGui::TextUnformatted("New model");
         ImGui::SetNextItemWidth(-1);
-        int modelIndex = useObj_ ? 1 : 0;
+        int modelIndex = controller_.useObjModel() ? 1 : 0;
         if (ImGui::Combo("##model", &modelIndex, "Avocado\0Teapot\0"))
-            useObj_ = modelIndex == 1;
+            controller_.selectModel(modelIndex == 1);
         if (ImGui::Button("Create object", {-1, 0}))
             createEntity(app);
         if (ImGui::Button("More..."))
@@ -880,7 +519,7 @@ namespace Incubator::Editor
                 const auto id = std::to_string(entity.id.value());
                 const auto label = (entity.name.empty() ? std::string("未命名") : entity.name) + " (" + id + ")";
                 ImGui::PushID(id.c_str());
-                if (ImGui::Selectable("##entity", operations_.selected() == entity.id))
+                if (ImGui::Selectable("##entity", controller_.selected() == entity.id))
                     select(app, entity.id);
                 const auto pos = ImGui::GetItemRectMin();
                 ImGui::GetWindowDrawList()->AddText({pos.x, pos.y}, ImGui::GetColorU32(ImGuiCol_Text), label.data(),
@@ -894,43 +533,34 @@ namespace Incubator::Editor
 
     void EditorScene::properties(Editor::EditorApp& app)
     {
-        if (!operations_.inTransaction())
-            clearPanelTransactionFlags();
+        controller_.syncPanelTransactionState();
         if (!ImGui::Begin("Properties"))
         {
             ImGui::End();
-            commitPanelTransactions(app);
+            controller_.commitPanelTransactions(app);
             return;
         }
         const auto& raw = app.window().input();
         const bool windowFocused = raw.focused() && !raw.focusLost();
         bool entityWidgetActive = false;
+        auto& operations = controller_.operations();
         const auto beginEntityTransaction = [&]() {
-            if (entityTransactionActive_ || lightingTransactionActive_ || backgroundTransactionActive_)
-                commitPanelTransactions(app);
-            if (!operations_.inTransaction())
-            {
-                operations_.beginTransaction(app.scene(), app.clearColor());
-                entityTransactionActive_ = operations_.inTransaction();
-            }
+            controller_.beginPanelTransaction(app, PanelTransactionKind::Entity);
         };
         const auto finishEntityTransaction = [&]() {
-            if (entityTransactionActive_)
-            {
-                entityTransactionActive_ = false;
-                operations_.commitTransaction(app.scene(), app.clearColor());
-            }
+            if (controller_.activePanelTransaction() == PanelTransactionKind::Entity)
+                controller_.commitPanelTransactions(app);
         };
         ImGui::PushItemWidth(-1);
         if (ImGui::CollapsingHeader("Selected object", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            if (const auto* entity = app.scene().find(operations_.selected()))
+            if (const auto* entity = app.scene().find(controller_.selected()))
             {
                 ImGui::Text("ID: %llu", static_cast<unsigned long long>(entity->id.value()));
                 ImGui::TextUnformatted("Name");
                 const auto nameId = std::to_string(entity->id.value());
                 ImGui::PushID(nameId.c_str());
-                auto name = pathBuffer(entity->name);
+                auto name = EditorController::pathBuffer(entity->name);
                 const auto resize = [](ImGuiInputTextCallbackData* data) {
                     auto* buffer = static_cast<std::vector<char>*>(data->UserData);
                     buffer->resize(static_cast<size_t>(data->BufSize));
@@ -942,7 +572,7 @@ namespace Incubator::Editor
                 if (ImGui::IsItemActivated() && windowFocused)
                     beginEntityTransaction();
                 if (nameChanged)
-                    operations_.rename(app.scene(), app.clearColor(), name.data());
+                    operations.rename(app.scene(), app.clearColor(), name.data());
                 entityWidgetActive |= ImGui::IsItemActive();
                 if (ImGui::IsItemDeactivated())
                     finishEntityTransaction();
@@ -953,14 +583,14 @@ namespace Incubator::Editor
                 auto degrees = glm::degrees(glm::eulerAngles(transform.rotation()));
                 bool visible = entity->visible;
                 if (ImGui::Checkbox("Visible", &visible))
-                    operations_.setVisible(app.scene(), app.clearColor(), visible);
+                    operations.setVisible(app.scene(), app.clearColor(), visible);
                 const auto applyTransformWidget = [&](bool edited) {
                     const bool activateStart = ImGui::IsItemActivated();
-                    if ((activateStart || (edited && ImGui::IsItemActive() && !entityTransactionActive_)) &&
-                        windowFocused)
+                    const bool entityActive = controller_.activePanelTransaction() == PanelTransactionKind::Entity;
+                    if ((activateStart || (edited && ImGui::IsItemActive() && !entityActive)) && windowFocused)
                         beginEntityTransaction();
                     if (edited)
-                        operations_.setTransform(app.scene(), app.clearColor(), transform);
+                        operations.setTransform(app.scene(), app.clearColor(), transform);
                     entityWidgetActive |= ImGui::IsItemActive();
                     if (ImGui::IsItemDeactivated())
                         finishEntityTransaction();
@@ -990,7 +620,7 @@ namespace Incubator::Editor
                 ImGui::TextWrapped("Select an object to edit.");
             ImGui::Separator();
             const auto gizmoModeButton = [&](const char* label, GizmoMode mode) {
-                const bool active = gizmoMode_ == mode;
+                const bool active = gizmoMode() == mode;
                 if (active)
                 {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
@@ -1010,7 +640,7 @@ namespace Incubator::Editor
         if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen))
         {
             if (ImGui::Button("Focus selected", {-1, 0}))
-                focusSelected(app, extent_);
+                focusSelected(app, controller_.lastExtent());
             if (ImGui::Button("Reset view", {-1, 0}))
                 resetCamera(app);
         }
@@ -1023,23 +653,12 @@ namespace Incubator::Editor
             const bool pickerOpen = ImGui::IsPopupOpen("picker");
             ImGui::PopID();
             const bool backgroundActive = (ImGui::IsItemActive() || pickerOpen) && windowFocused;
-            if (backgroundActive && !backgroundTransactionActive_)
-            {
-                if (entityTransactionActive_ || lightingTransactionActive_)
-                    commitPanelTransactions(app);
-                if (!operations_.inTransaction())
-                {
-                    operations_.beginTransaction(app.scene(), app.clearColor());
-                    backgroundTransactionActive_ = operations_.inTransaction();
-                }
-            }
+            if (backgroundActive && controller_.activePanelTransaction() != PanelTransactionKind::Background)
+                controller_.beginPanelTransaction(app, PanelTransactionKind::Background);
             if (colorChanged)
-                operations_.setClearColor(app.scene(), app.clearColor(), clearColor);
-            if (!backgroundActive && backgroundTransactionActive_)
-            {
-                backgroundTransactionActive_ = false;
-                operations_.commitTransaction(app.scene(), app.clearColor());
-            }
+                operations.setClearColor(app.scene(), app.clearColor(), clearColor);
+            if (!backgroundActive && controller_.activePanelTransaction() == PanelTransactionKind::Background)
+                controller_.commitPanelTransactions(app);
             auto& shadows = app.shadowSettings();
             ImGui::Checkbox("Shadows", &shadows.enabled);
             if (ImGui::IsItemHovered())
@@ -1055,51 +674,22 @@ namespace Incubator::Editor
             auto lighting = app.scene().lighting();
             const auto lightingState = App::lightingWidget(lighting);
             const bool lightingActive = lightingState.active && windowFocused;
-            if (lightingActive && !lightingTransactionActive_)
-            {
-                if (entityTransactionActive_ || backgroundTransactionActive_)
-                    commitPanelTransactions(app);
-                if (!operations_.inTransaction())
-                {
-                    operations_.beginTransaction(app.scene(), app.clearColor());
-                    lightingTransactionActive_ = operations_.inTransaction();
-                }
-            }
+            if (lightingActive && controller_.activePanelTransaction() != PanelTransactionKind::Lighting)
+                controller_.beginPanelTransaction(app, PanelTransactionKind::Lighting);
             if (lightingState.changed)
-                operations_.setLighting(app.scene(), app.clearColor(), lighting);
-            if (!lightingActive && lightingTransactionActive_)
-            {
-                lightingTransactionActive_ = false;
-                operations_.commitTransaction(app.scene(), app.clearColor());
-            }
+                operations.setLighting(app.scene(), app.clearColor(), lighting);
+            if (!lightingActive && controller_.activePanelTransaction() == PanelTransactionKind::Lighting)
+                controller_.commitPanelTransactions(app);
         }
-        else if (lightingTransactionActive_ || backgroundTransactionActive_)
+        else if (controller_.activePanelTransaction() == PanelTransactionKind::Lighting ||
+                 controller_.activePanelTransaction() == PanelTransactionKind::Background)
         {
-            lightingTransactionActive_ = false;
-            backgroundTransactionActive_ = false;
-            operations_.commitTransaction(app.scene(), app.clearColor());
+            controller_.commitPanelTransactions(app);
         }
-        if (entityTransactionActive_ && !entityWidgetActive)
+        if (controller_.activePanelTransaction() == PanelTransactionKind::Entity && !entityWidgetActive)
             finishEntityTransaction();
         ImGui::PopItemWidth();
         ImGui::End();
-    }
-
-    std::vector<char> EditorScene::pathBuffer(std::string_view path)
-    {
-        std::vector<char> buffer(std::max(size_t{1024}, path.size() + 1), '\0');
-        std::copy(path.begin(), path.end(), buffer.begin());
-        return buffer;
-    }
-
-    std::string_view EditorScene::creationPath(bool useObj)
-    {
-        return useObj ? "models/utah_teapot/utah_teapot.obj" : "models/avocado/glTF/Avocado.gltf";
-    }
-
-    Scene::Transform EditorScene::initialTransform(bool useObj)
-    {
-        return Scene::Transform({0, useObj ? 0.0f : -0.78f, 0}, {1, 0, 0, 0}, glm::vec3(useObj ? 0.075f : 24.0f));
     }
 
     Editor::Callbacks makeCallbacks(std::string startupScene)

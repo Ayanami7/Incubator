@@ -18,6 +18,7 @@
 
 #include "app/common/lighting_controls.h"
 #include "app/common/startup_config.h"
+#include "app/common/ui_input.h"
 #include "app/editor/editor_app.h"
 #include "app/editor/editor_scene.h"
 #include "app/editor/selection_overlay.h"

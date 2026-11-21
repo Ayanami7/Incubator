@@ -3,51 +3,24 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
-#include "runtime/platform/input/input_state.h"
+#include "viewport_input.h"
 
 namespace Incubator::App
 {
-    struct UiInput
-    {
-        Input::ButtonState rotate, pan;
-        Input::PointerValue position, delta, scroll;
-        bool focusPressed = false;
-        bool captureMouse = false;
-        bool captureKeyboard = false;
-        Input::ButtonState select;
-        float selectDragDistanceSquared = 0;
-    };
-
-    /// @brief 当前场景图像在 ImGui 屏幕逻辑坐标中的区域及交互状态。
-    struct ViewportRegion
-    {
-        Input::PointerValue origin, size;
-        bool hovered = false;
-        bool focused = false;
-    };
-
-    /// @brief 将已消费的输入批次映射到场景图像；已有手势仍由控制器持有。
-    inline UiInput viewportInput(UiInput input, const ViewportRegion& region, bool textInput)
-    {
-        input.position.x -= region.origin.x;
-        input.position.y -= region.origin.y;
-        input.captureMouse = !region.hovered;
-        input.captureKeyboard = !region.focused || textInput;
-        if (!region.hovered)
-            input.scroll = {};
-        return input;
-    }
-
     /// @brief 从 ImGui 读取 UI 消费后的输入批次。
     /// @note 原始输入仅用于取消或重新启用交互。
     class UiInputAdapter
     {
     public:
+        /// @brief 暂停向视口输出交互输入，直到原始按键与 ImGui 事件队列均已排空。
         void cancel()
         {
             suspended_ = true;
         }
 
+        /// @brief 采样当前帧经 ImGui 消费判定后的输入状态。
+        /// @param raw 平台层提供的当前窗口原始输入状态。
+        /// @return 适配后的视口输入快照。
         UiInput sample(const Input::InputState& raw)
         {
             const auto& io = ImGui::GetIO();

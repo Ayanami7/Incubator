@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
 #include <optional>
@@ -28,6 +29,31 @@ namespace Incubator::Editor
     {
         glm::vec2 start;
         glm::vec2 end;
+    };
+
+    /// @brief 纯 C++ 叠加图元 RGBA 颜色（每通道 0–255）。
+    struct OverlayColor
+    {
+        uint8_t r = 255;
+        uint8_t g = 255;
+        uint8_t b = 255;
+        uint8_t a = 255;
+    };
+
+    /// @brief 视口叠加层中的单条带颜色与线宽的辅助线段。
+    struct OverlayDrawLine
+    {
+        OverlaySegment segment{};
+        OverlayColor color{};
+        float thickness = 1.0f;
+    };
+
+    /// @brief 纯 C++ 视口叠加几何图元批次（包含裁剪矩形与按绘制顺序排列的线段列表）。
+    struct ViewportOverlay
+    {
+        glm::vec2 clipMin{0.0f};
+        glm::vec2 clipMax{0.0f};
+        std::vector<OverlayDrawLine> lines;
     };
 
     /// @brief 在 Vulkan 齐次裁剪空间（X/Y 位于 [-w, w]，Z 位于 [0, w]）中裁剪线段。
