@@ -4,6 +4,7 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <utility>
@@ -11,6 +12,8 @@
 
 #include "app/common/lighting_controls.h"
 #include "app/common/viewport.h"
+#include "editor_theme.h"
+#include "runtime/model/prepared_model.h"
 
 namespace Incubator::Editor
 {
@@ -122,7 +125,8 @@ namespace Incubator::Editor
     void EditorScene::layout(Editor::EditorApp& app)
     {
         menu(app);
-        statusBar();
+        toolbar(app);
+        statusBar(app);
         workspace_.begin();
         app.sceneViewport("Scene", &viewportOpen_);
     }
@@ -283,7 +287,7 @@ namespace Incubator::Editor
                 "asset redeployment may overwrite it.");
             if (controller_.messageError())
             {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::errorColor());
                 ImGui::TextWrapped("%s", controller_.message().c_str());
                 ImGui::PopStyleColor();
             }
@@ -373,13 +377,13 @@ namespace Incubator::Editor
             collectUnusedModels();
         if (!controller_.assetError().empty())
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::errorColor());
             ImGui::TextWrapped("%s", controller_.assetError().c_str());
             ImGui::PopStyleColor();
         }
         if (controller_.messageError())
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::errorColor());
             ImGui::TextWrapped("%s", controller_.message().c_str());
             ImGui::PopStyleColor();
         }
@@ -465,15 +469,100 @@ namespace Incubator::Editor
         ImGui::EndMainMenuBar();
     }
 
-    void EditorScene::statusBar()
+    void EditorScene::toolbar(Editor::EditorApp& app)
     {
         const auto flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImGui::GetStyle().FramePadding);
-        if (ImGui::BeginViewportSideBar("##status", ImGui::GetMainViewport(), ImGuiDir_Down, ImGui::GetFrameHeight(),
-                                        flags))
+        const auto& style = ImGui::GetStyle();
+        const float barHeight = ImGui::GetFrameHeight() + style.FramePadding.y * 2.0f;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, style.FramePadding);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, EditorTheme::rgba(0x19, 0x1C, 0x20));
+        if (ImGui::BeginViewportSideBar("##toolbar", ImGui::GetMainViewport(), ImGuiDir_Up, barHeight, flags))
+        {
+            const auto verticalSeparator = []() {
+                ImGui::SameLine();
+                ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+                ImGui::SameLine();
+            };
+
+            // 文件操作组（动态保存标签使用固定 ID 防止脏状态切换时吞掉点击）
+            if (ImGui::Button("Open..."))
+                requestOpen(app);
+            ImGui::SameLine();
+            if (ImGui::Button(isDirty() ? "Save *###toolbar-save" : "Save###toolbar-save"))
+                controller_.requestSave();
+            ImGui::SameLine();
+            if (ImGui::Button("Save As..."))
+                beginSaveAs();
+
+            verticalSeparator();
+
+            // 历史操作组
+            ImGui::BeginDisabled(!canUndo());
+            if (ImGui::Button("Undo"))
+                undo(app);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Undo (Ctrl+Z)");
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!canRedo());
+            if (ImGui::Button("Redo"))
+                redo(app);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Redo (Ctrl+Y)");
+
+            verticalSeparator();
+
+            // Gizmo 模式切换组
+            const auto gizmoToolbarButton = [&](const char* label, GizmoMode mode) {
+                const bool active = gizmoMode() == mode;
+                if (active)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Button, EditorTheme::accentColor());
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorTheme::accentColor());
+                }
+                if (ImGui::Button(label))
+                    setGizmoMode(mode);
+                if (active)
+                    ImGui::PopStyleColor(2);
+            };
+            gizmoToolbarButton("Translate (W)", GizmoMode::Translate);
+            ImGui::SameLine();
+            gizmoToolbarButton("Rotate (E)", GizmoMode::Rotate);
+            ImGui::SameLine();
+            gizmoToolbarButton("Scale (R)", GizmoMode::Scale);
+
+            verticalSeparator();
+
+            // 视图与阴影快捷组
+            const auto* selectedEntity = app.scene().find(selected());
+            const bool canFocus = selectedEntity && selectedEntity->model && selectedEntity->model->bounds();
+            ImGui::BeginDisabled(!canFocus);
+            if (ImGui::Button("Focus (F)"))
+                focusSelected(app, controller_.lastExtent());
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Reset View"))
+                resetCamera(app);
+            ImGui::SameLine();
+            ImGui::Checkbox("Shadows", &app.shadowSettings().enabled);
+        }
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+    }
+
+    void EditorScene::statusBar(Editor::EditorApp& app)
+    {
+        const auto flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+        const auto& style = ImGui::GetStyle();
+        const float barHeight = ImGui::GetFrameHeight() + style.FramePadding.y * 2.0f;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, style.FramePadding);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, EditorTheme::rgba(0x19, 0x1C, 0x20));
+        if (ImGui::BeginViewportSideBar("##status", ImGui::GetMainViewport(), ImGuiDir_Down, barHeight, flags))
         {
             if (controller_.messageError())
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.35f, 1));
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::errorColor());
             const auto text = statusText();
             ImGui::TextUnformatted(text.c_str());
             if (controller_.messageError())
@@ -487,8 +576,22 @@ namespace Incubator::Editor
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }
+
+            char statsBuffer[96]{};
+            std::snprintf(statsBuffer, sizeof(statsBuffer), "Entities: %zu | Cached: %zu",
+                          app.scene().entities().size(), cachedModels());
+            const float statsWidth = ImGui::CalcTextSize(statsBuffer).x;
+            const float rightEdge = ImGui::GetWindowContentRegionMax().x;
+            if (rightEdge - ImGui::GetItemRectMax().x > statsWidth + ImGui::GetStyle().ItemSpacing.x * 2.0f)
+            {
+                ImGui::SameLine(rightEdge - statsWidth);
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::mutedTextColor());
+                ImGui::TextUnformatted(statsBuffer);
+                ImGui::PopStyleColor();
+            }
         }
         ImGui::End();
+        ImGui::PopStyleColor();
         ImGui::PopStyleVar();
     }
 

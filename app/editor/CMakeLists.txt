@@ -8,6 +8,7 @@ set(EDITOR_HEADERS
     editor_scene.h
     editor_operations.h
     editor_selection.h
+    editor_theme.h
     gizmo.h
     selection_overlay.h
     workspace.h
@@ -17,6 +18,7 @@ set(EDITOR_SOURCES
     editor_controller.cpp
     editor_scene.cpp
     editor_operations.cpp
+    editor_theme.cpp
     gizmo.cpp
     selection_overlay.cpp
 )

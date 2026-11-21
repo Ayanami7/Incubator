@@ -132,7 +132,9 @@ namespace Incubator::Editor
 
         void menu(Editor::EditorApp& app);
 
-        void statusBar();
+        void toolbar(Editor::EditorApp& app);
+
+        void statusBar(Editor::EditorApp& app);
 
         void objects(Editor::EditorApp& app);
 

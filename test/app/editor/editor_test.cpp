@@ -1884,7 +1884,7 @@ namespace
                      initialName = app.scene().find(targetId)->name; initialPos = app.scene().find(targetId)->transform.position();
                      initialLighting = app.scene().lighting(); initialClearColor = app.clearColor();
                      auto* h = static_cast<GLFWwindow*>(app.window().getNativeHandle());
-                     hooks = hookWindowCallbacks(h); enableGlfwCallbacks(h);
+                     hooks = hookWindowCallbacks(h); enableGlfwCallbacks(h); hooks.focus(h, GLFW_TRUE);
                  },
                  [&](auto& app, const auto&) {
                      if (phase == 99) return;
@@ -2169,7 +2169,12 @@ namespace
                          break;
                      }
                      case 1: send(xMidScreen, false, false, true, false); EXPECT_FALSE(editor.gizmoDragging()); send(xMidScreen, false, false, false, true); ++step; break;
-                     case 2: send(xTipScreen, false, true, true, false); ASSERT_TRUE(editor.gizmoDragging()); editor.setGizmoMode(Editor::GizmoMode::Rotate); EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Translate); ++step; break;
+                     case 2: {
+                         const auto gizmo = Editor::projectGizmo(app.scene(), targetId, editor.gizmoMode(), extent, reg);
+                         ASSERT_TRUE(gizmo.visible);
+                         xTipScreen = gizmo.segments[0].segment.end;
+                         send(xTipScreen, false, true, true, false); ASSERT_TRUE(editor.gizmoDragging()); editor.setGizmoMode(Editor::GizmoMode::Rotate); EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Translate); ++step; break;
+                     }
                      case 3:
                          send({reg.origin.x + reg.size.x + 120.0f, xTipScreen.y}, true, false, true, false, true);
                          EXPECT_TRUE(editor.gizmoDragging() && app.scene().camera().position() == initialCamera.position());

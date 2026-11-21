@@ -3,6 +3,8 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include "editor_theme.h"
+
 namespace Incubator::Editor
 {
     /// @brief 使用 ImGui 自带配置保存单窗口工作区布局。
@@ -17,6 +19,7 @@ namespace Incubator::Editor
         {
             if (!initialized_)
             {
+                EditorTheme::applyEditorTheme();
                 ImGui::GetIO().IniFilename = "incubator-editor-layout.ini";
                 ImGui::LoadIniSettingsFromDisk(ImGui::GetIO().IniFilename);
                 initialized_ = true;
