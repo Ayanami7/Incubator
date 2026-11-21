@@ -149,7 +149,18 @@ int main(int argc, char** argv)
                      const auto& region = session.viewportRegion();
                      if (frame < 4 || extent.width == 0 || extent.height == 0 || region.size.x <= 0 ||
                          region.size.y <= 0 || region.size.x > 1000)
+                     {
+                         if (frame > 200)
+                         {
+                             std::cerr << "Write pass timed out waiting for viewport: frame=" << frame
+                                       << " extent=" << extent.width << "x" << extent.height
+                                       << " region=" << region.size.x << "x" << region.size.y << "\n";
+                             result = 1;
+                             writeDone = true;
+                             session.requestExit();
+                         }
                          return;
+                     }
 
                      // 1. 视口 Gizmo 平移（X 轴）
                      demo.setGizmoMode(Incubator::Editor::GizmoMode::Translate);

@@ -113,7 +113,7 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 
 根 CMake 在 Runtime、共用 Shader/资产目标定义后添加 app，再添加测试和示例。
 `app/CMakeLists.txt` 先添加 common，再添加 editor。`Editor` 编译 main.cpp，并链接 `IncubatorEditorSupport`。
-该静态库编译 editor_app.cpp、editor_scene.cpp、editor_operations.cpp、selection_overlay.cpp 和 gizmo.cpp，同时被两个 Editor 测试程序链接。
+该静态库编译 `editor_app.cpp`、`editor_controller.cpp`、`editor_scene.cpp`、`editor_operations.cpp`、`editor_theme.cpp`、`selection_overlay.cpp` 和 `gizmo.cpp`，同时被两个 Editor 测试程序链接。
 
 ```powershell
 # 按 WORKFLOW 进入 MSVC 环境并设置 UTF-8 代码页后执行。
@@ -125,7 +125,7 @@ cd build
 单独目标依赖 incubator_assets，部署模型、Shader、场景、字体和 incubator.json；运行 cwd 为 build，
 VS_DEBUGGER_WORKING_DIRECTORY 及 VS Code Editor 启动项均明确该目录。场景、配置和字体路径保持原语义，不随可执行文件位置改变。
 Editor 布局仅使用 incubator-editor-layout.ini；Demo 不持久化布局，二者不互相覆盖。
-`IncubatorAppCommon` 编译 AppSession 和启动配置，提供双方共用的参数、输入、相机和光照组件。
+`IncubatorAppCommon` 编译 AppSession 和启动配置，提供双方共用的参数、纯数据视口输入头（`viewport_input.h`）、ImGui 输入适配（`ui_input.h`）、相机和光照组件。
 
 应用使用方式见 [Editor](./app/editor.md) 和 [Demo](./examples/demo.md)。
 

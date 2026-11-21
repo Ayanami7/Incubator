@@ -856,4 +856,86 @@ namespace
         EXPECT_TRUE(controller.undo(scene, clearColor));
         EXPECT_FLOAT_EQ(scene.find(id)->transform.position().x, 0.0f);
     }
+
+    TEST(EditorControllerTest, RefreshSceneFilesDiscoversSortedJsonAndFailsSilently)
+    {
+        const auto prevCwd = fs::current_path();
+        const auto tempRoot = fs::temp_directory_path() / "incubator_editor_scene_files_test";
+        fs::remove_all(tempRoot);
+        fs::create_directories(tempRoot);
+
+        struct CwdGuard
+        {
+            fs::path prev;
+            fs::path temp;
+            ~CwdGuard()
+            {
+                std::error_code ec;
+                fs::current_path(prev, ec);
+                fs::remove_all(temp, ec);
+            }
+        } guard{prevCwd, tempRoot};
+
+        fs::current_path(tempRoot);
+        auto fileIO = FileIO::createPlatformFileIO();
+        Editor::EditorController controller;
+
+        // 预设一条非错误消息，确认目录缺失时 refreshSceneFiles 静默返回空且不污染消息或错误标记。
+        Scene::Scene scene;
+        std::array<float, 4> clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+        scene.createEntity();
+        ASSERT_TRUE(controller.operations().clear(scene, clearColor));
+        const std::string beforeMsg = controller.message();
+        ASSERT_FALSE(controller.messageError());
+
+        controller.refreshSceneFiles(*fileIO);
+        EXPECT_TRUE(controller.sceneFiles().empty());
+        EXPECT_EQ(controller.message(), beforeMsg);
+        EXPECT_FALSE(controller.messageError());
+
+        // 创建 assets/scenes/ 下的混合文件与子目录，验证仅收集 .json 且按字典序排序。
+        fs::create_directories(tempRoot / "assets" / "scenes" / "nested_dir");
+        for (const char* rel : {"assets/scenes/z_last.json", "assets/scenes/a_first.json",
+                                "assets/scenes/ignore.txt", "assets/scenes/UPPER.JSON"})
+        {
+            auto handle = fileIO->open(rel,
+                                       FileIO::OpenMode::ReadWrite | FileIO::OpenMode::Create |
+                                           FileIO::OpenMode::Truncate);
+            ASSERT_NE(handle, nullptr);
+        }
+
+        controller.refreshSceneFiles(*fileIO);
+        const std::vector<std::string> expected = {
+            "assets/scenes/UPPER.JSON",
+            "assets/scenes/a_first.json",
+            "assets/scenes/z_last.json",
+        };
+        EXPECT_EQ(controller.sceneFiles(), expected);
+        EXPECT_EQ(controller.message(), beforeMsg);
+        EXPECT_FALSE(controller.messageError());
+    }
+
+    TEST(EditorControllerTest, SetVisibleByEntityIdDoesNotStealSelectionAndSupportsUndoRedo)
+    {
+        Scene::Scene scene;
+        std::array<float, 4> clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+        Editor::EditorController controller;
+        const auto first = scene.createEntity(nullptr, Scene::Transform{}, true, "First");
+        const auto second = scene.createEntity(nullptr, Scene::Transform{}, true, "Second");
+        controller.select(first);
+
+        ASSERT_TRUE(controller.setVisible(scene, clearColor, second, false));
+        EXPECT_EQ(controller.selected(), first);
+        EXPECT_FALSE(scene.find(second)->visible);
+        EXPECT_TRUE(controller.canUndo());
+        EXPECT_TRUE(controller.isDirty());
+
+        ASSERT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_EQ(controller.selected(), first);
+        EXPECT_TRUE(scene.find(second)->visible);
+
+        ASSERT_TRUE(controller.redo(scene, clearColor));
+        EXPECT_EQ(controller.selected(), first);
+        EXPECT_FALSE(scene.find(second)->visible);
+    }
 }  // namespace

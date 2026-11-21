@@ -143,6 +143,7 @@ namespace Incubator::Editor
         EditorController controller_;
         Workspace workspace_;
         bool viewportOpen_ = true;
+        FileAction lastFileAction_ = FileAction::None;
     };
 
     Editor::Callbacks makeCallbacks(std::string startupScene = "assets/scenes/shadows.json");

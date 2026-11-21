@@ -249,8 +249,13 @@ namespace Incubator::Editor
                              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking))
             {
                 const auto file = controller_.scenePath();
-                ImGui::TextWrapped("Save changes to %s before continuing?",
-                                   file.empty() ? "(unsaved)" : std::string(file).c_str());
+                ImGui::TextUnformatted("Save changes before continuing?");
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::accentColor());
+                ImGui::TextWrapped("%s", file.empty() ? "(unsaved)" : std::string(file).c_str());
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
                 if (ImGui::Button("Save"))
                     controller_.resolveUnsavedSave(app);
                 ImGui::SameLine();
@@ -265,19 +270,55 @@ namespace Incubator::Editor
                 controller_.cancelPendingAction();
         }
         bool confirm = false;
-        if (controller_.fileAction() != FileAction::None)
+        const FileAction currentFileAction = controller_.fileAction();
+        if (currentFileAction != FileAction::None && currentFileAction != lastFileAction_)
+            controller_.refreshSceneFiles(app.fileIO());
+        lastFileAction_ = currentFileAction;
+        if (currentFileAction != FileAction::None)
         {
             bool open = true;
             ImGui::SetNextWindowSize({ImGui::GetFontSize() * 30, 0}, ImGuiCond_Appearing);
-            ImGui::Begin(controller_.fileAction() == FileAction::Open ? "Open scene" : "Save scene as", &open,
+            ImGui::Begin(currentFileAction == FileAction::Open ? "Open scene" : "Save scene as", &open,
                          ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
             const auto file = controller_.scenePath();
             ImGui::TextWrapped("Current file: %s", file.empty() ? "(unsaved)" : std::string(file).c_str());
+            ImGui::Spacing();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Scene files");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Refresh##scene-files"))
+                controller_.refreshSceneFiles(app.fileIO());
+            if (ImGui::BeginListBox("##scene-files", {-1, ImGui::GetFontSize() * 7.0f}))
+            {
+                const auto& files = controller_.sceneFiles();
+                if (files.empty())
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::mutedTextColor());
+                    ImGui::TextUnformatted("No .json scenes found.");
+                    ImGui::PopStyleColor();
+                }
+                else
+                {
+                    const std::string_view currentInput(controller_.pathBufferData().data());
+                    for (const auto& entry : files)
+                    {
+                        const bool isSelected = currentInput == entry;
+                        if (ImGui::Selectable(entry.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick))
+                        {
+                            controller_.operationPath(entry);
+                            if (currentFileAction == FileAction::Open &&
+                                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                                confirm = true;
+                        }
+                    }
+                }
+                ImGui::EndListBox();
+            }
             ImGui::TextUnformatted("Target path");
             ImGui::SetNextItemWidth(-1);
             auto& pathBuf = controller_.pathBufferData();
             ImGui::InputText("##path", pathBuf.data(), pathBuf.size());
-            if (ImGui::Button(controller_.fileAction() == FileAction::Open ? "Open" : "Save"))
+            if (ImGui::Button(currentFileAction == FileAction::Open ? "Open" : "Save"))
                 confirm = true;
             ImGui::SameLine();
             if (ImGui::Button("Cancel"))
@@ -296,6 +337,7 @@ namespace Incubator::Editor
             {
                 controller_.cancelFileAction();
                 controller_.cancelPendingAction();
+                lastFileAction_ = FileAction::None;
                 confirm = false;
             }
         }

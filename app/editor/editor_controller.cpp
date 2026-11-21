@@ -1,12 +1,15 @@
 #include "editor_controller.h"
 
 #include <algorithm>
+#include <cctype>
+#include <filesystem>
 #include <utility>
 
 #include "editor_app.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/model/prepared_model.h"
+#include "runtime/platform/fileio/fileio.h"
 #include "runtime/resource/resource_manager.h"
 
 namespace Incubator::Editor
@@ -281,6 +284,55 @@ namespace Incubator::Editor
     void EditorController::operationPath(std::string_view path)
     {
         scenePath_ = pathBuffer(path);
+    }
+
+    void EditorController::refreshSceneFiles(FileIO::FileIO& fileIO)
+    {
+        sceneFiles_.clear();
+        std::vector<std::string> scanDirs;
+        scanDirs.emplace_back("assets/scenes");
+        if (!operations_.currentFile().empty())
+        {
+            const std::filesystem::path currentParent = std::filesystem::path(operations_.currentFile()).parent_path();
+            if (!currentParent.empty() && !currentParent.is_absolute())
+            {
+                const std::string parentStr = currentParent.generic_string();
+                if (parentStr != "assets/scenes")
+                    scanDirs.push_back(parentStr);
+            }
+        }
+
+        for (const auto& dir : scanDirs)
+        {
+            try
+            {
+                const std::filesystem::path dirPath(dir);
+                if (!fileIO.directoryExists(dirPath))
+                    continue;
+                for (const auto& entry : fileIO.listDirectory(dirPath))
+                {
+                    if (entry.directory)
+                        continue;
+                    std::string ext = std::filesystem::path(entry.name).extension().string();
+                    std::transform(ext.begin(), ext.end(), ext.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    if (ext != ".json")
+                        continue;
+                    sceneFiles_.push_back((dirPath / entry.name).generic_string());
+                }
+            }
+            catch (...)
+            {
+                // 静默容错：目录不存在或枚举失败时不改写 operations_.message() / messageError()。
+            }
+        }
+        std::sort(sceneFiles_.begin(), sceneFiles_.end());
+        sceneFiles_.erase(std::unique(sceneFiles_.begin(), sceneFiles_.end()), sceneFiles_.end());
+    }
+
+    void EditorController::refreshSceneFiles(EditorApp& app)
+    {
+        refreshSceneFiles(app.fileIO());
     }
 
     bool EditorController::confirmFileAction(std::unique_ptr<Scene::Scene>& scene, std::array<float, 4>& clearColor,

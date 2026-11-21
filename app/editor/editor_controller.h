@@ -243,6 +243,15 @@ namespace Incubator::Editor
             return scenePath_;
         }
 
+        /// @brief 扫描 assets/scenes 及当前关联场景所在目录下的 .json 文件，目录缺失或异常时静默返回空列表。
+        void refreshSceneFiles(FileIO::FileIO& fileIO);
+        void refreshSceneFiles(EditorApp& app);
+        /// @brief 返回最近一次扫描并去重排序后的规范化相对场景路径列表。
+        const std::vector<std::string>& sceneFiles() const noexcept
+        {
+            return sceneFiles_;
+        }
+
         /// @brief 确认当前文件对话框动作（Open 或 SaveAs），并在必要时完成挂起流程。
         bool confirmFileAction(std::unique_ptr<Scene::Scene>& scene, std::array<float, 4>& clearColor,
                                FileIO::FileIO* fileIO);
@@ -388,6 +397,7 @@ namespace Incubator::Editor
         bool useObj_ = false;
         bool saveRequested_ = false;
         std::vector<char> scenePath_ = pathBuffer("");
+        std::vector<std::string> sceneFiles_;
         App::OrbitCamera orbit_;
         bool clickCandidate_ = false;
         Render::FrameExtent extent_{0, 0};

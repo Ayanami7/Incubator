@@ -55,19 +55,20 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 
 | 控件 | 行为 |
 |---|---|
-| 实体列表 | 按创建顺序显示名称和 EntityId，空名显示“未命名”，点击选中 |
+| 实体列表与内联可见性 | 按创建顺序显示名称和 `EntityId`（空名显示“未命名”），左侧 `##vis` 复选框可按实体 ID 直接切换显示/隐藏而不抢占当前选中项，点击列表项选中 |
+| 顶部快捷主工具栏 | 位于主菜单栏下方，提供 `Open...` / `Save`（固定 ID `###toolbar-save`） / `Save As...`、`Undo` / `Redo`、`Translate (W)` / `Rotate (E)` / `Scale (R)`、`Focus (F)` / `Reset View` 与 `Shadows` 快捷开关 |
 | 选中包围盒与三轴 Gizmo 叠加显示 | 选中可见实体时，在 Scene 图像层先绘制世界 AABB 黄色辅助线（若有模型边界），再叠绘可交互三轴 Transform Gizmo（无模型可见实体亦正常绘制 Gizmo）；X/Y/Z 轴默认红/绿/蓝配色，悬停或拖拽轴高亮加粗；不参与深度且不遮挡面板或弹窗，不持久化 |
-| 三轴 Gizmo 拖拽与模式切换 | 左键命中并拖拽 Gizmo 轴实时调整实体的世界平移、世界旋转或局部缩放（单次拖拽折叠为 1 步 Undo，失焦自动回滚，期间屏蔽重选与相机手势）；可通过 `Properties` 内 `Translate (W)` / `Rotate (E)` / `Scale (R)` 按钮或单键 `W` / `E` / `R` 切换（文本输入、弹窗与拖拽期间不误切） |
+| 三轴 Gizmo 拖拽与模式切换 | 左键命中并拖拽 Gizmo 轴实时调整实体的世界平移、世界旋转或局部缩放（单次拖拽折叠为 1 步 Undo，失焦自动回滚，期间屏蔽重选与相机手势）；可通过工具栏、`Properties` 内 `Translate (W)` / `Rotate (E)` / `Scale (R)` 按钮或单键 `W` / `E` / `R` 切换（文本输入、弹窗与拖拽期间不误切） |
 | Name | 编辑选中实体名称，允许重名和空名；连续输入在确认/失焦后折叠为单步历史；名称不影响实体身份或模型缓存 |
 | Objects：New model / Create object | 选择 Avocado 或 Teapot，在画面中央按该模型的创建预设添加共享实体，并选中 |
-| Assets：Enter / Up / Refresh | 进入虚拟子目录、返回上级、重新列出当前目录；不解析或热重载资源 |
+| Assets：面包屑导航 / Up / Refresh | 点击路径面包屑任意目录段直接跳转，或使用 `Up` / `Refresh` 返回上级及重新列出当前目录；列表按彩色类型徽章（`[DIR]` / `[MODEL]` / `[PNG]` / `[DEP]`）展示；不解析或热重载资源 |
 | Assets：Add | 对 OBJ/glTF 候选文件按需准备，成功后加入场景并选中；其他文件没有加入入口 |
 | Assets：Clear unused models | 显式移出没有外部模型持有的缓存项；待 Undo/Redo 恢复的历史引用与在途 GPU 资源保持有效，覆盖/淘汰或打开场景清空历史栈后可回收 |
-| File：Save / Save As / Open | Save 写当前文件（无关联时转 Save As）；Open 和 Save As 输入目标并确认，成功后清除脏标记并清空历史栈；取消和失败保留原关联与当前历史 |
+| File：Save / Save As / Open | Save 写当前文件（无关联时转 Save As）；Open 和 Save As 弹窗内置可视化 `.json` 场景文件浏览器（自动扫描 `assets/scenes` 及当前关联目录，目录缺失静默返回空列表，单击填充路径、Open 下双击直接确认），同时支持手动输入路径；成功后清除脏标记并清空历史栈；取消和失败保留原关联与当前历史 |
 | 未保存修改确认 | 文档处于脏状态（状态栏显示 `*`）时触发 `Open`、`Clear scene`、`Exit` 或窗口关闭按钮将弹出确认弹窗，支持 `Save`（无关联时衔接 `Save As` 成功再继续，取消则中止原操作）、`Discard` 与 `Cancel` |
 | Edit：Undo / Redo / Duplicate / Delete | 撤销/重做最近编辑动作（上限 64 步，回退至已保存修订号自动清除脏标记）；支持窗口级 `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z`（无需视口聚焦，文本输入、弹窗及活动事务期间不误触发） |
 | Visible | 显示/隐藏当前实体，保留其变换 |
-| Position / Rotation / Scale | 独立编辑实体的真实 TRS；支持零、负值及非均匀缩放，旋转使用角度并转换为四元数；连续拖动合并为单步 Undo |
+| Position / Rotation / Scale | 双列对齐布局（含 X/Y/Z 轴色标），独立编辑实体的真实 TRS 与右侧 `R##reset-pos/rot/scale` 分项重置按钮；支持零、负值及非均匀缩放，旋转使用角度并转换为四元数；连续拖动合并为单步 Undo |
 | Duplicate | 复制并选中实体，保持变换、可见性和共享模型；名称追加“ 副本”，空名使用“未命名 副本” |
 | Delete selected | 删除选中实体，撤销可恢复原 `EntityId` 与共享模型；其他实体保持 |
 | Objects → More → Clear scene | 清空实体及选中状态，保留 Camera、背景和 UI（进入历史栈，撤销可完整恢复） |
@@ -115,8 +116,8 @@ Scene settings 折叠区提供 Light yaw/pitch、Color (linear)、Intensity 和 
 ## 实现与持有期
 
 `main.cpp` 创建 FileIO、读取启动配置，将同一 FileIO 交给 `EditorApp`，并以启动场景路径创建主循环回调；
-`EditorApp::run()` 无参入口使用默认场景路径。`editor_scene.cpp` 组织模型展示、面板事务归属及文件确认弹窗，编辑、脏状态跟踪、历史快照与保存操作由 `editor_operations.cpp` 实现，视口三轴 Gizmo 投影、命中与射线求解由 `gizmo.cpp` 实现。
-`EditorOperations`（组合 `EditorSelection`，二者与 `gizmo.h` 头文件均不依赖 ImGui）维护会话模型复用表、唯一选中 `EntityId`、当前文件关联、基于操作/事务修订号的脏状态判定以及有界（64 步）轻量值快照栈（撤销通过 `Scene::restoreEntities` 还原既有 `EntityId` 与共享 `PreparedModel`，不触发重新读盘或 GPU 上传），不持有 Scene 或实体指针；`EditorScene` 承接面板未确认输入缓冲、面板事务标志、弹窗、布局、轨道/点击/Gizmo 拖拽手势以及 `selection_overlay.h` / `gizmo.h` 视口叠加显示，不复制第二份 Scene 或实体状态。实体唯一 Transform、可见性、Camera 及光照由 Scene 保存。角度、TRS 与灯光编辑值在本轮 UI 中临时取得，连续编辑在 `beginTransaction` / `commitTransaction` 内折叠为单步历史；未提交的面板事务在打开/清空/退出/关闭前会先结算进脏状态，以免绕过未保存拦截；拖拽/窗口失焦调用 `cancelTransaction` 回滚起点。
+`EditorApp::run()` 无参入口使用默认场景路径。`editor_controller.cpp` 统一承载文档工作流与未保存拦截、场景文件枚举、资产浏览、面板跨通道连续事务、视口 Gizmo/相机交互、快捷键判定与纯 C++ 视口叠加图元组装；`editor_scene.cpp` 与 `editor_theme.cpp` 仅负责暗灰工作室主题、ImGui 控件绘制、输入快照采集及向 `EditorController` 转发；`editor_operations.cpp` 实现编辑、脏状态跟踪、历史快照与保存加载；`gizmo.cpp` 实现视口三轴 Gizmo 投影、命中与射线求解。
+`EditorController` 与 `EditorOperations`（组合 `EditorSelection`，连同 `gizmo.h` 与 `app/common/viewport_input.h` 头文件均不依赖 ImGui）维护会话模型复用表、唯一选中 `EntityId`、当前文件关联、基于操作/事务修订号的脏状态判定以及有界（64 步）轻量值快照栈（撤销通过 `Scene::restoreEntities` 还原既有 `EntityId` 与共享 `PreparedModel`，不触发重新读盘或 GPU 上传），不持有 Scene 或实体指针；`EditorScene` 仅作为薄 ImGui 视图与布局提交层，不复制第二份 Scene 或实体状态。实体唯一 Transform、可见性、Camera 及光照由 Scene 保存。角度、TRS 与灯光编辑值在本轮 UI 中临时取得，连续编辑在 `beginTransaction` / `commitTransaction` 内折叠为单步历史；未提交的面板事务在打开/清空/退出/关闭前会先结算进脏状态，以免绕过未保存拦截；拖拽/窗口失焦调用 `cancelTransaction` 回滚起点。
 创建/删除/清空时不跨结构变更保存实体指针；从文件加载成功后清除旧选择并清空历史栈。操作规则、历史淘汰、纯 CPU 裁剪/投影与 Gizmo 求解由单元测试覆盖，面板事务、快捷键、`W`/`E`/`R` 模式切换、叠加绘制与视口交互由真实 ImGui 输入批次集成测试覆盖，独立进程保存与恢复（含 Gizmo 编辑与撤销重做后持久化）由 `editor_scene_restart` 验证，互不替代。
 
 EditorApp 向回调消费者提供基于单调 Clock 的 FrameTime；生产 Editor 不显示循环间隔，也没有固定步长调度或自动实体动画。

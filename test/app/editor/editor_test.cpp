@@ -1898,6 +1898,7 @@ namespace
                      auto* h = static_cast<GLFWwindow*>(app.window().getNativeHandle());
                      auto* props = ImGui::FindWindowByName("Properties");
                      if (!props) return;
+                     if (phase < 36) hooks.focus(h, GLFW_TRUE);
                      const std::string idStr = std::to_string(targetId.value());
                      switch (phase)
                      {
@@ -1934,8 +1935,8 @@ namespace
                          case 17: case 27: hooks.mouse(h, 0, GLFW_PRESS, 0); ++phase; break;
                          case 18: case 28: hooks.cursor(h, foundX + 60.0, foundY + 50.0); EXPECT_FALSE(editor.canUndo()); ++phase; break;
                          case 19: case 29: hooks.mouse(h, 0, GLFW_RELEASE, 0); ++phase; break;
-                         case 20: case 30: hooks.cursor(h, 10.0, 10.0); hooks.mouse(h, 0, GLFW_PRESS, 0); ++phase; break;
-                         case 21: case 31: hooks.mouse(h, 0, GLFW_RELEASE, 0); ++phase; break;
+                         case 20: case 30: ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, true); ++phase; break;
+                         case 21: case 31: ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, false); ++phase; break;
                          case 22:
                              ASSERT_NE(app.clearColor(), initialClearColor); ASSERT_TRUE(editor.undo(app));
                              EXPECT_TRUE(app.clearColor() == initialClearColor && !editor.canUndo()); ++phase; break;
@@ -2392,6 +2393,152 @@ namespace
                          [&](auto& app) { editor.layout(app); }, [&](auto& app) { editor.requestClose(app); }});
             EXPECT_TRUE(captured && tImg.width > 0 && tImg.width == rImg.width && tImg.width == sImg.width &&
                         tImg.rgba != rImg.rgba && rImg.rgba != sImg.rgba && tImg.rgba != sImg.rgba);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, ToolbarBreadcrumbsTransformResetAndSceneFileBrowserUnderValidation)
+    {
+        copyShowcaseModels();
+        {
+            Editor::EditorApp session(options(true, 1280, 800));
+            Editor::EditorScene editor;
+            Scene::EntityId firstId, secondId;
+            int step = 0, totalFrames = 0;
+            bool done = false;
+            WindowCapture::Image tImg, rImg, sImg;
+
+            session.run(
+                {[&](auto& app) {
+                     editor.initialize(app, "assets/scenes/mixed.json");
+                     app.shadowSettings().enabled = true;
+                     ASSERT_GE(app.scene().entities().size(), 2u);
+                     firstId = app.scene().entities()[0].id;
+                     secondId = app.scene().entities()[1].id;
+                     editor.select(app, firstId);
+                     editor.controller().operations().setTransform(
+                         app.scene(), app.clearColor(),
+                         Scene::Transform({2.0f, 3.0f, 4.0f},
+                                          glm::angleAxis(0.6f, glm::vec3(0.0f, 1.0f, 0.0f)),
+                                          {2.0f, 2.0f, 2.0f}));
+                     fs::create_directories("review");
+                 },
+                 [&](auto& app, const auto&) {
+                     if (++totalFrames > 160)
+                     {
+                         ADD_FAILURE() << "Task04 UI test timeout step=" << step;
+                         app.requestExit();
+                         return;
+                     }
+                     auto* toolbarWin = ImGui::FindWindowByName("##toolbar");
+                     auto* propsWin = ImGui::FindWindowByName("Properties");
+                     auto* objectsWin = ImGui::FindWindowByName("Objects");
+                     auto* assetsWin = ImGui::FindWindowByName("Assets");
+                     if (!toolbarWin || !propsWin || !objectsWin || !assetsWin)
+                         return;
+
+                     switch (step)
+                     {
+                         case 0:
+                             // 采集 Translate 模式布局截图并点击工具栏 Rotate (E)。
+                             tImg = WindowCapture::capture(app.window());
+                             WindowCapture::save(tImg, "review/ui-translate.ppm");
+                             ImGui::ActivateItemByID(toolbarWin->GetID("Rotate (E)"));
+                             ++step;
+                             break;
+                         case 1:
+                             EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Rotate);
+                             rImg = WindowCapture::capture(app.window());
+                             WindowCapture::save(rImg, "review/ui-rotate.ppm");
+                             ImGui::ActivateItemByID(toolbarWin->GetID("Scale (R)"));
+                             ++step;
+                             break;
+                         case 2:
+                             EXPECT_EQ(editor.gizmoMode(), Editor::GizmoMode::Scale);
+                             sImg = WindowCapture::capture(app.window());
+                             WindowCapture::save(sImg, "review/ui-scale.ppm");
+                             // 验证 Properties 分项重置按钮（R##reset-pos/rot/scale）。
+                             ImGui::ActivateItemByID(propsWin->GetID("R##reset-pos"));
+                             ++step;
+                             break;
+                         case 3:
+                             EXPECT_EQ(app.scene().find(firstId)->transform.position(), glm::vec3(0.0f));
+                             ImGui::ActivateItemByID(propsWin->GetID("R##reset-rot"));
+                             ++step;
+                             break;
+                         case 4:
+                             EXPECT_NEAR(std::abs(app.scene().find(firstId)->transform.rotation().w), 1.0f, 1e-4f);
+                             ImGui::ActivateItemByID(propsWin->GetID("R##reset-scale"));
+                             ++step;
+                             break;
+                         case 5:
+                             EXPECT_EQ(app.scene().find(firstId)->transform.scale(), glm::vec3(1.0f));
+                             // 验证 Objects 列表内联 ##vis 不抢占当前选中实体。
+                             if (!objectsWin->DC.ChildWindows.empty())
+                             {
+                                 auto* listChild = objectsWin->DC.ChildWindows[0];
+                                 const ImGuiID secondVisId = ImHashStr(
+                                     "##vis", 0, listChild->GetID(std::to_string(secondId.value()).c_str()));
+                                 ImGui::ActivateItemByID(secondVisId);
+                                 ++step;
+                             }
+                             break;
+                         case 6:
+                             EXPECT_EQ(editor.selected(), firstId);
+                             EXPECT_FALSE(app.scene().find(secondId)->visible);
+                             // 验证 Assets 进入子目录后切换标签页焦点并通过面包屑导航跳回根 "/"。
+                             editor.browseDirectory("models/avocado/glTF");
+                             ImGui::SetWindowFocus("Assets");
+                             ++step;
+                             break;
+                         case 7:
+                             EXPECT_EQ(editor.assetDirectory(), "models/avocado/glTF");
+                             {
+                                 const ImGuiID rootCrumb =
+                                     ImHashStr("/", 0, assetsWin->GetID("breadcrumb"));
+                                 ImGui::ActivateItemByID(rootCrumb);
+                             }
+                             ++step;
+                             break;
+                         case 8:
+                             EXPECT_TRUE(editor.assetDirectory().empty());
+                             // 验证工具栏固定 ID 保存按钮与 Open... 弹窗场景文件列表。
+                             ImGui::ActivateItemByID(toolbarWin->GetID("###toolbar-save"));
+                             ++step;
+                             break;
+                         case 9:
+                             EXPECT_FALSE(editor.isDirty());
+                             ImGui::ActivateItemByID(toolbarWin->GetID("Open..."));
+                             ++step;
+                             break;
+                         case 10:
+                             if (auto* openWin = ImGui::FindWindowByName("Open scene");
+                                 openWin && !openWin->DC.ChildWindows.empty())
+                             {
+                                 auto* filesChild = openWin->DC.ChildWindows[0];
+                                 const auto& files = editor.controller().sceneFiles();
+                                 EXPECT_FALSE(files.empty());
+                                 if (!files.empty())
+                                 {
+                                     ImGui::ActivateItemByID(filesChild->GetID(files.front().c_str()));
+                                     ++step;
+                                 }
+                             }
+                             break;
+                         case 11:
+                             EXPECT_EQ(std::string(editor.controller().pathBufferData().data()),
+                                       editor.controller().sceneFiles().front());
+                             done = true;
+                             app.requestExit();
+                             break;
+                     }
+                 },
+                 [&](auto& app) { editor.ui(app); },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            EXPECT_TRUE(done && tImg.width > 0 && tImg.rgba != rImg.rgba && rImg.rgba != sImg.rgba);
         }
         cleanValidation();
     }
