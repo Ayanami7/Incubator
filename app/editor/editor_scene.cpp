@@ -358,7 +358,48 @@ namespace Incubator::Editor
     {
         ImGui::SetNextWindowSize({ImGui::GetFontSize() * 22, ImGui::GetFontSize() * 22}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Assets");
-        ImGui::TextWrapped("Directory: /%s", controller_.assetDirectory().c_str());
+        // 可点击路径面包屑导航栏
+        std::string breadcrumbTarget;
+        bool hasBreadcrumbTarget = false;
+        ImGui::PushID("breadcrumb");
+        if (ImGui::SmallButton("/"))
+        {
+            breadcrumbTarget.clear();
+            hasBreadcrumbTarget = true;
+        }
+        if (!controller_.assetDirectory().empty())
+        {
+            const std::string& dir = controller_.assetDirectory();
+            size_t start = 0;
+            int segIndex = 0;
+            while (start < dir.size())
+            {
+                const size_t slash = dir.find('/', start);
+                const size_t end = slash == std::string::npos ? dir.size() : slash;
+                const std::string segment = dir.substr(start, end - start);
+                const std::string cumulative = dir.substr(0, end);
+                if (!segment.empty())
+                {
+                    ImGui::SameLine(0.0f, 4.0f);
+                    ImGui::TextDisabled(">");
+                    ImGui::SameLine(0.0f, 4.0f);
+                    ImGui::PushID(segIndex++);
+                    if (ImGui::SmallButton(segment.c_str()))
+                    {
+                        breadcrumbTarget = cumulative;
+                        hasBreadcrumbTarget = true;
+                    }
+                    ImGui::PopID();
+                }
+                if (slash == std::string::npos)
+                    break;
+                start = slash + 1;
+            }
+        }
+        ImGui::PopID();
+        if (hasBreadcrumbTarget)
+            browseDirectory(breadcrumbTarget);
+
         if (!controller_.assetDirectory().empty())
         {
             if (ImGui::Button("Up"))
@@ -388,25 +429,51 @@ namespace Incubator::Editor
             ImGui::PopStyleColor();
         }
         std::string enter;
-        if (ImGui::BeginTable("##assets", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp))
+        const ImGuiTableFlags tableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                           ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+        if (ImGui::BeginTable("##assets", 2, tableFlags))
         {
             ImGui::TableSetupColumn("Name / type", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 3.5f);
+            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 3.8f);
             ImGui::TableHeadersRow();
             for (const auto& entry : controller_.assetEntries())
             {
                 ImGui::PushID(entry.path.c_str());
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                const auto kind = entry.kind == Resource::AssetKind::Directory    ? "Directory"
-                                  : entry.kind == Resource::AssetKind::Model      ? "Model candidate"
-                                  : entry.kind == Resource::AssetKind::Texture    ? "PNG"
-                                  : entry.kind == Resource::AssetKind::Dependency ? "Dependency"
-                                                                                  : "File";
+                const char* kind = "File";
+                const char* badge = "[FILE]";
+                ImVec4 badgeColor = EditorTheme::mutedTextColor();
+                if (entry.kind == Resource::AssetKind::Directory)
+                {
+                    kind = "Directory";
+                    badge = "[DIR]";
+                    badgeColor = EditorTheme::badgeDirColor();
+                }
+                else if (entry.kind == Resource::AssetKind::Model)
+                {
+                    kind = "Model candidate";
+                    badge = "[MODEL]";
+                    badgeColor = EditorTheme::badgeModelColor();
+                }
+                else if (entry.kind == Resource::AssetKind::Texture)
+                {
+                    kind = "PNG";
+                    badge = "[PNG]";
+                    badgeColor = EditorTheme::badgeTextureColor();
+                }
+                else if (entry.kind == Resource::AssetKind::Dependency)
+                {
+                    kind = "Dependency";
+                    badge = "[DEP]";
+                }
+                ImGui::PushStyleColor(ImGuiCol_Text, badgeColor);
+                ImGui::TextUnformatted(badge);
+                ImGui::PopStyleColor();
+                ImGui::SameLine(0.0f, 6.0f);
                 ImGui::TextUnformatted(entry.name.c_str());
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s\n%s", entry.path.c_str(), kind);
-                ImGui::TextDisabled("%s", kind);
                 ImGui::TableNextColumn();
                 if (entry.kind == Resource::AssetKind::Directory && ImGui::Button("Enter"))
                     enter = entry.path;
@@ -617,16 +684,30 @@ namespace Incubator::Editor
         ImGui::Text("Objects: %zu", app.scene().entities().size());
         if (ImGui::BeginListBox("##entities", {-1, -1}))
         {
+            auto* drawList = ImGui::GetWindowDrawList();
             for (const auto& entity : app.scene().entities())
             {
                 const auto id = std::to_string(entity.id.value());
-                const auto label = (entity.name.empty() ? std::string("未命名") : entity.name) + " (" + id + ")";
+                const std::string displayName = entity.name.empty() ? std::string("未命名") : entity.name;
+                const std::string idSuffix = " (#" + id + ")";
                 ImGui::PushID(id.c_str());
+                bool visible = entity.visible;
+                if (ImGui::Checkbox("##vis", &visible))
+                    controller_.setVisible(app, entity.id, visible);
+                ImGui::SameLine();
                 if (ImGui::Selectable("##entity", controller_.selected() == entity.id))
                     select(app, entity.id);
                 const auto pos = ImGui::GetItemRectMin();
-                ImGui::GetWindowDrawList()->AddText({pos.x, pos.y}, ImGui::GetColorU32(ImGuiCol_Text), label.data(),
-                                                    label.data() + label.size());
+                const float textY = pos.y + (ImGui::GetItemRectSize().y - ImGui::GetFontSize()) * 0.5f;
+                const ImU32 nameColor = entity.visible
+                                            ? ImGui::GetColorU32(ImGuiCol_Text)
+                                            : ImGui::GetColorU32(EditorTheme::mutedTextColor());
+                drawList->AddText({pos.x + 2.0f, textY}, nameColor, displayName.data(),
+                                  displayName.data() + displayName.size());
+                const float nameWidth = ImGui::CalcTextSize(displayName.c_str()).x;
+                drawList->AddText({pos.x + 2.0f + nameWidth, textY},
+                                  ImGui::GetColorU32(EditorTheme::mutedTextColor()), idSuffix.data(),
+                                  idSuffix.data() + idSuffix.size());
                 ImGui::PopID();
             }
             ImGui::EndListBox();
@@ -654,13 +735,46 @@ namespace Incubator::Editor
             if (controller_.activePanelTransaction() == PanelTransactionKind::Entity)
                 controller_.commitPanelTransactions(app);
         };
-        ImGui::PushItemWidth(-1);
+        const auto& style = ImGui::GetStyle();
+        const float availWidth = ImGui::GetContentRegionAvail().x;
+        const float fontSize = ImGui::GetFontSize();
+        const float labelWidth = std::clamp(availWidth * 0.34f, fontSize * 5.5f, fontSize * 8.0f);
+        const float controlWidth = std::max(60.0f, availWidth - labelWidth);
+        const float resetBtnWidth = ImGui::CalcTextSize("R").x + style.FramePadding.x * 2.0f;
+        const float transformWidth = std::max(60.0f, controlWidth - resetBtnWidth - style.ItemSpacing.x);
+        const float halfWidth = std::max(60.0f, (availWidth - style.ItemSpacing.x) * 0.5f);
+        const auto rowLabel = [&](const char* label) {
+            const float rowStartX = ImGui::GetCursorPosX();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(label);
+            ImGui::SameLine(rowStartX + labelWidth);
+        };
+        const auto rowAxisLabel = [&](const char* label) {
+            const float rowStartX = ImGui::GetCursorPosX();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(label);
+            const ImVec2 itemMin = ImGui::GetItemRectMin();
+            const ImVec2 itemMax = ImGui::GetItemRectMax();
+            const float barX = itemMax.x + 5.0f;
+            const float barH = std::max(2.0f, (itemMax.y - itemMin.y - 4.0f) / 3.0f);
+            auto* drawList = ImGui::GetWindowDrawList();
+            drawList->AddRectFilled({barX, itemMin.y + 1.0f}, {barX + 3.0f, itemMin.y + 1.0f + barH},
+                                    ImGui::GetColorU32(EditorTheme::axisXColor()));
+            drawList->AddRectFilled({barX, itemMin.y + 2.0f + barH}, {barX + 3.0f, itemMin.y + 2.0f + barH * 2.0f},
+                                    ImGui::GetColorU32(EditorTheme::axisYColor()));
+            drawList->AddRectFilled({barX, itemMin.y + 3.0f + barH * 2.0f},
+                                    {barX + 3.0f, itemMin.y + 3.0f + barH * 3.0f},
+                                    ImGui::GetColorU32(EditorTheme::axisZColor()));
+            ImGui::SameLine(rowStartX + labelWidth);
+        };
+
         if (ImGui::CollapsingHeader("Selected object", ImGuiTreeNodeFlags_DefaultOpen))
         {
             if (const auto* entity = app.scene().find(controller_.selected()))
             {
-                ImGui::Text("ID: %llu", static_cast<unsigned long long>(entity->id.value()));
-                ImGui::TextUnformatted("Name");
+                rowLabel("ID");
+                ImGui::Text("#%llu", static_cast<unsigned long long>(entity->id.value()));
+                rowLabel("Name");
                 const auto nameId = std::to_string(entity->id.value());
                 ImGui::PushID(nameId.c_str());
                 auto name = EditorController::pathBuffer(entity->name);
@@ -670,6 +784,7 @@ namespace Incubator::Editor
                     data->Buf = buffer->data();
                     return 0;
                 };
+                ImGui::SetNextItemWidth(controlWidth);
                 const bool nameChanged = ImGui::InputText("##entity-name", name.data(), name.size(),
                                                           ImGuiInputTextFlags_CallbackResize, resize, &name);
                 if (ImGui::IsItemActivated() && windowFocused)
@@ -685,7 +800,8 @@ namespace Incubator::Editor
                 auto scale = transform.scale();
                 auto degrees = glm::degrees(glm::eulerAngles(transform.rotation()));
                 bool visible = entity->visible;
-                if (ImGui::Checkbox("Visible", &visible))
+                rowLabel("Visible");
+                if (ImGui::Checkbox("##visible", &visible))
                     operations.setVisible(app.scene(), app.clearColor(), visible);
                 const auto applyTransformWidget = [&](bool edited) {
                     const bool activateStart = ImGui::IsItemActivated();
@@ -698,38 +814,63 @@ namespace Incubator::Editor
                     if (ImGui::IsItemDeactivated())
                         finishEntityTransaction();
                 };
-                ImGui::TextUnformatted("Position");
+                rowAxisLabel("Position");
+                ImGui::SetNextItemWidth(transformWidth);
                 bool edited = ImGui::DragFloat3("##position", &position.x, 0.05f);
                 if (edited)
                     transform.setPosition(position);
                 applyTransformWidget(edited);
-                ImGui::TextUnformatted("Rotation");
+                ImGui::SameLine();
+                if (ImGui::Button("R##reset-pos"))
+                {
+                    auto resetTransform = entity->transform;
+                    resetTransform.setPosition(glm::vec3(0.0f));
+                    operations.setTransform(app.scene(), app.clearColor(), resetTransform);
+                }
+                rowAxisLabel("Rotation");
+                ImGui::SetNextItemWidth(transformWidth);
                 edited = ImGui::SliderFloat3("##rotation", &degrees.x, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp);
                 if (edited)
                     transform.setRotation(glm::quat(glm::radians(degrees)));
                 applyTransformWidget(edited);
-                ImGui::TextUnformatted("Scale");
+                ImGui::SameLine();
+                if (ImGui::Button("R##reset-rot"))
+                {
+                    auto resetTransform = entity->transform;
+                    resetTransform.setRotation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+                    operations.setTransform(app.scene(), app.clearColor(), resetTransform);
+                }
+                rowAxisLabel("Scale");
+                ImGui::SetNextItemWidth(transformWidth);
                 edited = ImGui::DragFloat3("##scale", &scale.x, 0.05f);
                 if (edited)
                     transform.setScale(scale);
                 applyTransformWidget(edited);
-                if (ImGui::Button("Duplicate"))
+                ImGui::SameLine();
+                if (ImGui::Button("R##reset-scale"))
+                {
+                    auto resetTransform = entity->transform;
+                    resetTransform.setScale(glm::vec3(1.0f));
+                    operations.setTransform(app.scene(), app.clearColor(), resetTransform);
+                }
+                if (ImGui::Button("Duplicate", {halfWidth, 0.0f}))
                     duplicateSelected(app);
                 ImGui::SameLine();
-                if (ImGui::Button("Delete selected"))
+                if (ImGui::Button("Delete selected", {halfWidth, 0.0f}))
                     deleteSelected(app);
             }
             else
                 ImGui::TextWrapped("Select an object to edit.");
             ImGui::Separator();
+            const float thirdWidth = std::max(40.0f, (availWidth - style.ItemSpacing.x * 2.0f) / 3.0f);
             const auto gizmoModeButton = [&](const char* label, GizmoMode mode) {
                 const bool active = gizmoMode() == mode;
                 if (active)
                 {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                    ImGui::PushStyleColor(ImGuiCol_Button, EditorTheme::accentColor());
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorTheme::accentColor());
                 }
-                if (ImGui::Button(label))
+                if (ImGui::Button(label, {thirdWidth, 0.0f}))
                     setGizmoMode(mode);
                 if (active)
                     ImGui::PopStyleColor(2);
@@ -742,14 +883,15 @@ namespace Incubator::Editor
         }
         if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            if (ImGui::Button("Focus selected", {-1, 0}))
+            if (ImGui::Button("Focus selected", {halfWidth, 0.0f}))
                 focusSelected(app, controller_.lastExtent());
-            if (ImGui::Button("Reset view", {-1, 0}))
+            ImGui::SameLine();
+            if (ImGui::Button("Reset view", {halfWidth, 0.0f}))
                 resetCamera(app);
         }
         if (ImGui::CollapsingHeader("Scene settings", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImGui::TextUnformatted("Background");
+            rowLabel("Background");
             auto clearColor = app.clearColor();
             const bool colorChanged = ImGui::ColorEdit3("##background", clearColor.data(), ImGuiColorEditFlags_NoInputs);
             ImGui::PushID("##background");
@@ -763,16 +905,18 @@ namespace Incubator::Editor
             if (!backgroundActive && controller_.activePanelTransaction() == PanelTransactionKind::Background)
                 controller_.commitPanelTransactions(app);
             auto& shadows = app.shadowSettings();
-            ImGui::Checkbox("Shadows", &shadows.enabled);
+            rowLabel("Shadows");
+            ImGui::Checkbox("##shadows", &shadows.enabled);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(
                     "Fixed light bounds: center (%g, %g, %g), half extents (%g, %g), depth %g..%g.\n"
                     "1024x1024; the range follows light direction, not the camera.",
                     shadows.center.x, shadows.center.y, shadows.center.z, shadows.halfExtent.x, shadows.halfExtent.y,
                     shadows.nearPlane, shadows.farPlane);
-            ImGui::TextUnformatted("Receiver depth bias");
+            rowLabel("Depth bias");
+            ImGui::SetNextItemWidth(controlWidth);
             ImGui::SliderFloat("##shadowBias", &shadows.depthBias, 0, 0.01f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
-            ImGui::TextWrapped("Shadow preview settings are not saved in scene files.");
+            ImGui::TextDisabled("Shadow preview settings are not saved in scene files.");
             ImGui::Separator();
             auto lighting = app.scene().lighting();
             const auto lightingState = App::lightingWidget(lighting);
@@ -791,7 +935,6 @@ namespace Incubator::Editor
         }
         if (controller_.activePanelTransaction() == PanelTransactionKind::Entity && !entityWidgetActive)
             finishEntityTransaction();
-        ImGui::PopItemWidth();
         ImGui::End();
     }
 

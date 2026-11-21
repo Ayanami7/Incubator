@@ -148,15 +148,21 @@ namespace Incubator::Editor
 
     bool EditorOperations::setVisible(Scene::Scene& scene, const std::array<float, 4>& clearColor, bool visible)
     {
-        const auto* entity = scene.find(selection_.selected());
+        return setVisible(scene, clearColor, selection_.selected(), visible);
+    }
+
+    bool EditorOperations::setVisible(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id,
+                                      bool visible)
+    {
+        const auto* entity = scene.find(id);
         if (!entity)
             return false;
         if (entity->visible == visible)
             return true;
         if (transaction_)
-            return selection_.setVisible(scene, visible);
+            return scene.setVisible(id, visible);
         auto before = captureSnapshot(scene, clearColor, currentRevision_);
-        if (!selection_.setVisible(scene, visible))
+        if (!scene.setVisible(id, visible))
             return false;
         pushUndoSnapshot(std::move(before));
         return true;

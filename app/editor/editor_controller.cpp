@@ -429,6 +429,17 @@ namespace Incubator::Editor
         deleteSelected(app.scene(), app.clearColor());
     }
 
+    bool EditorController::setVisible(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id,
+                                      bool visible)
+    {
+        return operations_.setVisible(scene, clearColor, id, visible);
+    }
+
+    bool EditorController::setVisible(EditorApp& app, Scene::EntityId id, bool visible)
+    {
+        return setVisible(app.scene(), app.clearColor(), id, visible);
+    }
+
     Scene::EntityId EditorController::duplicateSelected(Scene::Scene& scene, const std::array<float, 4>& clearColor)
     {
         auto mutableColor = clearColor;

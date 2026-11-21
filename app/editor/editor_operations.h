@@ -41,6 +41,7 @@ namespace Incubator::Editor
                       const Scene::Transform& transform = Scene::Transform{});
         bool rename(Scene::Scene& scene, const std::array<float, 4>& clearColor, std::string name);
         bool setVisible(Scene::Scene& scene, const std::array<float, 4>& clearColor, bool visible);
+        bool setVisible(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id, bool visible);
         bool setTransform(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::Transform transform);
         Scene::EntityId duplicate(Scene::Scene& scene, const std::array<float, 4>& clearColor);
         bool remove(Scene::Scene& scene, const std::array<float, 4>& clearColor);

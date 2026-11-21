@@ -461,14 +461,15 @@ namespace
                          const auto* panel = ImGui::FindWindowByName("Properties");
                          ASSERT_NE(panel, nullptr);
                          click = {panel->Pos.x + panel->Size.x - ImGui::GetFontSize() * 2,
-                                  panel->DC.CursorStartPos.y + ImGui::GetFrameHeightWithSpacing() + 2 * ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeight() * 0.5f};
+                                  panel->DC.CursorStartPos.y + 2 * ImGui::GetFrameHeightWithSpacing() + ImGui::GetFrameHeight() * 0.5f};
                          if (frame >= 9)
                          {
                              const auto* objects = ImGui::FindWindowByName("Objects");
                              ASSERT_TRUE(objects && objects->DC.ChildWindows.Size == 1);
                              const auto* child = objects->DC.ChildWindows[0];
-                             firstRow = {child->DC.CursorStartPos.x + 10, child->DC.CursorStartPos.y + ImGui::GetTextLineHeight() * 0.5f};
-                             thirdRow = {firstRow.x, firstRow.y + 2 * ImGui::GetTextLineHeightWithSpacing()};
+                             const float entityX = child->DC.CursorStartPos.x + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x + 20.0f;
+                             firstRow = {entityX, child->DC.CursorStartPos.y + ImGui::GetFrameHeight() * 0.5f};
+                             thirdRow = {entityX, firstRow.y + 2 * ImGui::GetFrameHeightWithSpacing()};
                          }
                          ++frame;
                      },
@@ -1737,15 +1738,17 @@ namespace
                          },
                          [&](auto& app) {
                              ImGui::SetNextWindowPos({12, 12}, ImGuiCond_Always);
-                             const auto row = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing();
+                             const auto row = ImGui::GetFrameHeightWithSpacing();
                              ImGui::SetNextWindowSize({600, 5 * row + ImGui::GetFrameHeight() + 2 * ImGui::GetStyle().WindowPadding.y}, ImGuiCond_Always);
                              ImGui::Begin("Lighting controls");
-                             ImGui::PushItemWidth(200);
+                             const float availWidth = ImGui::GetContentRegionAvail().x;
+                             const float fontSize = ImGui::GetFontSize();
+                             const float labelWidth = std::clamp(availWidth * 0.34f, fontSize * 5.5f, fontSize * 8.0f);
+                             const float controlWidth = std::max(60.0f, availWidth - labelWidth);
                              const auto origin = ImGui::GetCursorScreenPos();
-                             yawClick = {origin.x + 50, origin.y + ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeight() * 0.5f};
-                             intensityClick = {origin.x + 150, yawClick.y + 3 * row};
+                             yawClick = {origin.x + labelWidth + controlWidth * 0.25f, origin.y + ImGui::GetFrameHeight() * 0.5f};
+                             intensityClick = {origin.x + labelWidth + controlWidth * 0.8f, yawClick.y + 3 * row};
                              App::lightingControls(app.scene());
-                             ImGui::PopItemWidth();
                              ImGui::End();
                              const auto frame = Scene::extractSceneFrame(app.scene(), {800, 600});
                              ASSERT_TRUE(frame);
@@ -1874,7 +1877,10 @@ namespace
                 const float minY = props->InnerRect.Min.y + 8.0f, maxY = props->InnerRect.Max.y - 8.0f;
                 scanY = (scanY < minY) ? minY : scanY + 12.0f;
                 if (scanY > maxY) { scanY = minY; props->Scroll.y = props->Scroll.y >= props->ScrollMax.y ? 0.0f : std::min(props->Scroll.y + 120.0f, props->ScrollMax.y); }
-                hooks.cursor(h, double(props->WorkRect.Min.x + 10.0f), double(scanY));
+                const float availW = props->WorkRect.GetWidth();
+                const float fontSz = ImGui::GetFontSize();
+                const float labelW = std::clamp(availW * 0.34f, fontSz * 5.5f, fontSz * 8.0f);
+                hooks.cursor(h, double(props->WorkRect.Min.x + labelW + 8.0f), double(scanY));
             };
 
             session.run(

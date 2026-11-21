@@ -309,6 +309,9 @@ namespace Incubator::Editor
         void deleteSelected(Scene::Scene& scene, const std::array<float, 4>& clearColor);
         void deleteSelected(EditorApp& app);
 
+        bool setVisible(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id, bool visible);
+        bool setVisible(EditorApp& app, Scene::EntityId id, bool visible);
+
         Scene::EntityId duplicateSelected(Scene::Scene& scene, const std::array<float, 4>& clearColor);
         Scene::EntityId duplicateSelected(EditorApp& app);
 

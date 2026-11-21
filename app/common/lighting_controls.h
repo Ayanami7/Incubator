@@ -28,10 +28,23 @@ namespace Incubator::App
         float yaw = glm::degrees(float(std::atan2(direction.x, -direction.z)));
         float pitch = glm::degrees(float(std::asin(std::clamp(direction.y, -1.0, 1.0))));
         bool active = false;
-        ImGui::TextUnformatted("Light yaw");
+        const float availWidth = ImGui::GetContentRegionAvail().x;
+        const float fontSize = ImGui::GetFontSize();
+        const float labelWidth = std::clamp(availWidth * 0.34f, fontSize * 5.5f, fontSize * 8.0f);
+        const float controlWidth = std::max(60.0f, availWidth - labelWidth);
+        const auto rowLabel = [&](const char* label) {
+            const float rowStartX = ImGui::GetCursorPosX();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(label);
+            ImGui::SameLine(rowStartX + labelWidth);
+        };
+
+        rowLabel("Light yaw");
+        ImGui::SetNextItemWidth(controlWidth);
         bool directionChanged = ImGui::SliderFloat("##lightYaw", &yaw, -180, 180, "%.0f", ImGuiSliderFlags_AlwaysClamp);
         active |= ImGui::IsItemActive();
-        ImGui::TextUnformatted("Light pitch");
+        rowLabel("Light pitch");
+        ImGui::SetNextItemWidth(controlWidth);
         directionChanged |= ImGui::SliderFloat("##lightPitch", &pitch, -89, 89, "%.0f", ImGuiSliderFlags_AlwaysClamp);
         active |= ImGui::IsItemActive();
         if (directionChanged)
@@ -40,17 +53,19 @@ namespace Incubator::App
             lighting.direction = {std::cos(p) * std::sin(y), std::sin(p), -std::cos(p) * std::cos(y)};
         }
         bool changed = directionChanged;
-        ImGui::TextUnformatted("Color (linear)");
+        rowLabel("Color (linear)");
         changed |= ImGui::ColorEdit3("##lightColor", &lighting.color.x,
                                      ImGuiColorEditFlags_Float | ImGuiColorEditFlags_NoInputs);
         ImGui::PushID("##lightColor");
         const bool pickerOpen = ImGui::IsPopupOpen("picker");
         ImGui::PopID();
         active |= ImGui::IsItemActive() || pickerOpen;
-        ImGui::TextUnformatted("Intensity");
+        rowLabel("Intensity");
+        ImGui::SetNextItemWidth(controlWidth);
         changed |= ImGui::SliderFloat("##intensity", &lighting.intensity, 0, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         active |= ImGui::IsItemActive();
-        ImGui::TextUnformatted("Ambient");
+        rowLabel("Ambient");
+        ImGui::SetNextItemWidth(controlWidth);
         changed |= ImGui::SliderFloat("##ambient", &lighting.ambient, 0, 1, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         active |= ImGui::IsItemActive();
         return {changed, active};
