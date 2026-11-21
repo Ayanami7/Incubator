@@ -375,6 +375,8 @@ namespace Incubator::Editor
         {
             return extent_;
         }
+        /// @brief 在视口布局更新后同步有效渲染尺寸，避免切换场景或失焦恢复后按钮聚焦失效。
+        void syncViewportExtent(Render::FrameExtent extent) noexcept;
 
         static std::vector<char> pathBuffer(std::string_view path);
 

@@ -129,6 +129,7 @@ namespace Incubator::Editor
         statusBar(app);
         workspace_.begin();
         app.sceneViewport("Scene", &viewportOpen_);
+        controller_.syncViewportExtent(app.sceneExtent());
     }
 
     void EditorScene::restoreLayout()
@@ -648,7 +649,12 @@ namespace Incubator::Editor
             const bool canFocus = selectedEntity && selectedEntity->model && selectedEntity->model->bounds();
             ImGui::BeginDisabled(!canFocus);
             if (ImGui::Button("Focus (F)"))
-                focusSelected(app, controller_.lastExtent());
+            {
+                const auto focusExtent = (controller_.lastExtent().width > 0 && controller_.lastExtent().height > 0)
+                                             ? controller_.lastExtent()
+                                             : app.sceneExtent();
+                focusSelected(app, focusExtent);
+            }
             ImGui::EndDisabled();
             ImGui::SameLine();
             if (ImGui::Button("Reset View"))
@@ -690,8 +696,9 @@ namespace Incubator::Editor
             std::snprintf(statsBuffer, sizeof(statsBuffer), "Entities: %zu | Cached: %zu",
                           app.scene().entities().size(), cachedModels());
             const float statsWidth = ImGui::CalcTextSize(statsBuffer).x;
+            const float itemRightLocal = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
             const float rightEdge = ImGui::GetWindowContentRegionMax().x;
-            if (rightEdge - ImGui::GetItemRectMax().x > statsWidth + ImGui::GetStyle().ItemSpacing.x * 2.0f)
+            if (rightEdge - itemRightLocal > statsWidth + ImGui::GetStyle().ItemSpacing.x * 2.0f)
             {
                 ImGui::SameLine(rightEdge - statsWidth);
                 ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::mutedTextColor());
@@ -926,7 +933,12 @@ namespace Incubator::Editor
         if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen))
         {
             if (ImGui::Button("Focus selected", {halfWidth, 0.0f}))
-                focusSelected(app, controller_.lastExtent());
+            {
+                const auto focusExtent = (controller_.lastExtent().width > 0 && controller_.lastExtent().height > 0)
+                                             ? controller_.lastExtent()
+                                             : app.sceneExtent();
+                focusSelected(app, focusExtent);
+            }
             ImGui::SameLine();
             if (ImGui::Button("Reset view", {halfWidth, 0.0f}))
                 resetCamera(app);

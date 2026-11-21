@@ -8,6 +8,7 @@
 #include "editor_app.h"
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
+#include "runtime/core/utils/utf8.h"
 #include "runtime/model/prepared_model.h"
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/resource/resource_manager.h"
@@ -291,14 +292,16 @@ namespace Incubator::Editor
         sceneFiles_.clear();
         std::vector<std::string> scanDirs;
         scanDirs.emplace_back("assets/scenes");
-        if (!operations_.currentFile().empty())
+        if (!operations_.currentFile().empty() && Utils::Utf8::isValid(operations_.currentFile()))
         {
-            const std::filesystem::path currentParent = std::filesystem::path(operations_.currentFile()).parent_path();
+            const std::filesystem::path currentParent =
+                Utils::Utf8::toFsPath(operations_.currentFile()).parent_path();
             if (!currentParent.empty() && !currentParent.is_absolute())
             {
-                const std::string parentStr = currentParent.generic_string();
+                std::string parentStr = Utils::Utf8::toUtf8String(currentParent);
+                std::replace(parentStr.begin(), parentStr.end(), '\\', '/');
                 if (parentStr != "assets/scenes")
-                    scanDirs.push_back(parentStr);
+                    scanDirs.push_back(std::move(parentStr));
             }
         }
 
@@ -306,19 +309,22 @@ namespace Incubator::Editor
         {
             try
             {
-                const std::filesystem::path dirPath(dir);
+                const std::filesystem::path dirPath = Utils::Utf8::toFsPath(dir);
                 if (!fileIO.directoryExists(dirPath))
                     continue;
                 for (const auto& entry : fileIO.listDirectory(dirPath))
                 {
-                    if (entry.directory)
+                    if (entry.directory || !Utils::Utf8::isValid(entry.name))
                         continue;
-                    std::string ext = std::filesystem::path(entry.name).extension().string();
+                    const std::filesystem::path entryPath = Utils::Utf8::toFsPath(entry.name);
+                    std::string ext = Utils::Utf8::toUtf8String(entryPath.extension());
                     std::transform(ext.begin(), ext.end(), ext.begin(),
                                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                     if (ext != ".json")
                         continue;
-                    sceneFiles_.push_back((dirPath / entry.name).generic_string());
+                    std::string normalized = Utils::Utf8::toUtf8String(dirPath / entryPath);
+                    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+                    sceneFiles_.push_back(std::move(normalized));
                 }
             }
             catch (...)
@@ -528,10 +534,6 @@ namespace Incubator::Editor
         {
             operations_.beginTransaction(scene, clearColor);
             activePanelTransaction_ = operations_.inTransaction() ? kind : PanelTransactionKind::None;
-        }
-        else if (activePanelTransaction_ == PanelTransactionKind::None)
-        {
-            activePanelTransaction_ = kind;
         }
         return activePanelTransaction_ == kind;
     }
@@ -879,6 +881,12 @@ namespace Incubator::Editor
             operations_.commitTransaction(scene, clearColor);
         }
         return operations_.isDirty();
+    }
+
+    void EditorController::syncViewportExtent(Render::FrameExtent extent) noexcept
+    {
+        if (extent.width > 0 && extent.height > 0)
+            extent_ = extent;
     }
 
     std::vector<char> EditorController::pathBuffer(std::string_view path)

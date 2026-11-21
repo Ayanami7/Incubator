@@ -793,6 +793,15 @@ namespace
         EXPECT_NE(scene.lighting().intensity, 2.5f);
         EXPECT_TRUE(controller.undo(scene, clearColor));
         EXPECT_EQ(scene.find(id)->name, "PanelTarget");
+
+        // 外部事务激活期间（例如 Gizmo 拖拽），面板不得劫持或误提交该事务。
+        controller.operations().beginTransaction(scene, clearColor);
+        ASSERT_TRUE(controller.operations().inTransaction());
+        EXPECT_FALSE(controller.beginPanelTransaction(scene, clearColor, Editor::PanelTransactionKind::Entity));
+        EXPECT_EQ(controller.activePanelTransaction(), Editor::PanelTransactionKind::None);
+        controller.commitPanelTransactions(scene, clearColor);
+        EXPECT_TRUE(controller.operations().inTransaction());
+        controller.operations().cancelTransaction(scene, clearColor);
     }
 
     TEST(EditorControllerTest, ViewportInputGizmoDragAndOverlayAssemblyWorkWithoutWindow)
@@ -893,12 +902,13 @@ namespace
         EXPECT_EQ(controller.message(), beforeMsg);
         EXPECT_FALSE(controller.messageError());
 
-        // 创建 assets/scenes/ 下的混合文件与子目录，验证仅收集 .json 且按字典序排序。
+        // 创建 assets/scenes/ 下的混合文件（含 UTF-8 中文路径）与子目录，验证仅收集 .json 且按字典序排序。
         fs::create_directories(tempRoot / "assets" / "scenes" / "nested_dir");
         for (const char* rel : {"assets/scenes/z_last.json", "assets/scenes/a_first.json",
-                                "assets/scenes/ignore.txt", "assets/scenes/UPPER.JSON"})
+                                "assets/scenes/ignore.txt", "assets/scenes/UPPER.JSON",
+                                "assets/scenes/中文场景.json"})
         {
-            auto handle = fileIO->open(rel,
+            auto handle = fileIO->open(Utils::Utf8::toFsPath(rel),
                                        FileIO::OpenMode::ReadWrite | FileIO::OpenMode::Create |
                                            FileIO::OpenMode::Truncate);
             ASSERT_NE(handle, nullptr);
@@ -909,6 +919,7 @@ namespace
             "assets/scenes/UPPER.JSON",
             "assets/scenes/a_first.json",
             "assets/scenes/z_last.json",
+            "assets/scenes/中文场景.json",
         };
         EXPECT_EQ(controller.sceneFiles(), expected);
         EXPECT_EQ(controller.message(), beforeMsg);
