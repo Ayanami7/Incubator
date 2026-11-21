@@ -47,7 +47,7 @@ namespace Incubator
         {
             Vulkan::VulkanObjectData objectData(const glm::mat4& model)
             {
-                Vulkan::VulkanObjectData result{model, {glm::vec4(0), glm::vec4(0), glm::vec4(0)}};
+                Vulkan::VulkanObjectData result{model, {glm::vec4(0), glm::vec4(0), glm::vec4(0)}, glm::vec4(0)};
                 if (model[0][3] != 0 || model[1][3] != 0 || model[2][3] != 0 || model[3][3] != 1)
                     return result;
 
@@ -63,6 +63,7 @@ namespace Incubator
                             return result;
                 for (int column = 0; column < 3; ++column)
                     result.normalColumns[column] = glm::vec4(normal[column], 0);
+                result.tangentParams.x = determinant > 0.0 ? 1.0f : -1.0f;
                 return result;
             }
 

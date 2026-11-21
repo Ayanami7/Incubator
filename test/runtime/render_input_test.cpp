@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cmath>
+#include <glm/gtc/matrix_transform.hpp>
 #include <limits>
 #include <span>
 
@@ -57,6 +58,20 @@ namespace
         }
         input.lighting.direction = glm::vec3(0);
         EXPECT_THROW(makeFrameUniform(input), Error::Exception);
+    }
+
+    TEST(RenderFrameInputTest, FrameUniformDerivesCameraWorldPositionAndFallsBackOnSingularView)
+    {
+        const glm::vec3 eye(3.0f, -2.0f, 5.0f);
+        const glm::mat4 view = glm::lookAtRH(eye, glm::vec3(1.0f, 0.5f, -1.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        const auto valid = makeFrameUniform({{800, 600}, {view, glm::mat4(1)}, {}});
+        EXPECT_NEAR(valid.cameraPosition.x, eye.x, 1e-4f);
+        EXPECT_NEAR(valid.cameraPosition.y, eye.y, 1e-4f);
+        EXPECT_NEAR(valid.cameraPosition.z, eye.z, 1e-4f);
+        EXPECT_FLOAT_EQ(valid.cameraPosition.w, 0.0f);
+
+        const auto singular = makeFrameUniform({{800, 600}, {glm::mat4(0.0f), glm::mat4(1)}, {}});
+        EXPECT_EQ(singular.cameraPosition, glm::vec4(0.0f));
     }
 
     TEST(RenderFrameInputTest, ShadowFormatRequiresSampledDepthAttachmentAndFixedImageSupport)

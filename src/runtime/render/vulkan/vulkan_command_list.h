@@ -23,13 +23,15 @@ namespace Incubator
             {
                 glm::mat4 model;
                 glm::vec4 normalColumns[3];  ///< 逆转置矩阵的列；每列按 16 字节对齐，w 为零。
+                glm::vec4 tangentParams;     ///< x 为模型线性矩阵行列式符号（±1，无效时为 0），其余为零。
             };
             static_assert(std::is_standard_layout_v<VulkanObjectData>);
             static_assert(offsetof(VulkanObjectData, model) == 0);
             static_assert(offsetof(VulkanObjectData, normalColumns) == 64);
+            static_assert(offsetof(VulkanObjectData, tangentParams) == 112);
             static_assert(sizeof(glm::vec4) == 16);
             static_assert(alignof(VulkanObjectData) == 16);
-            static_assert(sizeof(VulkanObjectData) == 112);
+            static_assert(sizeof(VulkanObjectData) == 128);
             static_assert(sizeof(VulkanObjectData) <= 128);
 
             struct VulkanDrawItem

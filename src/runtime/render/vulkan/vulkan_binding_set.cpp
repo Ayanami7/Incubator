@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <glm/matrix.hpp>
 
 #include "runtime/core/error/error.h"
 #include "runtime/render/vulkan/vulkan_buffer.h"
@@ -48,12 +49,32 @@ namespace Incubator
                         throw Error::Exception(Error::Code::RENDER,
                                                "Shadow receiver depth bias must be finite and nonnegative");
                 }
+                glm::vec4 cameraPosition(0.0f);
+                const glm::dmat3 linear(input.camera.view);
+                const glm::dvec3 translation(input.camera.view[3]);
+                bool finiteView = std::isfinite(translation.x) && std::isfinite(translation.y) &&
+                                  std::isfinite(translation.z);
+                for (int column = 0; column < 3 && finiteView; ++column)
+                    for (int row = 0; row < 3 && finiteView; ++row)
+                        if (!std::isfinite(linear[column][row]))
+                            finiteView = false;
+                if (finiteView)
+                {
+                    const double determinant = glm::determinant(linear);
+                    if (std::isfinite(determinant) && determinant != 0.0)
+                    {
+                        const glm::dvec3 position = -glm::inverse(linear) * translation;
+                        if (std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z))
+                            cameraPosition = glm::vec4(glm::vec3(position), 0.0f);
+                    }
+                }
                 return {input.camera.view,
                         input.camera.projection,
                         glm::vec4(direction, lighting.intensity),
                         glm::vec4(lighting.color, lighting.ambient),
                         input.shadow ? input.shadow->viewProjection : glm::mat4(1),
-                        input.shadow ? glm::vec4(input.shadow->depthBias, 1, 0, 0) : glm::vec4(0)};
+                        input.shadow ? glm::vec4(input.shadow->depthBias, 1, 0, 0) : glm::vec4(0),
+                        cameraPosition};
             }
 
             VulkanBindingSet::VulkanBindingSet(const VulkanDevice& device,

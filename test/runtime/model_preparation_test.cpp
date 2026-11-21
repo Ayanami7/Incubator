@@ -1444,4 +1444,67 @@ namespace
         }
         cleanValidation();
     }
+
+    TEST_F(ModelPreparationTest, AvocadoPbrPreparationReleasesCpuTexturesAndDiffersFromLambert)
+    {
+        constexpr std::string_view avocado = "models/avocado/glTF/Avocado.gltf";
+        constexpr std::string_view basePng = "models/avocado/glTF/Avocado_baseColor.png";
+        constexpr std::string_view normalPng = "models/avocado/glTF/Avocado_normal.png";
+        constexpr std::string_view mrPng = "models/avocado/glTF/Avocado_roughnessMetallic.png";
+
+        auto native = window(true);
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            const Model::PrepareOptions pbrOptions{
+                TextureMipMode::FullChain,
+                {TextureFilter::Linear, TextureFilter::Linear, MipFilter::Linear},
+                ShadingMode::Pbr};
+            const Model::PrepareOptions lambertOptions{
+                TextureMipMode::FullChain,
+                {TextureFilter::Linear, TextureFilter::Linear, MipFilter::Linear},
+                ShadingMode::Lambert};
+
+            const auto pbrModel = Model::prepareModel(renderer, avocado, pbrOptions);
+            const auto lambertModel = Model::prepareModel(renderer, avocado, lambertOptions);
+            EXPECT_EQ(pbrModel->textures().size(), 3u);
+            EXPECT_EQ(lambertModel->textures().size(), 1u);
+
+            ResourceManager::instance().reset();
+            released(ResourceType::MODEL, avocado);
+            released(ResourceType::TEXTURE, basePng);
+            released(ResourceType::TEXTURE, normalPng);
+            released(ResourceType::TEXTURE, mrPng);
+
+            ASSERT_TRUE(pbrModel->bounds().has_value());
+            const auto center = (pbrModel->bounds()->min + pbrModel->bounds()->max) * 0.5f;
+            const float radius = std::max(glm::length(pbrModel->bounds()->max - pbrModel->bounds()->min) * 0.55f, 0.01f);
+            auto projection = glm::perspectiveRH_ZO(glm::radians(45.0f), 384.0f / 256.0f, 0.001f, 10.0f);
+            projection[1][1] *= -1.0f;
+            const CameraMatrices cam{
+                glm::lookAtRH(center + glm::vec3(0.0f, radius * 0.25f, radius * 2.2f), center,
+                              glm::vec3(0.0f, 1.0f, 0.0f)),
+                projection};
+            const Lighting lighting{glm::normalize(glm::vec3(0.5f, -0.7f, -0.5f)), {1.0f, 1.0f, 1.0f}, 1.4f, 0.12f};
+
+            const auto pbrPixels = TextureGpuReview::captureFrame(
+                renderer, {{384, 256}, cam, expandModel(*pbrModel, glm::mat4(1.0f)), lighting});
+            const auto lambertPixels = TextureGpuReview::captureFrame(
+                renderer, {{384, 256}, cam, expandModel(*lambertModel, glm::mat4(1.0f)), lighting});
+            ASSERT_EQ(pbrPixels.size(), 384u * 256u * 4u);
+            ASSERT_EQ(lambertPixels.size(), pbrPixels.size());
+
+            size_t diffPixels = 0;
+            for (size_t i = 0; i < pbrPixels.size(); i += 4)
+            {
+                const int diff = std::abs(int(pbrPixels[i]) - int(lambertPixels[i])) +
+                                 std::abs(int(pbrPixels[i + 1]) - int(lambertPixels[i + 1])) +
+                                 std::abs(int(pbrPixels[i + 2]) - int(lambertPixels[i + 2]));
+                if (diff > 12)
+                    ++diffPixels;
+            }
+            EXPECT_GT(diffPixels, 500u);
+        }
+        cleanValidation();
+    }
 }  // namespace

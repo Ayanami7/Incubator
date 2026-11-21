@@ -1790,4 +1790,125 @@ namespace
         }
         expectCleanValidation();
     }
+
+    TEST_F(VulkanReviewTest, PbrShadingNormalPerturbationGgxAndMirroredTbn)
+    {
+        auto window = createWindow();
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            SceneAssets assets;
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+
+            const Resource::TextureResource whiteTex({}, 1, 1, {255, 255, 255, 255});
+            const auto baseWhite = renderer.createTexture(whiteTex, TextureMipMode::BaseLevel, TextureColorSpace::Srgb);
+
+            // +Y 切线空间法线扰动：nTs ≈ (0, 0.8, 0.6) -> RGBA (128, 230, 204, 255)。
+            const Resource::TextureResource plusYNormalTex({}, 1, 1, {128, 230, 204, 255});
+            const auto plusYNormal =
+                renderer.createTexture(plusYNormalTex, TextureMipMode::BaseLevel, TextureColorSpace::Linear);
+
+            auto projection = glm::orthoRH_ZO(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
+            projection[1][1] *= -1.0f;
+            const CameraMatrices camera{
+                glm::lookAtRH(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+                projection};
+
+            const std::array<uint32_t, 6> indices{0, 1, 2, 2, 3, 0};
+            const std::array<MeshVertex, 4> tangentQuad{{
+                {{-1, -1, 0}, {0, 0}, {0, 0, 1}, {1, 0, 0, 1}},
+                {{1, -1, 0}, {1, 0}, {0, 0, 1}, {1, 0, 0, 1}},
+                {{1, 1, 0}, {1, 1}, {0, 0, 1}, {1, 0, 0, 1}},
+                {{-1, 1, 0}, {0, 1}, {0, 0, 1}, {1, 0, 0, 1}},
+            }};
+            const std::array<MeshVertex, 4> zeroTangentQuad{{
+                {{-1, -1, 0}, {0, 0}, {0, 0, 1}, {0, 0, 0, 0}},
+                {{1, -1, 0}, {1, 0}, {0, 0, 1}, {0, 0, 0, 0}},
+                {{1, 1, 0}, {1, 1}, {0, 0, 1}, {0, 0, 0, 0}},
+                {{-1, 1, 0}, {0, 1}, {0, 0, 1}, {0, 0, 0, 0}},
+            }};
+            const auto mesh = renderer.createMesh(tangentQuad, indices);
+            const auto zeroTanMesh = renderer.createMesh(zeroTangentQuad, indices);
+
+            const auto captureCenter = [&](const Mesh& m, const Material& mat, const glm::mat4& model,
+                                           const Lighting& lighting) {
+                std::vector<uint8_t> pixels;
+                Detail::RendererReviewAccess::withFrame(
+                    renderer,
+                    FrameInput{{384, 256}, camera, std::array{DrawItem{m, mat, model}}, lighting},
+                    [&](const auto& d, const auto& p, auto fs, auto nd) {
+                        pixels = TextureGpuReview::captureDraws(d, p, fs, nd, {0, 0, 384, 256, 0, 1});
+                    });
+                return pixels;
+            };
+
+            // 1. 固定光照参数验证 Cook-Torrance GGX 与能量守恒漫反射参考值（0.05 + 0.384 = 0.434）。
+            {
+                MaterialDesc desc{baseWhite, {0.5f, 0.5f, 0.5f}};
+                desc.shading = ShadingMode::Pbr;
+                desc.metallic = 0.0f;
+                desc.roughness = 0.5f;
+                const auto mat = renderer.createMaterial(desc);
+                const auto pixels = captureCenter(mesh, mat, glm::mat4(1.0f),
+                                                  {{0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, 0.6f, 0.1f});
+                expectLinearPixel(pixels, glm::vec3(0.434f));
+            }
+
+            // 2. +Y 切线空间法线贴图：正缩放受光更亮、单轴负缩放镜像模型反转副切线而变暗；
+            //    normalScale = 0 或零切线安全退化为几何法线。
+            {
+                const Lighting angledLight{{0.0f, -0.8f, -0.6f}, {1.0f, 1.0f, 1.0f}, 0.8f, 0.1f};
+                MaterialDesc flatDesc{baseWhite, {0.8f, 0.8f, 0.8f}};
+                flatDesc.shading = ShadingMode::Pbr;
+                flatDesc.metallic = 0.0f;
+                flatDesc.roughness = 0.6f;
+                const auto flatMat = renderer.createMaterial(flatDesc);
+
+                MaterialDesc perturbedDesc = flatDesc;
+                perturbedDesc.normalTexture = plusYNormal;
+                perturbedDesc.normalScale = 1.0f;
+                const auto perturbedMat = renderer.createMaterial(perturbedDesc);
+
+                MaterialDesc zeroScaleDesc = perturbedDesc;
+                zeroScaleDesc.normalScale = 0.0f;
+                const auto zeroScaleMat = renderer.createMaterial(zeroScaleDesc);
+
+                const auto flatPx = captureCenter(mesh, flatMat, glm::mat4(1.0f), angledLight);
+                const auto perturbedPx = captureCenter(mesh, perturbedMat, glm::mat4(1.0f), angledLight);
+                const auto mirroredPx = captureCenter(
+                    mesh, perturbedMat, glm::scale(glm::mat4(1.0f), glm::vec3(1.0f, -1.0f, 1.0f)), angledLight);
+                const auto zeroScalePx = captureCenter(mesh, zeroScaleMat, glm::mat4(1.0f), angledLight);
+                const auto zeroTanPx = captureCenter(zeroTanMesh, perturbedMat, glm::mat4(1.0f), angledLight);
+
+                const size_t centerOff = (128u * 384u + 192u) * 4u;
+                EXPECT_GT(perturbedPx[centerOff], flatPx[centerOff] + 20);
+                EXPECT_LT(mirroredPx[centerOff] + 40, flatPx[centerOff]);
+                EXPECT_NEAR(zeroScalePx[centerOff], flatPx[centerOff], 1);
+                EXPECT_NEAR(zeroTanPx[centerOff], flatPx[centerOff], 1);
+            }
+
+            // 3. 低粗糙度 vs 高粗糙度 GGX 高光峰值差异，以及纯金属环境光/漫反射衰减。
+            {
+                const Lighting frontLight{{0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, 0.5f, 0.05f};
+                MaterialDesc smoothDesc{baseWhite, {0.5f, 0.5f, 0.5f}};
+                smoothDesc.shading = ShadingMode::Pbr;
+                smoothDesc.metallic = 0.0f;
+                smoothDesc.roughness = 0.1f;
+                MaterialDesc roughDesc = smoothDesc;
+                roughDesc.roughness = 0.9f;
+                const auto smoothPx = captureCenter(mesh, renderer.createMaterial(smoothDesc), glm::mat4(1.0f), frontLight);
+                const auto roughPx = captureCenter(mesh, renderer.createMaterial(roughDesc), glm::mat4(1.0f), frontLight);
+                const size_t centerOff = (128u * 384u + 192u) * 4u;
+                EXPECT_GT(smoothPx[centerOff], roughPx[centerOff] + 50);
+
+                MaterialDesc metalDesc{baseWhite, {0.8f, 0.8f, 0.8f}};
+                metalDesc.shading = ShadingMode::Pbr;
+                metalDesc.metallic = 1.0f;
+                metalDesc.roughness = 0.5f;
+                const Lighting backLight{{0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, 1.0f, 0.3f};
+                const auto metalBackPx = captureCenter(mesh, renderer.createMaterial(metalDesc), glm::mat4(1.0f), backLight);
+                expectLinearPixel(metalBackPx, glm::vec3(0.0f));
+            }
+        }
+        expectCleanValidation();
+    }
 }  // namespace

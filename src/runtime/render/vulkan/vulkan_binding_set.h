@@ -30,6 +30,7 @@ namespace Incubator
                 glm::vec4 lightColorAmbient;        ///< xyz 为线性 RGB，w 为环境系数。
                 glm::mat4 shadowViewProjection;     ///< 固定光源投影与观察矩阵的乘积。
                 glm::vec4 shadowParams;             ///< x 为接收深度偏移，y 为阴影启用标记，其余为零。
+                glm::vec4 cameraPosition;           ///< 世界空间相机位置（xyz），由视图矩阵派生。
             };
             static_assert(std::is_standard_layout_v<VulkanFrameUniform>);
             static_assert(offsetof(VulkanFrameUniform, view) == 0);
@@ -39,7 +40,8 @@ namespace Incubator
             static_assert(alignof(VulkanFrameUniform) == 16);
             static_assert(offsetof(VulkanFrameUniform, shadowViewProjection) == 160);
             static_assert(offsetof(VulkanFrameUniform, shadowParams) == 224);
-            static_assert(sizeof(VulkanFrameUniform) == 240);
+            static_assert(offsetof(VulkanFrameUniform, cameraPosition) == 240);
+            static_assert(sizeof(VulkanFrameUniform) == 256);
 
             /// @brief 校验光照并打包本次提交的相机与光照值，非单位方向在此归一化。
             /// @throws Error::Exception 光照输入无效时抛出 RENDER。

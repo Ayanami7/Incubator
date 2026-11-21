@@ -8,6 +8,7 @@ layout(set = 0, binding = 0, std140) uniform FrameData
     vec4 lightColorAmbient;
     mat4 shadowViewProjection;
     vec4 shadowParams;
+    vec4 cameraPosition;
 } frame;
 
 layout(set = 0, binding = 1) uniform sampler2D shadowDepth;
@@ -22,6 +23,7 @@ layout(set = 1, binding = 3) uniform sampler2D metallicRoughnessTexture;
 layout(location = 0) in vec2 uv;
 layout(location = 1) in vec3 worldNormal;
 layout(location = 2) in vec3 worldPosition;
+layout(location = 3) in vec4 worldTangent;
 layout(location = 0) out vec4 fragmentColor;
 
 float shadowVisibility()
@@ -51,6 +53,86 @@ void main()
             diffuse = max(dot(worldNormal * inversesqrt(lengthSquared), -frame.lightDirectionIntensity.xyz), 0.0);
         linearColor *= vec3(frame.lightColorAmbient.w) +
                        frame.lightColorAmbient.rgb * frame.lightDirectionIntensity.w * diffuse * shadowVisibility();
+    }
+    else if (material.colorShading.w == 2.0)
+    {
+        const float PI = 3.14159265359;
+        vec3 baseColor = linearColor;
+        vec4 mr = texture(metallicRoughnessTexture, uv);
+        float roughness = clamp(mr.g * material.surfaceParams.y, 0.04, 1.0);
+        float metallic = clamp(mr.b * material.surfaceParams.z, 0.0, 1.0);
+        vec3 ambient = baseColor * (1.0 - metallic) * frame.lightColorAmbient.w;
+
+        float normalLen2 = dot(worldNormal, worldNormal);
+        if (normalLen2 <= 0.0)
+        {
+            linearColor = ambient;
+        }
+        else
+        {
+            vec3 N0 = worldNormal * inversesqrt(normalLen2);
+            vec3 N = N0;
+            if (material.surfaceParams.x > 0.0 && abs(worldTangent.w) > 0.0 &&
+                dot(worldTangent.xyz, worldTangent.xyz) > 0.0)
+            {
+                vec3 T0 = worldTangent.xyz - N0 * dot(N0, worldTangent.xyz);
+                float t0Len2 = dot(T0, T0);
+                if (t0Len2 > 1e-10)
+                {
+                    vec3 T = T0 * inversesqrt(t0Len2);
+                    vec3 B = (worldTangent.w < 0.0 ? -1.0 : 1.0) * cross(N0, T);
+                    vec3 nTs = texture(normalTexture, uv).xyz * 2.0 - 1.0;
+                    nTs.xy *= material.surfaceParams.x;
+                    vec3 perturbed = T * nTs.x + B * nTs.y + N0 * nTs.z;
+                    float pLen2 = dot(perturbed, perturbed);
+                    if (pLen2 > 0.0)
+                        N = perturbed * inversesqrt(pLen2);
+                }
+            }
+
+            vec3 toCamera = frame.cameraPosition.xyz - worldPosition;
+            float toCameraLen2 = dot(toCamera, toCamera);
+            vec3 V;
+            if (toCameraLen2 > 1e-10)
+            {
+                V = toCamera * inversesqrt(toCameraLen2);
+            }
+            else
+            {
+                vec3 vFallback = vec3(frame.view[0][2], frame.view[1][2], frame.view[2][2]);
+                float vfLen2 = dot(vFallback, vFallback);
+                V = vfLen2 > 0.0 ? vFallback * inversesqrt(vfLen2) : vec3(0.0, 0.0, 1.0);
+            }
+
+            vec3 L = -frame.lightDirectionIntensity.xyz;
+            float NdotL = dot(N, L);
+            float NdotV = dot(N, V);
+            vec3 direct = vec3(0.0);
+            if (NdotL > 0.0 && NdotV > 0.0)
+            {
+                vec3 H = normalize(L + V);
+                float NdotH = max(dot(N, H), 0.0);
+                float VdotH = max(dot(V, H), 0.0);
+
+                float alpha = roughness * roughness;
+                float alpha2 = alpha * alpha;
+                float denom = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
+                float D = alpha2 / (PI * denom * denom);
+
+                float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+                float gV = NdotV / (NdotV * (1.0 - k) + k);
+                float gL = NdotL / (NdotL * (1.0 - k) + k);
+                float G = gV * gL;
+
+                vec3 F0 = mix(vec3(0.04), baseColor, metallic);
+                vec3 F = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+                vec3 spec = (D * G * F) / max(4.0 * NdotV * NdotL, 1e-4);
+                vec3 kD = (1.0 - F) * (1.0 - metallic);
+                direct = (kD * baseColor / PI + spec) * frame.lightColorAmbient.rgb *
+                         (PI * frame.lightDirectionIntensity.w) * NdotL * shadowVisibility();
+            }
+            linearColor = ambient + direct;
+        }
     }
     linearColor = clamp(linearColor, 0.0, 1.0);
     vec3 encoded = mix(1.055 * pow(linearColor, vec3(1.0 / 2.4)) - 0.055,

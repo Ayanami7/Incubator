@@ -16,7 +16,8 @@ namespace Incubator::Model
             !validFilter(options.sampler.minFilter) || !validFilter(options.sampler.magFilter) ||
             (options.sampler.mipFilter != MipFilter::BaseLevel && options.sampler.mipFilter != MipFilter::Nearest &&
              options.sampler.mipFilter != MipFilter::Linear) ||
-            (options.shading != ShadingMode::Unlit && options.shading != ShadingMode::Lambert))
+            (options.shading != ShadingMode::Unlit && options.shading != ShadingMode::Lambert &&
+             options.shading != ShadingMode::Pbr))
             throw Error::Exception(Error::Code::RENDER, "Model preparation options are invalid");
 
         if (virtualPath.find('\0') != std::string_view::npos || !Utils::Utf8::isValid(virtualPath))

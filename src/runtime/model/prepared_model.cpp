@@ -64,52 +64,79 @@ namespace Incubator::Model
 
         // 创建 GPU 资源前先解析所有实际使用的依赖项。源数据已由
         // ModelResource 验证；复制后的节点和部件使用结果内连续索引。
+        struct TextureUploadRequest
+        {
+            const Resource::TextureResource* resource = nullptr;
+            Render::TextureColorSpace colorSpace = Render::TextureColorSpace::Srgb;
+        };
+        struct MaterialTextureSlots
+        {
+            uint32_t baseColor = NO_INDEX;
+            uint32_t normal = NO_INDEX;
+            uint32_t metallicRoughness = NO_INDEX;
+        };
         std::vector<Resource::CpuResource> textureHolds;
-        std::vector<const Resource::TextureResource*> pixels;
-        std::map<std::string, uint32_t> textureMap;
-        std::vector<uint32_t> materialTextures;
+        std::vector<TextureUploadRequest> textureRequests;
+        std::map<std::pair<std::string, Render::TextureColorSpace>, uint32_t> textureMap;
+        std::vector<MaterialTextureSlots> materialTextures;
         uint32_t whiteIndex = NO_INDEX;
+
+        const auto acquireTexture = [&](const std::string& path, Render::TextureColorSpace colorSpace) -> uint32_t {
+            auto [entry, inserted] = textureMap.emplace(std::make_pair(path, colorSpace),
+                                                        static_cast<uint32_t>(textureRequests.size()));
+            if (inserted)
+            {
+                textureHolds.push_back(
+                    Resource::ResourceManager::instance().hold<Resource::TextureResource>(
+                        Resource::ResourceType::TEXTURE, path));
+                const auto* texture = textureHolds.back().get<Resource::TextureResource>();
+                if (!texture)
+                    throw LoadError(fmt::format("Cannot prepare model '{}': texture '{}': {}", virtualPath, path,
+                                                textureHolds.back().failure()->reason));
+                textureRequests.push_back({texture, colorSpace});
+            }
+            return entry->second;
+        };
+
         for (uint32_t index : materials)
         {
             const auto& material = source->materials()[index];
-            uint32_t textureIndex;
+            MaterialTextureSlots slots;
             if (material.texturePath)
             {
-                auto [entry, inserted] =
-                    textureMap.emplace(*material.texturePath, static_cast<uint32_t>(pixels.size()));
-                textureIndex = entry->second;
-                if (inserted)
-                {
-                    textureHolds.push_back(Resource::ResourceManager::instance().hold<Resource::TextureResource>(
-                        Resource::ResourceType::TEXTURE, *material.texturePath));
-                    const auto* texture = textureHolds.back().get<Resource::TextureResource>();
-                    if (!texture)
-                        throw LoadError(fmt::format("Cannot prepare model '{}': texture '{}': {}", virtualPath,
-                                                    *material.texturePath, textureHolds.back().failure()->reason));
-                    pixels.push_back(texture);
-                }
+                slots.baseColor = acquireTexture(*material.texturePath, Render::TextureColorSpace::Srgb);
             }
             else
             {
                 if (whiteIndex == NO_INDEX)
                 {
-                    whiteIndex = static_cast<uint32_t>(pixels.size());
-                    pixels.push_back(nullptr);
+                    whiteIndex = static_cast<uint32_t>(textureRequests.size());
+                    textureRequests.push_back({nullptr, Render::TextureColorSpace::Srgb});
                 }
-                textureIndex = whiteIndex;
+                slots.baseColor = whiteIndex;
             }
-            materialTextures.push_back(textureIndex);
+            if (!material.unlit && options.shading == Render::ShadingMode::Pbr)
+            {
+                if (material.normalTexturePath)
+                    slots.normal = acquireTexture(*material.normalTexturePath, Render::TextureColorSpace::Linear);
+                if (material.metallicRoughnessTexturePath)
+                    slots.metallicRoughness =
+                        acquireTexture(*material.metallicRoughnessTexturePath, Render::TextureColorSpace::Linear);
+            }
+            materialTextures.push_back(slots);
         }
 
         result->resources_ = renderer.createResources();
-        for (const auto* texture : pixels)
+        for (const auto& request : textureRequests)
         {
-            if (texture)
-                result->textures_.push_back(renderer.createTexture(result->resources_, *texture, options.mipMode));
+            if (request.resource)
+                result->textures_.push_back(
+                    renderer.createTexture(result->resources_, *request.resource, options.mipMode, request.colorSpace));
             else
             {
                 Resource::TextureResource white({}, 1, 1, {255, 255, 255, 255});
-                result->textures_.push_back(renderer.createTexture(result->resources_, white, options.mipMode));
+                result->textures_.push_back(
+                    renderer.createTexture(result->resources_, white, options.mipMode, request.colorSpace));
             }
         }
         for (uint32_t index : geometries)
@@ -120,14 +147,27 @@ namespace Incubator::Model
             for (const auto& vertex : geometry.vertices)
                 vertices.push_back({{vertex.position[0], vertex.position[1], vertex.position[2]},
                                     {vertex.uv[0], vertex.uv[1]},
-                                    {vertex.normal[0], vertex.normal[1], vertex.normal[2]}});
+                                    {vertex.normal[0], vertex.normal[1], vertex.normal[2]},
+                                    {vertex.tangent[0], vertex.tangent[1], vertex.tangent[2], vertex.tangent[3]}});
             result->meshes_.push_back(renderer.createMesh(result->resources_, vertices, geometry.indices));
         }
         for (size_t i = 0; i < materials.size(); ++i)
-            result->materials_.push_back(renderer.createMaterial(
-                result->resources_,
-                {result->textures_[materialTextures[i]], source->materials()[materials[i]].color, options.sampler,
-                 source->materials()[materials[i]].unlit ? Render::ShadingMode::Unlit : options.shading}));
+        {
+            const auto& sourceMat = source->materials()[materials[i]];
+            const auto& slots = materialTextures[i];
+            Render::MaterialDesc desc{
+                result->textures_[slots.baseColor],
+                sourceMat.color,
+                options.sampler,
+                sourceMat.unlit ? Render::ShadingMode::Unlit : options.shading,
+                slots.normal == NO_INDEX ? Render::Texture{} : result->textures_[slots.normal],
+                slots.metallicRoughness == NO_INDEX ? Render::Texture{} : result->textures_[slots.metallicRoughness],
+                sourceMat.normalScale,
+                sourceMat.metallic,
+                sourceMat.roughness,
+            };
+            result->materials_.push_back(renderer.createMaterial(result->resources_, desc));
+        }
 
         // 模型相对绘制项只缓存一次。树结构已经验证，每帧无需重新遍历或
         // 检查结构。按相反顺序压入，以保持子节点的源顺序。
@@ -173,7 +213,9 @@ namespace Incubator::Model
             options.sampler.magFilter == Render::TextureFilter::Linear ? "linear" : "nearest",
             options.sampler.mipFilter == Render::MipFilter::BaseLevel ? "baseLevel" :
                 options.sampler.mipFilter == Render::MipFilter::Nearest ? "nearest" : "linear",
-            options.shading == Render::ShadingMode::Lambert ? "lambert" : "unlit");
+            options.shading == Render::ShadingMode::Pbr     ? "pbr"
+            : options.shading == Render::ShadingMode::Lambert ? "lambert"
+                                                              : "unlit");
         return result;
     }
 }  // namespace Incubator::Model

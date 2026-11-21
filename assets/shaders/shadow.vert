@@ -8,6 +8,7 @@ layout(set = 0, binding = 0, std140) uniform FrameData
     vec4 lightColorAmbient;
     mat4 shadowViewProjection;
     vec4 shadowParams;
+    vec4 cameraPosition;
 } frame;
 
 layout(push_constant) uniform ObjectData
