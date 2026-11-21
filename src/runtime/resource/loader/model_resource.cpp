@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/path/path.h"
 
 namespace Incubator
 {
@@ -104,15 +105,45 @@ namespace Incubator
                             fmt::format("Model material {} requires finite linear RGB in [0, 1]", i));
                     }
                 }
-                if (material.texturePath)
-                {
-                    auto key = canonicalizeResourceKey(*material.texturePath);
+                const auto canonicalizeSlot = [i](std::optional<std::string>& slot, bool requirePng,
+                                                  const char* label) {
+                    if (!slot)
+                        return;
+                    auto key = canonicalizeResourceKey(*slot);
                     if (key.empty() || key == ".")
                     {
-                        throw Error::Exception(Error::Code::CONFIG,
-                                               fmt::format("Model material {} has an invalid texture virtual path", i));
+                        throw Error::Exception(
+                            Error::Code::CONFIG,
+                            fmt::format("Model material {} has an invalid {} virtual path", i, label));
                     }
-                    material.texturePath = std::move(key);
+                    if (requirePng && !Path::hasExtension(key, "png"))
+                    {
+                        throw Error::Exception(
+                            Error::Code::CONFIG,
+                            fmt::format("Model material {} {} requires a .png virtual path", i, label));
+                    }
+                    slot = std::move(key);
+                };
+                canonicalizeSlot(material.texturePath, false, "texture");
+                canonicalizeSlot(material.normalTexturePath, true, "normal texture");
+                canonicalizeSlot(material.metallicRoughnessTexturePath, true, "metallic-roughness texture");
+                if (!std::isfinite(material.normalScale) || material.normalScale < 0.0f)
+                {
+                    throw Error::Exception(
+                        Error::Code::CONFIG,
+                        fmt::format("Model material {} requires finite nonnegative normal scale", i));
+                }
+                if (!std::isfinite(material.metallic) || material.metallic < 0.0f || material.metallic > 1.0f)
+                {
+                    throw Error::Exception(
+                        Error::Code::CONFIG,
+                        fmt::format("Model material {} requires finite metallic in [0, 1]", i));
+                }
+                if (!std::isfinite(material.roughness) || material.roughness < 0.0f || material.roughness > 1.0f)
+                {
+                    throw Error::Exception(
+                        Error::Code::CONFIG,
+                        fmt::format("Model material {} requires finite roughness in [0, 1]", i));
                 }
             }
             for (size_t i = 0; i < parts_.size(); ++i)

@@ -11,6 +11,7 @@
 #include <assimp/LogStream.hpp>
 #include <cmath>
 #include <exception>
+#include <glm/glm.hpp>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -107,30 +108,67 @@ namespace Incubator::Resource
                 }
             }
 
-            const aiTextureType textureType = gltf ? aiTextureType_BASE_COLOR : aiTextureType_DIFFUSE;
-            const unsigned count = source.GetTextureCount(textureType);
-            if (count > 1)
-                reject("Multiple base color textures are unsupported");
-            if (count == 1)
-            {
+            const auto parseTextureSlot = [&](aiTextureType textureType,
+                                              std::string_view label) -> std::optional<std::string> {
+                const unsigned count = source.GetTextureCount(textureType);
+                if (count > 1)
+                    reject(fmt::format("Multiple {} textures are unsupported", label));
+                if (count == 0)
+                    return std::nullopt;
                 aiString path;
                 aiTextureMapping mapping = aiTextureMapping_UV;
                 unsigned uv = 0;
                 if (source.GetTexture(textureType, 0, &path, &mapping, &uv) != aiReturn_SUCCESS ||
                     mapping != aiTextureMapping_UV || uv != 0)
                 {
-                    reject("Base color texture requires UV0");
+                    reject(fmt::format("{} texture requires UV0", label));
                 }
                 aiUVTransform transform;
                 if (source.Get(AI_MATKEY_UVTRANSFORM(textureType, 0), transform) == aiReturn_SUCCESS)
                 {
-                    reject("Base color UV transform is unsupported");
+                    reject(fmt::format("{} UV transform is unsupported", label));
                 }
                 if (path.length == 0 || path.data[0] == '*')
                     reject("Embedded model image is unsupported");
-                result.texturePath = Detail::modelDependencyPath(directory, path.C_Str(), gltf);
-                if (!Path::hasExtension(*result.texturePath, "png"))
+                std::string resolved = Detail::modelDependencyPath(directory, path.C_Str(), gltf);
+                if (!Path::hasExtension(resolved, "png"))
                     reject("Only external PNG images are supported");
+                return resolved;
+            };
+
+            result.texturePath = parseTextureSlot(gltf ? aiTextureType_BASE_COLOR : aiTextureType_DIFFUSE, "Base color");
+            if (gltf)
+            {
+                result.normalTexturePath = parseTextureSlot(aiTextureType_NORMALS, "Normal");
+                result.metallicRoughnessTexturePath =
+                    parseTextureSlot(aiTextureType_GLTF_METALLIC_ROUGHNESS, "Metallic roughness");
+
+                result.normalScale = 1.0f;
+                source.Get(AI_MATKEY_GLTF_TEXTURE_SCALE(aiTextureType_NORMALS, 0), result.normalScale);
+                if (!std::isfinite(result.normalScale) || result.normalScale < 0.0f)
+                {
+                    reject("Requires finite nonnegative normal scale");
+                }
+
+                result.metallic = 1.0f;
+                source.Get(AI_MATKEY_METALLIC_FACTOR, result.metallic);
+                if (!std::isfinite(result.metallic) || result.metallic < 0.0f || result.metallic > 1.0f)
+                {
+                    reject("Requires finite metallic factor in [0, 1]");
+                }
+
+                result.roughness = 1.0f;
+                source.Get(AI_MATKEY_ROUGHNESS_FACTOR, result.roughness);
+                if (!std::isfinite(result.roughness) || result.roughness < 0.0f || result.roughness > 1.0f)
+                {
+                    reject("Requires finite roughness factor in [0, 1]");
+                }
+            }
+            else
+            {
+                result.normalScale = 1.0f;
+                result.metallic = 0.0f;
+                result.roughness = 0.45f;
             }
             return result;
         }
@@ -200,13 +238,30 @@ namespace Incubator::Resource
                 {
                     throw Error::Exception(Error::Code::IO, fmt::format("Model geometry {} has invalid material", i));
                 }
-                if (materials[mesh.mMaterialIndex].texturePath && !mesh.HasTextureCoords(0))
+                const auto& material = materials[mesh.mMaterialIndex];
+                if ((material.texturePath || material.normalTexturePath || material.metallicRoughnessTexturePath) &&
+                    !mesh.HasTextureCoords(0))
                 {
                     throw Error::Exception(Error::Code::IO, fmt::format("Model geometry {} material {} requires UV0", i,
                                                                         mesh.mMaterialIndex));
                 }
                 MeshData geometry;
                 geometry.vertices.reserve(mesh.mNumVertices);
+                const bool hasSourceTangents = mesh.HasTangentsAndBitangents();
+                const auto orthonormalizeTangent = [](const glm::dvec3& normal, const glm::dvec3& rawTangent,
+                                                      const glm::dvec3& bitangent) -> std::array<float, 4> {
+                    const double nLen2 = glm::dot(normal, normal);
+                    if (!std::isfinite(nLen2) || nLen2 <= 0.0)
+                        return {};
+                    const glm::dvec3 ortho = rawTangent - normal * glm::dot(normal, rawTangent);
+                    const double len = glm::length(ortho);
+                    if (!std::isfinite(len) || len <= 1e-8)
+                        return {};
+                    const glm::dvec3 tangent = ortho / len;
+                    const float handedness = glm::dot(glm::cross(normal, tangent), bitangent) < 0.0 ? -1.0f : 1.0f;
+                    return {static_cast<float>(tangent.x), static_cast<float>(tangent.y),
+                            static_cast<float>(tangent.z), handedness};
+                };
                 for (unsigned v = 0; v < mesh.mNumVertices; ++v)
                 {
                     const auto& position = mesh.mVertices[v];
@@ -227,7 +282,22 @@ namespace Incubator::Resource
                             for (auto& component : normal)
                                 component = static_cast<float>(component / length);
                     }
-                    geometry.vertices.push_back({{position.x, position.y, position.z}, uv, normal});
+                    std::array<float, 4> tangent{};
+                    if (hasSourceTangents)
+                    {
+                        const auto& srcT = mesh.mTangents[v];
+                        const auto& srcB = mesh.mBitangents[v];
+                        if (!std::isfinite(srcT.x) || !std::isfinite(srcT.y) || !std::isfinite(srcT.z) ||
+                            !std::isfinite(srcB.x) || !std::isfinite(srcB.y) || !std::isfinite(srcB.z))
+                        {
+                            throw Error::Exception(
+                                Error::Code::IO, fmt::format("Model geometry {} has non-finite tangent/bitangent", i));
+                        }
+                        tangent = orthonormalizeTangent(glm::dvec3(normal[0], normal[1], normal[2]),
+                                                        glm::dvec3(srcT.x, srcT.y, srcT.z),
+                                                        glm::dvec3(srcB.x, srcB.y, srcB.z));
+                    }
+                    geometry.vertices.push_back({{position.x, position.y, position.z}, uv, normal, tangent});
                 }
                 for (unsigned f = 0; f < mesh.mNumFaces; ++f)
                 {
@@ -246,6 +316,52 @@ namespace Incubator::Resource
                                                    fmt::format("Model geometry {} index exceeds vertex range", i));
                         }
                         geometry.indices.push_back(static_cast<uint32_t>(index));
+                    }
+                }
+                if (!hasSourceTangents && mesh.HasTextureCoords(0) && mesh.HasNormals())
+                {
+                    std::vector<glm::dvec3> accT(geometry.vertices.size(), glm::dvec3(0.0));
+                    std::vector<glm::dvec3> accB(geometry.vertices.size(), glm::dvec3(0.0));
+                    for (size_t idx = 0; idx + 2 < geometry.indices.size(); idx += 3)
+                    {
+                        const uint32_t i0 = geometry.indices[idx];
+                        const uint32_t i1 = geometry.indices[idx + 1];
+                        const uint32_t i2 = geometry.indices[idx + 2];
+                        const auto& v0 = geometry.vertices[i0];
+                        const auto& v1 = geometry.vertices[i1];
+                        const auto& v2 = geometry.vertices[i2];
+                        const glm::dvec3 dp1(double(v1.position[0]) - v0.position[0],
+                                             double(v1.position[1]) - v0.position[1],
+                                             double(v1.position[2]) - v0.position[2]);
+                        const glm::dvec3 dp2(double(v2.position[0]) - v0.position[0],
+                                             double(v2.position[1]) - v0.position[1],
+                                             double(v2.position[2]) - v0.position[2]);
+                        const double du1 = double(v1.uv[0]) - v0.uv[0];
+                        const double dv1 = double(v1.uv[1]) - v0.uv[1];
+                        const double du2 = double(v2.uv[0]) - v0.uv[0];
+                        const double dv2 = double(v2.uv[1]) - v0.uv[1];
+                        const double det = du1 * dv2 - du2 * dv1;
+                        if (!std::isfinite(det) || std::abs(det) <= 1e-10)
+                            continue;
+                        const double invDet = 1.0 / det;
+                        const glm::dvec3 faceT = (dp1 * dv2 - dp2 * dv1) * invDet;
+                        const glm::dvec3 faceB = (dp2 * du1 - dp1 * du2) * invDet;
+                        if (!std::isfinite(faceT.x) || !std::isfinite(faceT.y) || !std::isfinite(faceT.z) ||
+                            !std::isfinite(faceB.x) || !std::isfinite(faceB.y) || !std::isfinite(faceB.z))
+                        {
+                            continue;
+                        }
+                        for (const uint32_t cornerIndex : {i0, i1, i2})
+                        {
+                            accT[cornerIndex] += faceT;
+                            accB[cornerIndex] += faceB;
+                        }
+                    }
+                    for (size_t v = 0; v < geometry.vertices.size(); ++v)
+                    {
+                        const auto& n = geometry.vertices[v].normal;
+                        geometry.vertices[v].tangent =
+                            orthonormalizeTangent(glm::dvec3(n[0], n[1], n[2]), accT[v], accB[v]);
                     }
                 }
                 geometries.push_back(std::move(geometry));

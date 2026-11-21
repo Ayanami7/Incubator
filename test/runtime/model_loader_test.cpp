@@ -997,4 +997,346 @@ namespace
         expectFailure(GLTF, "material 0");
         EXPECT_NE(messages_.str().find("UV transform"), std::string::npos);
     }
+
+    TEST_F(ModelLoaderTest, ImportsAvocadoPbrTexturesFactorsAndOrthonormalTangents)
+    {
+        const auto* model = load("models/avocado/glTF/Avocado.gltf");
+        ASSERT_NE(model, nullptr) << messages_.str();
+        ASSERT_FALSE(model->parts().empty());
+        const auto& mat = model->materials()[model->parts()[0].material];
+        EXPECT_EQ(mat.texturePath, canonicalizeResourceKey("models/avocado/glTF/Avocado_baseColor.png"));
+        EXPECT_EQ(mat.normalTexturePath, canonicalizeResourceKey("models/avocado/glTF/Avocado_normal.png"));
+        EXPECT_EQ(mat.metallicRoughnessTexturePath,
+                  canonicalizeResourceKey("models/avocado/glTF/Avocado_roughnessMetallic.png"));
+        EXPECT_FLOAT_EQ(mat.normalScale, 1.0f);
+        EXPECT_FLOAT_EQ(mat.metallic, 1.0f);
+        EXPECT_FLOAT_EQ(mat.roughness, 1.0f);
+
+        ASSERT_FALSE(model->geometries().empty());
+        size_t validTangents = 0;
+        for (const auto& vertex : model->geometries()[0].vertices)
+        {
+            const float nLen = std::hypot(vertex.normal[0], vertex.normal[1], vertex.normal[2]);
+            const float tLen = std::hypot(vertex.tangent[0], vertex.tangent[1], vertex.tangent[2]);
+            if (tLen > 0.0f)
+            {
+                ++validTangents;
+                EXPECT_NEAR(tLen, 1.0f, 1e-4f);
+                EXPECT_TRUE(vertex.tangent[3] == 1.0f || vertex.tangent[3] == -1.0f);
+                if (nLen > 0.0f)
+                {
+                    const float dot = vertex.normal[0] * vertex.tangent[0] + vertex.normal[1] * vertex.tangent[1] +
+                                      vertex.normal[2] * vertex.tangent[2];
+                    EXPECT_NEAR(dot, 0.0f, 1e-4f);
+                }
+            }
+        }
+        EXPECT_GT(validTangents, 0u);
+        expectClosed();
+    }
+
+    TEST_F(ModelLoaderTest, RejectsInvalidPbrTextureSlotsAndFactors)
+    {
+        const auto addSimpleNormalOrMr = [](rapidjson::Document& source, const char* slotName, const char* texName,
+                                            bool inPbr) {
+            auto& a = source.GetAllocator();
+            const rapidjson::SizeType imgIdx = source["images"].Size();
+            rapidjson::Value img(rapidjson::kObjectType);
+            img.AddMember("uri", rapidjson::Value(texName, a), a);
+            source["images"].PushBack(img, a);
+            const rapidjson::SizeType texIdx = source["textures"].Size();
+            rapidjson::Value tex(rapidjson::kObjectType);
+            tex.AddMember("source", imgIdx, a);
+            source["textures"].PushBack(tex, a);
+            rapidjson::Value slot(rapidjson::kObjectType);
+            slot.AddMember("index", texIdx, a);
+            if (inPbr)
+                source["materials"][0]["pbrMetallicRoughness"].AddMember(rapidjson::StringRef(slotName), slot, a);
+            else
+                source["materials"][0].AddMember(rapidjson::StringRef(slotName), slot, a);
+        };
+        // 复制一张有效 PNG 以便通过前置文件读取。
+        write("models/minimal_gltf/textures/normal.png", read("models/minimal_gltf/textures/albedo.png"));
+
+        // 1. normalTexture / metallicRoughnessTexture 使用 texCoord: 1
+        for (const bool inPbr : {false, true})
+        {
+            const std::string saved = read(GLTF);
+            editGltf([&](auto& source) {
+                addSimpleNormalOrMr(source, inPbr ? "metallicRoughnessTexture" : "normalTexture",
+                                    "textures/normal.png", inPbr);
+                auto& target = inPbr ? source["materials"][0]["pbrMetallicRoughness"]["metallicRoughnessTexture"]
+                                     : source["materials"][0]["normalTexture"];
+                target.AddMember("texCoord", 1u, source.GetAllocator());
+            });
+            expectFailure(GLTF, "UV0");
+            write(GLTF, saved);
+        }
+
+        // 2. normalTexture / metallicRoughnessTexture 使用 KHR_texture_transform
+        for (const bool inPbr : {false, true})
+        {
+            const std::string saved = read(GLTF);
+            editGltf([&](auto& source) {
+                auto& a = source.GetAllocator();
+                addSimpleNormalOrMr(source, inPbr ? "metallicRoughnessTexture" : "normalTexture",
+                                    "textures/normal.png", inPbr);
+                rapidjson::Value ext(rapidjson::kObjectType);
+                ext.AddMember("KHR_texture_transform", rapidjson::Value(rapidjson::kObjectType), a);
+                auto& target = inPbr ? source["materials"][0]["pbrMetallicRoughness"]["metallicRoughnessTexture"]
+                                     : source["materials"][0]["normalTexture"];
+                target.AddMember("extensions", ext, a);
+            });
+            expectFailure(GLTF, "UV transform");
+            write(GLTF, saved);
+        }
+
+        // 3. 非 .png 与路径逃逸
+        {
+            const std::string saved = read(GLTF);
+            editGltf([&](auto& source) {
+                addSimpleNormalOrMr(source, "normalTexture", "textures/normal.jpg", false);
+            });
+            expectFailure(GLTF, "PNG");
+            write(GLTF, saved);
+        }
+        {
+            const std::string saved = read(GLTF);
+            editGltf([&](auto& source) {
+                addSimpleNormalOrMr(source, "metallicRoughnessTexture", "../../../outside.png", true);
+            });
+            expectFailure(GLTF, "escapes");
+            write(GLTF, saved);
+        }
+
+        // 4. 缺失 TEXCOORD_0
+        {
+            const std::string saved = read(GLTF);
+            editGltf([&](auto& source) {
+                source["materials"][0]["pbrMetallicRoughness"].RemoveMember("baseColorTexture");
+                addSimpleNormalOrMr(source, "normalTexture", "textures/normal.png", false);
+                source["meshes"][0]["primitives"][0]["attributes"].RemoveMember("TEXCOORD_0");
+            });
+            expectFailure(GLTF, "UV0");
+            write(GLTF, saved);
+        }
+
+        // 5. 非法因子
+        for (const double bad : {-0.1, 1.2})
+        {
+            const std::string saved = read(GLTF);
+            editGltf([&](auto& source) {
+                source["materials"][0]["pbrMetallicRoughness"].AddMember("metallicFactor", bad, source.GetAllocator());
+            });
+            expectFailure(GLTF, "metallicFactor");
+            write(GLTF, saved);
+        }
+        for (const double bad : {-0.1, 1.5})
+        {
+            const std::string saved = read(GLTF);
+            editGltf([&](auto& source) {
+                source["materials"][0]["pbrMetallicRoughness"].AddMember("roughnessFactor", bad, source.GetAllocator());
+            });
+            expectFailure(GLTF, "roughnessFactor");
+            write(GLTF, saved);
+        }
+        {
+            const std::string saved = read(GLTF);
+            editGltf([&](auto& source) {
+                addSimpleNormalOrMr(source, "normalTexture", "textures/normal.png", false);
+                source["materials"][0]["normalTexture"].AddMember("scale", -0.5, source.GetAllocator());
+            });
+            expectFailure(GLTF, "normalTexture.scale");
+            write(GLTF, saved);
+        }
+    }
+
+    TEST_F(ModelLoaderTest, AcceptsZeroUv0AndOutputsZeroTangentForDegenerateUv)
+    {
+        auto bytes = read("models/minimal_gltf/geometry/mesh.bin");
+        // UV0 位于字节偏移 48..80（4 个 vec2 = 32 字节），全部清零。
+        std::fill(bytes.begin() + 48, bytes.begin() + 80, '\0');
+        write("models/minimal_gltf/geometry/mesh.bin", bytes);
+        const auto* model = load(GLTF);
+        ASSERT_NE(model, nullptr) << messages_.str();
+        for (const auto& vertex : model->geometries()[0].vertices)
+        {
+            EXPECT_EQ(vertex.uv, (std::array<float, 2>{0.0f, 0.0f}));
+            EXPECT_EQ(vertex.tangent, (std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}));
+        }
+        expectClosed();
+    }
+
+    TEST_F(ModelLoaderTest, NativeAndGeneratedTangentsMatchExpectedBitangentDirectionIncludingMirroredUv)
+    {
+        // 在 XY 平面构造 4 顶点矩形（法线 +Z），分别测试：
+        // 1) 无原生 TANGENT（由 ModelLoader 生成）
+        // 2) 带原生 TANGENT
+        // 3) 镜像 UV（u 翻转，手性应为相反符号）
+        const auto writePlaneGltf = [&](std::string_view gltfPath, bool includeTangent, bool mirroredUv) {
+            struct BinLayout
+            {
+                std::array<float, 12> pos;
+                std::array<float, 8> uv;
+                std::array<float, 12> norm;
+                std::array<float, 16> tan;
+                std::array<uint16_t, 6> idx;
+            } bin{
+                {0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0},
+                mirroredUv ? std::array<float, 8>{1, 1, 0, 1, 0, 0, 1, 0}
+                           : std::array<float, 8>{0, 1, 1, 1, 1, 0, 0, 0},
+                {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1},
+                {mirroredUv ? -1.0f : 1.0f, 0, 0, mirroredUv ? 1.0f : -1.0f,
+                 mirroredUv ? -1.0f : 1.0f, 0, 0, mirroredUv ? 1.0f : -1.0f,
+                 mirroredUv ? -1.0f : 1.0f, 0, 0, mirroredUv ? 1.0f : -1.0f,
+                 mirroredUv ? -1.0f : 1.0f, 0, 0, mirroredUv ? 1.0f : -1.0f},
+                {0, 1, 2, 0, 2, 3},
+            };
+            write("models/minimal_gltf/geometry/mesh.bin",
+                  std::string(reinterpret_cast<const char*>(&bin), sizeof(bin)));
+
+            rapidjson::Document doc;
+            doc.SetObject();
+            auto& a = doc.GetAllocator();
+            rapidjson::Value asset(rapidjson::kObjectType);
+            asset.AddMember("version", "2.0", a);
+            doc.AddMember("asset", asset, a);
+
+            rapidjson::Value buffers(rapidjson::kArrayType);
+            rapidjson::Value buf(rapidjson::kObjectType);
+            buf.AddMember("uri", "geometry/mesh.bin", a);
+            buf.AddMember("byteLength", static_cast<uint64_t>(sizeof(bin)), a);
+            buffers.PushBack(buf, a);
+            doc.AddMember("buffers", buffers, a);
+
+            rapidjson::Value views(rapidjson::kArrayType);
+            const auto addView = [&](uint64_t offset, uint64_t length) {
+                rapidjson::Value v(rapidjson::kObjectType);
+                v.AddMember("buffer", 0u, a);
+                v.AddMember("byteOffset", offset, a);
+                v.AddMember("byteLength", length, a);
+                views.PushBack(v, a);
+            };
+            addView(offsetof(BinLayout, pos), sizeof(bin.pos));
+            addView(offsetof(BinLayout, uv), sizeof(bin.uv));
+            addView(offsetof(BinLayout, norm), sizeof(bin.norm));
+            addView(offsetof(BinLayout, tan), sizeof(bin.tan));
+            addView(offsetof(BinLayout, idx), sizeof(bin.idx));
+            doc.AddMember("bufferViews", views, a);
+
+            rapidjson::Value accessors(rapidjson::kArrayType);
+            const auto addAccessor = [&](uint32_t view, uint32_t compType, uint32_t count, const char* type) {
+                rapidjson::Value acc(rapidjson::kObjectType);
+                acc.AddMember("bufferView", view, a);
+                acc.AddMember("componentType", compType, a);
+                acc.AddMember("count", count, a);
+                acc.AddMember("type", rapidjson::StringRef(type), a);
+                accessors.PushBack(acc, a);
+            };
+            addAccessor(0, 5126, 4, "VEC3");    // 0: POS
+            addAccessor(1, 5126, 4, "VEC2");    // 1: UV
+            addAccessor(2, 5126, 4, "VEC3");    // 2: NORM
+            addAccessor(3, 5126, 4, "VEC4");    // 3: TAN
+            addAccessor(4, 5123, 6, "SCALAR");  // 4: IDX
+            doc.AddMember("accessors", accessors, a);
+
+            rapidjson::Value attrs(rapidjson::kObjectType);
+            attrs.AddMember("POSITION", 0u, a);
+            attrs.AddMember("TEXCOORD_0", 1u, a);
+            attrs.AddMember("NORMAL", 2u, a);
+            if (includeTangent)
+                attrs.AddMember("TANGENT", 3u, a);
+            rapidjson::Value prim(rapidjson::kObjectType);
+            prim.AddMember("attributes", attrs, a);
+            prim.AddMember("indices", 4u, a);
+            rapidjson::Value prims(rapidjson::kArrayType);
+            prims.PushBack(prim, a);
+            rapidjson::Value mesh(rapidjson::kObjectType);
+            mesh.AddMember("primitives", prims, a);
+            rapidjson::Value meshes(rapidjson::kArrayType);
+            meshes.PushBack(mesh, a);
+            doc.AddMember("meshes", meshes, a);
+
+            rapidjson::Value node(rapidjson::kObjectType);
+            node.AddMember("mesh", 0u, a);
+            rapidjson::Value nodes(rapidjson::kArrayType);
+            nodes.PushBack(node, a);
+            doc.AddMember("nodes", nodes, a);
+            rapidjson::Value sceneNodes(rapidjson::kArrayType);
+            sceneNodes.PushBack(0u, a);
+            rapidjson::Value scene(rapidjson::kObjectType);
+            scene.AddMember("nodes", sceneNodes, a);
+            rapidjson::Value scenes(rapidjson::kArrayType);
+            scenes.PushBack(scene, a);
+            doc.AddMember("scenes", scenes, a);
+            doc.AddMember("scene", 0u, a);
+
+            rapidjson::StringBuffer buffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+            doc.Accept(writer);
+            write(gltfPath, std::string(buffer.GetString(), buffer.GetSize()));
+        };
+
+        const auto checkPlane = [&](std::string_view gltfPath, bool includeTangent, bool mirroredUv) {
+            writePlaneGltf(gltfPath, includeTangent, mirroredUv);
+            const auto* model = load(gltfPath);
+            ASSERT_NE(model, nullptr) << messages_.str();
+            const float expectedTx = mirroredUv ? -1.0f : 1.0f;
+            // v 从 1（y=0）减到 0（y=1），故 +V 方向指向 -Y（B = w * (N x T) = (0, -1, 0)）。
+            // 对于正常 UV（T=+X, N=+Z），N x T = +Y，故 w = -1 使得 B = -Y；
+            // 对于镜像 UV（T=-X, N=+Z），N x T = -Y，故 w = +1 使得 B = -Y。
+            const float expectedW = mirroredUv ? 1.0f : -1.0f;
+            for (const auto& vertex : model->geometries()[0].vertices)
+            {
+                EXPECT_NEAR(vertex.tangent[0], expectedTx, 1e-5f);
+                EXPECT_NEAR(vertex.tangent[1], 0.0f, 1e-5f);
+                EXPECT_NEAR(vertex.tangent[2], 0.0f, 1e-5f);
+                EXPECT_FLOAT_EQ(vertex.tangent[3], expectedW);
+            }
+        };
+
+        checkPlane("models/minimal_gltf/plane_gen.gltf", false, false);
+        checkPlane("models/minimal_gltf/plane_nat.gltf", true, false);
+        checkPlane("models/minimal_gltf/plane_mir_gen.gltf", false, true);
+        checkPlane("models/minimal_gltf/plane_mir_nat.gltf", true, true);
+        expectClosed();
+    }
+
+    TEST_F(ModelLoaderTest, MetallicFactorDefaultsAndObjPbrDefaults)
+    {
+        // glTF 省略 metallicFactor 时取 1.0（无论是否带 metallicRoughnessTexture）
+        {
+            const auto* model = load(GLTF);
+            ASSERT_NE(model, nullptr);
+            EXPECT_FLOAT_EQ(model->materials()[0].metallic, 1.0f);
+            EXPECT_FLOAT_EQ(model->materials()[0].roughness, 1.0f);
+            EXPECT_FLOAT_EQ(model->materials()[0].normalScale, 1.0f);
+        }
+        // glTF 显式 metallicFactor = 0.0 时保留 0.0
+        {
+            rapidjson::Document source;
+            const std::string text = read(GLTF);
+            source.Parse(text.data(), text.size());
+            source["materials"][0]["pbrMetallicRoughness"].AddMember("metallicFactor", 0.0, source.GetAllocator());
+            rapidjson::StringBuffer buffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+            source.Accept(writer);
+            constexpr const char* explicitZeroPath = "models/minimal_gltf/model_metallic0.gltf";
+            write(explicitZeroPath, std::string(buffer.GetString(), buffer.GetSize()));
+            const auto* model = load(explicitZeroPath);
+            ASSERT_NE(model, nullptr);
+            EXPECT_FLOAT_EQ(model->materials()[0].metallic, 0.0f);
+        }
+        // OBJ 默认 normalScale = 1.0, metallic = 0.0, roughness = 0.45
+        {
+            const auto* obj = load(OBJ);
+            ASSERT_NE(obj, nullptr);
+            EXPECT_FLOAT_EQ(obj->materials()[0].normalScale, 1.0f);
+            EXPECT_FLOAT_EQ(obj->materials()[0].metallic, 0.0f);
+            EXPECT_FLOAT_EQ(obj->materials()[0].roughness, 0.45f);
+            EXPECT_FALSE(obj->materials()[0].normalTexturePath.has_value());
+            EXPECT_FALSE(obj->materials()[0].metallicRoughnessTexturePath.has_value());
+        }
+        expectClosed();
+    }
 }  // namespace

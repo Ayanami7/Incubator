@@ -3,6 +3,7 @@
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
 
+#include <cmath>
 #include <limits>
 #include <sstream>
 #include <unordered_set>
@@ -170,22 +171,67 @@ namespace Incubator::Resource::Detail
             {
                 for (rapidjson::SizeType i = 0; i < materials->Size(); ++i)
                 {
-                    const auto* pbr = member((*materials)[i], "pbrMetallicRoughness");
-                    const auto* texture = pbr ? member(*pbr, "baseColorTexture") : nullptr;
-                    if (texture)
-                    {
+                    const auto checkTextureSlot = [i](const rapidjson::Value* texture, std::string_view label) {
+                        if (!texture)
+                            return;
                         const auto* uv = member(*texture, "texCoord");
                         const auto* extensions = member(*texture, "extensions");
                         if (uv && (!uv->IsUint() || uv->GetUint() != 0))
                         {
                             throw Error::Exception(Error::Code::IO,
-                                                   fmt::format("Model material {} requires base color UV0", i));
+                                                   fmt::format("Model material {} requires {} UV0", i, label));
                         }
                         if (extensions && member(*extensions, "KHR_texture_transform"))
                         {
                             throw Error::Exception(
                                 Error::Code::IO,
-                                fmt::format("Model material {} has unsupported base color UV transform", i));
+                                fmt::format("Model material {} has unsupported {} UV transform", i, label));
+                        }
+                    };
+                    const auto& mat = (*materials)[i];
+                    const auto* pbr = member(mat, "pbrMetallicRoughness");
+                    checkTextureSlot(pbr ? member(*pbr, "baseColorTexture") : nullptr, "base color");
+                    checkTextureSlot(pbr ? member(*pbr, "metallicRoughnessTexture") : nullptr, "metallic roughness");
+                    const auto* normalTex = member(mat, "normalTexture");
+                    checkTextureSlot(normalTex, "normal");
+
+                    if (pbr)
+                    {
+                        if (const auto* metallic = member(*pbr, "metallicFactor"))
+                        {
+                            const double value = metallic->IsNumber() ? metallic->GetDouble()
+                                                                      : std::numeric_limits<double>::quiet_NaN();
+                            if (!std::isfinite(value) || value < 0.0 || value > 1.0)
+                            {
+                                throw Error::Exception(
+                                    Error::Code::IO,
+                                    fmt::format("Model material {} requires finite metallicFactor in [0, 1]", i));
+                            }
+                        }
+                        if (const auto* roughness = member(*pbr, "roughnessFactor"))
+                        {
+                            const double value = roughness->IsNumber() ? roughness->GetDouble()
+                                                                       : std::numeric_limits<double>::quiet_NaN();
+                            if (!std::isfinite(value) || value < 0.0 || value > 1.0)
+                            {
+                                throw Error::Exception(
+                                    Error::Code::IO,
+                                    fmt::format("Model material {} requires finite roughnessFactor in [0, 1]", i));
+                            }
+                        }
+                    }
+                    if (normalTex)
+                    {
+                        if (const auto* scale = member(*normalTex, "scale"))
+                        {
+                            const double value = scale->IsNumber() ? scale->GetDouble()
+                                                                   : std::numeric_limits<double>::quiet_NaN();
+                            if (!std::isfinite(value) || value < 0.0)
+                            {
+                                throw Error::Exception(
+                                    Error::Code::IO,
+                                    fmt::format("Model material {} requires finite nonnegative normalTexture.scale", i));
+                            }
                         }
                     }
                 }

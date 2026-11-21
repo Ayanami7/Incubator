@@ -474,4 +474,34 @@ namespace
             }
         }
     }
+
+    TEST(ModelResourceTest, RejectsInvalidPbrMaterialPathsAndFactors)
+    {
+        for (const std::string& badPath : {"", ".", "../escape.png", "textures/normal.jpg"})
+        {
+            ModelInput input;
+            input.materials[0].normalTexturePath = badPath;
+            EXPECT_THROW(makeModel(input), Error::Exception);
+            input.materials[0].normalTexturePath.reset();
+            input.materials[0].metallicRoughnessTexturePath = badPath;
+            EXPECT_THROW(makeModel(input), Error::Exception);
+        }
+        for (const float badScale : {-0.1f, std::numeric_limits<float>::quiet_NaN(),
+                                     std::numeric_limits<float>::infinity()})
+        {
+            ModelInput input;
+            input.materials[0].normalScale = badScale;
+            expectInvalid(input, "normal scale");
+        }
+        for (const float badFactor : {-0.01f, 1.01f, std::numeric_limits<float>::quiet_NaN(),
+                                      std::numeric_limits<float>::infinity()})
+        {
+            ModelInput input;
+            input.materials[0].metallic = badFactor;
+            expectInvalid(input, "metallic");
+            input.materials[0].metallic = 0.5f;
+            input.materials[0].roughness = badFactor;
+            expectInvalid(input, "roughness");
+        }
+    }
 }  // namespace

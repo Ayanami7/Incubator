@@ -22,6 +22,11 @@ namespace Incubator
             std::optional<std::string> texturePath;
             std::array<float, 3> color{1.0f, 1.0f, 1.0f};  ///< 线性 RGB；输出不透明。
             bool unlit = false;  ///< 源材质显式声明不受光；不包含消费者的着色策略。
+            std::optional<std::string> normalTexturePath;             ///< 相对资产根的线性法线贴图路径（外部 PNG）。
+            std::optional<std::string> metallicRoughnessTexturePath;  ///< 相对资产根的线性金属粗糙度贴图路径（外部 PNG，G=粗糙度，B=金属度）。
+            float normalScale = 1.0f;                                 ///< 法线贴图 XY 缩放系数，有限且 >= 0。
+            float metallic = 0.0f;                                    ///< 金属度因子，有限且位于 [0, 1]。
+            float roughness = 1.0f;                                   ///< 粗糙度因子，有限且位于 [0, 1]。
         };
 
         struct ModelPart

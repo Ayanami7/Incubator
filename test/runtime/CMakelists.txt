@@ -44,6 +44,19 @@ foreach(MODEL_FILE IN ITEMS
     )
     list(APPEND RUNTIME_TEST_FIXTURE_OUTPUTS "${MODEL_OUTPUT}")
 endforeach()
+foreach(AVOCADO_FILE IN ITEMS Avocado.gltf Avocado.bin Avocado_baseColor.png Avocado_normal.png Avocado_roughnessMetallic.png)
+    set(AVOCADO_SOURCE "${CMAKE_SOURCE_DIR}/assets/models/avocado/glTF/${AVOCADO_FILE}")
+    set(AVOCADO_OUTPUT "${RUNTIME_TEST_ASSET_DIR}/models/avocado/glTF/${AVOCADO_FILE}")
+    add_custom_command(
+        OUTPUT "${AVOCADO_OUTPUT}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${RUNTIME_TEST_ASSET_DIR}/models/avocado/glTF"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${AVOCADO_SOURCE}" "${AVOCADO_OUTPUT}"
+        DEPENDS "${AVOCADO_SOURCE}"
+        COMMENT "部署 Avocado 模型资产 ${AVOCADO_FILE}"
+        VERBATIM
+    )
+    list(APPEND RUNTIME_TEST_FIXTURE_OUTPUTS "${AVOCADO_OUTPUT}")
+endforeach()
 foreach(TEXTURE_FILE IN ITEMS reference_rgba.png direction_rgba.png)
     set(TEXTURE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/textures/${TEXTURE_FILE}")
     set(TEXTURE_OUTPUT "${RUNTIME_TEST_ASSET_DIR}/textures/${TEXTURE_FILE}")
