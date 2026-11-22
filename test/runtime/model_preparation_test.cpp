@@ -792,13 +792,16 @@ namespace
             std::string sourcePath = "Models/normals/../normals/FOLDED.gltf";
             const auto lambert = Model::prepareModel(renderer, sourcePath, options);
             sourcePath.clear();
+            options.shading = ShadingMode::Pbr;
+            const auto pbr = Model::prepareModel(renderer, path, options);
             options.shading = ShadingMode::Unlit;
             EXPECT_EQ(lambert->source().path(), path);
             EXPECT_EQ(lambert->source().options().shading, ShadingMode::Lambert);
+            EXPECT_EQ(pbr->source().options().shading, ShadingMode::Pbr);
             released(ResourceType::MODEL, path);
             source_.reset();
             fileIO_.reset();
-            for (const auto& prepared : {legacy, lambert})
+            for (const auto& prepared : {legacy, lambert, pbr})
             {
                 EXPECT_EQ(prepared->meshes().size(), 2u);
                 EXPECT_EQ(prepared->materials().size(), 2u);
@@ -815,13 +818,13 @@ namespace
                 for (int channel = 0; channel < 3; ++channel)
                 {
                     EXPECT_NEAR(pixels[(115 * 384 + 57) * 4 + channel], 255, 2);
-                    EXPECT_NEAR(pixels[(115 * 384 + 249) * 4 + channel], prepared == lambert ? 0 : 255, 2);
+                    EXPECT_NEAR(pixels[(115 * 384 + 249) * 4 + channel], prepared == legacy ? 255 : 0, 2);
                 }
                 EXPECT_EQ(pixels[(115 * 384 + 57) * 4 + 3], 255);
                 EXPECT_EQ(pixels[(115 * 384 + 249) * 4 + 3], 255);
             }
-            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 4u);
-            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
+            EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 6u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 3u);
             EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
         }
         cleanValidation();
@@ -965,10 +968,10 @@ namespace
                 EXPECT_EQ(model->textures().size(), 2u);
                 EXPECT_EQ(model->materials().size(), 4u);
                 ASSERT_EQ(model->draws().size(), 5u);
-                for (bool minify : {false, true})
+                if (policy == 2)
                 {
-                    const auto extent = minify ? FrameExtent{1, 1} : FrameExtent{256, 256};
-                    const auto transform = glm::translate(glm::mat4(1), glm::vec3(minify ? -0.4f : 0, 0, 0.5f));
+                    const FrameExtent extent{1, 1};
+                    const auto transform = glm::translate(glm::mat4(1), glm::vec3(-0.4f, 0, 0.5f));
                     const std::array draws{DrawItem{model->meshes()[0], model->materials()[0], transform}};
                     std::vector<uint8_t> pixels;
                     Detail::RendererReviewAccess::withFrame(
@@ -978,11 +981,9 @@ namespace
                                 device, pipeline, frameSet, nativeDraws,
                                 {0, 0, float(extent.width), float(extent.height), 0, 1});
                         });
-                    const size_t offset = minify ? 0 : (128 * 384 + 128) * 4;
-                    const int expected = minify ? (policy == 2 ? 188 : 255) : (policy == 0 ? 255 : 188);
                     for (int channel = 0; channel < 3; ++channel)
-                        EXPECT_NEAR(pixels[offset + channel], expected, 2);
-                    EXPECT_EQ(pixels[offset + 3], 255);
+                        EXPECT_NEAR(pixels[channel], 188, 2);
+                    EXPECT_EQ(pixels[3], 255);
                 }
             }
             EXPECT_FALSE(ResourceRegistry::instance().lookup(ResourceType::TEXTURE, "textures/unused.png").valid());

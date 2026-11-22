@@ -24,6 +24,8 @@
 #include "runtime/core/error/error.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
+#include "runtime/resource/asset_source.h"
+#include "runtime/resource/resource_manager.h"
 #include "runtime/scene/scene.h"
 
 namespace
@@ -971,5 +973,52 @@ namespace
         ASSERT_TRUE(controller.redo(scene, clearColor));
         EXPECT_EQ(controller.selected(), first);
         EXPECT_FALSE(scene.find(second)->visible);
+    }
+
+    TEST(EditorControllerTest, AssetBrowserTracksDirectoriesParentEmptyAndErrorsWithoutWindow)
+    {
+        const auto tempRoot = fs::temp_directory_path() / "incubator_editor_asset_browser_test";
+        fs::remove_all(tempRoot);
+        fs::create_directories(tempRoot / "assets" / "browser" / "empty");
+        auto fileIO = FileIO::createPlatformFileIO();
+        struct CleanupGuard
+        {
+            fs::path temp;
+            ~CleanupGuard()
+            {
+                Resource::ResourceManager::instance().bindAssetSource(nullptr);
+                std::error_code ec;
+                fs::remove_all(temp, ec);
+            }
+        } guard{tempRoot};
+        ASSERT_NE(fileIO->open(tempRoot / "assets" / "browser" / "sample.obj",
+                               FileIO::OpenMode::ReadWrite | FileIO::OpenMode::Create | FileIO::OpenMode::Truncate),
+                  nullptr);
+        Resource::AssetSource source(*fileIO, tempRoot / "assets");
+        Resource::ResourceManager::instance().bindAssetSource(&source);
+
+        Editor::EditorController controller;
+        ASSERT_TRUE(controller.browseDirectory("browser"));
+        EXPECT_EQ(controller.assetDirectory(), "browser");
+        EXPECT_TRUE(controller.assetError().empty());
+        ASSERT_EQ(controller.assetEntries().size(), 2u);
+
+        ASSERT_TRUE(controller.browseDirectory("browser/empty"));
+        EXPECT_EQ(controller.assetDirectory(), "browser/empty");
+        EXPECT_TRUE(controller.assetEntries().empty());
+        EXPECT_TRUE(controller.assetError().empty());
+
+        ASSERT_TRUE(controller.parentDirectory());
+        EXPECT_EQ(controller.assetDirectory(), "browser");
+        EXPECT_TRUE(controller.assetError().empty());
+
+        ASSERT_FALSE(controller.browseDirectory("browser/missing"));
+        EXPECT_NE(controller.assetError().find("browser/missing"), std::string::npos);
+        EXPECT_TRUE(controller.assetEntries().empty());
+
+        ASSERT_TRUE(controller.parentDirectory());
+        EXPECT_TRUE(controller.assetDirectory().empty());
+        EXPECT_TRUE(controller.assetError().empty());
+        EXPECT_FALSE(controller.assetEntries().empty());
     }
 }  // namespace
