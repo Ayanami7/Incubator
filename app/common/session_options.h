@@ -20,6 +20,8 @@ namespace Incubator::App
         Render::RendererValidationMode validation = Render::RendererValidationMode::Disabled;
         std::string vertexShader = "shaders/cube.vert.spv";
         std::string fragmentShader = "shaders/cube.frag.spv";
+        std::string displayVertexShader = "shaders/display.vert.spv";
+        std::string displayFragmentShader = "shaders/display.frag.spv";
         std::array<float, 4> clearColor{0.12f, 0.16f, 0.22f, 1};
     };
 }  // namespace Incubator::App

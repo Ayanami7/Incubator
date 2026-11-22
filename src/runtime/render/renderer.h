@@ -103,6 +103,13 @@ namespace Incubator
             /// @note 未启用阴影的调用方不需要调用；不读取文件或保留 CPU Resource。
             void prepareShadowResources(const Resource::ShaderResource& vertexShader);
 
+            /// @brief 准备离屏视口显示 Pass（色调映射与 sRGB 编码）所需全屏 Shader。
+            /// @param vertexShader 全屏三角形顶点着色器资源。
+            /// @param fragmentShader 显示 Pass 片元着色器资源。
+            /// @note 须在首次调用 drawSceneTarget 之前准备；仅复制 SPIR-V 字码，不保留 CPU Resource。
+            void prepareDisplayResources(const Resource::ShaderResource& vertexShader,
+                                         const Resource::ShaderResource& fragmentShader);
+
             /// @brief 根据描述创建不可变材质绑定。
             /// @param desc 材质描述，仅在本次调用期间借用。
             /// @return 由此 Renderer 持有的材质引用。

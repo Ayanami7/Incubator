@@ -787,6 +787,7 @@ namespace
         {
             Renderer renderer(*window, RendererValidationMode::Required);
             renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
             auto depth = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
                 Resource::ResourceType::SHADER, "shaders/shadow.vert.spv");
             ASSERT_TRUE(depth);
@@ -865,6 +866,7 @@ namespace
         {
             Renderer renderer(*window, RendererValidationMode::Required);
             renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
             MaterialDesc desc{renderer.createTexture(*assets.texture)};
             observer = renderer.createMaterial(desc);
             Renderer moved(std::move(renderer));
@@ -2019,6 +2021,150 @@ namespace
                     const auto ldrPx = TextureGpuReview::captureDraws(device, pipeline, frameSet, nativeDraws);
                     expectLinearPixel(ldrPx, glm::vec3(0.434f));
                 });
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, DisplayPassToneMappingExposureBackgroundAndSlotResizeValidation)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+
+            const Resource::TextureResource whiteTex({}, 1, 1, {255, 255, 255, 255});
+            const auto white = renderer.createTexture(whiteTex, TextureMipMode::BaseLevel, TextureColorSpace::Srgb);
+            const std::array<MeshVertex, 4> quadVertices{
+                MeshVertex{{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+                MeshVertex{{0.5f, -0.5f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+                MeshVertex{{0.5f, 0.5f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+                MeshVertex{{-0.5f, 0.5f, 0.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}}};
+            const std::array<uint32_t, 6> quadIndices{0, 1, 2, 0, 2, 3};
+            const auto quad = renderer.createMesh(quadVertices, quadIndices);
+
+            MaterialDesc leftDesc{white, {0.5f, 0.25f, 0.1f}};
+            leftDesc.shading = ShadingMode::Lambert;
+            const auto leftMat = renderer.createMaterial(leftDesc);
+
+            MaterialDesc rightDesc{white, {1.0f, 0.8f, 0.5f}};
+            rightDesc.shading = ShadingMode::Lambert;
+            const auto rightMat = renderer.createMaterial(rightDesc);
+
+            const std::array draws{
+                DrawItem{quad, leftMat, glm::translate(glm::mat4(1.0f), {-0.5f, 0.0f, 0.5f}) *
+                                            glm::scale(glm::mat4(1.0f), {0.4f, 0.6f, 1.0f})},
+                DrawItem{quad, rightMat, glm::translate(glm::mat4(1.0f), {0.5f, 0.0f, 0.5f}) *
+                                             glm::scale(glm::mat4(1.0f), {0.4f, 0.6f, 1.0f})}};
+            const Lighting brightLight{{0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, 4.0f, 0.0f};
+            const std::array<float, 4> clearColor{0.12f, 0.16f, 0.22f, 1.0f};
+
+            // 1. 未准备显示 Shader 时 drawSceneTarget 拒绝执行。
+            {
+                ASSERT_TRUE(renderer.beginUiFrame());
+                const auto output = renderer.prepareSceneTarget({128, 64});
+                renderer.imgui().endFrame();
+                EXPECT_THROW(renderer.drawSceneTarget(output, {{128, 64}, {glm::mat4(1), glm::mat4(1)}, draws}, clearColor),
+                             Error::Exception);
+                Detail::RendererReviewAccess::waitForFrames(renderer);
+            }
+
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
+            const Resource::ShaderResource emptyShader({}, {});
+            EXPECT_THROW(renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment),
+                         Error::Exception);
+            EXPECT_THROW(renderer.prepareDisplayResources(emptyShader, *assets.displayFragment), Error::Exception);
+
+            // 2. 非法曝光范围校验。
+            {
+                ASSERT_TRUE(renderer.beginUiFrame());
+                const auto output = renderer.prepareSceneTarget({128, 64});
+                renderer.imgui().endFrame();
+                for (float badEv : {-8.5f, 8.5f, std::numeric_limits<float>::quiet_NaN()})
+                {
+                    FrameInput badInput{{128, 64}, {glm::mat4(1), glm::mat4(1)}, draws, brightLight};
+                    badInput.display = {ToneMappingMode::Reinhard, badEv};
+                    EXPECT_THROW(renderer.drawSceneTarget(output, badInput, clearColor), Error::Exception);
+                }
+                Detail::RendererReviewAccess::waitForFrames(renderer);
+            }
+
+            const auto renderAndCapture = [&](FrameExtent extent, std::span<const DrawItem> frameDraws,
+                                              DisplaySettings display) {
+                const auto uiExtent = renderer.beginUiFrame();
+                EXPECT_TRUE(uiExtent);
+                const auto output = renderer.prepareSceneTarget(extent);
+                ImGui::Begin("Viewport");
+                ImGui::Image(static_cast<ImTextureID>(renderer.sceneImage(output)),
+                             ImVec2(float(extent.width), float(extent.height)));
+                ImGui::End();
+                renderer.imgui().endFrame();
+                auto* drawData = renderer.imgui().drawData();
+                FrameInput input{extent, {glm::mat4(1.0f), glm::mat4(1.0f)}, frameDraws, brightLight};
+                input.display = display;
+                renderer.drawSceneTarget(output, input, clearColor,
+                                         [&](void* cmd) { renderer.imgui().recordDrawData(drawData, cmd); });
+                std::vector<uint8_t> pixels;
+                Detail::RendererReviewAccess::withSceneOutput(
+                    renderer, output, [&](const auto& device, const auto& image) {
+                        EXPECT_EQ(image.format(), VK_FORMAT_R8G8B8A8_UNORM);
+                        pixels = TextureGpuReview::captureMip(device, image, 0, {extent.width, extent.height});
+                    });
+                return pixels;
+            };
+
+            // 3. 空场景直接输出原有 clearColor。
+            {
+                const auto px = renderAndCapture({128, 64}, {}, {ToneMappingMode::Reinhard, 0.0f});
+                const size_t bgOff = (32u * 128u + 64u) * 4u;
+                EXPECT_NEAR(px[bgOff + 0], clearColor[0] * 255.0f, 1.5f);
+                EXPECT_NEAR(px[bgOff + 1], clearColor[1] * 255.0f, 1.5f);
+                EXPECT_NEAR(px[bgOff + 2], clearColor[2] * 255.0f, 1.5f);
+                EXPECT_EQ(px[bgOff + 3], 255u);
+            }
+
+            // 4. Off 模式：钳制到 [0, 1] 后编码一次 sRGB，EV 不影响输出；未覆盖背景仍为 clearColor。
+            {
+                const auto offNeg = renderAndCapture({128, 64}, draws, {ToneMappingMode::Off, -4.0f});
+                const auto offPos = renderAndCapture({128, 64}, draws, {ToneMappingMode::Off, 4.0f});
+                EXPECT_EQ(offNeg, offPos);
+                // left = {2.0, 1.0, 0.4} -> clamped = {1.0, 1.0, 0.4}
+                expectLinearPixel(offNeg, glm::vec3(1.0f, 1.0f, 0.4f), 32, 32, 128);
+                // right = {4.0, 3.2, 2.0} -> clamped = {1.0, 1.0, 1.0}
+                expectLinearPixel(offNeg, glm::vec3(1.0f, 1.0f, 1.0f), 96, 32, 128);
+                const size_t bgOff = (32u * 128u + 64u) * 4u;
+                EXPECT_NEAR(offNeg[bgOff + 0], clearColor[0] * 255.0f, 1.5f);
+            }
+
+            // 5. Reinhard 模式：参考像素正确、两个超亮样本可区分，且 +/-1 EV 曝光关系正确。
+            {
+                const auto reinhard0 = renderAndCapture({128, 64}, draws, {ToneMappingMode::Reinhard, 0.0f});
+                const glm::vec3 leftHdr(2.0f, 1.0f, 0.4f);
+                const glm::vec3 rightHdr(4.0f, 3.2f, 2.0f);
+                expectLinearPixel(reinhard0, leftHdr / (1.0f + leftHdr), 32, 32, 128);
+                expectLinearPixel(reinhard0, rightHdr / (1.0f + rightHdr), 96, 32, 128);
+                const size_t leftOff = (32u * 128u + 32u) * 4u;
+                const size_t rightOff = (32u * 128u + 96u) * 4u;
+                EXPECT_GT(reinhard0[rightOff + 0], reinhard0[leftOff + 0] + 10);
+
+                const auto reinhardPlus1 = renderAndCapture({128, 64}, draws, {ToneMappingMode::Reinhard, 1.0f});
+                const glm::vec3 leftPlus1 = leftHdr * 2.0f;
+                expectLinearPixel(reinhardPlus1, leftPlus1 / (1.0f + leftPlus1), 32, 32, 128);
+
+                const auto reinhardMinus1 = renderAndCapture({128, 64}, draws, {ToneMappingMode::Reinhard, -1.0f});
+                const glm::vec3 leftMinus1 = leftHdr * 0.5f;
+                expectLinearPixel(reinhardMinus1, leftMinus1 / (1.0f + leftMinus1), 32, 32, 128);
+            }
+
+            // 6. 连续帧复用旧帧槽与视口尺寸重建（128x64 -> 192x96 -> 128x64）在 Required Validation 下无错误。
+            for (const FrameExtent extent : {FrameExtent{192, 96}, FrameExtent{192, 96}, FrameExtent{128, 64},
+                                             FrameExtent{128, 64}})
+            {
+                const auto px = renderAndCapture(extent, draws, {ToneMappingMode::Reinhard, 0.0f});
+                const glm::vec3 rightHdr(4.0f, 3.2f, 2.0f);
+                expectLinearPixel(px, rightHdr / (1.0f + rightHdr), (extent.width * 3u) / 4u, extent.height / 2u,
+                                  extent.width);
+            }
         }
         expectCleanValidation();
     }

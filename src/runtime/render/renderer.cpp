@@ -404,6 +404,17 @@ namespace Incubator
                 shadowVertexShader_ = vertexShader.words();
             }
 
+            void prepareDisplayResources(const Resource::ShaderResource& vertexShader,
+                                         const Resource::ShaderResource& fragmentShader)
+            {
+                if (displayPass_)
+                    throw Error::Exception(Error::Code::RENDER, "Display resources are already prepared");
+                if (vertexShader.words().empty() || fragmentShader.words().empty())
+                    throw Error::Exception(Error::Code::RENDER, "Display shaders must contain SPIR-V words");
+                displayPass_ = std::make_unique<Vulkan::VulkanDisplayPass>(
+                    device_, VK_FORMAT_R8G8B8A8_UNORM, vertexShader.words(), fragmentShader.words());
+            }
+
             Material createMaterial(const MaterialDesc& desc, const std::shared_ptr<GpuResources::Impl>& resources = {})
             {
                 if (!bindingSet_)
@@ -684,7 +695,8 @@ namespace Incubator
                     auto next = std::make_shared<SceneOutput::Impl>();
                     next->owner = &device_;
                     next->target = std::make_unique<Vulkan::VulkanSceneTarget>(
-                        device_, VkExtent2D{extent.width, extent.height}, depthFormat_);
+                        device_, VkExtent2D{extent.width, extent.height}, depthFormat_,
+                        VK_FORMAT_R16G16B16A16_SFLOAT, true);
                     imguiRenderer_->releaseSceneImage(frameIndex);
                     slot = std::move(next);
                     Log::Registry::get("render").debug(
@@ -713,6 +725,15 @@ namespace Incubator
                 if (!target || target->owner != &device_ || target != sceneTargets_[index] ||
                     output.extent() != input.extent)
                     throw Error::Exception(Error::Code::RENDER, "Invalid current scene output");
+                if (!displayPass_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare display shaders before drawSceneTarget");
+                if (input.display.toneMapping != ToneMappingMode::Off &&
+                    input.display.toneMapping != ToneMappingMode::Reinhard)
+                    throw Error::Exception(Error::Code::RENDER, "Invalid tone mapping mode");
+                if (!std::isfinite(input.display.exposureEv) ||
+                    input.display.exposureEv < DisplaySettings::MIN_EXPOSURE_EV ||
+                    input.display.exposureEv > DisplaySettings::MAX_EXPOSURE_EV)
+                    throw Error::Exception(Error::Code::RENDER, "Exposure EV is out of range");
                 const auto frame = Vulkan::makeFrameUniform(input);
                 std::vector<std::shared_ptr<void>> resources;
                 const auto draws = resolveDraws(input, resources);
@@ -734,10 +755,10 @@ namespace Incubator
                 scheduler_->waitForCurrentFrame();
                 if (bindingSet_)
                     uniformBuffers_[index]->write(0, std::as_bytes(std::span(&frame, 1)));
-                if (!draws.empty() && !scenePipeline_)
-                    scenePipeline_ = std::make_unique<Vulkan::VulkanPipeline>(
-                        device_, VK_FORMAT_R8G8B8A8_UNORM, depthFormat_, bindingSet_->layout(),
-                        bindingSet_->materialLayout(), vertexShader_, fragmentShader_);
+                if (!draws.empty() && !sceneHdrPipeline_)
+                    sceneHdrPipeline_ = std::make_unique<Vulkan::VulkanPipeline>(
+                        device_, VK_FORMAT_R16G16B16A16_SFLOAT, depthFormat_, bindingSet_->layout(),
+                        bindingSet_->materialLayout(), vertexShader_, fragmentShader_, true);
                 std::shared_ptr<Vulkan::VulkanShadowTarget> shadow;
                 if (input.shadow)
                 {
@@ -757,6 +778,10 @@ namespace Incubator
                 resources.push_back(uniformBuffers_[index]);
                 VkClearColorValue clear{};
                 std::copy(clearColor.begin(), clearColor.end(), clear.float32);
+                const Vulkan::VulkanDisplayParams displayParams{
+                    clearColor,
+                    input.display.toneMapping == ToneMappingMode::Off ? 0u : 1u,
+                    std::exp2(input.display.exposureEv)};
                 if (!scheduler_->renderAndPresent(
                         *swapchain_, clear,
                         [&](VkCommandBuffer cmd) {
@@ -770,9 +795,9 @@ namespace Incubator
                                     Vulkan::VulkanCommandList::drawShadow(
                                         depth, *shadowPipeline_, bindingSet_->descriptorSet(index), shadowDraws);
                                 });
-                            target->target->record(cmd, clear, [&](VkCommandBuffer scene) {
+                            target->target->record(cmd, *displayPass_, displayParams, [&](VkCommandBuffer scene) {
                                 if (!draws.empty())
-                                    Vulkan::VulkanCommandList::drawIndexed(scene, *scenePipeline_,
+                                    Vulkan::VulkanCommandList::drawIndexed(scene, *sceneHdrPipeline_,
                                                                            bindingSet_->descriptorSet(index), draws);
                             });
                         }))
@@ -849,8 +874,8 @@ namespace Incubator
             std::unique_ptr<Vulkan::VulkanSwapchain> swapchain_;
             std::unique_ptr<Vulkan::VulkanPipeline> pipeline_;
             std::array<std::shared_ptr<SceneOutput::Impl>, Vulkan::VulkanFrameScheduler::FRAME_COUNT> sceneTargets_{};
-            std::unique_ptr<Vulkan::VulkanPipeline> scenePipeline_;
             std::unique_ptr<Vulkan::VulkanPipeline> sceneHdrPipeline_;
+            std::unique_ptr<Vulkan::VulkanDisplayPass> displayPass_;
             std::unique_ptr<Vulkan::VulkanPipeline> shadowPipeline_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
             std::unique_ptr<Integration::ImGuiRenderer> imguiRenderer_;
@@ -938,6 +963,14 @@ namespace Incubator
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
             impl_->prepareShadowResources(vertexShader);
+        }
+
+        void Renderer::prepareDisplayResources(const Resource::ShaderResource& vertexShader,
+                                               const Resource::ShaderResource& fragmentShader)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            impl_->prepareDisplayResources(vertexShader, fragmentShader);
         }
 
         Material Renderer::createMaterial(const MaterialDesc& desc)

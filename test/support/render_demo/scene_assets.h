@@ -18,6 +18,8 @@ namespace Incubator::Demo
     {
         std::string_view vertex = "shaders/cube.vert.spv";
         std::string_view fragment = "shaders/cube.frag.spv";
+        std::string_view displayVertex = "shaders/display.vert.spv";
+        std::string_view displayFragment = "shaders/display.frag.spv";
         std::string_view texture = "textures/reference_rgba.png";
     };
 
@@ -34,9 +36,14 @@ namespace Incubator::Demo
             manager.registerLoader(Resource::ResourceType::TEXTURE, std::make_unique<Resource::TextureLoader>(source_));
             vertexHold_ = hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.vertex);
             fragmentHold_ = hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.fragment);
+            displayVertexHold_ = hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.displayVertex);
+            displayFragmentHold_ =
+                hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, paths.displayFragment);
             textureHold_ = hold<Resource::TextureResource>(Resource::ResourceType::TEXTURE, paths.texture);
             vertex = vertexHold_.get<Resource::ShaderResource>();
             fragment = fragmentHold_.get<Resource::ShaderResource>();
+            displayVertex = displayVertexHold_.get<Resource::ShaderResource>();
+            displayFragment = displayFragmentHold_.get<Resource::ShaderResource>();
             texture = textureHold_.get<Resource::TextureResource>();
         }
 
@@ -47,8 +54,12 @@ namespace Incubator::Demo
         {
             vertex = nullptr;
             fragment = nullptr;
+            displayVertex = nullptr;
+            displayFragment = nullptr;
             texture = nullptr;
             textureHold_.reset();
+            displayFragmentHold_.reset();
+            displayVertexHold_.reset();
             fragmentHold_.reset();
             vertexHold_.reset();
             routeCleanup_.finish();
@@ -56,6 +67,8 @@ namespace Incubator::Demo
 
         Resource::ShaderResource* vertex = nullptr;
         Resource::ShaderResource* fragment = nullptr;
+        Resource::ShaderResource* displayVertex = nullptr;
+        Resource::ShaderResource* displayFragment = nullptr;
         Resource::TextureResource* texture = nullptr;
 
     private:
@@ -88,6 +101,8 @@ namespace Incubator::Demo
         RouteCleanup routeCleanup_;
         Resource::CpuResource vertexHold_;
         Resource::CpuResource fragmentHold_;
+        Resource::CpuResource displayVertexHold_;
+        Resource::CpuResource displayFragmentHold_;
         Resource::CpuResource textureHold_;
     };
 }  // namespace Incubator::Demo

@@ -44,13 +44,20 @@ namespace Incubator::App
                 manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, options.vertexShader);
             const auto fragment =
                 manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, options.fragmentShader);
+            const auto displayVertex =
+                manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, options.displayVertexShader);
+            const auto displayFragment =
+                manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, options.displayFragmentShader);
             const auto* vertexData = vertex.get<Resource::ShaderResource>();
             const auto* fragmentData = fragment.get<Resource::ShaderResource>();
-            if (!vertexData || !fragmentData)
+            const auto* displayVertexData = displayVertex.get<Resource::ShaderResource>();
+            const auto* displayFragmentData = displayFragment.get<Resource::ShaderResource>();
+            if (!vertexData || !fragmentData || !displayVertexData || !displayFragmentData)
                 throw Error::Exception(Error::Code::RENDER, "Cannot load application scene shaders");
             window_ = Window::createPlatformWindow(options.window);
             renderer_ = std::make_unique<Render::Renderer>(*window_, options.validation);
             renderer_->prepareSceneResources(*vertexData, *fragmentData);
+            renderer_->prepareDisplayResources(*displayVertexData, *displayFragmentData);
             scene_ = std::make_unique<Scene::Scene>();
         }
         catch (...)

@@ -12,6 +12,7 @@
 #include "runtime/platform/window/window.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
+#include "support/render_demo/scene_assets.h"
 #include "support/window_capture.h"
 
 namespace
@@ -108,7 +109,10 @@ namespace
         const auto output = std::filesystem::current_path().parent_path() / "review/task01-imgui";
         std::filesystem::create_directories(output);
         {
+            Demo::SceneAssets assets;
             Render::Renderer renderer(controlled, Render::RendererValidationMode::Required);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
+            assets.releaseCpuResources();
             EXPECT_TRUE(ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable);
             EXPECT_FALSE(ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable);
             int width, height, pixelWidth, pixelHeight;
@@ -165,7 +169,10 @@ namespace
         auto native = window(true);
         glfwSetWindowPos(static_cast<GLFWwindow*>(native->getNativeHandle()), 40, 40);
         {
+            Demo::SceneAssets assets;
             Render::Renderer renderer(*native, Render::RendererValidationMode::Required);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
+            assets.releaseCpuResources();
             for (int frame = 0; frame < 5; ++frame)
             {
                 native->beginInputFrame();

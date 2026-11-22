@@ -259,12 +259,21 @@ namespace
             {
                 const auto vertex = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/cube.vert.spv");
                 const auto fragment = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/cube.frag.spv");
+                const auto displayVertex = manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/display.vert.spv");
+                const auto displayFragment =
+                    manager.hold<ShaderResource>(ResourceType::SHADER, "shaders/display.frag.spv");
                 ASSERT_TRUE(vertex);
                 ASSERT_TRUE(fragment);
+                ASSERT_TRUE(displayVertex);
+                ASSERT_TRUE(displayFragment);
                 renderer.prepareSceneResources(*vertex.get<ShaderResource>(), *fragment.get<ShaderResource>());
+                renderer.prepareDisplayResources(*displayVertex.get<ShaderResource>(),
+                                                 *displayFragment.get<ShaderResource>());
             }
             released(ResourceType::SHADER, "shaders/cube.vert.spv");
             released(ResourceType::SHADER, "shaders/cube.frag.spv");
+            released(ResourceType::SHADER, "shaders/display.vert.spv");
+            released(ResourceType::SHADER, "shaders/display.frag.spv");
         }
         void copyShowcaseModels()
         {
@@ -303,7 +312,9 @@ namespace
                 return {};
             const auto output = renderer.prepareSceneTarget(frame.extent);
             renderer.imgui().endFrame();
-            renderer.drawSceneTarget(output, frame.input(), {0.12f, 0.16f, 0.22f, 1});
+            auto input = frame.input();
+            input.display = {ToneMappingMode::Off, 0.0f};
+            renderer.drawSceneTarget(output, input, {0.12f, 0.16f, 0.22f, 1});
             std::vector<uint8_t> pixels;
             Detail::RendererReviewAccess::withSceneOutput(renderer, output, [&](const auto& device, const auto& image) {
                 pixels = TextureGpuReview::captureMip(device, image, 0, {frame.extent.width, frame.extent.height});

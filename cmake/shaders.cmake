@@ -36,7 +36,29 @@ if(WIN32)
         COMMENT "编译阴影深度顶点 Shader"
         VERBATIM
     )
-    add_custom_target(incubator_shaders DEPENDS "${CUBE_VERTEX_SPIRV}" "${CUBE_FRAGMENT_SPIRV}" "${SHADOW_VERTEX_SPIRV}")
+    set(DISPLAY_VERTEX_SPIRV "${SHADER_OUTPUT_DIR}/display.vert.spv")
+    set(DISPLAY_FRAGMENT_SPIRV "${SHADER_OUTPUT_DIR}/display.frag.spv")
+    add_custom_command(
+        OUTPUT "${DISPLAY_VERTEX_SPIRV}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
+        COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 --target-env spirv1.6 --glsl-version 450
+                -S vert -o "${DISPLAY_VERTEX_SPIRV}" "${ASSETS_DIR}/shaders/display.vert"
+        DEPENDS "${ASSETS_DIR}/shaders/display.vert"
+        COMMENT "编译显示 Pass 顶点 Shader"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${DISPLAY_FRAGMENT_SPIRV}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
+        COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 --target-env spirv1.6 --glsl-version 450
+                -S frag -o "${DISPLAY_FRAGMENT_SPIRV}" "${ASSETS_DIR}/shaders/display.frag"
+        DEPENDS "${ASSETS_DIR}/shaders/display.frag"
+        COMMENT "编译显示 Pass 片元 Shader"
+        VERBATIM
+    )
+    add_custom_target(incubator_shaders
+        DEPENDS "${CUBE_VERTEX_SPIRV}" "${CUBE_FRAGMENT_SPIRV}" "${SHADOW_VERTEX_SPIRV}"
+                "${DISPLAY_VERTEX_SPIRV}" "${DISPLAY_FRAGMENT_SPIRV}")
 
 endif()
 

@@ -81,6 +81,7 @@ set(RENDER_HEADERS
     render/renderer.h
     render/gpu_resources.h
     render/detail/renderer_review.h
+    render/display.h
     render/frame_input.h
     render/lighting.h
     render/shadow.h

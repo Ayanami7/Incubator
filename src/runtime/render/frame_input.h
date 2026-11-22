@@ -4,6 +4,7 @@
 #include <glm/mat4x4.hpp>
 #include <span>
 
+#include "runtime/render/display.h"
 #include "runtime/render/lighting.h"
 #include "runtime/render/material.h"
 #include "runtime/render/mesh.h"
@@ -45,6 +46,7 @@ namespace Incubator
             Lighting lighting{};
             std::optional<ShadowFrame> shadow{};
             std::span<const DrawItem> shadowDraws{};  ///< 独立于主相机裁剪的投射物列表。
+            DisplaySettings display{};
         };
     }  // namespace Render
 }  // namespace Incubator
