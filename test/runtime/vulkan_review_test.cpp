@@ -1129,6 +1129,8 @@ namespace
                  ShadingMode::Lambert});
             releaseCpuAssets(assets);
             Renderer moved(std::move(renderer));
+            for (int f = 0; f < 4; ++f, glfwWaitEventsTimeout(0.02))
+                submitControlledScene(window, moved, {}, true);
             std::array draws{
                 DrawItem{meshObserver, materialObserver, glm::translate(glm::mat4(1), glm::vec3(-0.6f, 0, 0))},
                 DrawItem{meshObserver, materialObserver, glm::translate(glm::mat4(1), glm::vec3(0.6f, 0, 0))}};
