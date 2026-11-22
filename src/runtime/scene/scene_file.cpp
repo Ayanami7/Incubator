@@ -174,6 +174,8 @@ namespace Incubator::Scene
         w.StartObject();
         key(w, "version");
         w.Int(1);
+        key(w, "minorVersion");
+        w.Int(1);
         key(w, "entities");
         w.StartArray();
         for (const auto& e : d.entities)
@@ -181,6 +183,11 @@ namespace Incubator::Scene
             w.StartObject();
             key(w, "name");
             text(w, e.name);
+            key(w, "parent");
+            if (!e.parent)
+                w.Null();
+            else
+                w.Uint64(static_cast<uint64_t>(*e.parent));
             key(w, "model");
             if (!e.model)
                 w.Null();
@@ -283,6 +290,13 @@ namespace Incubator::Scene
         const auto& version = member(doc, "version", "root");
         if (!version.IsInt() || version.GetInt() != 1)
             fail("version", "expected integer 1");
+        int minorVersion = 0;
+        if (const auto minorIt = doc.FindMember("minorVersion"); minorIt != doc.MemberEnd())
+        {
+            if (!minorIt->value.IsInt() || (minorIt->value.GetInt() != 0 && minorIt->value.GetInt() != 1))
+                fail("minorVersion", "expected integer 0 or 1");
+            minorVersion = minorIt->value.GetInt();
+        }
         const auto& entities = member(doc, "entities", "root");
         if (!entities.IsArray())
             fail("entities", "expected array");
@@ -300,6 +314,21 @@ namespace Incubator::Scene
                 if (!validEntityName(item.name))
                     fail(p + ".name", "expected UTF-8 without NUL");
             }
+            if (minorVersion == 1)
+            {
+                const auto& parent = member(e, "parent", p);
+                if (!parent.IsNull())
+                {
+                    if (!parent.IsInt64() && !parent.IsUint64())
+                        fail(p + ".parent", "expected non-negative integer or null");
+                    if (parent.IsInt64() && parent.GetInt64() < 0)
+                        fail(p + ".parent", "parent index out of range");
+                    const uint64_t idx = parent.GetUint64();
+                    if (idx >= entities.Size() || idx > std::numeric_limits<size_t>::max())
+                        fail(p + ".parent", "parent index out of range");
+                    item.parent = static_cast<size_t>(idx);
+                }
+            }
             if (!m.IsNull())
                 item.model = model(m, p + ".model");
             const auto& t = member(e, "transform", p);
@@ -314,6 +343,8 @@ namespace Incubator::Scene
             item.visible = visible.GetBool();
             result.entities.push_back(std::move(item));
         }
+        if (const auto hierarchyError = findInvalidParentHierarchy(result.entities))
+            fail("entities[" + std::to_string(hierarchyError->entityIndex) + "].parent", hierarchyError->reason);
         const auto& c = member(doc, "camera", "root");
         const auto cp = vec3(member(c, "position", "camera"), "camera.position");
         const auto cr = quat(member(c, "rotation", "camera"), "camera.rotation");

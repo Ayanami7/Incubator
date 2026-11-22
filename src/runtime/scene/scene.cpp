@@ -1,8 +1,9 @@
 #include "runtime/scene/scene.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 
 #include "runtime/core/error/error.h"
@@ -34,23 +35,55 @@ namespace Incubator::Scene
         if (!entity)
             return {};
         const auto copy = *entity;
-        return createEntity(copy.model, copy.transform, copy.visible, copy.name);
+        const auto created = createEntity(copy.model, copy.transform, copy.visible, copy.name);
+        if (copy.parent.valid())
+            setParent(created, copy.parent);
+        return created;
     }
 
     void Scene::restoreEntities(std::span<const Entity> entities)
     {
-        std::unordered_set<uint64_t> seenIds;
-        seenIds.reserve(entities.size());
+        std::unordered_map<uint64_t, size_t> idToIndex;
+        idToIndex.reserve(entities.size());
         uint64_t maxId = 0;
-        for (const auto& entity : entities)
+        for (size_t i = 0; i < entities.size(); ++i)
         {
+            const auto& entity = entities[i];
             if (!entity.id.valid())
                 throw Error::Exception(Error::Code::CONFIG, "Entity restore requires valid EntityId");
             if (!validEntityName(entity.name))
                 throw Error::Exception(Error::Code::CONFIG, "Entity name must be UTF-8 without NUL");
-            if (!seenIds.insert(entity.id.value()).second)
+            if (!idToIndex.emplace(entity.id.value(), i).second)
                 throw Error::Exception(Error::Code::CONFIG, "Entity restore requires unique EntityIds");
             maxId = std::max(maxId, entity.id.value());
+        }
+
+        // 在替换前校验整份快照的父级引用、自指与循环，允许父级位于子级之后。
+        std::vector<uint8_t> visitState(entities.size(), 0);
+        for (size_t i = 0; i < entities.size(); ++i)
+        {
+            if (visitState[i] == 2)
+                continue;
+            std::vector<size_t> chain;
+            size_t current = i;
+            while (visitState[current] == 0)
+            {
+                visitState[current] = 1;
+                chain.push_back(current);
+                const EntityId parent = entities[current].parent;
+                if (!parent.valid())
+                    break;
+                if (parent == entities[current].id)
+                    throw Error::Exception(Error::Code::CONFIG, "Entity restore cannot parent an entity to itself");
+                const auto found = idToIndex.find(parent.value());
+                if (found == idToIndex.end())
+                    throw Error::Exception(Error::Code::CONFIG, "Entity restore requires existing parent EntityId");
+                current = found->second;
+                if (visitState[current] == 1)
+                    throw Error::Exception(Error::Code::CONFIG, "Entity restore cannot contain parent cycles");
+            }
+            for (const size_t idx : chain)
+                visitState[idx] = 2;
         }
 
         std::vector<Entity> restored(entities.begin(), entities.end());
@@ -111,8 +144,59 @@ namespace Incubator::Scene
         return true;
     }
 
+    bool Scene::setParent(EntityId id, EntityId parent)
+    {
+        auto* entity = findMutable(id);
+        if (!entity)
+            return false;
+        if (entity->parent == parent)
+            return true;
+        if (parent.valid())
+        {
+            if (parent == id || !find(parent))
+                return false;
+            EntityId cursor = parent;
+            for (size_t steps = 0; cursor.valid() && steps < entities_.size(); ++steps)
+            {
+                if (cursor == id)
+                    return false;
+                const auto* ancestor = find(cursor);
+                cursor = ancestor ? ancestor->parent : EntityId{};
+            }
+        }
+        entity->parent = parent;
+        return true;
+    }
+
+    bool Scene::hasChildren(EntityId id) const
+    {
+        if (!id.valid())
+            return false;
+        return std::ranges::any_of(entities_, [id](const Entity& entity) { return entity.parent == id; });
+    }
+
+    std::optional<glm::mat4> Scene::worldMatrix(EntityId id) const
+    {
+        const auto* entity = find(id);
+        if (!entity)
+            return std::nullopt;
+        glm::mat4 result = entity->transform.matrix();
+        EntityId cursor = entity->parent;
+        for (size_t steps = 0; cursor.valid() && steps < entities_.size(); ++steps)
+        {
+            const auto* parent = find(cursor);
+            if (!parent)
+                break;
+            result = parent->transform.matrix() * result;
+            cursor = parent->parent;
+        }
+        return result;
+    }
+
     bool Scene::destroyEntity(EntityId id)
     {
+        if (!find(id) || hasChildren(id))
+            return false;
         return std::erase_if(entities_, [id](const Entity& entity) { return entity.id == id; }) != 0;
     }
 
@@ -133,7 +217,10 @@ namespace Incubator::Scene
         {
             if (!entity.visible || !entity.model || !entity.model->bounds())
                 continue;
-            const auto bounds = entity.model->bounds()->transformed(entity.transform.matrix());
+            const auto world = worldMatrix(entity.id);
+            if (!world)
+                continue;
+            const auto bounds = entity.model->bounds()->transformed(*world);
             if (!bounds)
                 continue;
             const auto hit = Math::intersectSegment(segment, *bounds);

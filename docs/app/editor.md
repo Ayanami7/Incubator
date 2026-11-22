@@ -55,10 +55,11 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 
 | 控件 | 行为 |
 |---|---|
-| 实体列表与内联可见性 | 按创建顺序显示名称和 `EntityId`（空名显示“未命名”），左侧 `##vis` 复选框可按实体 ID 直接切换显示/隐藏而不抢占当前选中项，点击列表项选中 |
+| 实体树列表与内联可见性 | 在 `Objects` 中按同级创建顺序以树形缩进展示名称与 `EntityId`（空名显示“未命名”，重名以 `(#id)` 区分）；有子级时显示折叠/展开按钮（折叠状态不改变当前选中），左侧 `##vis` 复选框按实体 ID 独立切换显示/隐藏而不抢占当前选中项，点击列表项选中；隐藏父级不隐藏子级 |
+| 挂接 / 解除挂接 | 通过 `Objects → More...` 的 `Parent selected to... (keep local)` 与 `Unparent selected (keep local)` 挂接或解除挂接（保留局部变换），自动过滤自身与后代以防止循环；成功变更各记 1 步 Undo/Redo，无变化或非法操作不入栈 |
 | 顶部快捷主工具栏 | 位于主菜单栏下方，提供 `Open...` / `Save`（固定 ID `###toolbar-save`） / `Save As...`、`Undo` / `Redo`、`Translate (W)` / `Rotate (E)` / `Scale (R)`、`Focus (F)` / `Reset View` 与 `Shadows` 快捷开关 |
-| 选中包围盒与三轴 Gizmo 叠加显示 | 选中可见实体时，在 Scene 图像层先绘制世界 AABB 黄色辅助线（若有模型边界），再叠绘可交互三轴 Transform Gizmo（无模型可见实体亦正常绘制 Gizmo）；X/Y/Z 轴默认红/绿/蓝配色，悬停或拖拽轴高亮加粗；不参与深度且不遮挡面板或弹窗，不持久化 |
-| 三轴 Gizmo 拖拽与模式切换 | 左键命中并拖拽 Gizmo 轴实时调整实体的世界平移、世界旋转或局部缩放（单次拖拽折叠为 1 步 Undo，失焦自动回滚，期间屏蔽重选与相机手势）；可通过工具栏、`Properties` 内 `Translate (W)` / `Rotate (E)` / `Scale (R)` 按钮或单键 `W` / `E` / `R` 切换（文本输入、弹窗与拖拽期间不误切） |
+| 选中包围盒与三轴 Gizmo 叠加显示 | 选中可见实体时，在 Scene 图像层先绘制选中实体自身世界 AABB 黄色辅助线（若有模型边界），再叠绘三轴 Transform Gizmo（锚点位于实体世界位置；无模型可见实体亦正常绘制）；X/Y/Z 轴默认红/绿/蓝配色，悬停或拖拽轴高亮加粗；不参与深度且不遮挡面板或弹窗，不持久化 |
+| 三轴 Gizmo 拖拽与子级范围 | 根实体支持世界平移、世界旋转与局部缩放（单次拖拽折叠为 1 步 Undo，失焦自动回滚），驱动所有后代随动；选中子实体时保持当前 `GizmoMode` 值不变，首版仅在 `Translate` 且父级世界矩阵可逆时显示 Gizmo 并支持世界轴平移（通过父级世界逆矩阵反算局部位置），处于 `Rotate` / `Scale` 或父级奇异时隐藏 Gizmo、停用手势并在面板提示使用 `Properties` 局部编辑 |
 | Name | 编辑选中实体名称，允许重名和空名；连续输入在确认/失焦后折叠为单步历史；名称不影响实体身份或模型缓存 |
 | Objects：New model / Create object | 选择 Avocado 或 Teapot，在画面中央按该模型的创建预设添加共享实体，并选中 |
 | Assets：面包屑导航 / Up / Refresh | 点击路径面包屑任意目录段直接跳转，或使用 `Up` / `Refresh` 返回上级及重新列出当前目录；列表按彩色类型徽章（`[DIR]` / `[MODEL]` / `[PNG]` / `[DEP]`）展示；不解析或热重载资源 |
@@ -71,7 +72,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | Shading | 为带模型的选中实体切换模型准备着色模式（`Unlit` / `Lambert` / `PBR`，控件 `##entity-shading`）；先结算 Gizmo 与面板事务，通过 `ModelManager` 解析并复用缓存，纳入单步 Undo/Redo（资产自带 `unlit` 材质仍按 Unlit 渲染）；准备失败保留原模型与历史 |
 | Position / Rotation / Scale | 双列对齐布局（含 X/Y/Z 轴色标），独立编辑实体的真实 TRS 与右侧 `R##reset-pos/rot/scale` 分项重置按钮；支持零、负值及非均匀缩放，旋转使用角度并转换为四元数；连续拖动合并为单步 Undo |
 | Duplicate | 复制并选中实体，保持变换、可见性和共享模型；名称追加“ 副本”，空名使用“未命名 副本” |
-| Delete selected | 删除选中实体，撤销可恢复原 `EntityId` 与共享模型；其他实体保持 |
+| Delete selected | 删除无直接子级的选中实体，撤销可恢复原 `EntityId` 与共享模型；若实体仍有子级则拒绝删除并在状态栏提示先解除挂接或移走子级 |
 | Objects → More → Clear scene | 清空实体及选中状态，保留 Camera、背景和 UI（进入历史栈，撤销可完整恢复） |
 | 场景右键拖动 / 中键拖动 / 滚轮 | 轨道旋转 / 平移 / 缩放；UI 上开始的手势不操作相机，场景手势跨面板保持归属 |
 | F / Focus selected | 显式聚焦选中实体的世界包围体，保留朝向、FOV 和实体变换；F 受 UI 键盘捕获与 Gizmo 拖拽互斥约束 |

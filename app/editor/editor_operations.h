@@ -45,6 +45,9 @@ namespace Incubator::Editor
         bool setVisible(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id, bool visible);
         /// @brief 为选中实体切换模型准备着色模式，成功替换后压入一条撤销记录；失败保留原模型与历史。
         bool setEntityShading(Scene::Scene& scene, const std::array<float, 4>& clearColor, Render::ShadingMode shading);
+        /// @brief 设置或解除实体父级（保留局部变换）；成功变更时压入一条撤销记录，无变化或拒绝不入栈。
+        bool setParent(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id,
+                       Scene::EntityId parent);
         bool setTransform(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::Transform transform);
         Scene::EntityId duplicate(Scene::Scene& scene, const std::array<float, 4>& clearColor);
         bool remove(Scene::Scene& scene, const std::array<float, 4>& clearColor);

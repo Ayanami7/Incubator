@@ -36,7 +36,10 @@ namespace Incubator::Scene
         {
             if (!entity.visible || !entity.model)
                 continue;
-            const auto transform = entity.transform.matrix();
+            const auto world = scene.worldMatrix(entity.id);
+            if (!world)
+                continue;
+            const auto transform = *world;
             if (shadow)
                 appendDraws(shadowDraws, *entity.model, transform);
             if (frustumCulling && entity.model->bounds())

@@ -1021,4 +1021,128 @@ namespace
         EXPECT_TRUE(controller.assetError().empty());
         EXPECT_FALSE(controller.assetEntries().empty());
     }
+
+    TEST(EditorControllerTest, ReparentUnparentUndoRedoAndDeleteChildGuardWorkWithoutWindow)
+    {
+        Scene::Scene scene;
+        std::array<float, 4> clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+        Editor::EditorController controller;
+
+        const auto parent = scene.createEntity({}, Scene::Transform({2.0f, 0.0f, 0.0f}), true, "Parent");
+        const auto child = scene.createEntity({}, Scene::Transform({0.0f, 1.0f, 0.0f}), true, "Child");
+        const auto beforeLocal = scene.find(child)->transform.position();
+
+        // 挂接成功记 1 步历史并保持局部变换。
+        ASSERT_TRUE(controller.setParent(scene, clearColor, child, parent));
+        EXPECT_EQ(scene.find(child)->parent, parent);
+        EXPECT_EQ(scene.find(child)->transform.position(), beforeLocal);
+        EXPECT_TRUE(controller.canUndo());
+        EXPECT_TRUE(controller.isDirty());
+
+        // 重复挂接或循环挂接返回 false，不新增历史。
+        EXPECT_FALSE(controller.setParent(scene, clearColor, child, parent));
+        EXPECT_FALSE(controller.setParent(scene, clearColor, parent, child));
+
+        // 删除有子级的实体被拒绝，设置错误提示且不新增历史。
+        controller.select(parent);
+        controller.deleteSelected(scene, clearColor);
+        EXPECT_NE(scene.find(parent), nullptr);
+        EXPECT_TRUE(controller.messageError());
+        EXPECT_NE(controller.message().find("children"), std::string::npos);
+
+        // Undo 恢复为根，Redo 恢复挂接。
+        ASSERT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_FALSE(scene.find(child)->parent.valid());
+        EXPECT_FALSE(controller.canUndo());
+        ASSERT_TRUE(controller.redo(scene, clearColor));
+        EXPECT_EQ(scene.find(child)->parent, parent);
+
+        // 解除挂接同样可撤销重做。
+        ASSERT_TRUE(controller.setParent(scene, clearColor, child, {}));
+        EXPECT_FALSE(scene.find(child)->parent.valid());
+        ASSERT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_EQ(scene.find(child)->parent, parent);
+    }
+
+    TEST(EditorControllerTest, ChildWorldAxisTranslateGizmoSolvesUnderRotatedNonUniformParent)
+    {
+        Scene::Scene scene;
+        std::array<float, 4> clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+        Editor::EditorController controller;
+        scene.setCamera(Scene::Camera({0.0f, 0.0f, 10.0f}));
+
+        const auto parentTx = Scene::Transform(
+            {1.0f, 0.0f, 0.0f}, glm::angleAxis(glm::half_pi<float>(), glm::vec3(0, 1, 0)), {2.0f, 0.5f, 3.0f});
+        const auto parent = scene.createEntity({}, parentTx, true, "Parent");
+        const auto child = scene.createEntity({}, Scene::Transform({1.0f, 0.0f, 0.0f}), true, "Child");
+        ASSERT_TRUE(scene.setParent(child, parent));
+        controller.select(child);
+
+        const Render::FrameExtent extent{1280, 800};
+        const App::ViewportRegion region{{0.0f, 0.0f}, {1280.0f, 800.0f}};
+
+        // Translate 模式下子实体 Gizmo 锚点在世界位置。
+        const auto translateGizmo = Editor::projectGizmo(scene, child, Editor::GizmoMode::Translate, extent, region);
+        ASSERT_TRUE(translateGizmo.visible);
+        const glm::vec3 initialWorld((*scene.worldMatrix(child))[3]);
+        EXPECT_NEAR(glm::length(translateGizmo.origin - initialWorld), 0.0f, 1e-4f);
+
+        // Rotate / Scale 模式下保留 GizmoMode 值但隐藏视口 Gizmo。
+        controller.setGizmoMode(Editor::GizmoMode::Rotate);
+        EXPECT_EQ(controller.gizmoMode(), Editor::GizmoMode::Rotate);
+        EXPECT_FALSE(Editor::projectGizmo(scene, child, controller.gizmoMode(), extent, region).visible);
+        controller.setGizmoMode(Editor::GizmoMode::Scale);
+        EXPECT_FALSE(Editor::projectGizmo(scene, child, controller.gizmoMode(), extent, region).visible);
+
+        // 父级变换奇异时，Translate 模式也隐藏 Gizmo。
+        controller.setGizmoMode(Editor::GizmoMode::Translate);
+        ASSERT_TRUE(scene.setTransform(parent, Scene::Transform({1.0f, 0.0f, 0.0f}, {1, 0, 0, 0}, {0.0f, 1.0f, 1.0f})));
+        EXPECT_FALSE(Editor::projectGizmo(scene, child, Editor::GizmoMode::Translate, extent, region).visible);
+
+        // 恢复可逆父级并执行真实世界 X 轴平移拖拽，验证世界姿态沿 X 轴移动且局部位移正确反算。
+        ASSERT_TRUE(scene.setTransform(parent, parentTx));
+        const auto gizmo = Editor::projectGizmo(scene, child, Editor::GizmoMode::Translate, extent, region);
+        ASSERT_TRUE(gizmo.visible);
+        const auto& xSeg = gizmo.segments[0].segment;
+        const glm::vec2 xMid = (xSeg.start + xSeg.end) * 0.5f;
+
+        App::UiInput hover{};
+        hover.position = {xMid.x, xMid.y};
+        controller.input(scene, clearColor, extent, region, {1280.0, 800.0}, hover);
+        EXPECT_EQ(controller.hoveredGizmoAxis(), Editor::GizmoAxis::X);
+
+        App::UiInput press = hover;
+        press.select.down = true;
+        press.select.pressed = true;
+        controller.input(scene, clearColor, extent, region, {1280.0, 800.0}, press);
+        ASSERT_TRUE(controller.gizmoDragging());
+
+        App::UiInput drag = hover;
+        drag.position = {xMid.x + 60.0, xMid.y};
+        drag.select.down = true;
+        controller.input(scene, clearColor, extent, region, {1280.0, 800.0}, drag);
+
+        const glm::vec3 movedWorld((*scene.worldMatrix(child))[3]);
+        EXPECT_GT(movedWorld.x, initialWorld.x + 0.1f);
+        EXPECT_NEAR(movedWorld.y, initialWorld.y, 1e-4f);
+        EXPECT_NEAR(movedWorld.z, initialWorld.z, 1e-4f);
+
+        // 失焦取消应回滚到拖拽前局部位置；正常释放则提交 1 步撤销。
+        controller.cancelInteraction(scene, clearColor, true, true);
+        EXPECT_FALSE(controller.gizmoDragging());
+        EXPECT_EQ(scene.find(child)->transform.position(), glm::vec3(1.0f, 0.0f, 0.0f));
+        EXPECT_FALSE(controller.canUndo());
+
+        controller.input(scene, clearColor, extent, region, {1280.0, 800.0}, hover);
+        controller.input(scene, clearColor, extent, region, {1280.0, 800.0}, press);
+        controller.input(scene, clearColor, extent, region, {1280.0, 800.0}, drag);
+        App::UiInput release = drag;
+        release.select.down = false;
+        release.select.released = true;
+        controller.input(scene, clearColor, extent, region, {1280.0, 800.0}, release);
+        EXPECT_TRUE(controller.canUndo());
+        EXPECT_GT(glm::vec3((*scene.worldMatrix(child))[3]).x, initialWorld.x + 0.1f);
+        ASSERT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_EQ(scene.find(child)->transform.position(), glm::vec3(1.0f, 0.0f, 0.0f));
+    }
 }  // namespace

@@ -476,4 +476,117 @@ namespace
         scene.restoreEntities({});
         EXPECT_TRUE(scene.entities().empty());
     }
+
+    TEST(SceneEntityCpuTest, HierarchyWorldMatrixReparentDuplicateDeleteAndCycleGuards)
+    {
+        Scene scene;
+        Scene other;
+        const auto foreign = other.createEntity();
+
+        const Transform rootTx({2.0f, 0.0f, -1.0f}, glm::angleAxis(glm::half_pi<float>(), glm::vec3(0, 1, 0)),
+                               {1.0f, 1.0f, 1.0f});
+        const Transform midTx({1.0f, 2.0f, 0.0f}, {1, 0, 0, 0}, {2.0f, 0.5f, 3.0f});
+        const Transform leafTx({0.5f, -1.0f, 4.0f});
+
+        const auto root = scene.createEntity({}, rootTx, true, "Root");
+        const auto mid = scene.createEntity({}, midTx, true, "Mid");
+        const auto leaf = scene.createEntity({}, leafTx, true, "Leaf");
+
+        ASSERT_TRUE(scene.setParent(mid, root));
+        ASSERT_TRUE(scene.setParent(leaf, mid));
+        EXPECT_TRUE(scene.hasChildren(root));
+        EXPECT_TRUE(scene.hasChildren(mid));
+        EXPECT_FALSE(scene.hasChildren(leaf));
+        EXPECT_EQ(scene.find(mid)->transform.matrix(), midTx.matrix());
+        EXPECT_EQ(scene.find(leaf)->transform.matrix(), leafTx.matrix());
+
+        const auto expectMatNear = [](const glm::mat4& a, const glm::mat4& b) {
+            for (int c = 0; c < 4; ++c)
+                for (int r = 0; r < 4; ++r)
+                    EXPECT_NEAR(a[c][r], b[c][r], 1e-5f);
+        };
+        const auto expectedLeaf = rootTx.matrix() * midTx.matrix() * leafTx.matrix();
+        ASSERT_TRUE(scene.worldMatrix(leaf).has_value());
+        expectMatNear(*scene.worldMatrix(leaf), expectedLeaf);
+
+        // 修改父级影响后代；修改子级局部值不改变父级。
+        const Transform movedRoot({-3.0f, 1.0f, 2.0f}, rootTx.rotation(), rootTx.scale());
+        ASSERT_TRUE(scene.setTransform(root, movedRoot));
+        expectMatNear(*scene.worldMatrix(leaf), movedRoot.matrix() * midTx.matrix() * leafTx.matrix());
+        const Transform movedLeaf({9.0f, 8.0f, 7.0f});
+        ASSERT_TRUE(scene.setTransform(leaf, movedLeaf));
+        expectMatNear(*scene.worldMatrix(root), movedRoot.matrix());
+
+        // 重复设置同一父级无副作用；无效父级、跨场景父级、自挂接和循环均拒绝且保持原关系。
+        EXPECT_TRUE(scene.setParent(leaf, mid));
+        EXPECT_FALSE(scene.setParent(root, root));
+        EXPECT_FALSE(scene.setParent(root, foreign));
+        EXPECT_TRUE(scene.setParent(root, EntityId{}));
+        EXPECT_FALSE(scene.setParent(root, mid));
+        EXPECT_FALSE(scene.setParent(root, leaf));
+        EXPECT_FALSE(scene.setParent(EntityId{}, root));
+        EXPECT_EQ(scene.find(root)->parent, EntityId{});
+        EXPECT_EQ(scene.find(mid)->parent, root);
+        EXPECT_EQ(scene.find(leaf)->parent, mid);
+
+        // 复制保留同一父级但不连带子树；有子级不可单独删除。
+        const auto midCopy = scene.duplicateEntity(mid);
+        ASSERT_TRUE(midCopy.valid());
+        EXPECT_EQ(scene.find(midCopy)->parent, root);
+        EXPECT_FALSE(scene.hasChildren(midCopy));
+        EXPECT_FALSE(scene.destroyEntity(root));
+        EXPECT_FALSE(scene.destroyEntity(mid));
+        EXPECT_TRUE(scene.destroyEntity(midCopy));
+
+        // 解除挂接保留局部值。
+        ASSERT_TRUE(scene.setParent(leaf, EntityId{}));
+        EXPECT_EQ(scene.find(leaf)->parent, EntityId{});
+        EXPECT_EQ(scene.find(leaf)->transform.matrix(), movedLeaf.matrix());
+        expectMatNear(*scene.worldMatrix(leaf), movedLeaf.matrix());
+        EXPECT_FALSE(scene.hasChildren(mid));
+        EXPECT_TRUE(scene.destroyEntity(mid));
+        EXPECT_TRUE(scene.destroyEntity(root));
+
+        scene.clear();
+        EXPECT_TRUE(scene.entities().empty());
+        EXPECT_FALSE(scene.worldMatrix(leaf).has_value());
+    }
+
+    TEST(SceneEntityCpuTest, RestoreEntitiesValidatesParentOrderAndRejectsCyclesWithoutMutation)
+    {
+        Scene scene;
+        const auto child = scene.createEntity({}, Transform({1, 0, 0}), true, "Child");
+        const auto parent = scene.createEntity({}, Transform({0, 2, 0}), true, "Parent");
+        ASSERT_TRUE(scene.setParent(child, parent));
+
+        const std::vector<Entity> snapshot(scene.entities().begin(), scene.entities().end());
+        scene.clear();
+        scene.restoreEntities(snapshot);
+        ASSERT_EQ(scene.entities().size(), 2u);
+        EXPECT_EQ(scene.entities()[0].id, child);
+        EXPECT_EQ(scene.entities()[0].parent, parent);
+        EXPECT_EQ(scene.entities()[1].id, parent);
+        EXPECT_EQ(scene.entities()[1].parent, EntityId{});
+
+        // 缺失父级、自指、循环均抛出异常且保持原有实体列表。
+        {
+            auto missingParent = snapshot;
+            const auto extra = scene.createEntity();
+            missingParent[0].parent = extra;
+            EXPECT_THROW(scene.restoreEntities(missingParent), Incubator::Error::Exception);
+            EXPECT_EQ(scene.entities().size(), 3u);
+        }
+        {
+            auto selfParent = snapshot;
+            selfParent[1].parent = parent;
+            EXPECT_THROW(scene.restoreEntities(selfParent), Incubator::Error::Exception);
+            EXPECT_EQ(scene.entities().size(), 3u);
+        }
+        {
+            auto cycle = snapshot;
+            cycle[1].parent = child;
+            EXPECT_THROW(scene.restoreEntities(cycle), Incubator::Error::Exception);
+            EXPECT_EQ(scene.entities().size(), 3u);
+        }
+    }
 }  // namespace

@@ -67,7 +67,8 @@ int main(int argc, char** argv)
         bool writeDone = false;
 
         app.run({[&](auto& session) {
-                     demo.initialize(session, mode == "read" ? argv[2] : "assets/scenes/mixed.json");
+                     demo.initialize(session, (mode == "read" || mode == "read-hierarchy") ? argv[2]
+                                                                                           : "assets/scenes/mixed.json");
                      if (mode == "write")
                      {
                          Incubator::EditorTest::setSharedEditorScene(session, demo, false);
@@ -137,6 +138,102 @@ int main(int argc, char** argv)
                          {
                              std::cerr << "Restored scene verification failed\n";
                              result = 1;
+                         }
+                         session.requestExit();
+                     }
+                     else if (mode == "write-hierarchy")
+                     {
+                         const auto root = session.scene().entities()[0].id;
+                         const auto child1 = session.scene().entities()[1].id;
+                         demo.selectModel(true);
+                         const auto child2 = demo.createEntity(session);
+                         session.scene().setName(root, "RootGroup");
+                         session.scene().setName(child1, "ChildItem");
+                         session.scene().setName(child2, "ChildItem");
+                         session.scene().setTransform(child1, Incubator::Scene::Transform({1.0f, 0.25f, 0.0f}));
+                         session.scene().setTransform(child2, Incubator::Scene::Transform({-0.5f, 0.5f, 0.5f}));
+                         if (!demo.controller().setParent(session, child1, root) ||
+                             !demo.controller().setParent(session, child2, root))
+                         {
+                             std::cerr << "Failed to reparent children in write-hierarchy\n";
+                             result = 1;
+                         }
+                         demo.select(session, root);
+                         demo.controller().operations().setTransform(
+                             session.scene(), session.clearColor(),
+                             Incubator::Scene::Transform(
+                                 {1.2f, -0.3f, 0.4f}, glm::angleAxis(glm::half_pi<float>(), glm::vec3(0, 1, 0)),
+                                 {1.5f, 1.5f, 1.5f}));
+                         const auto w1 = session.scene().worldMatrix(child1);
+                         const auto w2 = session.scene().worldMatrix(child2);
+                         if (!w1 || !w2)
+                         {
+                             std::cerr << "Missing worldMatrix in write-hierarchy\n";
+                             result = 1;
+                         }
+                         else
+                         {
+                             std::ofstream expectedOut(expectedPath, std::ios::trunc);
+                             expectedOut << std::setprecision(9);
+                             for (const auto& mat : {*w1, *w2})
+                                 for (int c = 0; c < 4; ++c)
+                                     for (int r = 0; r < 4; ++r)
+                                         expectedOut << mat[c][r] << ' ';
+                             expectedOut << '\n';
+                         }
+                         if (!demo.save(session, argv[2]) || demo.isDirty())
+                         {
+                             std::cerr << demo.message();
+                             result = 1;
+                         }
+                         writeDone = true;
+                         session.requestExit();
+                     }
+                     else if (mode == "read-hierarchy")
+                     {
+                         if (demo.selected().valid() || demo.isDirty() || demo.canUndo() || demo.canRedo())
+                         {
+                             std::cerr << "Editor session state should reset on fresh hierarchy restart\n";
+                             result = 1;
+                         }
+                         const auto entities = session.scene().entities();
+                         if (entities.size() != 3 || entities[0].parent.valid() ||
+                             entities[1].parent != entities[0].id || entities[2].parent != entities[0].id ||
+                             entities[0].name != "RootGroup" || entities[1].name != "ChildItem" ||
+                             entities[2].name != "ChildItem")
+                         {
+                             std::cerr << "Restored hierarchy structure mismatch\n";
+                             result = 1;
+                         }
+                         else
+                         {
+                             std::array<glm::mat4, 2> expectedWorlds{};
+                             std::ifstream expectedIn(expectedPath);
+                             for (auto& mat : expectedWorlds)
+                                 for (int c = 0; c < 4; ++c)
+                                     for (int r = 0; r < 4; ++r)
+                                         expectedIn >> mat[c][r];
+                             if (!expectedIn)
+                             {
+                                 std::cerr << "Missing expected hierarchy matrices: " << expectedPath << "\n";
+                                 result = 1;
+                             }
+                             else
+                             {
+                                 const auto w1 = session.scene().worldMatrix(entities[1].id);
+                                 const auto w2 = session.scene().worldMatrix(entities[2].id);
+                                 for (int idx = 0; idx < 2; ++idx)
+                                 {
+                                     const auto& actual = idx == 0 ? *w1 : *w2;
+                                     for (int c = 0; c < 4; ++c)
+                                         for (int r = 0; r < 4; ++r)
+                                             if (std::abs(actual[c][r] - expectedWorlds[idx][c][r]) > 1e-4f)
+                                             {
+                                                 std::cerr << "Restored world matrix mismatch\n";
+                                                 result = 1;
+                                             }
+                                 }
+                             }
                          }
                          session.requestExit();
                      }
@@ -327,7 +424,7 @@ int main(int argc, char** argv)
                  [&](auto& session) { demo.layout(session); },
                  [&](auto& session) { demo.requestClose(session); }});
 
-        if (mode == "write" && !writeDone)
+        if ((mode == "write" || mode == "write-hierarchy") && !writeDone)
         {
             std::cerr << "Write pass did not complete\n";
             result = 1;

@@ -56,5 +56,6 @@ namespace Incubator::Scene
         bool visible = true;
         std::shared_ptr<const Model::PreparedModel> model;
         std::string name;
+        EntityId parent;
     };
 }  // namespace Incubator::Scene

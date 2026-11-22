@@ -4,9 +4,12 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <glm/matrix.hpp>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -730,25 +733,98 @@ namespace Incubator::Editor
             ImGui::OpenPopup("Object actions");
         if (ImGui::BeginPopup("Object actions"))
         {
+            const auto selectedId = controller_.selected();
+            const auto* selectedEntity = app.scene().find(selectedId);
+            const auto isDescendantOrSelf = [&](Scene::EntityId candidateId) {
+                if (!selectedEntity || !candidateId.valid())
+                    return true;
+                Scene::EntityId cursor = candidateId;
+                const auto total = app.scene().entities().size();
+                for (size_t steps = 0; cursor.valid() && steps <= total; ++steps)
+                {
+                    if (cursor == selectedId)
+                        return true;
+                    const auto* node = app.scene().find(cursor);
+                    cursor = node ? node->parent : Scene::EntityId{};
+                }
+                return false;
+            };
+            if (ImGui::BeginMenu("Parent selected to... (keep local)", selectedEntity != nullptr))
+            {
+                bool anyTarget = false;
+                for (const auto& candidate : app.scene().entities())
+                {
+                    if (isDescendantOrSelf(candidate.id))
+                        continue;
+                    anyTarget = true;
+                    const std::string label =
+                        (candidate.name.empty() ? std::string("未命名") : candidate.name) + " (#" +
+                        std::to_string(candidate.id.value()) + ")";
+                    ImGui::PushID(std::to_string(candidate.id.value()).c_str());
+                    if (ImGui::MenuItem(label.c_str(), nullptr, selectedEntity->parent == candidate.id))
+                        controller_.setParent(app, selectedId, candidate.id);
+                    ImGui::PopID();
+                }
+                if (!anyTarget)
+                    ImGui::MenuItem("(No valid parent)", nullptr, false, false);
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Unparent selected (keep local)", nullptr, false,
+                                selectedEntity != nullptr && selectedEntity->parent.valid()))
+                controller_.setParent(app, selectedId, {});
+            ImGui::Separator();
             if (ImGui::MenuItem("Clear scene", nullptr, false, !app.scene().entities().empty()))
                 requestClear(app);
             ImGui::EndPopup();
         }
         ImGui::Separator();
-        ImGui::Text("Objects: %zu", app.scene().entities().size());
+        const auto entities = app.scene().entities();
+        ImGui::Text("Objects: %zu", entities.size());
         if (ImGui::BeginListBox("##entities", {-1, -1}))
         {
-            auto* drawList = ImGui::GetWindowDrawList();
-            for (const auto& entity : app.scene().entities())
+            std::unordered_map<uint64_t, std::vector<size_t>> childrenByParent;
+            std::vector<size_t> rootIndices;
+            rootIndices.reserve(entities.size());
+            for (size_t i = 0; i < entities.size(); ++i)
             {
+                const auto parent = entities[i].parent;
+                if (parent.valid() && app.scene().find(parent) != nullptr)
+                    childrenByParent[parent.value()].push_back(i);
+                else
+                    rootIndices.push_back(i);
+            }
+
+            auto* drawList = ImGui::GetWindowDrawList();
+            const auto renderNode = [&](auto& self, size_t index, int depth) -> void {
+                const auto& entity = entities[index];
                 const auto id = std::to_string(entity.id.value());
                 const std::string displayName = entity.name.empty() ? std::string("未命名") : entity.name;
                 const std::string idSuffix = " (#" + id + ")";
+                const auto childIt = childrenByParent.find(entity.id.value());
+                const bool hasKids = childIt != childrenByParent.end() && !childIt->second.empty();
+                const bool collapsed = collapsedEntities_.contains(entity.id.value());
+
                 ImGui::PushID(id.c_str());
                 bool visible = entity.visible;
                 if (ImGui::Checkbox("##vis", &visible))
                     controller_.setVisible(app, entity.id, visible);
                 ImGui::SameLine();
+                if (depth > 0)
+                {
+                    ImGui::Dummy({static_cast<float>(depth) * 14.0f, 0.0f});
+                    ImGui::SameLine(0.0f, 4.0f);
+                }
+                if (hasKids)
+                {
+                    if (ImGui::SmallButton(collapsed ? ">##expand" : "v##expand"))
+                    {
+                        if (collapsed)
+                            collapsedEntities_.erase(entity.id.value());
+                        else
+                            collapsedEntities_.insert(entity.id.value());
+                    }
+                    ImGui::SameLine(0.0f, 4.0f);
+                }
                 if (ImGui::Selectable("##entity", controller_.selected() == entity.id))
                     select(app, entity.id);
                 const auto pos = ImGui::GetItemRectMin();
@@ -763,7 +839,15 @@ namespace Incubator::Editor
                                   ImGui::GetColorU32(EditorTheme::mutedTextColor()), idSuffix.data(),
                                   idSuffix.data() + idSuffix.size());
                 ImGui::PopID();
-            }
+
+                if (hasKids && !collapsed)
+                {
+                    for (const size_t childIdx : childIt->second)
+                        self(self, childIdx, depth + 1);
+                }
+            };
+            for (const size_t rootIdx : rootIndices)
+                renderNode(renderNode, rootIdx, 0);
             ImGui::EndListBox();
         }
         ImGui::End();
@@ -960,6 +1044,25 @@ namespace Incubator::Editor
             gizmoModeButton("Rotate (E)", GizmoMode::Rotate);
             ImGui::SameLine();
             gizmoModeButton("Scale (R)", GizmoMode::Scale);
+            if (const auto* selectedEntity = app.scene().find(controller_.selected());
+                selectedEntity && selectedEntity->parent.valid())
+            {
+                if (gizmoMode() != GizmoMode::Translate)
+                {
+                    ImGui::TextColored(EditorTheme::mutedTextColor(),
+                                       "Child Gizmo: Translate only (world axes); use Properties for Rotate/Scale.");
+                }
+                else
+                {
+                    const auto parentWorld = app.scene().worldMatrix(selectedEntity->parent);
+                    const double det = parentWorld ? glm::determinant(glm::dmat3(*parentWorld)) : 0.0;
+                    if (!parentWorld || !std::isfinite(det) || std::abs(det) <= 1e-8)
+                    {
+                        ImGui::TextColored(EditorTheme::mutedTextColor(),
+                                           "Child Gizmo disabled: parent transform is singular.");
+                    }
+                }
+            }
         }
         if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen))
         {

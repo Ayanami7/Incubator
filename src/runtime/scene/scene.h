@@ -36,14 +36,14 @@ namespace Incubator::Scene
         EntityId createEntity(std::shared_ptr<const Model::PreparedModel> model = {}, Transform transform = Transform{},
                               bool visible = true, std::string name = {});
 
-        /// @brief 复制实体的名称、变换、可见性及共享模型，不改变源实体。
+        /// @brief 复制实体的名称、变换、可见性、父级及共享模型，不改变源实体。
         /// @return 新实体 ID；源 ID 无效时返回无效 ID。
         /// @note 结构变化后必须重新获取实体指针和视图；不会加载或准备模型。
         EntityId duplicateEntity(EntityId id);
 
-        /// @brief 按快照顺序完整替换当前场景实体列表并保留原有 EntityId。
-        /// @param entities 待恢复的实体快照列表，不可包含无效或重复 EntityId 及非法名称。
-        /// @throws Error::Exception 存在无效/重复 ID 或非法 UTF-8/NUL 名称时抛出 CONFIG，且不改变原实体列表。
+        /// @brief 按快照顺序完整替换当前场景实体列表并保留原有 EntityId 与父子关系。
+        /// @param entities 待恢复的实体快照列表，不可包含无效/重复 EntityId、非法名称或无效/自指/循环父级。
+        /// @throws Error::Exception 校验失败时抛出 CONFIG，且不改变原实体列表。
         /// @note 常规 createEntity/duplicateEntity 不会复用已删除实体 ID；本接口仅用于编辑历史恢复既有实体身份，
         /// 并推进后续 ID 分配器至所有已恢复 ID 之后。结构变化后必须重新获取实体指针和视图。
         void restoreEntities(std::span<const Entity> entities);
@@ -57,6 +57,14 @@ namespace Incubator::Scene
         /// @brief 修改名称；无效 ID 返回 false，非法名称抛 CONFIG 并保留原值。
         bool setName(EntityId id, std::string name);
         bool setModel(EntityId id, std::shared_ptr<const Model::PreparedModel> model);
+        /// @brief 设置或解除实体的父级（传入无效 EntityId 表示解除挂接），保留局部 Transform。
+        /// @return 实体或非空父级不存在、自挂接或形成循环时返回 false 且保持原关系；重复设置同一父级返回 true。
+        bool setParent(EntityId id, EntityId parent);
+        /// @brief 查询实体是否拥有直接子级。
+        bool hasChildren(EntityId id) const;
+        /// @brief 按需计算实体的世界变换矩阵（parentWorld * localMatrix）；实体不存在时返回 std::nullopt。
+        std::optional<glm::mat4> worldMatrix(EntityId id) const;
+        /// @brief 删除实体；实体不存在或拥有直接子级时返回 false。
         bool destroyEntity(EntityId id);
         /// @brief 清除实体和模型持有，保留相机与光照。
         void clear();

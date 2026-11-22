@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "editor_app.h"
@@ -143,6 +145,7 @@ namespace Incubator::Editor
 
         EditorController controller_;
         Workspace workspace_;
+        std::unordered_set<uint64_t> collapsedEntities_;
         bool viewportOpen_ = true;
         FileAction lastFileAction_ = FileAction::None;
     };

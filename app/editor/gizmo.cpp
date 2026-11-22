@@ -242,7 +242,22 @@ namespace Incubator::Editor
         if (!entity || !entity->visible || !isValidViewport(extent, region))
             return {};
 
-        const glm::vec3 center = entity->transform.position();
+        if (entity->parent.valid())
+        {
+            if (mode != GizmoMode::Translate)
+                return {};
+            const auto parentWorld = scene.worldMatrix(entity->parent);
+            if (!parentWorld)
+                return {};
+            const double det = glm::determinant(glm::dmat3(*parentWorld));
+            if (!std::isfinite(det) || std::abs(det) <= 1e-8)
+                return {};
+        }
+
+        const auto world = scene.worldMatrix(selected);
+        if (!world)
+            return {};
+        const glm::vec3 center((*world)[3]);
         const auto worldLengthOpt = computeGizmoWorldLength(center, scene.camera(), extent, region, screenLength);
         if (!worldLengthOpt)
             return {};
@@ -396,15 +411,18 @@ namespace Incubator::Editor
     GizmoDragState beginGizmoDrag(Scene::EntityId entity, GizmoMode mode, GizmoAxis axis,
                                   const Scene::Transform& startTransform, const Scene::Camera& camera,
                                   Render::FrameExtent extent, const App::ViewportRegion& region,
-                                  glm::vec2 cursorPosition, float screenLength) noexcept
+                                  glm::vec2 cursorPosition, float screenLength,
+                                  std::optional<glm::vec3> worldOrigin,
+                                  const glm::dmat4& inverseParentWorld) noexcept
     {
         const auto worldAxisOpt = worldAxisVector(axis);
         if (!entity.valid() || !worldAxisOpt || !isValidViewport(extent, region) || !std::isfinite(cursorPosition.x) ||
             !std::isfinite(cursorPosition.y) || !std::isfinite(screenLength) || screenLength <= 0.0f)
             return {};
 
+        const glm::vec3 originWorld = worldOrigin.value_or(startTransform.position());
         const auto worldLengthOpt =
-            computeGizmoWorldLength(startTransform.position(), camera, extent, region, screenLength);
+            computeGizmoWorldLength(originWorld, camera, extent, region, screenLength);
         if (!worldLengthOpt)
             return {};
 
@@ -422,8 +440,10 @@ namespace Incubator::Editor
         state.startWorldLength = *worldLengthOpt;
         state.screenLength = screenLength;
         state.startCursor = glm::dvec2(cursorPosition);
+        state.startWorldOrigin = glm::dvec3(originWorld);
+        state.inverseParentWorld = inverseParentWorld;
 
-        const glm::dvec3 center(startTransform.position());
+        const glm::dvec3 center = state.startWorldOrigin;
         if (mode == GizmoMode::Translate)
         {
             state.dragAxis = *worldAxisOpt;
@@ -484,7 +504,8 @@ namespace Incubator::Editor
                 state.hasAxisReference = true;
                 return state.lastTransform;
             }
-            const glm::vec3 newPos(center + state.dragAxis * (*tOpt - state.startAxisParam));
+            const glm::dvec3 newWorldPos = state.startWorldOrigin + state.dragAxis * (*tOpt - state.startAxisParam);
+            const glm::vec3 newPos(state.inverseParentWorld * glm::dvec4(newWorldPos, 1.0));
             if (!isFiniteVec3(newPos))
                 return state.lastTransform;
             state.lastTransform =

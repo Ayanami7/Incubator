@@ -321,6 +321,10 @@ namespace Incubator::Editor
 
         bool setVisible(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id, bool visible);
         bool setVisible(EditorApp& app, Scene::EntityId id, bool visible);
+        /// @brief 先结算 Gizmo 与面板事务，再设置或解除实体的父级（保留局部变换）。
+        bool setParent(Scene::Scene& scene, std::array<float, 4>& clearColor, Scene::EntityId id,
+                       Scene::EntityId parent);
+        bool setParent(EditorApp& app, Scene::EntityId id, Scene::EntityId parent);
         /// @brief 先结算 Gizmo 与面板事务，再为选中实体切换模型准备着色模式。
         bool setEntityShading(Scene::Scene& scene, std::array<float, 4>& clearColor, Render::ShadingMode shading);
         bool setEntityShading(EditorApp& app, Render::ShadingMode shading);

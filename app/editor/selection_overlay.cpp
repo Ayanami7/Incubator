@@ -138,7 +138,10 @@ namespace Incubator::Editor
         const auto* entity = scene.find(selected);
         if (!entity || !entity->visible || !entity->model || !entity->model->bounds())
             return {};
-        const auto worldBounds = entity->model->bounds()->transformed(entity->transform.matrix());
+        const auto world = scene.worldMatrix(selected);
+        if (!world)
+            return {};
+        const auto worldBounds = entity->model->bounds()->transformed(*world);
         if (!worldBounds)
             return {};
         return projectAabbOverlay(*worldBounds, scene.camera(), extent, region);

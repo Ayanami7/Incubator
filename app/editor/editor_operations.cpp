@@ -20,8 +20,8 @@ namespace Incubator::Editor
 
         bool sameEntity(const Scene::Entity& a, const Scene::Entity& b) noexcept
         {
-            return a.id == b.id && a.name == b.name && a.visible == b.visible && a.model == b.model &&
-                   sameTransform(a.transform, b.transform);
+            return a.id == b.id && a.parent == b.parent && a.name == b.name && a.visible == b.visible &&
+                   a.model == b.model && sameTransform(a.transform, b.transform);
         }
 
         bool sameSnapshotState(const std::vector<Scene::Entity>& beforeEntities, const Render::Lighting& beforeLighting,
@@ -208,6 +208,30 @@ namespace Incubator::Editor
         }
     }
 
+    bool EditorOperations::setParent(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id,
+                                     Scene::EntityId parent)
+    {
+        commitTransaction(scene, clearColor);
+        const auto* entity = scene.find(id);
+        if (!entity)
+            return false;
+        if (entity->parent == parent)
+            return false;
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
+        if (!scene.setParent(id, parent))
+        {
+            messageError_ = true;
+            message_ = "Cannot reparent entity: invalid target or cycle";
+            return false;
+        }
+        pushUndoSnapshot(std::move(before));
+        messageError_ = false;
+        message_ = parent.valid() ? fmt::format("Parented #{} under #{} (kept local transform)", id.value(), parent.value())
+                                  : fmt::format("Unparented #{} (kept local transform)", id.value());
+        Log::Registry::get("editor").info("{}", message_);
+        return true;
+    }
+
     bool EditorOperations::setTransform(Scene::Scene& scene, const std::array<float, 4>& clearColor,
                                         Scene::Transform transform)
     {
@@ -241,10 +265,18 @@ namespace Incubator::Editor
     bool EditorOperations::remove(Scene::Scene& scene, const std::array<float, 4>& clearColor)
     {
         commitTransaction(scene, clearColor);
-        const bool existed = scene.find(selection_.selected()) != nullptr;
-        if (!existed)
+        const auto* entity = scene.find(selection_.selected());
+        if (!entity)
         {
             selection_.remove(scene);
+            return false;
+        }
+        if (scene.hasChildren(entity->id))
+        {
+            messageError_ = true;
+            message_ = fmt::format("Cannot delete '{}' (#{}): unparent or move children first",
+                                   entity->name.empty() ? "Unnamed" : entity->name, entity->id.value());
+            Log::Registry::get("editor").warn("{}", message_);
             return false;
         }
         auto before = captureSnapshot(scene, clearColor, currentRevision_);

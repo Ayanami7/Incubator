@@ -5,7 +5,7 @@
 
 `runtime/scene/transform.h` 和 `camera.h` 提供自有值类型，归入现有 `IncubatorRuntime`。
 二者使用 GLM，不依赖 Demo、ImGui 或输入控制；Camera 的输出类型复用 Render::CameraMatrices。
-`runtime/scene/scene.h` 和 `entity.h` 提供平铺实体管理及逻辑身份；`scene_frame.h` 提供拥有存储的场景帧提取。
+`runtime/scene/scene.h` 和 `entity.h` 提供实体管理、可选父子层级与逻辑身份；`scene_frame.h` 提供拥有存储的场景帧提取。
 
 ## Scene 与实体
 
@@ -20,22 +20,25 @@ scene.destroyEntity(first);
 // second still owns the same immutable PreparedModel.
 ```
 
-Scene 不可复制或移动，使用一个 vector 保存实体，属于单线程 Runtime；当前不提供 ECS 或实体父子树。
+Scene 不可复制或移动，使用一个 vector 保存实体，属于单线程 Runtime，支持通过可空 `parent` 组织实体父子层级（不引入 ECS、组件系统或持续变换缓存）。
 场景内容捕获、JSON 文件读写和重建由同模块的独立接口提供，见下文。
-Entity 保存 `id`、UTF-8 `name`、`transform`、`visible` 和可空的 `shared_ptr<const PreparedModel> model`。名称允许为空或重复，不参与身份识别；非法 UTF-8 或内嵌 NUL 被拒绝。
-Transform 是实体整体变换的唯一真源，实体不另存可修改的整体矩阵。
+Entity 保存 `id`、UTF-8 `name`、局部 `transform`、`visible`、可空的 `shared_ptr<const PreparedModel> model` 与可空 `parent`（`EntityId`）。名称允许为空或重复，不参与身份识别；非法 UTF-8 或内嵌 NUL 被拒绝。
+Transform 是实体的局部 TRS 真源，实体的世界矩阵由 `worldMatrix(id)` 按 `parentWorld * localMatrix` 按需计算，实体不另存缓存矩阵。
 模型内部节点仍属于 PreparedModel，不按节点创建实体。
 
 | 接口 | 行为 |
 |---|---|
-| createEntity(model={}, transform=Transform{}, visible=true, name={}) | 返回新 EntityId；无模型也可创建合法逻辑实体，名称默认为空 |
-| duplicateEntity(EntityId) | 复制名称、真实 Transform、可见性和共享模型，返回新 ID；无效 ID 返回无效值，不加载或上传资源 |
+| createEntity(model={}, transform=Transform{}, visible=true, name={}) | 返回新 EntityId；无模型也可创建合法逻辑实体，名称默认为空、父级为空 |
+| duplicateEntity(EntityId) | 复制名称、局部 Transform、可见性、同一父级和共享模型（不连带子树），返回新 ID；无效 ID 返回无效值，不加载或上传资源 |
 | setName(EntityId, name) | 按 ID 修改名称；无效 ID 返回 false，非法名称抛 CONFIG 且保留原值 |
 | find(EntityId) const | 返回只读 Entity 指针；无效、已删除或其他 Scene 的 ID 返回 nullptr |
-| setTransform/setVisible/setModel | 通过 ID 修改指定实体；未命中返回 false，其他实体不变；setModel 可传空解除绑定 |
-| destroyEntity(EntityId) | 删除指定实体，未命中返回 false；其他存活实体相对顺序保持 |
+| setTransform/setVisible/setModel | 通过 ID 修改指定实体；未命中返回 false，其他实体不变；setModel 可传空解除绑定；隐藏父级不隐藏子级 |
+| setParent(EntityId, EntityId) | 设置或解除父级（传入无效 ID 解除挂接）并保留局部 Transform；无效/跨场景父级、自挂接或形成循环返回 false 且保持原关系；重复设置同一父级返回 true |
+| hasChildren(EntityId) const | 查询实体是否拥有直接子级 |
+| worldMatrix(EntityId) const | 按需计算 `parentWorld * localMatrix` 世界矩阵；实体不存在返回 `std::nullopt` |
+| destroyEntity(EntityId) | 删除指定实体；未命中或实体拥有直接子级时返回 false；其他存活实体相对顺序保持 |
 | clear() | 清除全部实体和它们的模型持有，保留当前 Camera 与光照 |
-| restoreEntities(span<const Entity>) | 专门用于编辑历史快照恢复：按顺序整体替换实体并保留原 EntityId，校验 ID 唯一/有效与名称合法，并推进后续 ID 分配器至最大值之后 |
+| restoreEntities(span<const Entity>) | 专门用于编辑历史快照恢复：按顺序整体替换实体并保留原 EntityId 与父级，前置校验 ID 唯一/有效、名称合法与父级无缺失/自指/循环（允许父级在子级之后），并推进后续 ID 分配器至最大值之后 |
 | entities() const | 返回 span<const Entity>，按存活实体的创建顺序遍历；新实体追加到尾部 |
 | camera() const / setCamera(Camera) | 只读访问或整体替换 Scene 自有 Camera；默认 Camera 有效，设置时复制其值 |
 | lighting() const / setLighting(Render::Lighting) | 只读借用或整体替换 Scene 自有光照；非法设置抛 CONFIG，保留原值 |
@@ -62,7 +65,7 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
 
 `Camera::viewportSegment(extent, position)` 接收图像内归一化逻辑坐标，左上为 `(0,0)`、右下为 `(1,1)`，使用最终相机矩阵反投影近远裁剪面；无效尺寸、越界坐标或无法反投影返回空值。投影已包含 Vulkan Y 适配，调用方不再翻转 Y 或重复应用 DPI。
 
-`Scene::pick(extent, position)` 使用当前相机生成线段，`Scene::pick(segment)` 接受世界空间线段。两者只查询可见且有可计算世界 AABB 的模型实体；模型边界已包含源根，查询只再应用实体 Transform。返回的 `PickHit` 按值包含 EntityId 与 `[0,1]` 入盒参数，最小参数优先，相等按创建顺序；ID 仍须通过所属 Scene 判断是否存活。
+`Scene::pick(extent, position)` 使用当前相机生成线段，`Scene::pick(segment)` 接受世界空间线段。两者只查询可见且有可计算世界 AABB 的模型实体；模型边界已包含源根，查询再应用 `Scene::worldMatrix` 换算世界边界。返回的 `PickHit` 按值包含 EntityId 与 `[0,1]` 入盒参数，最小参数优先，相等按创建顺序；ID 仍须通过所属 Scene 判断是否存活。
 
 `Math::intersectSegment` 使用闭区间 `[0,1]` 求线段入盒参数，起点在盒内时返回 0；平行轴、边界接触和退化盒按闭盒处理。输入非有限或未命中时返回空值。
 
@@ -86,13 +89,15 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
 ## 场景 JSON 文件
 
 `runtime/scene/scene_file.h` 提供 `encodeScene`、`decodeScene` 以及显式接收 FileIO 的
-`readScene` / `writeScene`。文本为 UTF-8、无 BOM 的 JSON v1：
+`readScene` / `writeScene`。文本为 UTF-8、无 BOM 的 JSON：写出格式为 **1.1**（`"version": 1, "minorVersion": 1`，每个实体含可空 `parent` 零基索引，允许父级位于子级之后），同时兼容读取平铺 **1.0**（省略 `minorVersion` 或为 `0`，全部实体视为根）：
 
 ```json
 {
   "version": 1,
+  "minorVersion": 1,
   "entities": [{
     "name": "示例模型",
+    "parent": null,
     "model": {"path": "models/example.gltf", "prepare": {
       "mipMode": "fullChain", "sampler": {"minFilter": "linear", "magFilter": "linear", "mipFilter": "linear"},
       "shading": "lambert"

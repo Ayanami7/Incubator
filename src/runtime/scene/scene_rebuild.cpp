@@ -10,6 +10,10 @@ namespace Incubator::Scene
         const SceneDescription& description,
         const std::function<std::shared_ptr<const Model::PreparedModel>(const Model::ModelReference&)>& resolve)
     {
+        if (const auto hierarchyError = findInvalidParentHierarchy(description.entities))
+            throw Error::Exception(
+                Error::Code::CONFIG,
+                fmt::format("entities[{}].parent: {}", hierarchyError->entityIndex, hierarchyError->reason));
         if (!description.valid())
             throw Error::Exception(Error::Code::CONFIG, "Invalid scene lighting, display, clearColor or entity name");
         for (const auto& entity : description.entities)
@@ -34,6 +38,8 @@ namespace Incubator::Scene
         scene->setCamera(description.camera);
         scene->setLighting(description.lighting);
         scene->setDisplay(description.display);
+        std::vector<EntityId> createdIds;
+        createdIds.reserve(description.entities.size());
         for (const auto& entity : description.entities)
         {
             std::shared_ptr<const Model::PreparedModel> model;
@@ -43,7 +49,12 @@ namespace Incubator::Scene
                 if (!model)
                     throw Error::Exception(Error::Code::CONFIG, "Scene model resolver returned null");
             }
-            scene->createEntity(std::move(model), entity.transform, entity.visible, entity.name);
+            createdIds.push_back(scene->createEntity(std::move(model), entity.transform, entity.visible, entity.name));
+        }
+        for (size_t i = 0; i < description.entities.size(); ++i)
+        {
+            if (description.entities[i].parent)
+                scene->setParent(createdIds[i], createdIds[*description.entities[i].parent]);
         }
         return {std::move(scene), description.clearColor};
     }

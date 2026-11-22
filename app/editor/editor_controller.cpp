@@ -498,6 +498,19 @@ namespace Incubator::Editor
         return setVisible(app.scene(), app.clearColor(), id, visible);
     }
 
+    bool EditorController::setParent(Scene::Scene& scene, std::array<float, 4>& clearColor, Scene::EntityId id,
+                                     Scene::EntityId parent)
+    {
+        cancelGizmoDrag(scene, clearColor);
+        commitPanelTransactions(scene, clearColor);
+        return operations_.setParent(scene, clearColor, id, parent);
+    }
+
+    bool EditorController::setParent(EditorApp& app, Scene::EntityId id, Scene::EntityId parent)
+    {
+        return setParent(app.scene(), app.clearColor(), id, parent);
+    }
+
     bool EditorController::setEntityShading(Scene::Scene& scene, std::array<float, 4>& clearColor,
                                             Render::ShadingMode shading)
     {
@@ -640,7 +653,10 @@ namespace Incubator::Editor
         const auto* entity = scene.find(operations_.selected());
         if (!entity || !entity->model || !entity->model->bounds())
             return false;
-        const auto bounds = entity->model->bounds()->transformed(entity->transform.matrix());
+        const auto world = scene.worldMatrix(entity->id);
+        if (!world)
+            return false;
+        const auto bounds = entity->model->bounds()->transformed(*world);
         auto camera = scene.camera();
         if (!orbit_.focus(camera, bounds, extent))
             return false;
@@ -713,8 +729,43 @@ namespace Incubator::Editor
             {
                 if (const auto* entity = scene.find(operations_.selected()))
                 {
-                    const auto drag = beginGizmoDrag(operations_.selected(), gizmoMode_, hoveredGizmoAxis_,
-                                                     entity->transform, camera, extent, region, cursorScreenPos);
+                    bool canDrag = true;
+                    std::optional<glm::vec3> worldOrigin;
+                    glm::dmat4 inverseParentWorld(1.0);
+                    if (entity->parent.valid())
+                    {
+                        if (gizmoMode_ != GizmoMode::Translate)
+                        {
+                            canDrag = false;
+                        }
+                        else
+                        {
+                            const auto parentWorld = scene.worldMatrix(entity->parent);
+                            const auto entityWorld = scene.worldMatrix(entity->id);
+                            if (!parentWorld || !entityWorld)
+                            {
+                                canDrag = false;
+                            }
+                            else
+                            {
+                                const double det = glm::determinant(glm::dmat3(*parentWorld));
+                                if (!std::isfinite(det) || std::abs(det) <= 1e-8)
+                                {
+                                    canDrag = false;
+                                }
+                                else
+                                {
+                                    worldOrigin = glm::vec3((*entityWorld)[3]);
+                                    inverseParentWorld = glm::inverse(glm::dmat4(*parentWorld));
+                                }
+                            }
+                        }
+                    }
+                    const auto drag = canDrag
+                                          ? beginGizmoDrag(operations_.selected(), gizmoMode_, hoveredGizmoAxis_,
+                                                           entity->transform, camera, extent, region, cursorScreenPos,
+                                                           90.0f, worldOrigin, inverseParentWorld)
+                                          : GizmoDragState{};
                     if (drag.active)
                     {
                         commitPanelTransactions(scene, clearColor);

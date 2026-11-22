@@ -2,6 +2,8 @@
 
 #include <array>
 #include <optional>
+#include <span>
+#include <string>
 #include <vector>
 
 #include "runtime/model/model_reference.h"
@@ -21,7 +23,18 @@ namespace Incubator::Scene
         Transform transform;
         bool visible = true;
         std::string name;
+        std::optional<size_t> parent;
     };
+
+    /// @brief 描述实体层级校验失败时的定位与原因。
+    struct HierarchyValidationError
+    {
+        size_t entityIndex = 0;
+        std::string reason;
+    };
+
+    /// @brief 校验描述列表中的父级索引范围、自指与循环，返回首个非法实体的索引与原因。
+    std::optional<HierarchyValidationError> findInvalidParentHierarchy(std::span<const EntityDescription> entities);
 
     /// @brief 独立持有的场景内容及消费者背景设置。
     struct SceneDescription

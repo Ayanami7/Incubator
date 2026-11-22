@@ -98,6 +98,8 @@ namespace Incubator::Editor
         bool hasPlaneReference = false;
         glm::dvec2 startCursor{0.0};
         glm::dvec2 startScreenTangent{1.0, 0.0};
+        glm::dvec3 startWorldOrigin{0.0};
+        glm::dmat4 inverseParentWorld{1.0};
     };
 
     /// @brief 在屏幕逻辑坐标空间中执行 Gizmo 三轴 2D 命中测试。
@@ -121,7 +123,9 @@ namespace Incubator::Editor
     GizmoDragState beginGizmoDrag(Scene::EntityId entity, GizmoMode mode, GizmoAxis axis,
                                   const Scene::Transform& startTransform, const Scene::Camera& camera,
                                   Render::FrameExtent extent, const App::ViewportRegion& region,
-                                  glm::vec2 cursorPosition, float screenLength = 90.0f) noexcept;
+                                  glm::vec2 cursorPosition, float screenLength = 90.0f,
+                                  std::optional<glm::vec3> worldOrigin = std::nullopt,
+                                  const glm::dmat4& inverseParentWorld = glm::dmat4(1.0)) noexcept;
 
     /// @brief 根据当前鼠标位置与相机求解 Gizmo 拖拽产生的新变换，支持鼠标跨出视口边界的非裁剪射线。
     /// @param state 可变拖拽状态，维护上一有效帧变换并在首帧缺失参考时补齐。

@@ -1523,4 +1523,61 @@ namespace
         }
         cleanValidation();
     }
+
+    TEST_F(ModelPreparationTest, ParentChildWorldDrawsShadowCullingAndPickMatch)
+    {
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            const auto model = Model::prepareModel(renderer, GLTF);
+            ASSERT_TRUE(model && !model->draws().empty() && model->bounds().has_value());
+
+            Scene::Scene scene;
+            scene.setCamera(Scene::Camera({2.5f, 1.5f, 5.0f}));
+            const auto parent = scene.createEntity({}, Scene::Transform({2.0f, 0.0f, 0.0f}), true, "Parent");
+            const auto child = scene.createEntity(model, Scene::Transform({0.0f, 1.0f, 0.0f}), true, "Child");
+            ASSERT_TRUE(scene.setParent(child, parent));
+            const auto world = scene.worldMatrix(child);
+            ASSERT_TRUE(world.has_value());
+
+            Render::ShadowSettings shadows;
+            shadows.enabled = true;
+            const auto frame = Scene::extractSceneFrame(scene, {320, 240}, true, shadows);
+            ASSERT_TRUE(frame.has_value());
+            ASSERT_EQ(frame->draws.size(), model->draws().size());
+            ASSERT_EQ(frame->shadowDraws.size(), model->draws().size());
+            const auto expectedDraw = (*world) * model->draws()[0].model;
+            EXPECT_EQ(frame->draws[0].model, expectedDraw);
+            EXPECT_EQ(frame->shadowDraws[0].model, expectedDraw);
+
+            // 拾取命中世界位置，不命中局部位置。
+            const auto worldCenter = glm::vec3((*world) * glm::vec4((model->bounds()->min + model->bounds()->max) * 0.5f, 1.0f));
+            const auto hitWorld = scene.pick(Math::LineSegment{worldCenter + glm::vec3(0, 0, 2), worldCenter - glm::vec3(0, 0, 2)});
+            ASSERT_TRUE(hitWorld.has_value());
+            EXPECT_EQ(hitWorld->id, child);
+            const auto localCenter = (model->bounds()->min + model->bounds()->max) * 0.5f + glm::vec3(0.0f, 1.0f, 0.0f);
+            EXPECT_FALSE(scene.pick(Math::LineSegment{localCenter + glm::vec3(0, 0, 2), localCenter - glm::vec3(0, 0, 2)}).has_value());
+
+            // 父级移出视锥后子级主绘制被裁剪，阴影仍保留。
+            ASSERT_TRUE(scene.setTransform(parent, Scene::Transform({200.0f, 0.0f, 0.0f})));
+            const auto culled = Scene::extractSceneFrame(scene, {320, 240}, true, shadows);
+            ASSERT_TRUE(culled.has_value());
+            EXPECT_TRUE(culled->draws.empty());
+            EXPECT_EQ(culled->shadowDraws.size(), model->draws().size());
+
+            // 隐藏父级不隐藏子级：子级保持自身可见性、绘制与拾取。
+            ASSERT_TRUE(scene.setTransform(parent, Scene::Transform({2.0f, 0.0f, 0.0f})));
+            ASSERT_TRUE(scene.setVisible(parent, false));
+            const auto parentHidden = Scene::extractSceneFrame(scene, {320, 240}, true, shadows);
+            ASSERT_TRUE(parentHidden.has_value());
+            EXPECT_EQ(parentHidden->draws.size(), model->draws().size());
+            EXPECT_EQ(parentHidden->shadowDraws.size(), model->draws().size());
+            const auto hitWhenParentHidden =
+                scene.pick(Math::LineSegment{worldCenter + glm::vec3(0, 0, 2), worldCenter - glm::vec3(0, 0, 2)});
+            ASSERT_TRUE(hitWhenParentHidden.has_value());
+            EXPECT_EQ(hitWhenParentHidden->id, child);
+        }
+        cleanValidation();
+    }
 }  // namespace

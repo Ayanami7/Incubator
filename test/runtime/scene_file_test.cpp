@@ -11,6 +11,8 @@
 #include "runtime/core/error/error.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
+#include "runtime/scene/scene.h"
+#include "runtime/scene/scene_rebuild.h"
 
 namespace
 {
@@ -42,6 +44,7 @@ namespace
             EXPECT_EQ(a.entities[i].model, b.entities[i].model);
             EXPECT_EQ(a.entities[i].visible, b.entities[i].visible);
             EXPECT_EQ(a.entities[i].name, b.entities[i].name);
+            EXPECT_EQ(a.entities[i].parent, b.entities[i].parent);
             EXPECT_EQ(a.entities[i].transform.position(), b.entities[i].transform.position());
             EXPECT_EQ(a.entities[i].transform.scale(), b.entities[i].transform.scale());
             EXPECT_NEAR(std::abs(glm::dot(a.entities[i].transform.rotation(), b.entities[i].transform.rotation())), 1,
@@ -99,6 +102,9 @@ namespace
         };
         check(replace("\"version\": 1", "\"version\": 2"), "version");
         check(replace("\"version\": 1", "\"version\": 1.0"), "version");
+        check(replace("\"minorVersion\": 1", "\"minorVersion\": 2"), "minorVersion");
+        check(replace("\"minorVersion\": 1", "\"minorVersion\": -1"), "minorVersion");
+        check(replace("\"minorVersion\": 1", "\"minorVersion\": 1.0"), "minorVersion");
         check(replace("\"visible\": false", "\"visible\": 0"), "visible");
         check(replace("\"name\": \"兔子 ## 中文\"", "\"name\": 42"), "entities[0].name");
         check(replace("\"name\": \"兔子 ## 中文\"", "\"name\": \"bad\\u0000name\""), "entities[0].name");
@@ -359,5 +365,94 @@ namespace
                 EXPECT_EQ(loaded.display, (Render::DisplaySettings{Render::ToneMappingMode::Reinhard, 0.0f}));
             }
         }
+    }
+
+    TEST(SceneFileTest, HierarchyVersion2RoundTripForwardParentDuplicateNamesAndInvalidParentErrors)
+    {
+        // 构造父节点在子节点之后且包含重名实体的 v2 场景，验证往返、重建及世界姿态保持。
+        Scene::Scene source;
+        source.setDisplay({Render::ToneMappingMode::Off, 1.25f});
+        const auto child = source.createEntity({}, Scene::Transform({1.0f, 0.0f, 0.0f}), true, "Node");
+        const auto parent = source.createEntity(
+            {}, Scene::Transform({0.0f, 2.0f, 0.0f}, glm::angleAxis(glm::half_pi<float>(), glm::vec3(0, 1, 0))), true,
+            "Node");
+        ASSERT_TRUE(source.setParent(child, parent));
+        const auto expectedWorld = *source.worldMatrix(child);
+
+        auto desc = Scene::captureScene(source, {0.2f, 0.3f, 0.4f, 1.0f});
+        ASSERT_EQ(desc.entities[0].parent, 1u);
+        ASSERT_FALSE(desc.entities[1].parent.has_value());
+
+        const std::string json = Scene::encodeScene(desc);
+        EXPECT_NE(json.find("\"version\": 1"), std::string::npos);
+        EXPECT_NE(json.find("\"minorVersion\": 1"), std::string::npos);
+        const auto decoded = Scene::decodeScene(json);
+        compare(desc, decoded);
+
+        int resolveCalls = 0;
+        const auto rebuilt = Scene::rebuildScene(decoded, [&](const Model::ModelReference&) {
+            ++resolveCalls;
+            return std::shared_ptr<const Model::PreparedModel>{};
+        });
+        EXPECT_EQ(resolveCalls, 0);
+        ASSERT_EQ(rebuilt.scene->entities().size(), 2u);
+        EXPECT_EQ(rebuilt.scene->entities()[0].name, "Node");
+        EXPECT_EQ(rebuilt.scene->entities()[1].name, "Node");
+        EXPECT_EQ(rebuilt.scene->entities()[0].parent, rebuilt.scene->entities()[1].id);
+        EXPECT_FALSE(rebuilt.scene->entities()[1].parent.valid());
+        const auto rebuiltWorld = *rebuilt.scene->worldMatrix(rebuilt.scene->entities()[0].id);
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+                EXPECT_NEAR(rebuiltWorld[c][r], expectedWorld[c][r], 1e-5f);
+        EXPECT_EQ(rebuilt.scene->display(), (Render::DisplaySettings{Render::ToneMappingMode::Off, 1.25f}));
+
+        // 验证 v2 缺失 parent、非整数、越界、自指及循环均报 entities[i].parent 错误。
+        const auto expectBadJson = [&](std::string text, std::string_view expectedField) {
+            try
+            {
+                (void)Scene::decodeScene(text);
+                FAIL() << "accepted invalid hierarchy JSON";
+            }
+            catch (const Error::Exception& e)
+            {
+                EXPECT_EQ(e.code(), Error::Code::IO);
+                EXPECT_NE(e.message().find(expectedField), std::string::npos) << e.message();
+            }
+        };
+        auto replaceFirst = [&](std::string text, std::string_view from, std::string_view to) {
+            const auto pos = text.find(from);
+            EXPECT_NE(pos, std::string::npos);
+            if (pos != std::string::npos)
+                text.replace(pos, from.size(), to);
+            return text;
+        };
+        expectBadJson(replaceFirst(json, "\"parent\": 1,", ""), "entities[0].parent");
+        expectBadJson(replaceFirst(json, "\"parent\": 1", "\"parent\": 1.5"), "entities[0].parent");
+        expectBadJson(replaceFirst(json, "\"parent\": 1", "\"parent\": \"1\""), "entities[0].parent");
+        expectBadJson(replaceFirst(json, "\"parent\": 1", "\"parent\": -1"), "entities[0].parent");
+        expectBadJson(replaceFirst(json, "\"parent\": 1", "\"parent\": 99"), "entities[0].parent");
+        expectBadJson(replaceFirst(json, "\"parent\": 1", "\"parent\": 0"), "entities[0].parent");
+        expectBadJson(replaceFirst(json, "\"parent\": null", "\"parent\": 0"), "entities[0].parent");
+
+        // 直接重建遇到非法层级应在解析模型前失败。
+        auto invalidDesc = desc;
+        invalidDesc.entities[0].model = Model::ModelReference("models/a.gltf");
+        invalidDesc.entities[1].parent = 0u;
+        EXPECT_FALSE(invalidDesc.valid());
+        int badResolveCalls = 0;
+        try
+        {
+            (void)Scene::rebuildScene(invalidDesc, [&](const Model::ModelReference&) {
+                ++badResolveCalls;
+                return std::shared_ptr<const Model::PreparedModel>{};
+            });
+            FAIL() << "accepted invalid hierarchy description";
+        }
+        catch (const Error::Exception& e)
+        {
+            EXPECT_EQ(e.code(), Error::Code::CONFIG);
+            EXPECT_NE(e.message().find("entities[0].parent"), std::string::npos) << e.message();
+        }
+        EXPECT_EQ(badResolveCalls, 0);
     }
 }  // namespace

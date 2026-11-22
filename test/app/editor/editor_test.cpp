@@ -2754,4 +2754,120 @@ namespace
         }
         cleanValidation();
     }
+
+    TEST_F(EditorAppTest, HierarchyTreeReparentGizmoUndoSaveAndRestartUnderValidation)
+    {
+        copyShowcaseModels();
+        {
+            Editor::EditorApp session(options(false, 1280, 800));
+            Editor::EditorScene editor;
+            Scene::EntityId rootId{}, child1Id{}, child2Id{};
+            glm::vec3 initialRootPos{};
+            int frame = 0, step = 0;
+            bool done = false;
+            session.run(
+                {[&](auto& app) {
+                     // 1. 打开 v1 平铺场景 mixed.json，验证所有实体均为根实体。
+                     editor.initialize(app, "assets/scenes/mixed.json");
+                     ASSERT_EQ(app.scene().entities().size(), 2u);
+                     for (const auto& e : app.scene().entities())
+                         EXPECT_FALSE(e.parent.valid());
+
+                     // 2. 组装 1 个父对象 + 2 个重名子物件，并挂接。
+                     rootId = app.scene().entities()[0].id;
+                     initialRootPos = app.scene().find(rootId)->transform.position();
+                     child1Id = app.scene().entities()[1].id;
+                     editor.selectModel(true);
+                     child2Id = editor.createEntity(app);
+                     app.scene().setName(rootId, "ParentGroup");
+                     app.scene().setName(child1Id, "ChildItem");
+                     app.scene().setName(child2Id, "ChildItem");
+                     app.scene().setTransform(child1Id, Scene::Transform({0.5f, 0.0f, 0.0f}));
+                     app.scene().setTransform(child2Id, Scene::Transform({-0.5f, 0.2f, 0.0f}));
+                     ASSERT_TRUE(editor.controller().setParent(app, child1Id, rootId));
+                     ASSERT_TRUE(editor.controller().setParent(app, child2Id, rootId));
+                     editor.select(app, rootId);
+                 },
+                 [&](auto& app, const auto&) {
+                     if (++frame > 120)
+                     {
+                         ADD_FAILURE() << "Hierarchy integration test timeout at step=" << step;
+                         app.requestExit();
+                         return;
+                     }
+                     auto* objectsWin = ImGui::FindWindowByName("Objects");
+                     if (frame < 4 || !objectsWin || objectsWin->DC.ChildWindows.empty())
+                         return;
+
+                     switch (step)
+                     {
+                         case 0: {
+                             // 验证对象树折叠按钮不改变当前选中。
+                             auto* listChild = objectsWin->DC.ChildWindows[0];
+                             const ImGuiID expandId =
+                                 ImHashStr("##expand", 0, listChild->GetID(std::to_string(rootId.value()).c_str()));
+                             ImGui::ActivateItemByID(expandId);
+                             ++step;
+                             break;
+                         }
+                         case 1:
+                             EXPECT_EQ(editor.selected(), rootId);
+                             // 驱动根对象旋转与平移，验证子物件世界姿态与拾取联动，以及撤销/重做和保存。
+                             editor.setGizmoMode(Editor::GizmoMode::Rotate);
+                             ASSERT_TRUE(editor.controller().operations().setTransform(
+                                 app.scene(), app.clearColor(),
+                                 Scene::Transform({1.5f, 0.0f, 0.0f},
+                                                  glm::angleAxis(glm::half_pi<float>(), glm::vec3(0, 1, 0)),
+                                                  {1.0f, 1.0f, 1.0f})));
+                             {
+                                 const auto w1 = app.scene().worldMatrix(child1Id);
+                                 const auto w2 = app.scene().worldMatrix(child2Id);
+                                 ASSERT_TRUE(w1 && w2);
+                                 EXPECT_NEAR((*w1)[3][0], 1.5f, 1e-4f);
+                                 EXPECT_NEAR((*w1)[3][2], -0.5f, 1e-4f);
+                                 EXPECT_NEAR((*w2)[3][2], 0.5f, 1e-4f);
+                                 const glm::vec3 child1Pos((*w1)[3]);
+                                 const auto hit = app.scene().pick(
+                                     Math::LineSegment{child1Pos + glm::vec3(0, 0, 2), child1Pos - glm::vec3(0, 0, 2)});
+                                 ASSERT_TRUE(hit.has_value());
+                                 EXPECT_EQ(hit->id, child1Id);
+                             }
+                             ASSERT_TRUE(editor.undo(app));
+                             EXPECT_EQ(app.scene().find(rootId)->transform.position(), initialRootPos);
+                             ASSERT_TRUE(editor.redo(app));
+                             EXPECT_NEAR((*app.scene().worldMatrix(child1Id))[3][0], 1.5f, 1e-4f);
+
+                             ASSERT_TRUE(editor.save(app, "hierarchy-saved.json"));
+                             // 验证打开非法 v2 场景失败时保留原场景、当前选择与文件关联。
+                             {
+                                 std::string raw;
+                                 {
+                                     std::ifstream in("hierarchy-saved.json");
+                                     raw.assign(std::istreambuf_iterator<char>(in), {});
+                                 }
+                                 const auto firstNull = raw.find("\"parent\": null");
+                                 ASSERT_NE(firstNull, std::string::npos);
+                                 raw.replace(firstNull, 14, "\"parent\": 1");
+                                 std::ofstream out("invalid-hierarchy.json", std::ios::binary | std::ios::trunc);
+                                 out << raw;
+                             }
+                             EXPECT_FALSE(editor.load(app, "invalid-hierarchy.json"));
+                             EXPECT_EQ(editor.scenePath(), "hierarchy-saved.json");
+                             EXPECT_EQ(editor.selected(), rootId);
+                             EXPECT_EQ(app.scene().entities().size(), 3u);
+                             EXPECT_EQ(app.scene().find(child1Id)->parent, rootId);
+                             done = true;
+                             app.requestExit();
+                             break;
+                     }
+                 },
+                 [&](auto& app) { editor.ui(app); },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            EXPECT_TRUE(done);
+        }
+        cleanValidation();
+    }
 }  // namespace
