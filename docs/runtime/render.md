@@ -114,8 +114,7 @@ RGB 按 sRGB → 线性过滤 → sRGB 写回，alpha 按线性 straight 通道�
 不支持时抛出 RENDER 错误，同时保留 extent/像素长度检查；Resource 不包含设备限制。
 直接构造的深度附件、读回图像及后端默认上传仍为单 mip。
 
-场景 RGB 由 sRGB 纹理采样得到 linear 值，与材质线性 RGB 相乘后，fragment Shader 使用精确 sRGB transfer function
-编码后写入 UNORM，输出 alpha=1，不启用场景 blending。clearColor 与 ImGui RGB 均为
+场景 RGB 由 sRGB 纹理采样得到 linear 值，与材质线性 RGB 相乘后，直接呈现（`drawFrame`）路径沿用片元 Shader 钳制与 sRGB transfer function 编码后写入 UNORM；独立视口（`drawSceneTarget`）则先将未钳制的线性 HDR 颜色（几何覆盖写 `alpha = 1`，清屏背景写 `alpha = 0`）写入 `VK_FORMAT_R16G16B16A16_SFLOAT` 场景附件，再经全屏显示 Pass（按 `DisplaySettings` 执行曝光与 `Off` / `Reinhard` 色调映射，未覆盖处直接输出 `clearColor`）编码一次 sRGB 写入 `VK_FORMAT_R8G8B8A8_UNORM` 视口图像供 ImGui 采样。clearColor 与 ImGui RGB 均为
 sRGB 编码值，直接写 UNORM；ImGui 沿用现有编码空间 alpha blending，不修改第三方 Shader。
 交换链仅支持 `SRGB_NONLINEAR` colorSpace，按 BGRA8_UNORM、RGBA8_UNORM 顺序选择，
 与设备返回的列表顺序无关。单个 UNDEFINED/SRGB_NONLINEAR 选择 BGRA8_UNORM，并检查
@@ -371,14 +370,14 @@ Scene 实体共享准备结果，`Scene::extractSceneFrame` 将实体整体变�
 
 ## 独立场景目标
 
-`prepareSceneTarget(extent)` 等待当前帧槽完成，按场景像素尺寸复用或替换该槽的颜色及深度附件。
+`prepareDisplayResources(vertexShader, fragmentShader)` 准备全屏显示 Pass 所需 Shader，须在首次调用 `drawSceneTarget` 前调用。
+`prepareSceneTarget(extent)` 等待当前帧槽完成，按场景像素尺寸复用或替换该槽的线性 HDR 颜色（`VK_FORMAT_R16G16B16A16_SFLOAT`）、显示 LDR 颜色（`VK_FORMAT_R8G8B8A8_UNORM`）及深度附件。
 `prepareSceneTarget`、`drawSceneTarget` 和 `sceneImage` 在 moved-from Renderer 上均抛 RENDER，移动后的目标继续可用。
 零尺寸返回无效 `SceneOutput`。输出为非拥有引用，尺寸由 `extent()` 查询；尺寸重建或 Renderer 关闭后失效，
 只能交给所属 Renderer 的当前帧槽使用。图像在生产路径中不经过 CPU 回读。
 
-`drawSceneTarget(output, input, clearColor, recordUi)` 先在独立目标中绘制场景，再在交换链中记录 UI。
-场景目标使用 RGBA8 UNORM，保存生产片段着色器已编码的 sRGB 字节，背景同样为显示编码值；
-后续 UI 采样应沿用这些字节，避免再次编码。图像方向与当前直接绘制一致。
+`drawSceneTarget(output, input, clearColor, recordUi)` 先在独立线性 HDR 目标中绘制场景，再执行全屏显示 Pass 按 `input.display`（`ToneMappingMode::Off` 钳制或 `Reinhard` 配合 `[-8, +8]` EV 曝光，未覆盖背景输出 `clearColor`）编码一次 sRGB 写入 RGBA8 UNORM 视口图像，最后在交换链中记录 UI。
+后续 UI 采样沿用该 RGBA8 UNORM 图像，避免再次编码。图像方向与当前直接绘制一致。
 旧附件在槽 Fence 完成后替换，稳定帧不分配目标或等待整个设备空闲；原 `drawFrame` 直接绘制入口继续可用。
 ImGui 图像注册及工作区布局由后续 Integration 接入。
 

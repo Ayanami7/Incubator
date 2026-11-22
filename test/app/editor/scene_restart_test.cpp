@@ -131,7 +131,9 @@ int main(int argc, char** argv)
                              d.camera.perspective().nearPlane != 0.2f || d.camera.perspective().farPlane != 90 ||
                              d.lighting.direction != glm::vec3(0, -2, -3) ||
                              d.lighting.color != glm::vec3(0.2f, 0.6f, 0.8f) || d.lighting.intensity != 2 ||
-                             d.lighting.ambient != 0.3f || d.clearColor != std::array<float, 4>{0.2f, 0.3f, 0.4f, 0.5f})
+                             d.lighting.ambient != 0.3f ||
+                             d.display != (Incubator::Render::DisplaySettings{Incubator::Render::ToneMappingMode::Off, 2.25f}) ||
+                             d.clearColor != std::array<float, 4>{0.2f, 0.3f, 0.4f, 0.5f})
                          {
                              std::cerr << "Restored scene verification failed\n";
                              result = 1;
@@ -285,6 +287,7 @@ int main(int argc, char** argv)
                      }
                      session.scene().setCamera(Incubator::Scene::Camera({1, 2, 8}, {1, 0, 0, 0}, {0.9f, 0.2f, 90}));
                      session.scene().setLighting({{0, -2, -3}, {0.2f, 0.6f, 0.8f}, 2, 0.3f});
+                     session.scene().setDisplay({Incubator::Render::ToneMappingMode::Off, 2.25f});
                      session.clearColor() = {0.2f, 0.3f, 0.4f, 0.5f};
 
                      {

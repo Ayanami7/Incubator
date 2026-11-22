@@ -25,10 +25,12 @@ namespace Incubator::Editor
         }
 
         bool sameSnapshotState(const std::vector<Scene::Entity>& beforeEntities, const Render::Lighting& beforeLighting,
+                               const Render::DisplaySettings& beforeDisplay,
                                const std::array<float, 4>& beforeClearColor, const Scene::Scene& scene,
                                const std::array<float, 4>& clearColor)
         {
-            if (!(beforeLighting == scene.lighting()) || beforeClearColor != clearColor)
+            if (!(beforeLighting == scene.lighting()) || !(beforeDisplay == scene.display()) ||
+                beforeClearColor != clearColor)
                 return false;
             const auto entities = scene.entities();
             if (beforeEntities.size() != entities.size())
@@ -47,8 +49,8 @@ namespace Incubator::Editor
                                                                         uint64_t revision) const
     {
         const auto entities = scene.entities();
-        return {std::vector<Scene::Entity>(entities.begin(), entities.end()), scene.lighting(), clearColor,
-                selection_.selected(), revision};
+        return {std::vector<Scene::Entity>(entities.begin(), entities.end()), scene.lighting(), scene.display(),
+                clearColor, selection_.selected(), revision};
     }
 
     void EditorOperations::pushUndoSnapshot(HistorySnapshot before)
@@ -70,6 +72,7 @@ namespace Incubator::Editor
     {
         scene.restoreEntities(snapshot.entities);
         scene.setLighting(snapshot.lighting);
+        scene.setDisplay(snapshot.display);
         clearColor = snapshot.clearColor;
         selection_.select(snapshot.selected);
         currentRevision_ = snapshot.revision;
@@ -88,7 +91,7 @@ namespace Incubator::Editor
             return false;
         auto before = std::move(*transaction_);
         transaction_.reset();
-        if (sameSnapshotState(before.entities, before.lighting, before.clearColor, scene, clearColor))
+        if (sameSnapshotState(before.entities, before.lighting, before.display, before.clearColor, scene, clearColor))
             return false;
         pushUndoSnapshot(std::move(before));
         return true;
@@ -276,6 +279,22 @@ namespace Incubator::Editor
         }
         auto before = captureSnapshot(scene, clearColor, currentRevision_);
         scene.setLighting(lighting);
+        pushUndoSnapshot(std::move(before));
+        return true;
+    }
+
+    bool EditorOperations::setDisplay(Scene::Scene& scene, const std::array<float, 4>& clearColor,
+                                      Render::DisplaySettings display)
+    {
+        if (scene.display() == display)
+            return true;
+        if (transaction_)
+        {
+            scene.setDisplay(display);
+            return true;
+        }
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
+        scene.setDisplay(display);
         pushUndoSnapshot(std::move(before));
         return true;
     }

@@ -96,7 +96,7 @@ Listed 只统计当前目录发现项，Cached 只统计 PreparedModel 缓存项
 场景及阴影 Shader 同样通过 ResourceManager::hold 取得只可移动的 CPU 持有，准备结束后自动释放，不直接配对 Registry 引用。
 调整姿态和可见性复用现有 GPU 引用。
 
-保存包含所有实体（包括隐藏和无模型实体）、模型来源与准备配置、Camera、Lighting 和背景。加载成功后替换场景、清除选择并同步相机控制器；失败时显示错误并保留原场景。保存覆盖文件，打开后的写入失败可能留下部分文件。
+保存包含所有实体（包括隐藏和无模型实体）、模型来源与准备配置、Camera、Lighting、Display（`toneMapping` 与 `exposureEv`）和背景。加载成功后替换场景、清除选择并同步相机控制器；失败时显示错误并保留原场景。保存覆盖文件，打开后的写入失败可能留下部分文件。
 
 保存成功后当前文件关联更新为目标文件；待操作路径单独保存，编辑它不改变当前文件，取消或失败也不改变关联。
 多个场景使用不同文件路径分别保存，一次只打开一个 Scene。相对保存路径按 cwd 解析；
@@ -106,7 +106,8 @@ Listed 只统计当前目录发现项，Cached 只统计 PreparedModel 缓存项
 两种正式模型显式使用 Lambert 漫反射预览，继续采用 FullChain 和线性 min/mag/mip；
 源 Unlit 材质始终不受光。默认阴影场景的传播方向为 `(-0.6,-1,-0.4)`、
 线性颜色 `(1,0.95,0.9)`、强度 1、环境系数 0.15；GPU 帧参数会归一化方向。
-Scene settings 折叠区提供 Light yaw/pitch、Color (linear)、Intensity 和 Ambient。
+Scene settings 折叠区提供 Light yaw/pitch、Color (linear)、Intensity、Ambient，以及 Tone mapping（`##display-tone-mapping`：`Off` / `Reinhard`）和 Exposure (EV)（`##display-exposure-ev`：`[-8, +8]` EV）。
+模式切换立即记 1 步撤销历史；`Off` 模式下禁用曝光滑块并保留原 EV 值供重新开启 `Reinhard` 时恢复；曝光拖动实时更新画面并在结束时折叠为单步历史。
 角度产生非零方向，颜色控件显示 `[0,1]` 线性 RGB，强度范围为 `[0,4]`，环境系数为 `[0,1]`。
 强度 0 只关闭直接光，环境系数也为 0 时普通 Lambert 材质为黑色；清屏与 UI 不受灯光影响。
 清空实体保留当前灯光；打开场景文件读取其中的灯光。相机操作和聚焦不会改变灯光。

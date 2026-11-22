@@ -60,6 +60,7 @@ namespace Incubator::Editor
         None,
         Entity,
         Lighting,
+        Display,
         Background
     };
 
@@ -323,6 +324,9 @@ namespace Incubator::Editor
         /// @brief 先结算 Gizmo 与面板事务，再为选中实体切换模型准备着色模式。
         bool setEntityShading(Scene::Scene& scene, std::array<float, 4>& clearColor, Render::ShadingMode shading);
         bool setEntityShading(EditorApp& app, Render::ShadingMode shading);
+        /// @brief 先结算 Gizmo 与面板事务，再更新场景显示（色调映射与曝光）设置并记一步历史。
+        bool setDisplay(Scene::Scene& scene, std::array<float, 4>& clearColor, Render::DisplaySettings display);
+        bool setDisplay(EditorApp& app, Render::DisplaySettings display);
 
         Scene::EntityId duplicateSelected(Scene::Scene& scene, const std::array<float, 4>& clearColor);
         Scene::EntityId duplicateSelected(EditorApp& app);

@@ -12,6 +12,7 @@
 #include "editor_selection.h"
 #include "runtime/model/model_manager.h"
 #include "runtime/platform/fileio/fileio.h"
+#include "runtime/render/display.h"
 #include "runtime/render/lighting.h"
 #include "runtime/scene/scene_rebuild.h"
 
@@ -49,6 +50,7 @@ namespace Incubator::Editor
         bool remove(Scene::Scene& scene, const std::array<float, 4>& clearColor);
         bool clear(Scene::Scene& scene, const std::array<float, 4>& clearColor);
         bool setLighting(Scene::Scene& scene, const std::array<float, 4>& clearColor, Render::Lighting lighting);
+        bool setDisplay(Scene::Scene& scene, const std::array<float, 4>& clearColor, Render::DisplaySettings display);
         bool setClearColor(const Scene::Scene& scene, std::array<float, 4>& clearColor,
                            const std::array<float, 4>& newColor);
 
@@ -109,6 +111,7 @@ namespace Incubator::Editor
         {
             std::vector<Scene::Entity> entities;
             Render::Lighting lighting{};
+            Render::DisplaySettings display{};
             std::array<float, 4> clearColor{0.12f, 0.16f, 0.22f, 1.0f};
             Scene::EntityId selected;
             uint64_t revision = 0;

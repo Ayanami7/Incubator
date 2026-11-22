@@ -2754,4 +2754,198 @@ namespace
         }
         cleanValidation();
     }
+
+    TEST_F(EditorAppTest, DisplayControlsHdrComparisonUndoRedoSaveAndRestoreUnderValidation)
+    {
+        copyShowcaseModels();
+        std::filesystem::create_directories("assets/models/shadows");
+        std::filesystem::copy_file(Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR) / "models/shadows/receiver.obj",
+                                   "assets/models/shadows/receiver.obj",
+                                   std::filesystem::copy_options::overwrite_existing);
+        {
+            Editor::EditorApp session(options(true, 1280, 800));
+            Editor::EditorScene editor;
+            int step = 0, frame = 0;
+            bool done = false;
+            WindowCapture::Image offShot{}, reinhardShot{};
+            auto* handle = static_cast<GLFWwindow*>(session.window().getNativeHandle());
+            auto hooks = hookWindowCallbacks(handle);
+            float scanY = 0.0f;
+            double foundX = 0.0, foundY = 0.0;
+            const auto scanSlider = [&](ImGuiWindow* props, ImGuiID target, int nextStep) {
+                if (ImGui::GetHoveredID() == target)
+                {
+                    foundX = ImGui::GetIO().MousePos.x;
+                    foundY = ImGui::GetIO().MousePos.y;
+                    scanY = 0.0f;
+                    step = nextStep;
+                    return;
+                }
+                if (scanY <= props->InnerRect.Min.y)
+                    scanY = props->InnerRect.Min.y + 4.0f;
+                else
+                    scanY += 8.0f;
+                if (scanY > props->InnerRect.Max.y)
+                    scanY = props->InnerRect.Min.y + 4.0f;
+                const float availW = props->WorkRect.GetWidth();
+                const float fontSz = ImGui::GetFontSize();
+                const float labelW = std::clamp(availW * 0.34f, fontSz * 5.5f, fontSz * 8.0f);
+                hooks.cursor(handle, double(props->WorkRect.Min.x + labelW + 24.0f), double(scanY));
+            };
+
+            session.run(
+                {[&](auto& app) {
+                     // 1. 打开仓库自带场景 mixed.json，验证采用文件中显式显示设置。
+                     editor.initialize(app, "assets/scenes/mixed.json");
+                     EXPECT_EQ(app.scene().display(), (Render::DisplaySettings{Render::ToneMappingMode::Reinhard, 0.0f}));
+
+                     // 验证读取显式 Off / +1.5 EV 的场景文件后直接采用文件中的设置。
+                     auto explicitScene = Scene::captureScene(app.scene(), app.clearColor());
+                     explicitScene.display = {Render::ToneMappingMode::Off, 1.5f};
+                     Scene::writeScene(app.fileIO(), "assets/scenes/explicit_display.json", explicitScene);
+                     ASSERT_TRUE(editor.load(app, "assets/scenes/explicit_display.json"));
+                     EXPECT_EQ(app.scene().display(), (Render::DisplaySettings{Render::ToneMappingMode::Off, 1.5f}));
+
+                     // 切回 mixed.json（默认 Reinhard / 0 EV，且清空历史），再搭建 Avocado + Teapot + 地面 + 高强方向光场景。
+                     ASSERT_TRUE(editor.load(app, "assets/scenes/mixed.json"));
+                     const Scene::EntityId avocadoId = app.scene().entities()[0].id;
+                     editor.select(app, avocadoId);
+                     ASSERT_TRUE(editor.setEntityShading(app, Render::ShadingMode::Pbr));
+                     editor.selectModel(true);
+                     const Scene::EntityId teapotId = editor.createEntity(app);
+                     app.scene().setTransform(teapotId,
+                                              Scene::Transform({0.25f, 0.0f, 0.0f}, {1, 0, 0, 0}, {0.1f, 0.1f, 0.1f}));
+                     ASSERT_TRUE(editor.setEntityShading(app, Render::ShadingMode::Pbr));
+                     ASSERT_TRUE(editor.addModel(
+                         app, "models/shadows/receiver.obj",
+                         Scene::Transform({0.0f, -0.18f, 0.0f},
+                                          glm::angleAxis(-glm::half_pi<float>(), glm::vec3(1, 0, 0)),
+                                          {1.5f, 1.5f, 1.0f})));
+                     editor.select(app, avocadoId);
+                     app.shadowSettings().enabled = true;
+                     app.scene().setLighting({{-0.4f, -0.8f, -0.6f}, {1.0f, 0.98f, 0.92f}, 3.5f, 0.1f});
+                     app.scene().setDisplay({Render::ToneMappingMode::Reinhard, 0.0f});
+                     hooks = hookWindowCallbacks(handle);
+                     enableGlfwCallbacks(handle);
+                     hooks.focus(handle, GLFW_TRUE);
+                 },
+                 [&](auto& app, const auto&) {
+                     if (++frame > 400)
+                     {
+                         ADD_FAILURE() << "DisplayControls test timeout at step=" << step;
+                         app.requestExit();
+                     }
+                     auto* propWin = ImGui::FindWindowByName("Properties");
+                     if (frame < 5 || !propWin || app.sceneExtent().width == 0)
+                         return;
+                     hooks.focus(handle, GLFW_TRUE);
+
+                     switch (step)
+                     {
+                         case 0:
+                             // 确保 Properties 滚动到底部使 Scene settings 显示控件可见。
+                             propWin->Scroll.y = propWin->ScrollMax.y;
+                             ++step;
+                             break;
+                         case 1:
+                             // 采集同机位 Reinhard 截图并激活 ##display-tone-mapping Combo。
+                             glfwWaitEventsTimeout(0.06);
+                             reinhardShot = WindowCapture::capture(app.window());
+                             WindowCapture::save(reinhardShot, "review/hdr-reinhard.ppm");
+                             ImGui::ActivateItemByID(propWin->GetID("##display-tone-mapping"));
+                             ++step;
+                             break;
+                         case 2:
+                             if (!ImGui::GetCurrentContext()->OpenPopupStack.empty())
+                             {
+                                 auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
+                                 if (popup)
+                                 {
+                                     ImGui::ActivateItemByID(ImHashStr("Off", 0, popup->GetID(int(0))));
+                                     ++step;
+                                 }
+                             }
+                             break;
+                         case 3:
+                             if (app.scene().display().toneMapping == Render::ToneMappingMode::Off)
+                             {
+                                 EXPECT_FLOAT_EQ(app.scene().display().exposureEv, 0.0f);
+                                 EXPECT_TRUE(editor.canUndo());
+                                 ++step;
+                             }
+                             break;
+                         case 4:
+                             // 等待一帧渲染后采集同机位 Off 截图，并验证 Off 模式下曝光滑块禁用。
+                             glfwWaitEventsTimeout(0.06);
+                             offShot = WindowCapture::capture(app.window());
+                             WindowCapture::save(offShot, "review/hdr-off.ppm");
+                             EXPECT_NE(offShot.rgba, reinhardShot.rgba);
+                             // 撤销回到 Reinhard 并扫描定位 ##display-exposure-ev。
+                             EXPECT_TRUE(editor.undo(app));
+                             EXPECT_EQ(app.scene().display().toneMapping, Render::ToneMappingMode::Reinhard);
+                             EXPECT_FLOAT_EQ(app.scene().display().exposureEv, 0.0f);
+                             ++step;
+                             break;
+                         case 5:
+                             scanSlider(propWin, propWin->GetID("##display-exposure-ev"), 6);
+                             break;
+                         case 6:
+                             // 在 Reinhard 下通过实际 ImGui SliderFloat 连续拖动曝光，验证仅记 1 步撤销历史。
+                             hooks.mouse(handle, 0, GLFW_PRESS, 0);
+                             ++step;
+                             break;
+                         case 7:
+                             hooks.cursor(handle, foundX + 30.0, foundY);
+                             ++step;
+                             break;
+                         case 8:
+                             hooks.cursor(handle, foundX + 60.0, foundY);
+                             ++step;
+                             break;
+                         case 9:
+                             hooks.mouse(handle, 0, GLFW_RELEASE, 0);
+                             ++step;
+                             break;
+                         case 10: {
+                             const float draggedEv = app.scene().display().exposureEv;
+                             EXPECT_GT(draggedEv, 0.5f);
+                             // 连续拖动仅增加 1 条历史，撤销一次应直接回到 0 EV。
+                             EXPECT_TRUE(editor.undo(app));
+                             EXPECT_FLOAT_EQ(app.scene().display().exposureEv, 0.0f);
+                             EXPECT_TRUE(editor.redo(app));
+                             EXPECT_FLOAT_EQ(app.scene().display().exposureEv, draggedEv);
+
+                             // 切到 Off 并切回 Reinhard，确认 EV 保留。
+                             EXPECT_TRUE(editor.controller().setDisplay(app, {Render::ToneMappingMode::Off, draggedEv}));
+                             EXPECT_TRUE(editor.controller().setDisplay(
+                                 app, {Render::ToneMappingMode::Reinhard, draggedEv}));
+
+                             // 保存到新文件并加载恢复显示模式与 EV，同时验证最小化恢复。
+                             ASSERT_TRUE(editor.save(app, "assets/scenes/hdr_roundtrip.json"));
+                             ASSERT_TRUE(editor.load(app, "assets/scenes/hdr_roundtrip.json"));
+                             EXPECT_EQ(app.scene().display().toneMapping, Render::ToneMappingMode::Reinhard);
+                             EXPECT_NEAR(app.scene().display().exposureEv, draggedEv, 1e-4f);
+
+                             glfwIconifyWindow(handle);
+                             glfwPollEvents();
+                             glfwRestoreWindow(handle);
+                             glfwPollEvents();
+                             ++step;
+                             break;
+                         }
+                         case 11:
+                             done = true;
+                             app.requestExit();
+                             break;
+                     }
+                 },
+                 [&](auto& app) { editor.ui(app); },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            EXPECT_TRUE(done);
+        }
+        cleanValidation();
+    }
 }  // namespace

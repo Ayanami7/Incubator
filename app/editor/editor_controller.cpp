@@ -511,6 +511,19 @@ namespace Incubator::Editor
         return setEntityShading(app.scene(), app.clearColor(), shading);
     }
 
+    bool EditorController::setDisplay(Scene::Scene& scene, std::array<float, 4>& clearColor,
+                                      Render::DisplaySettings display)
+    {
+        cancelGizmoDrag(scene, clearColor);
+        commitPanelTransactions(scene, clearColor);
+        return operations_.setDisplay(scene, clearColor, display);
+    }
+
+    bool EditorController::setDisplay(EditorApp& app, Render::DisplaySettings display)
+    {
+        return setDisplay(app.scene(), app.clearColor(), display);
+    }
+
     Scene::EntityId EditorController::duplicateSelected(Scene::Scene& scene, const std::array<float, 4>& clearColor)
     {
         auto mutableColor = clearColor;

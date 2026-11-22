@@ -105,6 +105,7 @@ namespace
         EXPECT_TRUE(operations.setVisible(scene, clearColor, true));
         EXPECT_TRUE(operations.setTransform(scene, clearColor, Scene::Transform({1, 0, 0})));
         EXPECT_TRUE(operations.setLighting(scene, clearColor, scene.lighting()));
+        EXPECT_TRUE(operations.setDisplay(scene, clearColor, scene.display()));
         EXPECT_TRUE(operations.setClearColor(scene, clearColor, clearColor));
         EXPECT_FALSE(operations.isDirty());
 
@@ -124,6 +125,9 @@ namespace
         checkDirty([](auto& op, auto& s, const auto& bg) { EXPECT_TRUE(op.remove(s, bg)); });
         checkDirty([](auto& op, auto& s, const auto& bg) { EXPECT_TRUE(op.clear(s, bg)); });
         checkDirty([](auto& op, auto& s, const auto& bg) { auto l = s.lighting(); l.intensity = 2.5f; EXPECT_TRUE(op.setLighting(s, bg, l)); });
+        checkDirty([](auto& op, auto& s, const auto& bg) {
+            EXPECT_TRUE(op.setDisplay(s, bg, {Render::ToneMappingMode::Off, 2.0f}));
+        });
         checkDirty([](auto& op, const auto& s, auto& bg) { EXPECT_TRUE(op.setClearColor(s, bg, {0.5f, 0.5f, 0.5f, 1.0f})); });
 
         // 删除场景外部已被销毁的实体不置脏。
@@ -216,6 +220,25 @@ namespace
         size_t undos = 0; while (bounded.undo(boundedScene, boundedColor)) ++undos;
         EXPECT_TRUE(undos == Editor::EditorOperations::MAX_HISTORY &&
                     boundedScene.find(target)->transform.position().x == 1.0f && bounded.isDirty());
+
+        // 显示设置：离散切换记 1 步，连续事务合并为 1 步，Undo/Redo 正确恢复，Off 保留 EV。
+        Editor::EditorOperations displayOps;
+        Scene::Scene displayScene;
+        std::array<float, 4> displayBg{0.12f, 0.16f, 0.22f, 1.0f};
+        EXPECT_TRUE(displayOps.setDisplay(displayScene, displayBg, {Render::ToneMappingMode::Reinhard, 2.5f}));
+        EXPECT_TRUE(displayOps.setDisplay(displayScene, displayBg, {Render::ToneMappingMode::Off, 2.5f}));
+        EXPECT_TRUE(displayOps.setDisplay(displayScene, displayBg, {Render::ToneMappingMode::Reinhard, 2.5f}));
+        displayOps.beginTransaction(displayScene, displayBg);
+        EXPECT_TRUE(displayOps.setDisplay(displayScene, displayBg, {Render::ToneMappingMode::Reinhard, 3.0f}));
+        EXPECT_TRUE(displayOps.setDisplay(displayScene, displayBg, {Render::ToneMappingMode::Reinhard, 4.0f}));
+        EXPECT_TRUE(displayOps.commitTransaction(displayScene, displayBg));
+        EXPECT_EQ(displayScene.display(), (Render::DisplaySettings{Render::ToneMappingMode::Reinhard, 4.0f}));
+        EXPECT_TRUE(displayOps.undo(displayScene, displayBg));
+        EXPECT_EQ(displayScene.display(), (Render::DisplaySettings{Render::ToneMappingMode::Reinhard, 2.5f}));
+        EXPECT_TRUE(displayOps.undo(displayScene, displayBg));
+        EXPECT_EQ(displayScene.display(), (Render::DisplaySettings{Render::ToneMappingMode::Off, 2.5f}));
+        EXPECT_TRUE(displayOps.redo(displayScene, displayBg));
+        EXPECT_EQ(displayScene.display(), (Render::DisplaySettings{Render::ToneMappingMode::Reinhard, 2.5f}));
     }
 
     TEST(EditorOperationsHistoryTest, TransactionsMergeNoOpDiscardAndCancelRollback)

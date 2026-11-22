@@ -1012,8 +1012,37 @@ namespace Incubator::Editor
                 operations.setLighting(app.scene(), app.clearColor(), lighting);
             if (!lightingActive && controller_.activePanelTransaction() == PanelTransactionKind::Lighting)
                 controller_.commitPanelTransactions(app);
+
+            ImGui::Separator();
+            auto display = app.scene().display();
+            rowLabel("Tone mapping");
+            ImGui::SetNextItemWidth(controlWidth);
+            int toneIndex = display.toneMapping == Render::ToneMappingMode::Off ? 0 : 1;
+            if (ImGui::Combo("##display-tone-mapping", &toneIndex, "Off\0Reinhard\0"))
+            {
+                display.toneMapping = toneIndex == 0 ? Render::ToneMappingMode::Off : Render::ToneMappingMode::Reinhard;
+                controller_.setDisplay(app, display);
+            }
+            const bool exposureDisabled = display.toneMapping == Render::ToneMappingMode::Off;
+            rowLabel("Exposure (EV)");
+            ImGui::SetNextItemWidth(controlWidth);
+            if (exposureDisabled)
+                ImGui::BeginDisabled(true);
+            const bool exposureChanged = ImGui::SliderFloat(
+                "##display-exposure-ev", &display.exposureEv, Render::DisplaySettings::MIN_EXPOSURE_EV,
+                Render::DisplaySettings::MAX_EXPOSURE_EV, "%+.2f EV", ImGuiSliderFlags_AlwaysClamp);
+            const bool exposureActive = !exposureDisabled && ImGui::IsItemActive() && windowFocused;
+            if (exposureDisabled)
+                ImGui::EndDisabled();
+            if (exposureActive && controller_.activePanelTransaction() != PanelTransactionKind::Display)
+                controller_.beginPanelTransaction(app, PanelTransactionKind::Display);
+            if (exposureChanged)
+                operations.setDisplay(app.scene(), app.clearColor(), display);
+            if (!exposureActive && controller_.activePanelTransaction() == PanelTransactionKind::Display)
+                controller_.commitPanelTransactions(app);
         }
         else if (controller_.activePanelTransaction() == PanelTransactionKind::Lighting ||
+                 controller_.activePanelTransaction() == PanelTransactionKind::Display ||
                  controller_.activePanelTransaction() == PanelTransactionKind::Background)
         {
             controller_.commitPanelTransactions(app);

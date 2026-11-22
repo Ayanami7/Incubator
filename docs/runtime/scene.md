@@ -76,12 +76,12 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
 
 `runtime/scene/scene_description.h` 提供 `SceneDescription` 和 `captureScene(scene, clearColor)`。
 捕获按创建顺序复制全部实体，包括隐藏、离屏、无模型及无绘制内容的实体，保存可空模型来源、真实 Transform 和可见性；
-同时复制 Camera、原始 Lighting 和调用方传入的背景。快照不含 EntityId、派生矩阵、GPU 引用或交互状态，
+同时复制 Camera、原始 Lighting、显示设置 `DisplaySettings`（默认 `Reinhard` / `0 EV`）和调用方传入的背景。快照不含 EntityId、派生矩阵、GPU 引用或交互状态，
 之后修改或销毁 Scene 不会改变它。捕获不读取文件或准备 GPU 资源。
 
 背景 RGB 为 sRGB 编码、alpha 为线性值，各分量必须有限且位于 `[0,1]`；无效输入抛 CONFIG。
-默认描述使用默认 Camera、Lighting 和背景 `{0.12, 0.16, 0.22, 1}`。`SceneDescription::valid()`
-检查可直接修改的光照、背景和实体名称；Transform、Camera 和 ModelReference 继续由各自类型保证合法性。
+默认描述使用默认 Camera、Lighting、显示设置（`Reinhard` / `0 EV`）和背景 `{0.12, 0.16, 0.22, 1}`。`SceneDescription::valid()`
+检查可直接修改的光照、显示设置（`Off` / `Reinhard` 且曝光位于 `[-8, +8]` EV）、背景和实体名称；Transform、Camera 和 ModelReference 继续由各自类型保证合法性。
 
 ## 场景 JSON 文件
 
@@ -103,6 +103,7 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
   "camera": {"position": [0, 0, 6], "rotation": [0, 0, 0, 1],
     "perspective": {"verticalFov": 0.7853982, "nearPlane": 0.1, "farPlane": 100}},
   "lighting": {"direction": [0, 0, -1], "color": [1, 1, 1], "intensity": 1, "ambient": 0.1},
+  "display": {"toneMapping": "reinhard", "exposureEv": 0},
   "clearColor": [0.12, 0.16, 0.22, 1]
 }
 ```
@@ -111,7 +112,7 @@ JSON v1 的 `name` 为可选字符串，旧文件缺省时为空；新文件保�
 
 字段均必需，`model` 可为 `null`；四元数顺序为 xyzw，FOV 使用弧度。枚举区分大小写：
 `mipMode` 为 `baseLevel/fullChain`，min/mag 过滤为 `nearest/linear`，mip 过滤为
-`baseLevel/nearest/linear`，`shading` 为 `unlit/lambert/pbr`。未知字段忽略；错误格式、非法值及其他版本抛 IO，
+`baseLevel/nearest/linear`，`shading` 为 `unlit/lambert/pbr`，`display.toneMapping` 为 `off/reinhard`（`display.exposureEv` 为位于 `[-8, 8]` 的有限数值）。未知字段忽略；错误格式、非法值及其他版本抛 IO，
 错误含字段上下文。内存描述无效时编码抛 CONFIG。编解码不加载模型或创建 GPU 资源。
 
 文件接口接收 UTF-8 原生路径；模型路径仍相对资产根，与场景文件所在目录无关。
