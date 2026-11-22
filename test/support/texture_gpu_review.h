@@ -113,13 +113,44 @@ namespace TextureGpuReview
         VkDeviceMemory memory_ = VK_NULL_HANDLE;
     };
 
-    // 按所读区域分配复核缓冲区，读取后恢复图像采样布局。
-    inline std::vector<uint8_t> captureMip(const VulkanDevice& device, const VulkanImage& image,
-                                            uint32_t level, VkExtent2D extent,
-                                            VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT,
-                                            VkOffset3D offset = {0, 0, 0})
+    inline float halfToFloat(uint16_t bits) noexcept
     {
-        Readback readback(device, size_t(extent.width) * extent.height * 4);
+        const uint32_t sign = static_cast<uint32_t>(bits & 0x8000u) << 16;
+        const uint32_t exp = (bits >> 10) & 0x1Fu;
+        const uint32_t mant = bits & 0x03FFu;
+        uint32_t out = sign;
+        if (exp == 0)
+        {
+            if (mant != 0)
+            {
+                uint32_t m = mant;
+                uint32_t e = 127 - 14;
+                while ((m & 0x0400u) == 0)
+                {
+                    m <<= 1;
+                    --e;
+                }
+                m &= 0x03FFu;
+                out |= (e << 23) | (m << 13);
+            }
+        }
+        else if (exp == 31)
+        {
+            out |= 0x7F800000u | (mant << 13);
+        }
+        else
+        {
+            out |= ((exp + (127 - 15)) << 23) | (mant << 13);
+        }
+        float value = 0.0f;
+        std::memcpy(&value, &out, sizeof(value));
+        return value;
+    }
+
+    inline void copyImageToReadback(const VulkanDevice& device, const VulkanImage& image, uint32_t level,
+                                    VkExtent2D extent, VkImageAspectFlags aspect, VkOffset3D offset,
+                                    VkBuffer dstBuffer)
+    {
         device.executeImmediate([&](VkCommandBuffer commands) {
             VkImageMemoryBarrier2 toTransfer{};
             toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
@@ -141,8 +172,7 @@ namespace TextureGpuReview
             copy.imageSubresource = {aspect, level, 0, 1};
             copy.imageOffset = offset;
             copy.imageExtent = {extent.width, extent.height, 1};
-            vkCmdCopyImageToBuffer(commands, image.handle(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1,
-                                   &copy);
+            vkCmdCopyImageToBuffer(commands, image.handle(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dstBuffer, 1, &copy);
             auto toShader = toTransfer;
             toShader.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
             toShader.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
@@ -157,16 +187,47 @@ namespace TextureGpuReview
             toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
             toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
             toHost.srcQueueFamilyIndex = toHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            toHost.buffer = readback.buffer;
+            toHost.buffer = dstBuffer;
             toHost.size = VK_WHOLE_SIZE;
             dependency.pImageMemoryBarriers = &toShader;
             dependency.bufferMemoryBarrierCount = 1;
             dependency.pBufferMemoryBarriers = &toHost;
             vkCmdPipelineBarrier2(commands, &dependency);
         });
+    }
+
+    // 按所读区域分配复核缓冲区，读取后恢复图像采样布局。
+    inline std::vector<uint8_t> captureMip(const VulkanDevice& device, const VulkanImage& image,
+                                            uint32_t level, VkExtent2D extent,
+                                            VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+                                            VkOffset3D offset = {0, 0, 0})
+    {
+        Readback readback(device, size_t(extent.width) * extent.height * 4);
+        copyImageToReadback(device, image, level, extent, aspect, offset, readback.buffer);
         auto pixels = readback.pixels();
         pixels.resize(extent.width * extent.height * 4);
         return pixels;
+    }
+
+    /// @brief 回读 VK_FORMAT_R16G16B16A16_SFLOAT 图像并解码为 RGBA float32 像素。
+    inline std::vector<std::array<float, 4>> captureRgba16f(const VulkanDevice& device, const VulkanImage& image,
+                                                           VkExtent2D extent)
+    {
+        if (image.format() != VK_FORMAT_R16G16B16A16_SFLOAT)
+            throw Error::Exception(Error::Code::RENDER, "Expected R16G16B16A16_SFLOAT image for HDR readback");
+        const size_t pixelCount = size_t(extent.width) * extent.height;
+        Readback readback(device, pixelCount * 8);
+        copyImageToReadback(device, image, 0, extent, VK_IMAGE_ASPECT_COLOR_BIT, {0, 0, 0}, readback.buffer);
+        const auto bytes = readback.pixels();
+        std::vector<std::array<float, 4>> result(pixelCount);
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            uint16_t raw[4]{};
+            std::memcpy(raw, bytes.data() + i * 8, sizeof(raw));
+            for (int c = 0; c < 4; ++c)
+                result[i][c] = halfToFloat(raw[c]);
+        }
+        return result;
     }
 
     // 与模型复核共用附件、屏障和回读代码；模型调用方提供

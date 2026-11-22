@@ -6,5 +6,6 @@
   ],
   "camera":{"position":[0,0,6],"rotation":[0,0,0,1],"perspective":{"verticalFov":0.7853982,"nearPlane":0.1,"farPlane":100}},
   "lighting":{"direction":[-0.6,-0.8,-1],"color":[1,0.95,0.9],"intensity":1,"ambient":0.15},
+  "display":{"toneMapping":"reinhard","exposureEv":0},
   "clearColor":[0.12,0.16,0.22,1]
 }

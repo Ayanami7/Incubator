@@ -1911,4 +1911,115 @@ namespace
         }
         expectCleanValidation();
     }
+
+    TEST_F(VulkanReviewTest, LinearHdrSceneTargetPreservesSuperBrightValuesAndDepth)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const Resource::TextureResource whiteTex({}, 1, 1, {255, 255, 255, 255});
+            const auto white = renderer.createTexture(whiteTex, TextureMipMode::BaseLevel, TextureColorSpace::Srgb);
+            const std::array<MeshVertex, 4> quadVertices{
+                MeshVertex{{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+                MeshVertex{{0.5f, -0.5f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+                MeshVertex{{0.5f, 0.5f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+                MeshVertex{{-0.5f, 0.5f, 0.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}}};
+            const std::array<uint32_t, 6> quadIndices{0, 1, 2, 0, 2, 3};
+            const auto quad = renderer.createMesh(quadVertices, quadIndices);
+
+            MaterialDesc leftDesc{white, {0.5f, 0.4f, 0.35f}};
+            leftDesc.shading = ShadingMode::Lambert;
+            const auto leftMat = renderer.createMaterial(leftDesc);
+
+            MaterialDesc rightDesc{white, {1.0f, 0.8f, 0.5f}};
+            rightDesc.shading = ShadingMode::Lambert;
+            const auto rightMat = renderer.createMaterial(rightDesc);
+
+            MaterialDesc occluderDesc{white, {0.2f, 0.2f, 0.2f}};
+            occluderDesc.shading = ShadingMode::Unlit;
+            const auto occluderMat = renderer.createMaterial(occluderDesc);
+
+            const Lighting brightLight{{0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, 4.0f, 0.0f};
+            constexpr FrameExtent EXTENT{128, 64};
+            const std::array<float, 4> clearColor{0.1f, 0.2f, 0.3f, 0.0f};
+
+            // 1. 两个超亮样本在 VK_FORMAT_R16G16B16A16_SFLOAT 中保留各自大于 1.0 的线性值，背景 alpha 为 0。
+            const std::array draws{
+                DrawItem{quad, leftMat, glm::translate(glm::mat4(1.0f), {-0.5f, 0.0f, 0.5f}) *
+                                            glm::scale(glm::mat4(1.0f), {0.4f, 0.6f, 1.0f})},
+                DrawItem{quad, rightMat, glm::translate(glm::mat4(1.0f), {0.5f, 0.0f, 0.5f}) *
+                                             glm::scale(glm::mat4(1.0f), {0.4f, 0.6f, 1.0f})}};
+            const FrameInput hdrInput{EXTENT, {glm::mat4(1.0f), glm::mat4(1.0f)}, draws, brightLight};
+            std::vector<std::array<float, 4>> hdrPixels;
+            Detail::RendererReviewAccess::withHdrSceneTarget(
+                renderer, hdrInput, clearColor, [&](const auto& device, const auto& image) {
+                    EXPECT_EQ(image.format(), VK_FORMAT_R16G16B16A16_SFLOAT);
+                    hdrPixels = TextureGpuReview::captureRgba16f(device, image, {EXTENT.width, EXTENT.height});
+                });
+            ASSERT_EQ(hdrPixels.size(), size_t(EXTENT.width) * EXTENT.height);
+
+            const auto& leftPx = hdrPixels[size_t(32) * EXTENT.width + 32];
+            const auto& rightPx = hdrPixels[size_t(32) * EXTENT.width + 96];
+            const auto& bgPx = hdrPixels[size_t(32) * EXTENT.width + 64];
+
+            for (int c = 0; c < 3; ++c)
+            {
+                EXPECT_GT(leftPx[c], 1.0f);
+                EXPECT_GT(rightPx[c], leftPx[c] + 0.5f);
+            }
+            EXPECT_NEAR(leftPx[0], 2.0f, 0.01f);
+            EXPECT_NEAR(leftPx[1], 1.6f, 0.01f);
+            EXPECT_NEAR(leftPx[2], 1.4f, 0.01f);
+            EXPECT_NEAR(leftPx[3], 1.0f, 0.001f);
+
+            EXPECT_NEAR(rightPx[0], 4.0f, 0.01f);
+            EXPECT_NEAR(rightPx[1], 3.2f, 0.01f);
+            EXPECT_NEAR(rightPx[2], 2.0f, 0.01f);
+            EXPECT_NEAR(rightPx[3], 1.0f, 0.001f);
+
+            EXPECT_NEAR(bgPx[0], clearColor[0], 0.005f);
+            EXPECT_NEAR(bgPx[1], clearColor[1], 0.005f);
+            EXPECT_NEAR(bgPx[2], clearColor[2], 0.005f);
+            EXPECT_NEAR(bgPx[3], 0.0f, 0.001f);
+
+            // 2. 验证 HDR 场景目标深度测试生效（更近的 Unlit 遮挡物覆盖后方超亮方块）。
+            const std::array depthDraws{
+                DrawItem{quad, rightMat, glm::translate(glm::mat4(1.0f), {0.0f, 0.0f, 0.8f}) *
+                                             glm::scale(glm::mat4(1.0f), {0.6f, 0.6f, 1.0f})},
+                DrawItem{quad, occluderMat, glm::translate(glm::mat4(1.0f), {0.0f, 0.0f, 0.2f}) *
+                                                glm::scale(glm::mat4(1.0f), {0.4f, 0.4f, 1.0f})}};
+            Detail::RendererReviewAccess::withHdrSceneTarget(
+                renderer, FrameInput{EXTENT, {glm::mat4(1.0f), glm::mat4(1.0f)}, depthDraws, brightLight}, clearColor,
+                [&](const auto& device, const auto& image) {
+                    hdrPixels = TextureGpuReview::captureRgba16f(device, image, {EXTENT.width, EXTENT.height});
+                });
+            const auto& occludedPx = hdrPixels[size_t(32) * EXTENT.width + 64];
+            EXPECT_NEAR(occludedPx[0], 0.2f, 0.01f);
+            EXPECT_NEAR(occludedPx[1], 0.2f, 0.01f);
+            EXPECT_NEAR(occludedPx[2], 0.2f, 0.01f);
+            EXPECT_NEAR(occludedPx[3], 1.0f, 0.001f);
+
+            // 3. 验证同 Renderer 下现有 drawFrame LDR 路径不受影响（含 Unlit/Lambert/Pbr 三种模式）。
+            auto orthoProj = glm::orthoRH_ZO(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
+            orthoProj[1][1] *= -1.0f;
+            const CameraMatrices pbrCamera{
+                glm::lookAtRH(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)), orthoProj};
+            MaterialDesc pbrDesc{white, {0.5f, 0.5f, 0.5f}};
+            pbrDesc.shading = ShadingMode::Pbr;
+            pbrDesc.metallic = 0.0f;
+            pbrDesc.roughness = 0.5f;
+            const auto pbrMat = renderer.createMaterial(pbrDesc);
+            const std::array pbrDraw{DrawItem{quad, pbrMat, glm::mat4(1.0f)}};
+            Detail::RendererReviewAccess::withFrame(
+                renderer,
+                FrameInput{{384, 256}, pbrCamera, pbrDraw, {{0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, 0.6f, 0.1f}},
+                [&](const auto& device, const auto& pipeline, auto frameSet, auto nativeDraws) {
+                    const auto ldrPx = TextureGpuReview::captureDraws(device, pipeline, frameSet, nativeDraws);
+                    expectLinearPixel(ldrPx, glm::vec3(0.434f));
+                });
+        }
+        expectCleanValidation();
+    }
 }  // namespace

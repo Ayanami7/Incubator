@@ -1,5 +1,7 @@
 #version 450
 
+layout(constant_id = 0) const bool LINEAR_HDR_OUTPUT = false;
+
 layout(set = 0, binding = 0, std140) uniform FrameData
 {
     mat4 view;
@@ -133,6 +135,11 @@ void main()
             }
             linearColor = ambient + direct;
         }
+    }
+    if (LINEAR_HDR_OUTPUT)
+    {
+        fragmentColor = vec4(max(linearColor, vec3(0.0)), 1.0);
+        return;
     }
     linearColor = clamp(linearColor, 0.0, 1.0);
     vec3 encoded = mix(1.055 * pow(linearColor, vec3(1.0 / 2.4)) - 0.055,

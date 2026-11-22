@@ -133,6 +133,10 @@
     "intensity": 1,
     "ambient": 0.15
   },
+  "display": {
+    "toneMapping": "reinhard",
+    "exposureEv": 0
+  },
   "clearColor": [
     0.12,
     0.16,

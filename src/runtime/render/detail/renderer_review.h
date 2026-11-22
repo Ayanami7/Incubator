@@ -45,5 +45,13 @@ namespace Incubator::Render::Detail
         /// @param input 待提交帧输入。
         /// @param record 访问当前 GPU 资源的回调。
         static void withFrame(Renderer& renderer, const FrameInput& input, const Record& record);
+        /// @brief 使用 VK_FORMAT_R16G16B16A16_SFLOAT 离屏场景目标与线性 HDR 主场景管线执行同步录制与回读复核。
+        /// @param renderer 被复核的 Renderer。
+        /// @param input 待提交帧输入。
+        /// @param clearColor 场景清屏颜色。
+        /// @param record 访问已完成绘制的 HDR 场景颜色附件的回调。
+        static void withHdrSceneTarget(
+            Renderer& renderer, const FrameInput& input, const std::array<float, 4>& clearColor,
+            const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record);
     };
 }  // namespace Incubator::Render::Detail

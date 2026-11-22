@@ -7,7 +7,8 @@ namespace Incubator::Render::Vulkan
     class VulkanSceneTarget
     {
     public:
-        VulkanSceneTarget(const VulkanDevice& device, VkExtent2D extent, VkFormat depthFormat);
+        VulkanSceneTarget(const VulkanDevice& device, VkExtent2D extent, VkFormat depthFormat,
+                          VkFormat colorFormat = VK_FORMAT_R8G8B8A8_UNORM);
         void record(VkCommandBuffer commands, const VkClearColorValue& color,
                     const std::function<void(VkCommandBuffer)>& draw);
         const VulkanImage& color() const

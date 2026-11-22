@@ -544,6 +544,58 @@ namespace Incubator
                 record(device_, *pipeline_, bindings.descriptorSet(0), draws);
             }
 
+            void withHdrSceneTarget(
+                const FrameInput& input, const std::array<float, 4>& clearColor,
+                const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record)
+            {
+                if (!bindingSet_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare scene shaders before GPU review");
+                const auto frame = Vulkan::makeFrameUniform(input);
+                std::vector<std::shared_ptr<void>> resources;
+                const auto draws = resolveDraws(input, resources);
+                std::vector<Vulkan::VulkanShadowDrawItem> shadowDraws;
+                std::unique_ptr<Vulkan::VulkanShadowTarget> shadowTarget;
+                if (input.shadow)
+                {
+                    if (shadowVertexShader_.empty())
+                        throw Error::Exception(Error::Code::RENDER,
+                                               "Prepare shadow vertex shader before enabling shadows");
+                    shadowDraws = resolveShadowDraws(input, resources);
+                    shadowTarget = std::make_unique<Vulkan::VulkanShadowTarget>(device_);
+                    if (!shadowPipeline_)
+                        shadowPipeline_ = std::make_unique<Vulkan::VulkanPipeline>(
+                            device_, VK_FORMAT_UNDEFINED, shadowTarget->image().format(), bindingSet_->layout(),
+                            VK_NULL_HANDLE, shadowVertexShader_, std::vector<uint32_t>{});
+                }
+                if (!sceneHdrPipeline_)
+                    sceneHdrPipeline_ = std::make_unique<Vulkan::VulkanPipeline>(
+                        device_, VK_FORMAT_R16G16B16A16_SFLOAT, depthFormat_, bindingSet_->layout(),
+                        bindingSet_->materialLayout(), vertexShader_, fragmentShader_, true);
+                Vulkan::VulkanSceneTarget hdrTarget(device_, {input.extent.width, input.extent.height}, depthFormat_,
+                                                    VK_FORMAT_R16G16B16A16_SFLOAT);
+                const std::array uniforms = {std::make_shared<Vulkan::VulkanBuffer>(
+                    device_, sizeof(frame), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
+                uniforms[0]->write(0, std::as_bytes(std::span(&frame, 1)));
+                Vulkan::VulkanBindingSet bindings(device_, uniforms);
+                bindings.setShadowImage(0, shadowTarget ? &shadowTarget->image() : nullptr);
+                VkClearColorValue clear{};
+                std::copy(clearColor.begin(), clearColor.end(), clear.float32);
+                device_.executeImmediate([&](VkCommandBuffer cmd) {
+                    if (shadowTarget)
+                        shadowTarget->record(cmd, [&](VkCommandBuffer depth) {
+                            Vulkan::VulkanCommandList::drawShadow(depth, *shadowPipeline_, bindings.descriptorSet(0),
+                                                                  shadowDraws);
+                        });
+                    hdrTarget.record(cmd, clear, [&](VkCommandBuffer scene) {
+                        if (!draws.empty())
+                            Vulkan::VulkanCommandList::drawIndexed(scene, *sceneHdrPipeline_, bindings.descriptorSet(0),
+                                                                   draws);
+                    });
+                });
+                record(device_, hdrTarget.color());
+            }
+
             void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
                            const std::function<void(void*)>& recordUi)
             {
@@ -798,6 +850,7 @@ namespace Incubator
             std::unique_ptr<Vulkan::VulkanPipeline> pipeline_;
             std::array<std::shared_ptr<SceneOutput::Impl>, Vulkan::VulkanFrameScheduler::FRAME_COUNT> sceneTargets_{};
             std::unique_ptr<Vulkan::VulkanPipeline> scenePipeline_;
+            std::unique_ptr<Vulkan::VulkanPipeline> sceneHdrPipeline_;
             std::unique_ptr<Vulkan::VulkanPipeline> shadowPipeline_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
             std::unique_ptr<Integration::ImGuiRenderer> imguiRenderer_;
@@ -959,4 +1012,13 @@ void Incubator::Render::Detail::RendererReviewAccess::withShadowOutput(
     const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record)
 {
     renderer.impl_->reviewShadowOutput(output, record);
+}
+
+void Incubator::Render::Detail::RendererReviewAccess::withHdrSceneTarget(
+    Renderer& renderer, const FrameInput& input, const std::array<float, 4>& clearColor,
+    const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record)
+{
+    if (!renderer.impl_)
+        throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+    renderer.impl_->withHdrSceneTarget(input, clearColor, record);
 }

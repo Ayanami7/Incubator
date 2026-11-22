@@ -3,12 +3,13 @@
 #include "runtime/core/error/error.h"
 namespace Incubator::Render::Vulkan
 {
-    VulkanSceneTarget::VulkanSceneTarget(const VulkanDevice& device, VkExtent2D extent, VkFormat depthFormat)
+    VulkanSceneTarget::VulkanSceneTarget(const VulkanDevice& device, VkExtent2D extent, VkFormat depthFormat,
+                                         VkFormat colorFormat)
     {
         if (!extent.width || !extent.height)
             throw Error::Exception(Error::Code::RENDER, "Scene target extent must be positive");
         color_ = std::make_shared<VulkanImage>(
-            device, extent, VK_FORMAT_R8G8B8A8_UNORM,
+            device, extent, colorFormat,
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
             VK_IMAGE_ASPECT_COLOR_BIT);
         depth_ = std::make_shared<VulkanImage>(device, extent, depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,

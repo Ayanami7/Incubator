@@ -32,7 +32,7 @@ namespace Incubator
             VulkanPipeline::VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
                                            VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout materialLayout,
                                            const std::vector<uint32_t>& vertexShader,
-                                           const std::vector<uint32_t>& fragmentShader)
+                                           const std::vector<uint32_t>& fragmentShader, bool linearHdrOutput)
                 : device_(device), colorFormat_(colorFormat), depthFormat_(depthFormat)
             {
                 const bool depthOnly = colorFormat == VK_FORMAT_UNDEFINED;
@@ -67,6 +67,10 @@ namespace Incubator
                     checkVk(vkCreatePipelineLayout(device_.handle(), &layoutInfo, nullptr, &layout_),
                             "vkCreatePipelineLayout");
 
+                    const VkBool32 hdrSpecialization = linearHdrOutput ? VK_TRUE : VK_FALSE;
+                    const VkSpecializationMapEntry specializationEntry{0, 0, sizeof(VkBool32)};
+                    const VkSpecializationInfo specializationInfo{1, &specializationEntry, sizeof(VkBool32),
+                                                                  &hdrSpecialization};
                     const std::array<VkPipelineShaderStageCreateInfo, 2> stages = [&] {
                         std::array<VkPipelineShaderStageCreateInfo, 2> result{};
                         result[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -77,6 +81,7 @@ namespace Incubator
                         result[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
                         result[1].module = fragmentModule;
                         result[1].pName = "main";
+                        result[1].pSpecializationInfo = &specializationInfo;
                         return result;
                     }();
 
