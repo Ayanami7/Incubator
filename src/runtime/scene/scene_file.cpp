@@ -253,6 +253,13 @@ namespace Incubator::Scene
         key(w, "ambient");
         w.Double(d.lighting.ambient);
         w.EndObject();
+        key(w, "display");
+        w.StartObject();
+        key(w, "toneMapping");
+        w.String(d.display.toneMapping == Render::ToneMappingMode::Off ? "off" : "reinhard");
+        key(w, "exposureEv");
+        w.Double(d.display.exposureEv);
+        w.EndObject();
         key(w, "clearColor");
         w.StartArray();
         for (float c : d.clearColor)
@@ -323,6 +330,14 @@ namespace Incubator::Scene
                            number(member(l, "ambient", "lighting"), "lighting.ambient")};
         if (!result.lighting.valid())
             fail("lighting", "invalid value");
+        const auto& disp = member(doc, "display", "root");
+        result.display.toneMapping =
+            choice<Render::ToneMappingMode>(member(disp, "toneMapping", "display"), "display.toneMapping",
+                                            {{"off", Render::ToneMappingMode::Off},
+                                             {"reinhard", Render::ToneMappingMode::Reinhard}});
+        result.display.exposureEv = number(member(disp, "exposureEv", "display"), "display.exposureEv");
+        if (!result.display.valid())
+            fail("display.exposureEv", "must be in [-8, 8]");
         result.clearColor = array<4>(member(doc, "clearColor", "root"), "clearColor");
         if (!result.valid())
             fail("clearColor", "values must be in [0, 1]");

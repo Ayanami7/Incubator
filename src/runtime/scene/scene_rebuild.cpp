@@ -11,7 +11,7 @@ namespace Incubator::Scene
         const std::function<std::shared_ptr<const Model::PreparedModel>(const Model::ModelReference&)>& resolve)
     {
         if (!description.valid())
-            throw Error::Exception(Error::Code::CONFIG, "Invalid scene lighting, clearColor or entity name");
+            throw Error::Exception(Error::Code::CONFIG, "Invalid scene lighting, display, clearColor or entity name");
         for (const auto& entity : description.entities)
         {
             if (!entity.model)
@@ -33,6 +33,7 @@ namespace Incubator::Scene
         auto scene = std::make_unique<Scene>();
         scene->setCamera(description.camera);
         scene->setLighting(description.lighting);
+        scene->setDisplay(description.display);
         for (const auto& entity : description.entities)
         {
             std::shared_ptr<const Model::PreparedModel> model;

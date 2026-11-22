@@ -234,4 +234,37 @@ namespace
         EXPECT_EQ(changed->shadow->depthBias, 0);
         EXPECT_EQ(input.lighting, lighting);
     }
+
+    TEST(SceneFrameCpuTest, DisplaySettingsDefaultAndFrameSnapshotIsolation)
+    {
+        Scene::Scene scene;
+        EXPECT_EQ(scene.display(), (Render::DisplaySettings{Render::ToneMappingMode::Reinhard, 0.0f}));
+
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        for (const auto bad : std::array<Render::DisplaySettings, 4>{{{Render::ToneMappingMode::Reinhard, -8.1f},
+                                                                      {Render::ToneMappingMode::Off, 8.1f},
+                                                                      {Render::ToneMappingMode::Reinhard, nan},
+                                                                      {Render::ToneMappingMode::Off, inf}}})
+        {
+            EXPECT_THROW(scene.setDisplay(bad), Error::Exception);
+            EXPECT_EQ(scene.display(), (Render::DisplaySettings{Render::ToneMappingMode::Reinhard, 0.0f}));
+        }
+
+        const Render::DisplaySettings firstDisplay{Render::ToneMappingMode::Off, 2.25f};
+        scene.setDisplay(firstDisplay);
+        auto firstFrame = Scene::extractSceneFrame(scene, {320, 240});
+        ASSERT_TRUE(firstFrame);
+        EXPECT_EQ(firstFrame->display, firstDisplay);
+        EXPECT_EQ(firstFrame->input().display, firstDisplay);
+
+        const Render::DisplaySettings secondDisplay{Render::ToneMappingMode::Reinhard, -1.5f};
+        scene.setDisplay(secondDisplay);
+        auto secondFrame = Scene::extractSceneFrame(scene, {320, 240});
+        ASSERT_TRUE(secondFrame);
+        EXPECT_EQ(secondFrame->display, secondDisplay);
+        EXPECT_EQ(secondFrame->input().display, secondDisplay);
+        EXPECT_EQ(firstFrame->display, firstDisplay);
+        EXPECT_EQ(firstFrame->input().display, firstDisplay);
+    }
 }  // namespace

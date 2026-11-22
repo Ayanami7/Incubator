@@ -172,4 +172,17 @@ namespace Incubator::Scene
                                    "ambient in [0, 1], and nonnegative finite intensity");
         lighting_ = lighting;
     }
+
+    const Render::DisplaySettings& Scene::display() const
+    {
+        return display_;
+    }
+
+    void Scene::setDisplay(Render::DisplaySettings display)
+    {
+        if (!display.valid())
+            throw Error::Exception(Error::Code::CONFIG,
+                                   "Scene display requires valid tone mapping mode and finite exposureEv in [-8, 8]");
+        display_ = display;
+    }
 }  // namespace Incubator::Scene

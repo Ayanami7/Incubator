@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "runtime/model/model_reference.h"
+#include "runtime/render/display.h"
 #include "runtime/render/lighting.h"
 #include "runtime/scene/camera.h"
 #include "runtime/scene/transform.h"
@@ -28,6 +29,7 @@ namespace Incubator::Scene
         std::vector<EntityDescription> entities;
         Camera camera;
         Render::Lighting lighting;
+        Render::DisplaySettings display;
         std::array<float, 4> clearColor{0.12f, 0.16f, 0.22f, 1.0f};
 
         /// @brief 检查可直接修改的光照、背景及实体名称。

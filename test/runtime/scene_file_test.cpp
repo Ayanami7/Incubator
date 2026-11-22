@@ -30,6 +30,7 @@ namespace
         d.entities[1].name = "### 空实体";
         d.camera = Scene::Camera({3, 4, 5}, {2, 0, 1, 3}, {0.9f, 0.2f, 200});
         d.lighting = {{0, -2, -4}, {0.2f, 0.5f, 0.8f}, 2.25f, 0.3f};
+        d.display = {Render::ToneMappingMode::Off, 1.5f};
         d.clearColor = {0.1f, 0.2f, 0.3f, 0.4f};
         return d;
     }
@@ -52,6 +53,7 @@ namespace
         EXPECT_FLOAT_EQ(a.camera.perspective().nearPlane, b.camera.perspective().nearPlane);
         EXPECT_FLOAT_EQ(a.camera.perspective().farPlane, b.camera.perspective().farPlane);
         EXPECT_EQ(a.lighting, b.lighting);
+        EXPECT_EQ(a.display, b.display);
         EXPECT_EQ(a.clearColor, b.clearColor);
     }
     TEST(SceneFileTest, RoundTripAndAllOptions)
@@ -115,7 +117,7 @@ namespace
         check(valid.substr(0, valid.size() - 1), "JSON");
         check(std::string("\xff", 1), "JSON");
         const std::string simple =
-            R"({"version":1,"entities":[],"camera":{"position":[0,0,0],"rotation":[0,0,0,1],"perspective":{"verticalFov":0.8,"nearPlane":0.1,"farPlane":10}},"lighting":{"direction":[0,0,-1],"color":[1,1,1],"intensity":1,"ambient":0.1},"clearColor":[0,0,0,1]})";
+            R"({"version":1,"entities":[],"camera":{"position":[0,0,0],"rotation":[0,0,0,1],"perspective":{"verticalFov":0.8,"nearPlane":0.1,"farPlane":10}},"lighting":{"direction":[0,0,-1],"color":[1,1,1],"intensity":1,"ambient":0.1},"display":{"toneMapping":"reinhard","exposureEv":0},"clearColor":[0,0,0,1]})";
         auto bad = [&](std::string from, std::string to, std::string_view field) {
             auto text = simple;
             const auto at = text.find(from);
@@ -127,6 +129,14 @@ namespace
         bad("[0,0,0,1]", "[0,0,0,0]", "camera");
         bad("\"verticalFov\":0.8", "\"verticalFov\":1e100", "verticalFov");
         bad("\"direction\":[0,0,-1]", "\"direction\":[0,0,0]", "lighting");
+        bad("\"display\":{\"toneMapping\":\"reinhard\",\"exposureEv\":0},", "", "display");
+        bad("\"toneMapping\":\"reinhard\",", "", "display.toneMapping");
+        bad(",\"exposureEv\":0", "", "display.exposureEv");
+        bad("\"toneMapping\":\"reinhard\"", "\"toneMapping\":\"aces\"", "display.toneMapping");
+        bad("\"exposureEv\":0", "\"exposureEv\":\"0\"", "display.exposureEv");
+        bad("\"exposureEv\":0", "\"exposureEv\":1e100", "display.exposureEv");
+        bad("\"exposureEv\":0", "\"exposureEv\":-8.1", "display.exposureEv");
+        bad("\"exposureEv\":0", "\"exposureEv\":8.1", "display.exposureEv");
         bad("\"clearColor\":[0,0,0,1]", "\"clearColor\":[0,0,0,2]", "clearColor");
         auto unknown = valid;
         unknown.insert(1, "\"extra\": true,");
@@ -323,5 +333,31 @@ namespace
         ASSERT_NE(pos, std::string::npos);
         invalid.replace(pos, 5, "\"phong\"");
         EXPECT_THROW((void)Scene::decodeScene(invalid), Error::Exception);
+    }
+
+    TEST(SceneFileTest, RoundTripsDisplaySettingsAndReadsUpdatedBuiltinAssets)
+    {
+        auto d = sample();
+        for (const auto& display :
+             std::array<Render::DisplaySettings, 4>{{{Render::ToneMappingMode::Off, -3.25f},
+                                                     {Render::ToneMappingMode::Off, 8.0f},
+                                                     {Render::ToneMappingMode::Reinhard, -8.0f},
+                                                     {Render::ToneMappingMode::Reinhard, 2.5f}}})
+        {
+            d.display = display;
+            compare(d, Scene::decodeScene(Scene::encodeScene(d)));
+        }
+
+        auto io = Fio::createPlatformFileIO();
+        for (const char* name : {"mixed.json", "shadows.json"})
+        {
+            const auto path = std::filesystem::path(SCENE_FIXTURE_DIR).parent_path().parent_path().parent_path() /
+                              "assets/scenes" / name;
+            if (std::filesystem::exists(path))
+            {
+                const auto loaded = Scene::readScene(*io, Utils::Utf8::toUtf8String(path));
+                EXPECT_EQ(loaded.display, (Render::DisplaySettings{Render::ToneMappingMode::Reinhard, 0.0f}));
+            }
+        }
     }
 }  // namespace

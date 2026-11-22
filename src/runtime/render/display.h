@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 namespace Incubator::Render
 {
     /// @brief 离屏视口色调映射模式。
@@ -17,6 +19,12 @@ namespace Incubator::Render
 
         ToneMappingMode toneMapping = ToneMappingMode::Reinhard;
         float exposureEv = 0.0f;
+
+        bool valid() const noexcept
+        {
+            return (toneMapping == ToneMappingMode::Off || toneMapping == ToneMappingMode::Reinhard) &&
+                   std::isfinite(exposureEv) && exposureEv >= MIN_EXPOSURE_EV && exposureEv <= MAX_EXPOSURE_EV;
+        }
 
         bool operator==(const DisplaySettings&) const = default;
     };

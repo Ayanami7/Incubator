@@ -10,7 +10,7 @@ namespace Incubator::Scene
 {
     Render::FrameInput SceneFrame::input() const&
     {
-        return {extent, camera, draws, lighting, shadow, shadowDraws};
+        return {extent, camera, draws, lighting, shadow, shadowDraws, display};
     }
 
     std::optional<SceneFrame> extractSceneFrame(const Scene& scene, Render::FrameExtent extent, bool frustumCulling,
@@ -48,6 +48,6 @@ namespace Incubator::Scene
             appendDraws(draws, *entity.model, transform);
         }
         return SceneFrame{extent,           camera, std::move(draws),
-                          scene.lighting(), shadow, std::move(shadowDraws)};
+                          scene.lighting(), shadow, std::move(shadowDraws), scene.display()};
     }
 }  // namespace Incubator::Scene

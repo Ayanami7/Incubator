@@ -126,6 +126,9 @@ namespace
         description.lighting.direction = {0, 0, 0};
         EXPECT_FALSE(description.valid());
         description.lighting = {};
+        description.display.exposureEv = 9.0f;
+        EXPECT_FALSE(description.valid());
+        description.display = {};
         description.clearColor[0] = -1;
         EXPECT_FALSE(description.valid());
     }
@@ -138,6 +141,7 @@ namespace
         old.createEntity();
         old.setCamera(Camera({2, 3, 4}, {1, 0, 1, 0}, {0.9f, 0.2f, 20}));
         old.setLighting({{0, -3, -2}, {0.3f, 0.6f, 0.8f}, 2, 0.4f});
+        old.setDisplay({Render::ToneMappingMode::Off, -2.5f});
         auto input = Incubator::Scene::captureScene(old, {0.2f, 0.3f, 0.4f, 0.5f});
         const auto rebuilt = Incubator::Scene::rebuildScene(input, {});
         ASSERT_EQ(rebuilt.scene->entities().size(), 2u);
@@ -148,6 +152,7 @@ namespace
         EXPECT_EQ(rebuilt.scene->camera().rotation(), input.camera.rotation());
         EXPECT_FLOAT_EQ(rebuilt.scene->camera().perspective().farPlane, 20);
         EXPECT_EQ(rebuilt.scene->lighting(), input.lighting);
+        EXPECT_EQ(rebuilt.scene->display(), input.display);
         EXPECT_EQ(rebuilt.clearColor, input.clearColor);
         const auto again = Incubator::Scene::captureScene(*rebuilt.scene, rebuilt.clearColor);
         EXPECT_EQ(again.entities[0].transform.matrix(), input.entities[0].transform.matrix());

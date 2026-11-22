@@ -12,7 +12,7 @@ namespace Incubator::Scene
 {
     bool SceneDescription::valid() const noexcept
     {
-        return lighting.valid() &&
+        return lighting.valid() && display.valid() &&
                std::ranges::all_of(entities, [](const auto& entity) { return validEntityName(entity.name); }) &&
                std::ranges::all_of(clearColor,
                                    [](float value) { return std::isfinite(value) && value >= 0.0f && value <= 1.0f; });
@@ -23,6 +23,7 @@ namespace Incubator::Scene
         SceneDescription result;
         result.camera = scene.camera();
         result.lighting = scene.lighting();
+        result.display = scene.display();
         result.clearColor = clearColor;
         if (!result.valid())
             throw Error::Exception(Error::Code::CONFIG, "Scene background must contain finite values in [0, 1]");

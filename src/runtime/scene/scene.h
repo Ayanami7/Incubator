@@ -3,6 +3,7 @@
 #include <span>
 #include <vector>
 
+#include "runtime/render/display.h"
 #include "runtime/render/lighting.h"
 #include "runtime/scene/camera.h"
 #include "runtime/scene/entity.h"
@@ -80,10 +81,17 @@ namespace Incubator::Scene
         /// @throws Error::Exception 光照无效时抛出 CONFIG，且不改变原值。
         void setLighting(Render::Lighting lighting);
 
+        /// @brief 只读借用当前显示（色调映射与曝光）设置。
+        const Render::DisplaySettings& display() const;
+        /// @brief 整体替换场景显示设置。
+        /// @throws Error::Exception 模式非法或曝光超出 [-8, +8] EV / 非有限时抛出 CONFIG，且不改变原值。
+        void setDisplay(Render::DisplaySettings display);
+
     private:
         Entity* findMutable(EntityId id);
         std::vector<Entity> entities_;
         Camera camera_;
         Render::Lighting lighting_{};
+        Render::DisplaySettings display_{};
     };
 }  // namespace Incubator::Scene

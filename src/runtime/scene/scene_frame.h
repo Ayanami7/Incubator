@@ -20,6 +20,7 @@ namespace Incubator::Scene
         Render::Lighting lighting{};
         std::optional<Render::ShadowFrame> shadow{};
         std::vector<Render::DrawItem> shadowDraws;
+        Render::DisplaySettings display{};
 
         /// @brief 创建提交渲染所需的借用输入。
         /// @return 指向此帧两份绘制列表的输入视图。
