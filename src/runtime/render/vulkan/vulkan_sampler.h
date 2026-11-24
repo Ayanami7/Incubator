@@ -17,7 +17,8 @@ namespace Incubator
             class VulkanSampler
             {
             public:
-                explicit VulkanSampler(const VulkanDevice& device, SamplerDesc desc = {}, uint32_t mipLevels = 1);
+                explicit VulkanSampler(const VulkanDevice& device, SamplerDesc desc = {}, uint32_t mipLevels = 1,
+                                       VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT);
                 ~VulkanSampler();
 
                 VulkanSampler(const VulkanSampler&) = delete;

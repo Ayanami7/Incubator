@@ -20,7 +20,10 @@
 namespace Incubator::App
 {
     AppSession::AppSession(std::string name, const SessionOptions& options, std::unique_ptr<FileIO::FileIO> fileIO)
-        : name_(std::move(name)), fileIO_(std::move(fileIO)), clearColor_(options.clearColor)
+        : name_(std::move(name)),
+          fileIO_(std::move(fileIO)),
+          clearColor_(options.clearColor),
+          fxaaFragmentShader_(options.fxaaFragmentShader)
     {
         shadowSettings_.depthBias = 0.003f;
         auto& manager = Resource::ResourceManager::instance();
@@ -128,6 +131,24 @@ namespace Incubator::App
         return shadowSettings_;
     }
 
+    bool& AppSession::fxaaEnabled()
+    {
+        requireOpen();
+        return fxaaEnabled_;
+    }
+
+    bool AppSession::fxaaEnabled() const
+    {
+        requireOpen();
+        return fxaaEnabled_;
+    }
+
+    const Render::SceneOutput& AppSession::sceneOutput() const
+    {
+        requireOpen();
+        return sceneOutput_;
+    }
+
     void AppSession::drawSceneImage()
     {
         const auto size = ImGui::GetContentRegionAvail();
@@ -137,7 +158,17 @@ namespace Incubator::App
         sceneExtent_ = App::viewportExtent(size.x, size.y, w > 0 ? double(fw) / w : 0, h > 0 ? double(fh) / h : 0);
         if (sceneExtent_.width && sceneExtent_.height)
         {
-            sceneOutput_ = renderer_->prepareSceneTarget(sceneExtent_);
+            if (fxaaEnabled_ && !fxaaResourcesPrepared_)
+            {
+                const auto fxaa = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
+                    Resource::ResourceType::SHADER, fxaaFragmentShader_);
+                const auto* shader = fxaa.get<Resource::ShaderResource>();
+                if (!shader)
+                    throw Error::Exception(Error::Code::RENDER, "Cannot load application FXAA shader");
+                renderer_->prepareFxaaResources(*shader);
+                fxaaResourcesPrepared_ = true;
+            }
+            sceneOutput_ = renderer_->prepareSceneTarget(sceneExtent_, fxaaEnabled_);
             const auto origin = ImGui::GetCursorScreenPos();
             ImGui::Image(static_cast<ImTextureID>(renderer_->sceneImage(sceneOutput_)), size);
             const bool hovered = ImGui::IsItemHovered();

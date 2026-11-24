@@ -75,6 +75,21 @@ namespace Incubator::Editor
         {
             return session_.shadowSettings();
         }
+        /// @brief 编辑本会话的 FXAA 预览开关；默认关闭，不参与场景或启动配置的保存加载。
+        /// @note 首次在独立视口启用时按需准备片元 Shader；UI 阶段改动从下一有效视口帧生效。
+        bool& fxaaEnabled()
+        {
+            return session_.fxaaEnabled();
+        }
+        bool fxaaEnabled() const
+        {
+            return session_.fxaaEnabled();
+        }
+        /// @brief 返回本轮布局准备的场景输出引用，供同一帧采样与提交共用。
+        const Render::SceneOutput& sceneOutput() const
+        {
+            return session_.sceneOutput();
+        }
         /// @brief 在当前 UI 帧中显示独立场景视口；关闭或隐藏时只提交其他 UI。
         void sceneViewport(const char* title, bool* open = nullptr);
         /// @brief 返回本轮布局确定的场景图像逻辑区域。

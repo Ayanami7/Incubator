@@ -180,7 +180,7 @@ namespace Incubator
                                                  io.Fonts->TexHeight);
             }
 
-            uint64_t ImGuiRenderer::sceneImage(uint32_t slot, VkImageView image)
+            uint64_t ImGuiRenderer::sceneImage(uint32_t slot, VkImageView image, bool fxaa)
             {
                 if (!vulkanInitialized_ || slot >= sceneBindings_.size() || !image)
                     throw Error::Exception(Error::Code::RENDER, "Invalid UI scene image");
@@ -192,10 +192,12 @@ namespace Incubator
                     if (vkCreateSampler(device_, &info, nullptr, &sceneSampler_) != VK_SUCCESS)
                         throw Error::Exception(Error::Code::RENDER, "Cannot create scene image sampler");
                 }
-                auto& binding = sceneBindings_[slot];
+                auto& binding = sceneBindings_[slot][fxaa ? 1 : 0];
                 if (binding.image != image)
                 {
-                    releaseSceneImage(slot);
+                    if (binding.set)
+                        ImGui_ImplVulkan_RemoveTexture(binding.set);
+                    binding = {};
                     binding.set =
                         ImGui_ImplVulkan_AddTexture(sceneSampler_, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                     binding.image = image;
@@ -204,10 +206,12 @@ namespace Incubator
             }
             void ImGuiRenderer::releaseSceneImage(uint32_t slot)
             {
-                auto& binding = sceneBindings_.at(slot);
-                if (binding.set)
-                    ImGui_ImplVulkan_RemoveTexture(binding.set);
-                binding = {};
+                for (auto& binding : sceneBindings_.at(slot))
+                {
+                    if (binding.set)
+                        ImGui_ImplVulkan_RemoveTexture(binding.set);
+                    binding = {};
+                }
             }
 
             void ImGuiRenderer::endFrame()

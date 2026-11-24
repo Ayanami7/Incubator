@@ -20,6 +20,10 @@ namespace Incubator::Render
         {
             return extent_;
         }
+        bool fxaaEnabled() const noexcept
+        {
+            return fxaaEnabled_;
+        }
 
     private:
         friend class Renderer;
@@ -27,5 +31,6 @@ namespace Incubator::Render
         struct Impl;
         std::weak_ptr<Impl> impl_;
         FrameExtent extent_{};
+        bool fxaaEnabled_ = false;
     };
 }  // namespace Incubator::Render

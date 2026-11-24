@@ -2870,4 +2870,173 @@ namespace
         }
         cleanValidation();
     }
+
+    TEST_F(EditorAppTest, FxaaViewCheckboxNextFrameOutputResizeOverlayAndCleanDocumentUnderValidation)
+    {
+        copyShowcaseModels();
+        {
+            Editor::EditorApp session(options(true, 1280, 800));
+            Editor::EditorScene editor;
+            Scene::EntityId targetId{};
+            Render::FrameExtent baseExtent{};
+            std::vector<uint8_t> offPixels, onPixels;
+            int frame = 0, step = 0, resizeWaitFrames = 0;
+            bool done = false;
+            bool checkedSameFrameOn = false, checkedSameFrameOff = false;
+            auto* handle = static_cast<GLFWwindow*>(session.window().getNativeHandle());
+            enableGlfwCallbacks(handle, false);
+
+            session.run(
+                {[&](auto& app) {
+                     editor.initialize(app, "assets/scenes/mixed.json");
+                     ASSERT_FALSE(app.scene().entities().empty());
+                     targetId = app.scene().entities()[0].id;
+                     editor.select(app, targetId);
+                     EXPECT_FALSE(app.fxaaEnabled());
+                     EXPECT_FALSE(Resource::ResourceRegistry::instance()
+                                      .lookup(Resource::ResourceType::SHADER, "shaders/fxaa.frag.spv")
+                                      .valid());
+                 },
+                 [&](auto& app, const auto&) {
+                     if (++frame > 180)
+                     {
+                         ADD_FAILURE() << "FXAA editor integration test timeout at step=" << step;
+                         app.requestExit();
+                         return;
+                     }
+                     auto* propsWin = ImGui::FindWindowByName("Properties");
+                     if (frame < 5 || !propsWin || !app.sceneOutput().valid())
+                         return;
+
+                     switch (step)
+                     {
+                         case 0: {
+                             // 默认关闭且不加载 FXAA Shader；抓取原 LDR 输出基线，并在本帧 UI 阶段点击复选框开启 FXAA。
+                             EXPECT_FALSE(app.fxaaEnabled());
+                             EXPECT_FALSE(app.sceneOutput().fxaaEnabled());
+                             EXPECT_FALSE(Resource::ResourceRegistry::instance()
+                                              .lookup(Resource::ResourceType::SHADER, "shaders/fxaa.frag.spv")
+                                              .valid());
+                             baseExtent = app.sceneOutput().extent();
+                             Render::Detail::RendererReviewAccess::withSceneOutput(
+                                 app.renderer(), app.sceneOutput(), [&](const auto& device, const auto& image) {
+                                     offPixels = TextureGpuReview::captureMip(
+                                         device, image, 0, {baseExtent.width, baseExtent.height});
+                                 });
+                             ASSERT_FALSE(offPixels.empty());
+                             propsWin->Scroll.y = propsWin->ScrollMax.y;
+                             ImGui::ActivateItemByID(propsWin->GetID("##fxaa"));
+                             ++step;
+                             break;
+                         }
+                         case 1:
+                             // 上一帧（触发复选框的同一帧）仍输出原 LDR；等待当前帧（已用开启状态提交）完成绘制。
+                             EXPECT_TRUE(app.fxaaEnabled());
+                             EXPECT_FALSE(app.sceneOutput().fxaaEnabled());
+                             ++step;
+                             break;
+                         case 2: {
+                             // 下一有效视口帧已按 FXAA 输出；验证按需加载并已释放 CPU 持有、边缘与原图存在差异、纯背景一致。
+                             EXPECT_TRUE(app.sceneOutput().fxaaEnabled());
+                             EXPECT_EQ(app.sceneOutput().extent(), baseExtent);
+                             const auto fxaaId = Resource::ResourceRegistry::instance().lookup(
+                                 Resource::ResourceType::SHADER, "shaders/fxaa.frag.spv");
+                             ASSERT_TRUE(fxaaId.valid());
+                             EXPECT_EQ(Resource::ResourceRegistry::instance().refCount(fxaaId), 0u);
+                             Render::Detail::RendererReviewAccess::withSceneOutput(
+                                 app.renderer(), app.sceneOutput(), [&](const auto& device, const auto& image) {
+                                     onPixels = TextureGpuReview::captureMip(
+                                         device, image, 0, {baseExtent.width, baseExtent.height});
+                                 });
+                             ASSERT_EQ(onPixels.size(), offPixels.size());
+                             EXPECT_NE(onPixels, offPixels);
+                             for (int c = 0; c < 4; ++c)
+                                 EXPECT_EQ(onPixels[size_t(4 * baseExtent.width + 4) * 4u + c],
+                                           offPixels[size_t(4 * baseExtent.width + 4) * 4u + c]);
+
+                             // 验证拾取仍沿用原图像区域，且切换未产生脏状态、撤销记录或场景文件字段。
+                             const auto region = app.viewportRegion();
+                             bool picked = false;
+                             for (int y = 1; y < 20 && !picked; ++y)
+                                 for (int x = 1; x < 20 && !picked; ++x)
+                                     if (const auto hit = app.scene().pick(baseExtent, {x / 20.0f, y / 20.0f});
+                                         hit && hit->id == targetId)
+                                         picked = true;
+                             EXPECT_TRUE(picked && region.size.x > 0 && region.size.y > 0);
+                             EXPECT_FALSE(editor.isDirty());
+                             EXPECT_FALSE(editor.canUndo());
+                             ASSERT_TRUE(editor.save(app, "fxaa-clean.json"));
+                             std::ifstream savedFile("fxaa-clean.json");
+                             const std::string json((std::istreambuf_iterator<char>(savedFile)), {});
+                             EXPECT_EQ(json.find("fxaa"), std::string::npos);
+
+                             glfwSetWindowSize(handle, 960, 560);
+                             ++step;
+                             break;
+                         }
+                         case 3:
+                             if (app.sceneOutput().extent() != baseExtent)
+                             {
+                                 std::vector<uint8_t> resizedPixels;
+                                 EXPECT_TRUE(app.sceneOutput().fxaaEnabled());
+                                 const auto resizedExtent = app.sceneOutput().extent();
+                                 Render::Detail::RendererReviewAccess::withSceneOutput(
+                                     app.renderer(), app.sceneOutput(), [&](const auto& device, const auto& image) {
+                                         resizedPixels = TextureGpuReview::captureMip(
+                                             device, image, 0, {resizedExtent.width, resizedExtent.height});
+                                     });
+                                 EXPECT_EQ(resizedPixels.size(),
+                                           size_t(resizedExtent.width) * resizedExtent.height * 4u);
+                                 ImGui::ActivateItemByID(propsWin->GetID("##fxaa"));
+                                 ++step;
+                             }
+                             else if (++resizeWaitFrames > 40)
+                             {
+                                 ADD_FAILURE() << "Viewport resize did not propagate";
+                                 app.requestExit();
+                             }
+                             break;
+                         case 4:
+                             EXPECT_FALSE(app.fxaaEnabled());
+                             EXPECT_TRUE(app.sceneOutput().fxaaEnabled());
+                             ++step;
+                             break;
+                         case 5:
+                             EXPECT_FALSE(app.sceneOutput().fxaaEnabled());
+                             EXPECT_FALSE(editor.isDirty());
+                             EXPECT_FALSE(editor.canUndo());
+                             done = true;
+                             app.requestExit();
+                             break;
+                     }
+                 },
+                 [&](auto& app) {
+                     auto* sceneList = app.sceneDrawList();
+                     const int beforeVtx = sceneList ? sceneList->VtxBuffer.Size : 0;
+                     editor.ui(app);
+                     const int afterVtx = sceneList ? sceneList->VtxBuffer.Size : 0;
+                     // 文字、选中框与 Gizmo 仍在 FXAA 之后经 UI 绘制列表叠加。
+                     if (sceneList && app.sceneOutput().valid())
+                         EXPECT_GT(afterVtx, beforeVtx);
+                     if (step == 1 && !checkedSameFrameOn)
+                     {
+                         EXPECT_TRUE(app.fxaaEnabled());
+                         EXPECT_FALSE(app.sceneOutput().fxaaEnabled());
+                         checkedSameFrameOn = true;
+                     }
+                     if (step == 4 && !checkedSameFrameOff)
+                     {
+                         EXPECT_FALSE(app.fxaaEnabled());
+                         EXPECT_TRUE(app.sceneOutput().fxaaEnabled());
+                         checkedSameFrameOff = true;
+                     }
+                 },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            EXPECT_TRUE(done && checkedSameFrameOn && checkedSameFrameOff);
+        }
+        cleanValidation();
+    }
 }  // namespace

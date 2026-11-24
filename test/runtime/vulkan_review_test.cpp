@@ -2170,4 +2170,192 @@ namespace
         }
         expectCleanValidation();
     }
+
+    TEST_F(VulkanReviewTest, OffscreenFxaaSmoothingBaselineTogglesAndResizeValidation)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        auto fxaaHold = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
+            Resource::ResourceType::SHADER, "shaders/fxaa.frag.spv");
+        ASSERT_TRUE(fxaaHold);
+        const auto fxaaWords = fxaaHold.get<Resource::ShaderResource>()->words();
+        fxaaHold.reset();
+        const Resource::ShaderResource fxaaShader({}, fxaaWords);
+        const Resource::ShaderResource emptyShader({}, {});
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+
+            // 1. 准备顺序与未准备 FXAA 的错误边界。
+            EXPECT_THROW(renderer.prepareFxaaResources(fxaaShader), Error::Exception);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
+            EXPECT_THROW(renderer.prepareFxaaResources(emptyShader), Error::Exception);
+
+            const Resource::TextureResource whiteTex({}, 1, 1, {255, 255, 255, 255});
+            const auto white = renderer.createTexture(whiteTex, TextureMipMode::BaseLevel, TextureColorSpace::Srgb);
+            MaterialDesc matDesc{white, {0.9f, 0.9f, 0.9f}};
+            matDesc.shading = ShadingMode::Unlit;
+            const auto whiteMat = renderer.createMaterial(matDesc);
+
+            // 固定对照几何：左侧高反差浅斜边三角（含大块纯白内部区域），右侧斜置细线条。
+            const std::vector<MeshVertex> contrastVertices{
+                // 三角形（索引 0, 1, 2）：斜边自 (-1.45, -0.30) 至 (-0.15, 0.45)，内部纯色覆盖右下角区域
+                MeshVertex{{-1.45f, -0.30f, 0.0f}, {0.0f, 0.0f}},
+                MeshVertex{{-0.15f, -0.75f, 0.0f}, {1.0f, 0.0f}},
+                MeshVertex{{-0.15f, 0.45f, 0.0f}, {1.0f, 1.0f}},
+                // 细线条（索引 3..6）：从 (0.20, -0.45) 至 (1.35, 0.45) 的约 1.2px 细斜带
+                MeshVertex{{0.20f, -0.458f, 0.0f}, {0.0f, 0.0f}},
+                MeshVertex{{0.20f, -0.442f, 0.0f}, {0.0f, 1.0f}},
+                MeshVertex{{1.35f, 0.458f, 0.0f}, {1.0f, 1.0f}},
+                MeshVertex{{1.35f, 0.442f, 0.0f}, {1.0f, 0.0f}},
+            };
+            const std::array<uint32_t, 9> contrastIndices{0, 1, 2, 3, 5, 4, 3, 6, 5};
+            const auto mesh = renderer.createMesh(contrastVertices, contrastIndices);
+            const std::array draws{DrawItem{mesh, whiteMat, glm::mat4(1.0f)}};
+            releaseCpuAssets(assets);
+
+            const std::array<float, 4> clearColor{0.04f, 0.05f, 0.08f, 1.0f};
+            const auto makeCamera = [](FrameExtent extent) {
+                const float aspect = float(extent.width) / float(extent.height);
+                auto projection = glm::orthoRH_ZO(-aspect, aspect, -1.0f, 1.0f, 0.1f, 10.0f);
+                projection[1][1] *= -1.0f;
+                return CameraMatrices{
+                    glm::lookAtRH(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+                    projection};
+            };
+
+            // 未准备 FXAA 时以 fxaa=true 提交 drawSceneTarget 应明确抛错，但不破坏后续准备。
+            {
+                ASSERT_TRUE(renderer.beginUiFrame());
+                const auto invalidFxaaOut = renderer.prepareSceneTarget({320, 180}, true);
+                EXPECT_TRUE(invalidFxaaOut.fxaaEnabled());
+                renderer.imgui().endFrame();
+                FrameInput input{{320, 180}, makeCamera({320, 180}), draws};
+                input.display = {ToneMappingMode::Reinhard, 0.0f};
+                EXPECT_THROW(renderer.drawSceneTarget(invalidFxaaOut, input, clearColor), Error::Exception);
+                Detail::RendererReviewAccess::waitForFrames(renderer);
+            }
+
+            renderer.prepareFxaaResources(fxaaShader);
+            EXPECT_THROW(renderer.prepareFxaaResources(fxaaShader), Error::Exception);
+
+            const auto renderSceneTarget = [&](FrameExtent extent, bool fxaa) {
+                const auto uiExtent = renderer.beginUiFrame();
+                EXPECT_TRUE(uiExtent);
+                const auto output = renderer.prepareSceneTarget(extent, fxaa);
+                EXPECT_EQ(output.fxaaEnabled(), fxaa);
+                ImGui::Begin("Viewport");
+                ImGui::Image(static_cast<ImTextureID>(renderer.sceneImage(output)),
+                             ImVec2(float(extent.width), float(extent.height)));
+                ImGui::End();
+                renderer.imgui().endFrame();
+                auto* drawData = renderer.imgui().drawData();
+                FrameInput input{extent, makeCamera(extent), draws};
+                input.display = {ToneMappingMode::Reinhard, 0.0f};
+                renderer.drawSceneTarget(output, input, clearColor,
+                                         [&](void* cmd) { renderer.imgui().recordDrawData(drawData, cmd); });
+                std::vector<uint8_t> pixels;
+                Detail::RendererReviewAccess::withSceneOutput(
+                    renderer, output, [&](const auto& device, const auto& image) {
+                        EXPECT_EQ(image.format(), VK_FORMAT_R8G8B8A8_UNORM);
+                        pixels = TextureGpuReview::captureMip(device, image, 0, {extent.width, extent.height});
+                    });
+                return pixels;
+            };
+
+            const auto lumaOf = [&](const std::vector<uint8_t>& px, uint32_t x, uint32_t y, uint32_t w) {
+                const size_t off = (size_t(y) * w + x) * 4u;
+                return (int(px[off]) * 299 + int(px[off + 1]) * 587 + int(px[off + 2]) * 114) / 1000;
+            };
+            const auto pixelEqual = [](const std::vector<uint8_t>& a, const std::vector<uint8_t>& b, uint32_t x,
+                                       uint32_t y, uint32_t w) {
+                const size_t off = (size_t(y) * w + x) * 4u;
+                return a[off] == b[off] && a[off + 1] == b[off + 1] && a[off + 2] == b[off + 2] &&
+                       a[off + 3] == b[off + 3];
+            };
+
+            // 2. 固定输入 320x180 下的开关基线对比，并保存对照图到 build/review/。
+            constexpr FrameExtent BASE_EXTENT{320, 180};
+            const auto offBaseline = renderSceneTarget(BASE_EXTENT, false);
+            const auto onBaseline = renderSceneTarget(BASE_EXTENT, true);
+            ASSERT_EQ(offBaseline.size(), size_t(BASE_EXTENT.width) * BASE_EXTENT.height * 4u);
+            ASSERT_EQ(onBaseline.size(), offBaseline.size());
+
+            // 远离边缘的背景纯色与三角形纯白内部像素保持一致。
+            const int bgLuma = lumaOf(offBaseline, 16, 16, BASE_EXTENT.width);
+            const int fgLuma = lumaOf(offBaseline, 130, 135, BASE_EXTENT.width);
+            EXPECT_LT(bgLuma, 25);
+            EXPECT_GT(fgLuma, 170);
+            for (uint32_t y = 12; y <= 24; ++y)
+                for (uint32_t x = 12; x <= 24; ++x)
+                    EXPECT_TRUE(pixelEqual(offBaseline, onBaseline, x, y, BASE_EXTENT.width));
+            for (uint32_t y = 128; y <= 142; ++y)
+                for (uint32_t x = 124; x <= 136; ++x)
+                    EXPECT_TRUE(pixelEqual(offBaseline, onBaseline, x, y, BASE_EXTENT.width));
+
+            // 统计斜边区域内的中间过渡像素数量（关闭时应为 0，开启时应显著出现）。
+            auto countEdgeIntermediates = [&](const std::vector<uint8_t>& px, uint32_t w, uint32_t h,
+                                              uint32_t xMin, uint32_t xMax, uint32_t yMin, uint32_t yMax) {
+                int count = 0;
+                for (uint32_t y = yMin; y < yMax; ++y)
+                    for (uint32_t x = xMin; x < xMax; ++x)
+                    {
+                        const size_t off = (size_t(y) * w + x) * 4u;
+                        EXPECT_EQ(px[off + 3], 255u);
+                        const int lum = lumaOf(px, x, y, w);
+                        if (lum > bgLuma + 8 && lum < fgLuma - 8)
+                            ++count;
+                    }
+                return count;
+            };
+            const int offDiagIntermediates = countEdgeIntermediates(offBaseline, 320, 180, 35, 135, 45, 115);
+            const int onDiagIntermediates = countEdgeIntermediates(onBaseline, 320, 180, 35, 135, 45, 115);
+            EXPECT_EQ(offDiagIntermediates, 0);
+            EXPECT_GT(onDiagIntermediates, 20);
+
+            // 右侧细线区域同样产生中间抗锯齿过渡像素。
+            const int offLineIntermediates = countEdgeIntermediates(offBaseline, 320, 180, 175, 290, 45, 140);
+            const int onLineIntermediates = countEdgeIntermediates(onBaseline, 320, 180, 175, 290, 45, 140);
+            EXPECT_EQ(offLineIntermediates, 0);
+            EXPECT_GT(onLineIntermediates, 20);
+
+            // 保存固定机位对照结果到 build/review/fxaa-off.ppm 与 build/review/fxaa-on.ppm。
+            const auto reviewDir = Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR).parent_path().parent_path() / "review";
+            WindowCapture::save({int(BASE_EXTENT.width), int(BASE_EXTENT.height), offBaseline},
+                                reviewDir / "fxaa-off.ppm");
+            WindowCapture::save({int(BASE_EXTENT.width), int(BASE_EXTENT.height), onBaseline},
+                                reviewDir / "fxaa-on.ppm");
+
+            // 3. 同一帧槽连续帧开关切换：关闭严格保持 LDR 基线，开启保持一致 FXAA 输出。
+            for (const bool fxaa : {false, true, true, false, false, true})
+            {
+                const auto px = renderSceneTarget(BASE_EXTENT, fxaa);
+                EXPECT_EQ(px, fxaa ? onBaseline : offBaseline);
+            }
+
+            // 4. 尺寸重建（480x270 -> 240x136）下开关及双帧槽输出均正确。
+            for (const FrameExtent extent : {FrameExtent{480, 270}, FrameExtent{240, 136}})
+            {
+                for (int slotPass = 0; slotPass < 2; ++slotPass)
+                {
+                    const auto offPx = renderSceneTarget(extent, false);
+                    const auto onPx = renderSceneTarget(extent, true);
+                    EXPECT_TRUE(pixelEqual(offPx, onPx, 8, 8, extent.width));
+                    const uint32_t xMin = extent.width / 10u;
+                    const uint32_t xMax = (extent.width * 45u) / 100u;
+                    const uint32_t yMin = extent.height / 4u;
+                    const uint32_t yMax = (extent.height * 65u) / 100u;
+                    EXPECT_EQ(countEdgeIntermediates(offPx, extent.width, extent.height, xMin, xMax, yMin, yMax), 0);
+                    EXPECT_GT(countEdgeIntermediates(onPx, extent.width, extent.height, xMin, xMax, yMin, yMax), 10);
+                }
+            }
+
+            // 5. 同 Renderer 下直接呈现路径 drawFrame 继续可用且不录制 FXAA。
+            const auto extent = renderer.beginUiFrame();
+            ASSERT_TRUE(extent);
+            renderer.imgui().endFrame();
+            renderer.drawFrame(FrameInput{*extent, makeCamera(*extent), draws}, clearColor);
+        }
+        expectCleanValidation();
+    }
 }  // namespace

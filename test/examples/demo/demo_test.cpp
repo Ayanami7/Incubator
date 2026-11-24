@@ -120,6 +120,9 @@ namespace
             }
         };
         app.run(std::move(callbacks));
+        EXPECT_FALSE(Resource::ResourceRegistry::instance()
+                         .lookup(Resource::ResourceType::SHADER, "shaders/fxaa.frag.spv")
+                         .valid());
         EXPECT_GE(uiFrames, 5);
         for (const auto& model : models)
             EXPECT_FALSE(model->meshes()[0].valid());

@@ -411,8 +411,24 @@ namespace Incubator
                     throw Error::Exception(Error::Code::RENDER, "Display resources are already prepared");
                 if (vertexShader.words().empty() || fragmentShader.words().empty())
                     throw Error::Exception(Error::Code::RENDER, "Display shaders must contain SPIR-V words");
+                auto vertexWords = vertexShader.words();
                 displayPass_ = std::make_unique<Vulkan::VulkanDisplayPass>(
-                    device_, VK_FORMAT_R8G8B8A8_UNORM, vertexShader.words(), fragmentShader.words());
+                    device_, VK_FORMAT_R8G8B8A8_UNORM, vertexWords, fragmentShader.words());
+                displayVertexShader_ = std::move(vertexWords);
+            }
+
+            void prepareFxaaResources(const Resource::ShaderResource& fragmentShader)
+            {
+                if (!displayPass_ || displayVertexShader_.empty())
+                    throw Error::Exception(Error::Code::RENDER, "Prepare display resources before FXAA resources");
+                if (fxaaPass_)
+                    throw Error::Exception(Error::Code::RENDER, "FXAA resources are already prepared");
+                if (fragmentShader.words().empty())
+                    throw Error::Exception(Error::Code::RENDER, "FXAA fragment shader must contain SPIR-V words");
+                fxaaPass_ = std::make_unique<Vulkan::VulkanDisplayPass>(
+                    device_, VK_FORMAT_R8G8B8A8_UNORM, displayVertexShader_, fragmentShader.words(),
+                    SamplerDesc{TextureFilter::Linear, TextureFilter::Linear, MipFilter::BaseLevel},
+                    VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0);
             }
 
             Material createMaterial(const MaterialDesc& desc, const std::shared_ptr<GpuResources::Impl>& resources = {})
@@ -663,7 +679,7 @@ namespace Incubator
                 if (!target || target->owner != &device_)
                     throw Error::Exception(Error::Code::RENDER, "Invalid scene output");
                 scheduler_->waitForFrames();
-                record(device_, target->target->color());
+                record(device_, target->target->color(output.fxaaEnabled()));
             }
             void reviewShadowOutput(
                 const SceneOutput& output,
@@ -680,7 +696,7 @@ namespace Incubator
                 record(device_, shadow->image());
             }
 
-            SceneOutput prepareSceneTarget(FrameExtent extent)
+            SceneOutput prepareSceneTarget(FrameExtent extent, bool fxaa = false)
             {
                 SceneOutput output;
                 if (!extent.width || !extent.height)
@@ -705,8 +721,11 @@ namespace Incubator
                         extent.width, extent.height, static_cast<int>(slot->target->color().format()),
                         static_cast<int>(depthFormat_));
                 }
+                if (fxaa)
+                    slot->target->ensureFxaaTarget();
                 output.impl_ = slot;
                 output.extent_ = extent;
+                output.fxaaEnabled_ = fxaa;
                 return output;
             }
             uint64_t sceneImage(const SceneOutput& output)
@@ -715,7 +734,8 @@ namespace Incubator
                 const auto slot = scheduler_->currentFrameIndex();
                 if (!target || target->owner != &device_ || target != sceneTargets_[slot])
                     throw Error::Exception(Error::Code::RENDER, "Invalid current scene output");
-                return imguiRenderer_->sceneImage(slot, target->target->color().view());
+                return imguiRenderer_->sceneImage(slot, target->target->color(output.fxaaEnabled()).view(),
+                                                  output.fxaaEnabled());
             }
             void drawSceneTarget(const SceneOutput& output, const FrameInput& input,
                                  const std::array<float, 4>& clearColor, const std::function<void(void*)>& ui)
@@ -727,6 +747,8 @@ namespace Incubator
                     throw Error::Exception(Error::Code::RENDER, "Invalid current scene output");
                 if (!displayPass_)
                     throw Error::Exception(Error::Code::RENDER, "Prepare display shaders before drawSceneTarget");
+                if (output.fxaaEnabled() && !fxaaPass_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare FXAA resources before drawSceneTarget with FXAA");
                 if (input.display.toneMapping != ToneMappingMode::Off &&
                     input.display.toneMapping != ToneMappingMode::Reinhard)
                     throw Error::Exception(Error::Code::RENDER, "Invalid tone mapping mode");
@@ -795,11 +817,14 @@ namespace Incubator
                                     Vulkan::VulkanCommandList::drawShadow(
                                         depth, *shadowPipeline_, bindingSet_->descriptorSet(index), shadowDraws);
                                 });
-                            target->target->record(cmd, *displayPass_, displayParams, [&](VkCommandBuffer scene) {
-                                if (!draws.empty())
-                                    Vulkan::VulkanCommandList::drawIndexed(scene, *sceneHdrPipeline_,
-                                                                           bindingSet_->descriptorSet(index), draws);
-                            });
+                            target->target->record(cmd, *displayPass_, displayParams,
+                                                   [&](VkCommandBuffer scene) {
+                                                       if (!draws.empty())
+                                                           Vulkan::VulkanCommandList::drawIndexed(
+                                                               scene, *sceneHdrPipeline_,
+                                                               bindingSet_->descriptorSet(index), draws);
+                                                   },
+                                                   output.fxaaEnabled() ? fxaaPass_.get() : nullptr);
                         }))
                     needsRebuild_ = true;
             }
@@ -861,6 +886,7 @@ namespace Incubator
             std::vector<uint32_t> vertexShader_;
             std::vector<uint32_t> fragmentShader_;
             std::vector<uint32_t> shadowVertexShader_;
+            std::vector<uint32_t> displayVertexShader_;
             std::vector<ResourceEntry<Mesh::Impl>> meshes_;
             std::vector<ResourceEntry<Texture::Impl>> textures_;
             std::array<std::shared_ptr<Vulkan::VulkanBuffer>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
@@ -876,6 +902,7 @@ namespace Incubator
             std::array<std::shared_ptr<SceneOutput::Impl>, Vulkan::VulkanFrameScheduler::FRAME_COUNT> sceneTargets_{};
             std::unique_ptr<Vulkan::VulkanPipeline> sceneHdrPipeline_;
             std::unique_ptr<Vulkan::VulkanDisplayPass> displayPass_;
+            std::unique_ptr<Vulkan::VulkanDisplayPass> fxaaPass_;
             std::unique_ptr<Vulkan::VulkanPipeline> shadowPipeline_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
             std::unique_ptr<Integration::ImGuiRenderer> imguiRenderer_;
@@ -973,6 +1000,13 @@ namespace Incubator
             impl_->prepareDisplayResources(vertexShader, fragmentShader);
         }
 
+        void Renderer::prepareFxaaResources(const Resource::ShaderResource& fragmentShader)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            impl_->prepareFxaaResources(fragmentShader);
+        }
+
         Material Renderer::createMaterial(const MaterialDesc& desc)
         {
             if (!impl_)
@@ -1011,11 +1045,11 @@ namespace Incubator
 
 namespace Incubator::Render
 {
-    SceneOutput Renderer::prepareSceneTarget(FrameExtent extent)
+    SceneOutput Renderer::prepareSceneTarget(FrameExtent extent, bool fxaa)
     {
         if (!impl_)
             throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
-        return impl_->prepareSceneTarget(extent);
+        return impl_->prepareSceneTarget(extent, fxaa);
     }
     void Renderer::drawSceneTarget(const SceneOutput& output, const FrameInput& input,
                                    const std::array<float, 4>& color, const std::function<void(void*)>& ui)

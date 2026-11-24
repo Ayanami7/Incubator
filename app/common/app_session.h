@@ -88,6 +88,12 @@ namespace Incubator::App
         /// @brief 编辑本会话的阴影预览设置；不参与场景或启动配置的保存加载。
         /// @note 首次在独立视口启用时按需准备深度 Shader。
         Render::ShadowSettings& shadowSettings();
+        /// @brief 编辑本会话的 FXAA 预览开关；默认关闭，不参与场景或启动配置的保存加载。
+        /// @note 首次在独立视口启用时按需准备片元 Shader；UI 阶段改动从下一有效视口帧生效。
+        bool& fxaaEnabled();
+        bool fxaaEnabled() const;
+        /// @brief 返回本轮布局准备的场景输出引用，供同一帧采样与提交共用。
+        const Render::SceneOutput& sceneOutput() const;
         /// @brief 在调用方打开的 ImGui 窗口中提交场景图像。
         void drawSceneImage();
         void requireOpen() const;
@@ -136,8 +142,11 @@ namespace Incubator::App
         std::unique_ptr<Render::Renderer> renderer_;
         std::unique_ptr<Scene::Scene> scene_;
         std::array<float, 4> clearColor_;
+        std::string fxaaFragmentShader_;
         Render::ShadowSettings shadowSettings_{};
         bool shadowResourcesPrepared_ = false;
+        bool fxaaEnabled_ = false;
+        bool fxaaResourcesPrepared_ = false;
         Render::FrameExtent sceneExtent_{};
         Render::SceneOutput sceneOutput_;
         App::ViewportRegion viewportRegion_;

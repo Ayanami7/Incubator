@@ -110,6 +110,11 @@ namespace Incubator
             void prepareDisplayResources(const Resource::ShaderResource& vertexShader,
                                          const Resource::ShaderResource& fragmentShader);
 
+            /// @brief 准备离屏视口 LDR FXAA 所需片元着色器，首次启用时按需调用。
+            /// @param fragmentShader FXAA 片元着色器资源。
+            /// @note 须在 prepareDisplayResources 之后调用，复用全屏顶点着色器；仅复制 SPIR-V 字码，不保留 CPU Resource。
+            void prepareFxaaResources(const Resource::ShaderResource& fragmentShader);
+
             /// @brief 根据描述创建不可变材质绑定。
             /// @param desc 材质描述，仅在本次调用期间借用。
             /// @return 由此 Renderer 持有的材质引用。
@@ -132,7 +137,9 @@ namespace Incubator
             void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
                            const std::function<void(void*)>& recordUi = {});
             /// @brief 等待当前帧槽后准备独立场景图像；零尺寸返回无效引用。
-            SceneOutput prepareSceneTarget(FrameExtent extent);
+            /// @param extent 目标像素尺寸。
+            /// @param fxaa 本帧是否启用离屏视口 LDR FXAA；将随引用记录并由 sceneImage 与 drawSceneTarget 共用。
+            SceneOutput prepareSceneTarget(FrameExtent extent, bool fxaa = false);
             /// @brief 同帧先绘制阴影深度（启用时）与独立场景，再记录交换链 UI。
             /// @note 启用阴影前需准备深度 Shader；阴影只作用于 Lambert 直接光。
             void drawSceneTarget(const SceneOutput& output, const FrameInput& input,

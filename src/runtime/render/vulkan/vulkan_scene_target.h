@@ -23,13 +23,17 @@ namespace Incubator::Render::Vulkan
     };
     static_assert(sizeof(VulkanDisplayParams) == 24);
 
-    /// @brief 持有全屏显示 Pass 共享管线、采样器与描述符布局。
+    /// @brief 持有全屏后处理/显示 Pass 共享管线、采样器与描述符布局。
     class VulkanDisplayPass
     {
     public:
         VulkanDisplayPass(const VulkanDevice& device, VkFormat ldrFormat,
                           const std::vector<uint32_t>& vertexShader,
-                          const std::vector<uint32_t>& fragmentShader);
+                          const std::vector<uint32_t>& fragmentShader,
+                          SamplerDesc samplerDesc = {TextureFilter::Nearest, TextureFilter::Nearest,
+                                                   MipFilter::Nearest},
+                          VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                          uint32_t pushConstantSize = sizeof(VulkanDisplayParams));
         ~VulkanDisplayPass();
 
         VulkanDisplayPass(const VulkanDisplayPass&) = delete;
@@ -64,23 +68,31 @@ namespace Incubator::Render::Vulkan
         void record(VkCommandBuffer commands, const VkClearColorValue& color,
                     const std::function<void(VkCommandBuffer)>& draw);
 
-        /// @brief 双目标录制路径：先录制线性 HDR 主场景，再执行全屏显示 Pass 输出到 LDR 图像。
+        /// @brief 双目标录制路径：先录制线性 HDR 主场景，再执行全屏显示 Pass 输出到 LDR 图像，可选继续录制 FXAA。
         void record(VkCommandBuffer commands, const VulkanDisplayPass& displayPass,
                     const VulkanDisplayParams& displayParams,
-                    const std::function<void(VkCommandBuffer)>& drawScene);
+                    const std::function<void(VkCommandBuffer)>& drawScene,
+                    const VulkanDisplayPass* fxaaPass = nullptr);
 
-        const VulkanImage& color() const { return ldrColor_ ? *ldrColor_ : *hdrColor_; }
+        /// @brief 为已分配的离屏场景目标按需补充同尺寸 FXAA 输出图像。
+        void ensureFxaaTarget();
+
+        const VulkanImage& color(bool fxaa = false) const;
         const VulkanImage& hdrColor() const { return *hdrColor_; }
 
     private:
-        void ensureHdrDescriptor(const VulkanDisplayPass& displayPass);
+        void ensureDescriptorPool();
+        void ensureDescriptorSet(const VulkanDisplayPass& pass, VkDescriptorSet& set, const VulkanImage& image);
 
         const VulkanDevice& device_;
         std::shared_ptr<VulkanImage> hdrColor_;
         std::shared_ptr<VulkanImage> ldrColor_;
+        std::shared_ptr<VulkanImage> fxaaColor_;
         std::shared_ptr<VulkanImage> depth_;
         VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
         VkDescriptorSet hdrDescriptorSet_ = VK_NULL_HANDLE;
+        VkDescriptorSet ldrDescriptorSet_ = VK_NULL_HANDLE;
         bool initialized_ = false;
+        bool fxaaInitialized_ = false;
     };
 }  // namespace Incubator::Render::Vulkan

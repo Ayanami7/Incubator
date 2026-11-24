@@ -33,9 +33,9 @@ namespace Incubator
                 /// @note 需要先调用 initializeVulkan；应用代码应使用 Renderer::beginUiFrame。
                 /// 在新帧开始前检测 DPI 变化，必要时同步重建字体与样式。
                 void beginFrame();
-                /// @brief 为已完成等待的帧槽注册场景图像，返回 ImGui 纹理标识。
-                uint64_t sceneImage(uint32_t slot, VkImageView image);
-                /// @brief 释放已完成等待的帧槽场景绑定。
+                /// @brief 为已完成等待的帧槽注册场景图像，原 LDR 与 FXAA 输出各自独立维护，返回 ImGui 纹理标识。
+                uint64_t sceneImage(uint32_t slot, VkImageView image, bool fxaa = false);
+                /// @brief 释放已完成等待的帧槽场景绑定（含 LDR 与 FXAA 输出）。
                 void releaseSceneImage(uint32_t slot);
                 void endFrame();
                 void* drawData() const noexcept;
@@ -47,7 +47,7 @@ namespace Incubator
                     VkImageView image = VK_NULL_HANDLE;
                     VkDescriptorSet set = VK_NULL_HANDLE;
                 };
-                std::array<SceneBinding, 2> sceneBindings_{};
+                std::array<std::array<SceneBinding, 2>, 2> sceneBindings_{};
                 VkSampler sceneSampler_ = VK_NULL_HANDLE;
                 void updateDpi();
                 void shutdownVulkan() noexcept;

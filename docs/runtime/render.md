@@ -114,7 +114,7 @@ RGB 按 sRGB → 线性过滤 → sRGB 写回，alpha 按线性 straight 通道�
 不支持时抛出 RENDER 错误，同时保留 extent/像素长度检查；Resource 不包含设备限制。
 直接构造的深度附件、读回图像及后端默认上传仍为单 mip。
 
-场景 RGB 由 sRGB 纹理采样得到 linear 值，与材质线性 RGB 相乘后，直接呈现（`drawFrame`）路径沿用片元 Shader 钳制与 sRGB transfer function 编码后写入 UNORM；独立视口（`drawSceneTarget`）则先将未钳制的线性 HDR 颜色（几何覆盖写 `alpha = 1`，清屏背景写 `alpha = 0`）写入 `VK_FORMAT_R16G16B16A16_SFLOAT` 场景附件，再经全屏显示 Pass（按 `DisplaySettings` 执行曝光与 `Off` / `Reinhard` 色调映射，未覆盖处直接输出 `clearColor`）编码一次 sRGB 写入 `VK_FORMAT_R8G8B8A8_UNORM` 视口图像供 ImGui 采样。clearColor 与 ImGui RGB 均为
+场景 RGB 由 sRGB 纹理采样得到 linear 值，与材质线性 RGB 相乘后，直接呈现（`drawFrame`）路径沿用片元 Shader 钳制与 sRGB transfer function 编码后写入 UNORM；独立视口（`drawSceneTarget`）则先将未钳制的线性 HDR 颜色（几何覆盖写 `alpha = 1`，清屏背景写 `alpha = 0`）写入 `VK_FORMAT_R16G16B16A16_SFLOAT` 场景附件，再经全屏显示 Pass（按 `DisplaySettings` 执行曝光与 `Off` / `Reinhard` 色调映射，未覆盖处直接输出 `clearColor`）编码一次 sRGB 写入 `VK_FORMAT_R8G8B8A8_UNORM` 视口图像，开启 FXAA 时随后经固定质量 LDR FXAA 输出到同格式独立图像（`LINEAR` + `ClampToEdge` 采样并保留中心像素 alpha），供 ImGui 采样。clearColor 与 ImGui RGB 均为
 sRGB 编码值，直接写 UNORM；ImGui 沿用现有编码空间 alpha blending，不修改第三方 Shader。
 交换链仅支持 `SRGB_NONLINEAR` colorSpace，按 BGRA8_UNORM、RGBA8_UNORM 顺序选择，
 与设备返回的列表顺序无关。单个 UNDEFINED/SRGB_NONLINEAR 选择 BGRA8_UNORM，并检查
@@ -371,21 +371,21 @@ Scene 实体共享准备结果，`Scene::extractSceneFrame` 将实体整体变�
 ## 独立场景目标
 
 `prepareDisplayResources(vertexShader, fragmentShader)` 准备全屏显示 Pass 所需 Shader，须在首次调用 `drawSceneTarget` 前调用。
-`prepareSceneTarget(extent)` 等待当前帧槽完成，按场景像素尺寸复用或替换该槽的线性 HDR 颜色（`VK_FORMAT_R16G16B16A16_SFLOAT`）、显示 LDR 颜色（`VK_FORMAT_R8G8B8A8_UNORM`）及深度附件。
+`prepareFxaaResources(fragmentShader)` 须在 `prepareDisplayResources` 之后按需调用，复用全屏顶点 Shader 并以 `LINEAR` / `ClampToEdge` 采样配置准备 LDR FXAA 管线，仅复制 SPIR-V 字码。
+`prepareSceneTarget(extent, fxaa = false)` 等待当前帧槽完成，按场景像素尺寸复用或替换该槽的线性 HDR 颜色（`VK_FORMAT_R16G16B16A16_SFLOAT`）、显示 LDR 颜色（`VK_FORMAT_R8G8B8A8_UNORM`）及深度附件，并在 `fxaa` 为 `true` 时按需准备同尺寸 `VK_FORMAT_R8G8B8A8_UNORM` FXAA 输出附件及将该开关记录于 `SceneOutput`。
 `prepareSceneTarget`、`drawSceneTarget` 和 `sceneImage` 在 moved-from Renderer 上均抛 RENDER，移动后的目标继续可用。
-零尺寸返回无效 `SceneOutput`。输出为非拥有引用，尺寸由 `extent()` 查询；尺寸重建或 Renderer 关闭后失效，
+零尺寸返回无效 `SceneOutput`。输出为非拥有引用，尺寸由 `extent()` 查询、开关由 `fxaaEnabled()` 查询；尺寸重建或 Renderer 关闭后失效，
 只能交给所属 Renderer 的当前帧槽使用。图像在生产路径中不经过 CPU 回读。
 
-`drawSceneTarget(output, input, clearColor, recordUi)` 先在独立线性 HDR 目标中绘制场景，再执行全屏显示 Pass 按 `input.display`（`ToneMappingMode::Off` 钳制或 `Reinhard` 配合 `[-8, +8]` EV 曝光，未覆盖背景输出 `clearColor`）编码一次 sRGB 写入 RGBA8 UNORM 视口图像，最后在交换链中记录 UI。
-后续 UI 采样沿用该 RGBA8 UNORM 图像，避免再次编码。图像方向与当前直接绘制一致。
+`drawSceneTarget(output, input, clearColor, recordUi)` 先在独立线性 HDR 目标中绘制场景，再执行全屏显示 Pass 按 `input.display`（`ToneMappingMode::Off` 钳制或 `Reinhard` 配合 `[-8, +8]` EV 曝光，未覆盖背景输出 `clearColor`）编码一次 sRGB 写入 LDR 图像；若 `output.fxaaEnabled()` 为 `true`（未准备 FXAA 资源时抛 RENDER），接着在显示 Pass 写入与片元采样之间建立同步依赖并录制全屏 FXAA 写入独立 FXAA 输出图像（保持显示编码与中心像素 alpha）；最后在交换链中记录 UI。
+后续 UI 采样沿用对应的 `RGBA8 UNORM` 图像（原 LDR 图或 FXAA 输出图），避免再次编码。图像方向与当前直接绘制一致；`drawFrame` 不支持也不录制 FXAA。
 旧附件在槽 Fence 完成后替换，稳定帧不分配目标或等待整个设备空闲；原 `drawFrame` 直接绘制入口继续可用。
-ImGui 图像注册及工作区布局由后续 Integration 接入。
 
 ### 场景图像与 UI 帧
 
-在 `beginUiFrame()` 之后，布局确定图像区域，再调用 `prepareSceneTarget` 和 `sceneImage` 取得当前槽的
-ImGui 纹理标识，生成图像命令。Integration 按帧槽持有描述符及独立采样器；重建目标前先结束旧绑定。
-场景目标先写入，随后在同一提交中采样到 UI，不增加 CPU 回读。字体图集更新不改变场景图像绑定。
+在 `beginUiFrame()` 之后，布局确定图像区域，再调用 `prepareSceneTarget` 和 `sceneImage` 取得当前槽对应输出（原 LDR 或 FXAA）的
+ImGui 纹理标识，生成图像命令。Integration 按帧槽分别为原 LDR 图与 FXAA 输出图独立维护描述符绑定及统一采样器；重建目标前先结束旧绑定。
+场景目标先写入（并在开启 FXAA 时完成 FXAA 输出写入到片元采样的同步依赖），随后在同一提交中采样到 UI，不增加 CPU 回读。字体图集更新不改变场景图像绑定。
 若 UI 生成后窗口尺寸变化，提交跳过该帧，下一轮开始 UI 前重建后端，避免已生成命令引用旧描述符。
 
 

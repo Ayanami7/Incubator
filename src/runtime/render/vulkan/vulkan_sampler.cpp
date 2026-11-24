@@ -9,7 +9,8 @@ namespace Incubator
     {
         namespace Vulkan
         {
-            VulkanSampler::VulkanSampler(const VulkanDevice& device, SamplerDesc desc, uint32_t mipLevels)
+            VulkanSampler::VulkanSampler(const VulkanDevice& device, SamplerDesc desc, uint32_t mipLevels,
+                                         VkSamplerAddressMode addressMode)
                 : device_(device)
             {
                 const auto filter = [](TextureFilter value) {
@@ -33,9 +34,9 @@ namespace Incubator
                 samplerInfo.mipmapMode = !baseLevelOnly && desc.mipFilter == MipFilter::Linear
                                              ? VK_SAMPLER_MIPMAP_MODE_LINEAR
                                              : VK_SAMPLER_MIPMAP_MODE_NEAREST;
-                samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-                samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-                samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+                samplerInfo.addressModeU = addressMode;
+                samplerInfo.addressModeV = addressMode;
+                samplerInfo.addressModeW = addressMode;
                 samplerInfo.maxAnisotropy = 1.0f;
                 samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
                 samplerInfo.minLod = 0.0f;

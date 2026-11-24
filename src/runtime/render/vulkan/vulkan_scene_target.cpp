@@ -40,8 +40,9 @@ namespace Incubator::Render::Vulkan
 
     VulkanDisplayPass::VulkanDisplayPass(const VulkanDevice& device, VkFormat ldrFormat,
                                          const std::vector<uint32_t>& vertexShader,
-                                         const std::vector<uint32_t>& fragmentShader)
-        : device_(device), sampler_(device, {TextureFilter::Nearest, TextureFilter::Nearest, MipFilter::Nearest})
+                                         const std::vector<uint32_t>& fragmentShader, SamplerDesc samplerDesc,
+                                         VkSamplerAddressMode addressMode, uint32_t pushConstantSize)
+        : device_(device), sampler_(device, samplerDesc, 1, addressMode)
     {
         VkShaderModule vertexModule = VK_NULL_HANDLE;
         VkShaderModule fragmentModule = VK_NULL_HANDLE;
@@ -51,11 +52,11 @@ namespace Incubator::Render::Vulkan
             moduleInfo.codeSize = vertexShader.size() * sizeof(uint32_t);
             moduleInfo.pCode = vertexShader.data();
             checkVk(vkCreateShaderModule(device_.handle(), &moduleInfo, nullptr, &vertexModule),
-                    "vkCreateShaderModule(display.vert)");
+                    "vkCreateShaderModule(fullscreen.vert)");
             moduleInfo.codeSize = fragmentShader.size() * sizeof(uint32_t);
             moduleInfo.pCode = fragmentShader.data();
             checkVk(vkCreateShaderModule(device_.handle(), &moduleInfo, nullptr, &fragmentModule),
-                    "vkCreateShaderModule(display.frag)");
+                    "vkCreateShaderModule(fullscreen.frag)");
 
             const VkDescriptorSetLayoutBinding binding{
                 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
@@ -63,16 +64,19 @@ namespace Incubator::Render::Vulkan
             setLayoutInfo.bindingCount = 1;
             setLayoutInfo.pBindings = &binding;
             checkVk(vkCreateDescriptorSetLayout(device_.handle(), &setLayoutInfo, nullptr, &setLayout_),
-                    "vkCreateDescriptorSetLayout(display)");
+                    "vkCreateDescriptorSetLayout(fullscreen)");
 
-            const VkPushConstantRange pushRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(VulkanDisplayParams)};
+            const VkPushConstantRange pushRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, pushConstantSize};
             VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
             layoutInfo.setLayoutCount = 1;
             layoutInfo.pSetLayouts = &setLayout_;
-            layoutInfo.pushConstantRangeCount = 1;
-            layoutInfo.pPushConstantRanges = &pushRange;
+            if (pushConstantSize > 0)
+            {
+                layoutInfo.pushConstantRangeCount = 1;
+                layoutInfo.pPushConstantRanges = &pushRange;
+            }
             checkVk(vkCreatePipelineLayout(device_.handle(), &layoutInfo, nullptr, &pipelineLayout_),
-                    "vkCreatePipelineLayout(display)");
+                    "vkCreatePipelineLayout(fullscreen)");
 
             const std::array<VkPipelineShaderStageCreateInfo, 2> stages = [&] {
                 std::array<VkPipelineShaderStageCreateInfo, 2> result{};
@@ -184,28 +188,59 @@ namespace Incubator::Render::Vulkan
             vkDestroyDescriptorPool(device_.handle(), descriptorPool_, nullptr);
     }
 
-    void VulkanSceneTarget::ensureHdrDescriptor(const VulkanDisplayPass& displayPass)
+    void VulkanSceneTarget::ensureFxaaTarget()
     {
-        if (hdrDescriptorSet_ != VK_NULL_HANDLE)
+        if (!ldrColor_)
+            throw Error::Exception(Error::Code::RENDER, "FXAA requires dual HDR/LDR scene target");
+        if (fxaaColor_)
             return;
-        const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+        constexpr VkImageUsageFlags colorUsage =
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        fxaaColor_ = std::make_shared<VulkanImage>(device_, ldrColor_->extent(), VK_FORMAT_R8G8B8A8_UNORM, colorUsage,
+                                                   VK_IMAGE_ASPECT_COLOR_BIT);
+    }
+
+    const VulkanImage& VulkanSceneTarget::color(bool fxaa) const
+    {
+        if (fxaa)
+        {
+            if (!fxaaColor_)
+                throw Error::Exception(Error::Code::RENDER, "FXAA target image has not been prepared");
+            return *fxaaColor_;
+        }
+        return ldrColor_ ? *ldrColor_ : *hdrColor_;
+    }
+
+    void VulkanSceneTarget::ensureDescriptorPool()
+    {
+        if (descriptorPool_ != VK_NULL_HANDLE)
+            return;
+        // 每个场景目标最多同时需要 HDR->Display 与 LDR->FXAA 两组组合图像采样器描述符。
+        const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        poolInfo.maxSets = 1;
+        poolInfo.maxSets = 2;
         poolInfo.poolSizeCount = 1;
         poolInfo.pPoolSizes = &poolSize;
         checkVk(vkCreateDescriptorPool(device_.handle(), &poolInfo, nullptr, &descriptorPool_),
                 "vkCreateDescriptorPool(sceneTarget)");
-        const VkDescriptorSetLayout layout = displayPass.descriptorSetLayout();
+    }
+
+    void VulkanSceneTarget::ensureDescriptorSet(const VulkanDisplayPass& pass, VkDescriptorSet& set,
+                                                const VulkanImage& image)
+    {
+        if (set != VK_NULL_HANDLE)
+            return;
+        ensureDescriptorPool();
+        const VkDescriptorSetLayout layout = pass.descriptorSetLayout();
         VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         allocInfo.descriptorPool = descriptorPool_;
         allocInfo.descriptorSetCount = 1;
         allocInfo.pSetLayouts = &layout;
-        checkVk(vkAllocateDescriptorSets(device_.handle(), &allocInfo, &hdrDescriptorSet_),
+        checkVk(vkAllocateDescriptorSets(device_.handle(), &allocInfo, &set),
                 "vkAllocateDescriptorSets(sceneTarget)");
-        const VkDescriptorImageInfo imageInfo{
-            displayPass.sampler(), hdrColor_->view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo imageInfo{pass.sampler(), image.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        write.dstSet = hdrDescriptorSet_;
+        write.dstSet = set;
         write.dstBinding = 0;
         write.descriptorCount = 1;
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -276,11 +311,17 @@ namespace Incubator::Render::Vulkan
 
     void VulkanSceneTarget::record(VkCommandBuffer cmd, const VulkanDisplayPass& displayPass,
                                    const VulkanDisplayParams& displayParams,
-                                   const std::function<void(VkCommandBuffer)>& drawScene)
+                                   const std::function<void(VkCommandBuffer)>& drawScene,
+                                   const VulkanDisplayPass* fxaaPass)
     {
         if (!ldrColor_)
             throw Error::Exception(Error::Code::RENDER, "Display pass requires dual HDR/LDR scene target");
-        ensureHdrDescriptor(displayPass);
+        ensureDescriptorSet(displayPass, hdrDescriptorSet_, *hdrColor_);
+        if (fxaaPass)
+        {
+            ensureFxaaTarget();
+            ensureDescriptorSet(*fxaaPass, ldrDescriptorSet_, *ldrColor_);
+        }
 
         // 1. 线性 HDR 主场景 Pass：alpha 清零用于标记未覆盖背景。
         const std::array hdrBarriers = {
@@ -367,15 +408,69 @@ namespace Incubator::Render::Vulkan
         vkCmdDraw(cmd, 3, 1, 0, 0);
         vkCmdEndRendering(cmd);
 
-        // 3. LDR 写入 -> ImGui 片元采样。
-        const auto ldrToShader = makeImageBarrier(
-            ldrColor_->handle(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-        dep.imageMemoryBarrierCount = 1;
-        dep.pImageMemoryBarriers = &ldrToShader;
-        vkCmdPipelineBarrier2(cmd, &dep);
+        if (fxaaPass)
+        {
+            // 3. 显示 Pass 写入 -> FXAA 片元采样；同时将 FXAA 目标转换为色彩附件。
+            const std::array fxaaBarriers = {
+                makeImageBarrier(ldrColor_->handle(), VK_IMAGE_ASPECT_COLOR_BIT,
+                                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+                makeImageBarrier(fxaaColor_->handle(), VK_IMAGE_ASPECT_COLOR_BIT,
+                                 fxaaInitialized_ ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                                  : VK_IMAGE_LAYOUT_UNDEFINED,
+                                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                 fxaaInitialized_ ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_NONE,
+                                 fxaaInitialized_ ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)};
+            dep.imageMemoryBarrierCount = static_cast<uint32_t>(fxaaBarriers.size());
+            dep.pImageMemoryBarriers = fxaaBarriers.data();
+            vkCmdPipelineBarrier2(cmd, &dep);
+
+            VkRenderingAttachmentInfo fxaaAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+            fxaaAttachment.imageView = fxaaColor_->view();
+            fxaaAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            fxaaAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            fxaaAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingInfo fxaaInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
+            fxaaInfo.renderArea.extent = fxaaColor_->extent();
+            fxaaInfo.layerCount = 1;
+            fxaaInfo.colorAttachmentCount = 1;
+            fxaaInfo.pColorAttachments = &fxaaAttachment;
+            vkCmdBeginRendering(cmd, &fxaaInfo);
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fxaaPass->pipeline());
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fxaaPass->pipelineLayout(), 0, 1,
+                                    &ldrDescriptorSet_, 0, nullptr);
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+            vkCmdEndRendering(cmd);
+
+            // 4. FXAA 写入 -> ImGui 片元采样。
+            const auto fxaaToShader = makeImageBarrier(
+                fxaaColor_->handle(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            dep.imageMemoryBarrierCount = 1;
+            dep.pImageMemoryBarriers = &fxaaToShader;
+            vkCmdPipelineBarrier2(cmd, &dep);
+            fxaaInitialized_ = true;
+        }
+        else
+        {
+            // 3. LDR 写入 -> ImGui 片元采样。
+            const auto ldrToShader = makeImageBarrier(
+                ldrColor_->handle(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            dep.imageMemoryBarrierCount = 1;
+            dep.pImageMemoryBarriers = &ldrToShader;
+            vkCmdPipelineBarrier2(cmd, &dep);
+        }
         initialized_ = true;
     }
 }  // namespace Incubator::Render::Vulkan

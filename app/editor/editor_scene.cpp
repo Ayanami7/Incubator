@@ -1076,6 +1076,8 @@ namespace Incubator::Editor
             ImGui::SameLine();
             if (ImGui::Button("Reset view", {halfWidth, 0.0f}))
                 resetCamera(app);
+            rowLabel("FXAA");
+            ImGui::Checkbox("##fxaa", &app.fxaaEnabled());
         }
         if (ImGui::CollapsingHeader("Scene settings", ImGuiTreeNodeFlags_DefaultOpen))
         {
