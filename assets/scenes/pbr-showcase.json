@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "minorVersion": 1,
+  "entities": [
+    {
+      "name": "Avocado Cut",
+      "parent": null,
+      "model": {
+        "path": "models/avocado/gltf/avocado.gltf",
+        "prepare": {
+          "mipMode": "fullChain",
+          "sampler": {
+            "minFilter": "linear",
+            "magFilter": "linear",
+            "mipFilter": "linear"
+          },
+          "shading": "pbr"
+        }
+      },
+      "transform": {
+        "position": [
+          -0.56,
+          -0.8488543,
+          0.05
+        ],
+        "rotation": [
+          0,
+          -0.08715574274765817,
+          0,
+          0.9961946980917455
+        ],
+        "scale": [
+          24,
+          24,
+          24
+        ]
+      },
+      "visible": true
+    },
+    {
+      "name": "Avocado Peel",
+      "parent": null,
+      "model": {
+        "path": "models/avocado/gltf/avocado.gltf",
+        "prepare": {
+          "mipMode": "fullChain",
+          "sampler": {
+            "minFilter": "linear",
+            "magFilter": "linear",
+            "mipFilter": "linear"
+          },
+          "shading": "pbr"
+        }
+      },
+      "transform": {
+        "position": [
+          0.58,
+          -0.8488543,
+          0.15
+        ],
+        "rotation": [
+          0,
+          0.9945218953682733,
+          0,
+          0.10452846326765346
+        ],
+        "scale": [
+          24,
+          24,
+          24
+        ]
+      },
+      "visible": true
+    },
+    {
+      "name": "Ground",
+      "parent": null,
+      "model": {
+        "path": "models/ground/ground.obj",
+        "prepare": {
+          "mipMode": "fullChain",
+          "sampler": {
+            "minFilter": "linear",
+            "magFilter": "linear",
+            "mipFilter": "linear"
+          },
+          "shading": "pbr"
+        }
+      },
+      "transform": {
+        "position": [
+          0,
+          -0.85,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "visible": true
+    }
+  ],
+  "camera": {
+    "position": [
+      0.2,
+      0.62,
+      3.45
+    ],
+    "rotation": [
+      -0.1190450330377841,
+      0.017259766805245866,
+      0.002069722586831127,
+      0.9927366704253827
+    ],
+    "perspective": {
+      "verticalFov": 0.6981317,
+      "nearPlane": 0.1,
+      "farPlane": 100
+    }
+  },
+  "lighting": {
+    "direction": [
+      0.74,
+      -0.56,
+      -0.37
+    ],
+    "color": [
+      1,
+      0.96,
+      0.9
+    ],
+    "intensity": 1.55,
+    "ambient": 0.14
+  },
+  "display": {
+    "toneMapping": "reinhard",
+    "exposureEv": 0.15
+  },
+  "clearColor": [
+    0.08,
+    0.095,
+    0.125,
+    1
+  ]
+}

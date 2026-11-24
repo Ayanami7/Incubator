@@ -365,6 +365,29 @@ namespace
                 EXPECT_EQ(loaded.display, (Render::DisplaySettings{Render::ToneMappingMode::Reinhard, 0.0f}));
             }
         }
+        {
+            const auto showcasePath =
+                std::filesystem::path(SCENE_FIXTURE_DIR).parent_path().parent_path().parent_path() /
+                "assets/scenes/pbr-showcase.json";
+            ASSERT_TRUE(std::filesystem::exists(showcasePath));
+            const auto showcase = Scene::readScene(*io, Utils::Utf8::toUtf8String(showcasePath));
+            ASSERT_EQ(showcase.entities.size(), 3u);
+            EXPECT_EQ(showcase.entities[0].name, "Avocado Cut");
+            EXPECT_EQ(showcase.entities[1].name, "Avocado Peel");
+            EXPECT_EQ(showcase.entities[2].name, "Ground");
+            for (const auto& entity : showcase.entities)
+            {
+                EXPECT_FALSE(entity.parent.has_value());
+                ASSERT_TRUE(entity.model.has_value());
+                EXPECT_EQ(entity.model->options().mipMode, Render::TextureMipMode::FullChain);
+                EXPECT_EQ(entity.model->options().sampler.minFilter, Render::TextureFilter::Linear);
+                EXPECT_EQ(entity.model->options().sampler.magFilter, Render::TextureFilter::Linear);
+                EXPECT_EQ(entity.model->options().sampler.mipFilter, Render::MipFilter::Linear);
+                EXPECT_EQ(entity.model->options().shading, Render::ShadingMode::Pbr);
+            }
+            EXPECT_EQ(showcase.display.toneMapping, Render::ToneMappingMode::Reinhard);
+            EXPECT_FLOAT_EQ(showcase.display.exposureEv, 0.15f);
+        }
     }
 
     TEST(SceneFileTest, HierarchyVersion2RoundTripForwardParentDuplicateNamesAndInvalidParentErrors)

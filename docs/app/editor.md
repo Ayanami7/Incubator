@@ -13,7 +13,7 @@ Set-Location 'E:/Project/VScode/Incubator/build'
 
 工作目录必须是对应构建目录。目标依赖 `incubator_shaders`、`incubator_models`、`incubator_scenes` 和 `incubator_config`，
 复用 `<build>/assets/` 中的 SPIR-V、Avocado glTF/bin/PNG、Utah Teapot OBJ 和自有地面 OBJ/MTL。
-默认展示场景为 `assets/scenes/shadows.json`，原 `assets/scenes/mixed.json` 继续部署并可直接打开。
+默认展示场景为 `assets/scenes/shadows.json`，`assets/scenes/mixed.json` 与 `assets/scenes/pbr-showcase.json` 一并部署并可通过 `File → Open` 打开。
 Visual Studio 的目标调试工作目录也设为 `${CMAKE_BINARY_DIR}`。
 VS Code 选择 `Debug` 调试项启动 Editor，cwd 为 build；`Demo` 调试项启动最小 Demo。
 
@@ -42,7 +42,8 @@ UI 使用 18 基础字号及统一控件间距，字体与样式随窗口 DPI �
 地面位于 y=-0.85，长宽各 10 个世界单位；Avocado 位于 `(-1.2,-0.8488543,0)`、缩放 24，
 Teapot 位于 `(1.35,-0.259375,0)`、缩放 0.075，两者落在地面上。
 相机位于 `(4,2.5,5.5)` 并观察 `(0,-0.2,0)`，垂直 FOV 45°、近/远裁面 0.1/100。
-原 mixed.json 保留无地面的两个模型和 `(0,0,6)` 相机，兼容原文件编辑流程。
+原 `mixed.json` 保留无地面的两个模型和 `(0,0,6)` 相机，兼容原文件编辑流程。
+`pbr-showcase.json` 使用 `minorVersion: 1` 并填写实体名称（`Avocado Cut`、`Avocado Peel` 与 `Ground`），全部采用 `PBR` 着色、`FullChain` mip 与线性采样，配合 `(0.2,0.62,3.45)` 机位、侧光、`Reinhard` / `+0.15 EV` 曝光及深灰背景展示果皮、切面与接触阴影。
 启动时通过既有场景文件读取和重建接口恢复实体、Camera、Lighting 和背景，不再固定创建两个 Avocado。
 启动场景缺失、内容无效或模型准备失败时关闭会话并返回 1。
 模型保留源节点层级、基色纹理和单位；面板创建对象时使用上述展示缩放。

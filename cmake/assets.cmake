@@ -26,7 +26,7 @@ endforeach()
 add_custom_target(incubator_models DEPENDS ${APP_MODEL_OUTPUTS})
 
 set(APP_SCENE_OUTPUTS)
-foreach(SCENE_FILE IN ITEMS mixed.json shadows.json)
+foreach(SCENE_FILE IN ITEMS mixed.json shadows.json pbr-showcase.json)
     set(SCENE_OUTPUT "${CMAKE_BINARY_DIR}/assets/scenes/${SCENE_FILE}")
     add_custom_command(OUTPUT "${SCENE_OUTPUT}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/assets/scenes"
