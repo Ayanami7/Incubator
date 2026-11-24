@@ -804,6 +804,9 @@ namespace Incubator
                     clearColor,
                     input.display.toneMapping == ToneMappingMode::Off ? 0u : 1u,
                     std::exp2(input.display.exposureEv)};
+                const Vulkan::ViewportSampleInput sampleInput{
+                    static_cast<uint32_t>(draws.size()),
+                    static_cast<uint32_t>(shadow ? shadowDraws.size() : 0)};
                 if (!scheduler_->renderAndPresent(
                         *swapchain_, clear,
                         [&](VkCommandBuffer cmd) {
@@ -825,8 +828,28 @@ namespace Incubator
                                                                bindingSet_->descriptorSet(index), draws);
                                                    },
                                                    output.fxaaEnabled() ? fxaaPass_.get() : nullptr);
-                        }))
+                        },
+                        sampleInput))
                     needsRebuild_ = true;
+            }
+
+            ViewportStats lastViewportStats() const noexcept
+            {
+                ViewportStats stats;
+                stats.gpuTimestampAvailable = scheduler_->supportsTimestamps();
+                if (const auto& sample = scheduler_->lastCompletedViewportSample())
+                {
+                    stats.hasCompletedSample = true;
+                    stats.gpuTimeMs = sample->gpuTimeMs;
+                    stats.sceneDrawCount = sample->sceneDrawCount;
+                    stats.shadowDrawCount = sample->shadowDrawCount;
+                }
+                return stats;
+            }
+
+            uint64_t completedViewportSampleCount() const noexcept
+            {
+                return scheduler_->completedViewportSampleCount();
             }
 
             Integration::ImGuiRenderer& imgui()
@@ -1072,6 +1095,20 @@ uint64_t Incubator::Render::Renderer::sceneImage(const SceneOutput& output)
     if (!impl_)
         throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
     return impl_->sceneImage(output);
+}
+
+Incubator::Render::ViewportStats Incubator::Render::Renderer::lastViewportStats() const noexcept
+{
+    if (!impl_)
+        return {};
+    return impl_->lastViewportStats();
+}
+
+uint64_t Incubator::Render::Detail::RendererReviewAccess::completedViewportSampleCount(Renderer& renderer)
+{
+    if (!renderer.impl_)
+        throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+    return renderer.impl_->completedViewportSampleCount();
 }
 
 void Incubator::Render::Detail::RendererReviewAccess::withShadowOutput(

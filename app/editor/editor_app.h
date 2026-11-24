@@ -106,6 +106,16 @@ namespace Incubator::Editor
         {
             return session_.sceneDrawList();
         }
+        /// @brief 返回当前主循环最近一帧的 CPU 帧时间。
+        const FrameTime& lastFrameTime() const
+        {
+            return session_.lastFrameTime();
+        }
+        /// @brief 返回最近一次已完成的离屏视口帧统计样本。
+        Render::ViewportStats viewportStats() const
+        {
+            return session_.viewportStats();
+        }
 
     private:
         App::AppSession session_;

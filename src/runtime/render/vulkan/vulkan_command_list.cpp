@@ -28,7 +28,8 @@ namespace Incubator
                                            uint32_t imageIndex, const VkClearColorValue& clearColor, VkImage depthImage,
                                            VkImageView depthView,
                                            const std::function<void(VkCommandBuffer)>& recordScene,
-                                           const std::function<void(VkCommandBuffer)>& beforeScene)
+                                           const std::function<void(VkCommandBuffer)>& beforeScene,
+                                           VkQueryPool timestampPool)
             {
                 VkCommandBufferBeginInfo beginInfo{};
                 beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -36,7 +37,18 @@ namespace Incubator
                 checkVk(vkBeginCommandBuffer(commandBuffer, &beginInfo), "vkBeginCommandBuffer");
 
                 if (beforeScene)
+                {
+                    if (timestampPool != VK_NULL_HANDLE)
+                    {
+                        vkCmdResetQueryPool(commandBuffer, timestampPool, 0, 2);
+                        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampPool, 0);
+                    }
                     beforeScene(commandBuffer);
+                    if (timestampPool != VK_NULL_HANDLE)
+                    {
+                        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampPool, 1);
+                    }
+                }
 
                 VkImageMemoryBarrier2 toColor{};
                 toColor.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;

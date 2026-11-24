@@ -31,6 +31,8 @@ namespace Incubator::Render::Detail
         static ResourceCounts resourceCounts(Renderer& renderer);
         /// @brief 等待全部已提交帧的 Fence 并释放帧槽持有，不等待整个设备空闲。
         static void waitForFrames(Renderer& renderer);
+        /// @brief 返回当前已完成并消费的离屏视口样本累计次数。
+        static uint64_t completedViewportSampleCount(Renderer& renderer);
         static void withSceneOutput(
             Renderer& renderer, const SceneOutput& output,
             const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record);

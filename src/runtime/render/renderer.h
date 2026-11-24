@@ -44,6 +44,16 @@ namespace Incubator
             Required
         };
 
+        /// @brief 最近一次已完成的离屏视口帧统计样本。
+        struct ViewportStats
+        {
+            bool hasCompletedSample = false;     ///< 是否已有至少一帧完成的离屏视口样本。
+            bool gpuTimestampAvailable = false;  ///< 当前图形队列是否支持有效 GPU 时间戳。
+            std::optional<double> gpuTimeMs;     ///< 最近一次完成样本的离屏视口 GPU 总耗时（毫秒）。
+            uint32_t sceneDrawCount = 0;         ///< 与该完成样本同帧的主场景绘制项数。
+            uint32_t shadowDrawCount = 0;        ///< 与该完成样本同帧的阴影绘制项数（关闭阴影时为 0）。
+        };
+
         class Renderer
         {
         public:
@@ -147,6 +157,8 @@ namespace Incubator
                                  const std::function<void(void*)>& recordUi = {});
             /// @brief 返回当前槽场景图像的 UI 纹理标识，供 Integration 消费。
             uint64_t sceneImage(const SceneOutput& output);
+            /// @brief 返回最近一次已完成的离屏视口帧统计样本（非等待读取）。
+            ViewportStats lastViewportStats() const noexcept;
             Integration::ImGuiRenderer& imgui();
 
         private:

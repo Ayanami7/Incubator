@@ -31,6 +31,7 @@
 #include "runtime/render/renderer.h"
 #include "runtime/render/vulkan/glfw_surface.h"
 #include "runtime/render/vulkan/vulkan_device.h"
+#include "runtime/render/vulkan/vulkan_frame_scheduler.h"
 #include "runtime/render/vulkan/vulkan_image.h"
 #include "runtime/render/vulkan/vulkan_instance.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
@@ -2355,6 +2356,244 @@ namespace
             ASSERT_TRUE(extent);
             renderer.imgui().endFrame();
             renderer.drawFrame(FrameInput{*extent, makeCamera(*extent), draws}, clearColor);
+        }
+        expectCleanValidation();
+    }
+
+    TEST(VulkanTimestampMathTest, ComputesDurationWithValidBitsWrapAroundAndValidation)
+    {
+        using Vulkan::computeTimestampDurationMs;
+        EXPECT_FALSE(computeTimestampDurationMs(10, 20, 0, 1.0f).has_value());
+        EXPECT_FALSE(computeTimestampDurationMs(10, 20, 32, 0.0f).has_value());
+        EXPECT_FALSE(computeTimestampDurationMs(10, 20, 32, -1.0f).has_value());
+
+        // 普通递增与毫秒换算（1,000,000 ticks * 1 ns = 1.0 ms）。
+        const auto normalMs = computeTimestampDurationMs(500, 1'000'500, 36, 1.0f);
+        ASSERT_TRUE(normalMs.has_value());
+        EXPECT_NEAR(*normalMs, 1.0, 1e-9);
+
+        // 仅保留低 32 位有效位，忽略高位脏位。
+        const auto maskedMs = computeTimestampDurationMs(0xABCD0000'00000100ULL, 0x12340000'00000500ULL, 32, 10.0f);
+        ASSERT_TRUE(maskedMs.has_value());
+        EXPECT_NEAR(*maskedMs, 0x400 * 10.0 / 1'000'000.0, 1e-9);
+
+        // 32 位计数器回绕：0xFFFFFF00 -> 0x00000100 经过 0x200 ticks。
+        const auto wrapped32Ms = computeTimestampDurationMs(0xFFFFFF00ULL, 0x00000100ULL, 32, 1000.0f);
+        ASSERT_TRUE(wrapped32Ms.has_value());
+        EXPECT_NEAR(*wrapped32Ms, 0x200 * 1000.0 / 1'000'000.0, 1e-9);
+
+        // 64 位计数器回绕。
+        const auto wrapped64Ms = computeTimestampDurationMs(std::numeric_limits<uint64_t>::max() - 99ULL, 100ULL, 64, 5.0f);
+        ASSERT_TRUE(wrapped64Ms.has_value());
+        EXPECT_NEAR(*wrapped64Ms, 200.0 * 5.0 / 1'000'000.0, 1e-9);
+    }
+
+    TEST_F(VulkanReviewTest, OffscreenViewportStatsLifecycleAndComparisonReport)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        auto fxaaHold = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
+            Resource::ResourceType::SHADER, "shaders/fxaa.frag.spv");
+        auto shadowHold = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
+            Resource::ResourceType::SHADER, "shaders/shadow.vert.spv");
+        ASSERT_TRUE(fxaaHold);
+        ASSERT_TRUE(shadowHold);
+        const Resource::ShaderResource fxaaShader({}, fxaaHold.get<Resource::ShaderResource>()->words());
+        const Resource::ShaderResource shadowShader({}, shadowHold.get<Resource::ShaderResource>()->words());
+        fxaaHold.reset();
+        shadowHold.reset();
+
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
+            renderer.prepareFxaaResources(fxaaShader);
+            renderer.prepareShadowResources(shadowShader);
+
+            const Resource::TextureResource whiteTex({}, 1, 1, {255, 255, 255, 255});
+            const auto white = renderer.createTexture(whiteTex, TextureMipMode::BaseLevel, TextureColorSpace::Srgb);
+            MaterialDesc groundMatDesc{white, {0.72f, 0.74f, 0.78f}};
+            groundMatDesc.shading = ShadingMode::Lambert;
+            const auto groundMat = renderer.createMaterial(groundMatDesc);
+            MaterialDesc cubeMatDesc{white, {0.88f, 0.45f, 0.25f}};
+            cubeMatDesc.shading = ShadingMode::Lambert;
+            const auto cubeMat = renderer.createMaterial(cubeMatDesc);
+
+            const auto cubeData = Demo::makeCubeMesh();
+            const auto cubeMesh = renderer.createMesh(cubeData.vertices, cubeData.indices);
+            const glm::mat4 groundModel =
+                glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.6f, 0.0f)), glm::vec3(5.0f, 0.2f, 5.0f));
+            const glm::mat4 casterA =
+                glm::rotate(glm::translate(glm::mat4(1.0f), glm::vec3(-0.8f, 0.2f, 0.2f)), glm::radians(28.0f),
+                            glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::mat4 casterB =
+                glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.9f, 0.0f, -0.5f)), glm::vec3(0.8f, 1.2f, 0.8f));
+            const std::array draws{
+                DrawItem{cubeMesh, groundMat, groundModel},
+                DrawItem{cubeMesh, cubeMat, casterA},
+                DrawItem{cubeMesh, cubeMat, casterB},
+            };
+            releaseCpuAssets(assets);
+
+            // 1. 首帧提交前无完成样本；零尺寸不会产生样本。
+            EXPECT_FALSE(renderer.lastViewportStats().hasCompletedSample);
+            EXPECT_EQ(Detail::RendererReviewAccess::completedViewportSampleCount(renderer), 0u);
+            EXPECT_FALSE(renderer.prepareSceneTarget({0, 0}, false).valid());
+            EXPECT_EQ(Detail::RendererReviewAccess::completedViewportSampleCount(renderer), 0u);
+
+            const std::array<float, 4> clearColor{0.08f, 0.10f, 0.14f, 1.0f};
+            const auto makeCamera = [](FrameExtent extent) {
+                const float aspect = float(extent.width) / float(extent.height);
+                auto projection = glm::perspectiveRH_ZO(glm::radians(45.0f), aspect, 0.1f, 50.0f);
+                projection[1][1] *= -1.0f;
+                return CameraMatrices{
+                    glm::lookAtRH(glm::vec3(2.8f, 2.2f, 3.6f), glm::vec3(0.0f, -0.1f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+                    projection};
+            };
+
+            const auto submitOffscreen = [&](FrameExtent extent, bool shadows, bool fxaa,
+                                             std::vector<uint8_t>* outPixels = nullptr) {
+                const auto uiExtent = renderer.beginUiFrame();
+                EXPECT_TRUE(uiExtent);
+                const auto output = renderer.prepareSceneTarget(extent, fxaa);
+                ImGui::Begin("Viewport");
+                ImGui::Image(static_cast<ImTextureID>(renderer.sceneImage(output)),
+                             ImVec2(float(extent.width), float(extent.height)));
+                ImGui::End();
+                renderer.imgui().endFrame();
+                auto* drawData = renderer.imgui().drawData();
+
+                FrameInput input{extent, makeCamera(extent), draws};
+                input.display = {ToneMappingMode::Reinhard, 0.0f};
+                input.lighting.direction = glm::normalize(glm::vec3(-0.6f, -1.0f, -0.4f));
+                input.lighting.color = {1.0f, 0.96f, 0.90f};
+                input.lighting.intensity = 2.6f;
+                input.lighting.ambient = 0.25f;
+                if (shadows)
+                {
+                    ShadowSettings settings;
+                    settings.enabled = true;
+                    settings.depthBias = 0.003f;
+                    input.shadow = makeShadowFrame(settings, input.lighting.direction);
+                    input.shadowDraws = draws;
+                }
+
+                renderer.drawSceneTarget(output, input, clearColor,
+                                         [&](void* cmd) { renderer.imgui().recordDrawData(drawData, cmd); });
+                if (outPixels)
+                {
+                    Detail::RendererReviewAccess::withSceneOutput(
+                        renderer, output, [&](const auto& device, const auto& image) {
+                            *outPixels = TextureGpuReview::captureMip(device, image, 0, {extent.width, extent.height});
+                        });
+                }
+            };
+
+            // 2. 生命周期：连续帧、开关阴影、drawFrame 不新增样本、尺寸重建。
+            submitOffscreen({320, 180}, false, false);
+            Detail::RendererReviewAccess::waitForFrames(renderer);
+            auto stats = renderer.lastViewportStats();
+            EXPECT_TRUE(stats.hasCompletedSample);
+            EXPECT_EQ(stats.sceneDrawCount, 3u);
+            EXPECT_EQ(stats.shadowDrawCount, 0u);
+            if (stats.gpuTimestampAvailable)
+            {
+                ASSERT_TRUE(stats.gpuTimeMs.has_value());
+                EXPECT_GE(*stats.gpuTimeMs, 0.0);
+            }
+            EXPECT_EQ(Detail::RendererReviewAccess::completedViewportSampleCount(renderer), 1u);
+
+            // 开启阴影并等待该样本完成。
+            submitOffscreen({320, 180}, true, false);
+            Detail::RendererReviewAccess::waitForFrames(renderer);
+            stats = renderer.lastViewportStats();
+            EXPECT_TRUE(stats.hasCompletedSample);
+            EXPECT_EQ(stats.sceneDrawCount, 3u);
+            EXPECT_EQ(stats.shadowDrawCount, 3u);
+            EXPECT_EQ(Detail::RendererReviewAccess::completedViewportSampleCount(renderer), 2u);
+
+            // 直接呈现路径 drawFrame 不应新增离屏视口样本。
+            {
+                const auto uiExtent = renderer.beginUiFrame();
+                ASSERT_TRUE(uiExtent);
+                renderer.imgui().endFrame();
+                renderer.drawFrame(FrameInput{*uiExtent, makeCamera(*uiExtent), draws}, clearColor);
+                Detail::RendererReviewAccess::waitForFrames(renderer);
+                EXPECT_EQ(Detail::RendererReviewAccess::completedViewportSampleCount(renderer), 2u);
+            }
+
+            // 尺寸重建后提交仍正常采集样本。
+            submitOffscreen({480, 270}, false, true);
+            Detail::RendererReviewAccess::waitForFrames(renderer);
+            stats = renderer.lastViewportStats();
+            EXPECT_EQ(stats.sceneDrawCount, 3u);
+            EXPECT_EQ(stats.shadowDrawCount, 0u);
+            EXPECT_EQ(Detail::RendererReviewAccess::completedViewportSampleCount(renderer), 3u);
+
+            // 3. 固定条件三组对照（640x360）：全关 / 仅开 Shadows / 仅开 FXAA。
+            constexpr FrameExtent COMPARE_EXTENT{640, 360};
+            constexpr int WARMUP_FRAMES = 4;
+            constexpr int SAMPLE_FRAMES = 11;
+            struct GroupSpec
+            {
+                const char* label;
+                const char* ppmName;
+                bool shadows;
+                bool fxaa;
+            };
+            const std::array<GroupSpec, 3> groups{{
+                {"AllOff", "stats-off.ppm", false, false},
+                {"ShadowsOnly", "stats-shadows.ppm", true, false},
+                {"FxaaOnly", "stats-fxaa.ppm", false, true},
+            }};
+
+            const auto reviewDir = Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR).parent_path().parent_path() / "review";
+            std::filesystem::create_directories(reviewDir);
+            std::ostringstream report;
+            report << "Viewport Stats Comparison (640x360, Debug, Validation=Required)\n";
+            report << "Warmup=" << WARMUP_FRAMES << ", Samples=" << SAMPLE_FRAMES << "\n";
+
+            for (const auto& group : groups)
+            {
+                for (int i = 0; i < WARMUP_FRAMES; ++i)
+                    submitOffscreen(COMPARE_EXTENT, group.shadows, group.fxaa);
+                Detail::RendererReviewAccess::waitForFrames(renderer);
+
+                std::vector<double> gpuTimes;
+                uint32_t recordedSceneDraws = 0;
+                uint32_t recordedShadowDraws = 0;
+                std::vector<uint8_t> finalPixels;
+                for (int i = 0; i < SAMPLE_FRAMES; ++i)
+                {
+                    submitOffscreen(COMPARE_EXTENT, group.shadows, group.fxaa,
+                                    (i + 1 == SAMPLE_FRAMES) ? &finalPixels : nullptr);
+                    Detail::RendererReviewAccess::waitForFrames(renderer);
+                    const auto current = renderer.lastViewportStats();
+                    EXPECT_TRUE(current.hasCompletedSample);
+                    EXPECT_EQ(current.sceneDrawCount, 3u);
+                    EXPECT_EQ(current.shadowDrawCount, group.shadows ? 3u : 0u);
+                    recordedSceneDraws = current.sceneDrawCount;
+                    recordedShadowDraws = current.shadowDrawCount;
+                    if (current.gpuTimeMs.has_value())
+                        gpuTimes.push_back(*current.gpuTimeMs);
+                }
+
+                WindowCapture::save({int(COMPARE_EXTENT.width), int(COMPARE_EXTENT.height), finalPixels},
+                                    reviewDir / group.ppmName);
+
+                double medianMs = 0.0;
+                if (!gpuTimes.empty())
+                {
+                    std::sort(gpuTimes.begin(), gpuTimes.end());
+                    medianMs = gpuTimes[gpuTimes.size() / 2];
+                }
+                report << group.label << ": medianGpuMs=" << medianMs << ", sceneDraws=" << recordedSceneDraws
+                       << ", shadowDraws=" << recordedShadowDraws << ", ppm=" << group.ppmName << "\n";
+            }
+
+            std::ofstream reportFile(reviewDir / "viewport-stats-comparison.txt");
+            reportFile << report.str();
+            std::cout << report.str() << std::endl;
         }
         expectCleanValidation();
     }

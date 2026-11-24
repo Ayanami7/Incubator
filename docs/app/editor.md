@@ -78,6 +78,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | F / Focus selected | 显式聚焦选中实体的世界包围体，保留朝向、FOV 和实体变换；F 受 UI 键盘捕获与 Gizmo 拖拽互斥约束 |
 | Reset view | 恢复位置 `(0,0,6)`、默认朝向和投影的相机，不重建实体或改变选择 |
 | View：FXAA | 控制独立视口 LDR FXAA 预览开关（控件 `##fxaa`，默认关闭）；仅本会话有效，切换在下一个有效视口帧生效，不产生脏状态或 Undo 记录 |
+| View：性能统计 | 显示 `CPU frame`（主循环 `FrameTime::delta`，毫秒）、`GPU viewport`（最近完成视口帧 GPU 总耗时，毫秒）、`Scene draws`（主场景绘制项数）与 `Shadow draws`（阴影绘制项数，关闭时为 0）；首帧等待完成样本显示 `--`，队列不支持时间戳时 GPU 耗时显示 `Unavailable` |
 | Background | 修改背景颜色（调色盘或面板改动合并为单步 Undo） |
 | Shadows / Receiver depth bias | 开关阴影预览，调整接收偏移；仅本会话有效，不写入场景文件，不置脏也不进入 Undo 栈 |
 | Exit | 请求会话退出，也可直接关闭窗口（均受未保存修改拦截保护） |
@@ -186,6 +187,8 @@ Camera 与实体状态提取场景并合成 UI。视口关闭、折叠或没有�
 视口输入按当帧图像区域判断归属，工作区布局独立于场景内容。
 
 `Properties → View` 中的 `FXAA`（`##fxaa`）经 `EditorApp::fxaaEnabled()`（由 `AppSession` 持有）控制独立视口的固定质量 LDR FXAA，默认关闭。颜色处理顺序为线性 HDR 主场景 → 显示 Pass（曝光、色调映射与 sRGB 编码）→ 可选 FXAA → ImGui（界面、文字、选中框与 Gizmo）；开关在 UI 阶段切换，本帧布局、图像注册与提交继续共用 `SceneOutput` 内已记录的状态，改动从下一有效视口帧生效。首次在有效视口帧启用时，按需经 `ShaderResource` 路由加载并准备 `shaders/fxaa.frag.spv`（关闭状态及 Demo 不加载），随即释放 CPU 持有；切换不改变场景文件、脏状态或历史栈。
+
+`Properties → View` 同时展示由 `AppSession::lastFrameTime()` 与 `Renderer::lastViewportStats()` 提供的四项会话诊断指标：`CPU frame` 取主循环最近一帧 `FrameTime::delta`（毫秒）；`GPU viewport`、`Scene draws` 与 `Shadow draws` 来自同一份最近已完成的离屏视口帧槽样本（从可选阴影深度 Pass 前到显示 Pass 或 FXAA 结束，止于 ImGui 合成之前）。首帧样本未完成前显示 `--`；图形队列不支持时间戳时 `GPU viewport` 显示 `Unavailable`，`CPU frame` 与绘制项数仍正常更新。
 
 ## 停靠工作区与文件关联
 

@@ -28,7 +28,8 @@ namespace Incubator
                 }
             }  // namespace
 
-            VulkanFrameScheduler::VulkanFrameScheduler(const VulkanDevice& device) : device_(device)
+            VulkanFrameScheduler::VulkanFrameScheduler(const VulkanDevice& device)
+                : device_(device), supportsTimestamps_(device.supportsGraphicsTimestamps())
             {
                 try
                 {
@@ -59,12 +60,24 @@ namespace Incubator
                         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
                         checkVk(vkCreateFence(device_.handle(), &fenceInfo, nullptr, &frame.completionFence),
                                 "vkCreateFence");
+
+                        if (supportsTimestamps_)
+                        {
+                            VkQueryPoolCreateInfo queryInfo{};
+                            queryInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+                            queryInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+                            queryInfo.queryCount = 2;
+                            checkVk(vkCreateQueryPool(device_.handle(), &queryInfo, nullptr, &frame.timestampPool),
+                                    "vkCreateQueryPool");
+                        }
                     }
                 }
                 catch (...)
                 {
                     for (FrameSlot& frame : frames_)
                     {
+                        if (frame.timestampPool != VK_NULL_HANDLE)
+                            vkDestroyQueryPool(device_.handle(), frame.timestampPool, nullptr);
                         if (frame.completionFence != VK_NULL_HANDLE)
                             vkDestroyFence(device_.handle(), frame.completionFence, nullptr);
                         if (frame.imageAvailable != VK_NULL_HANDLE)
@@ -90,6 +103,8 @@ namespace Incubator
                 destroySwapchainSync();
                 for (FrameSlot& frame : frames_)
                 {
+                    if (frame.timestampPool != VK_NULL_HANDLE)
+                        vkDestroyQueryPool(device_.handle(), frame.timestampPool, nullptr);
                     if (frame.completionFence != VK_NULL_HANDLE)
                         vkDestroyFence(device_.handle(), frame.completionFence, nullptr);
                     if (frame.imageAvailable != VK_NULL_HANDLE)
@@ -149,7 +164,10 @@ namespace Incubator
                                         std::numeric_limits<uint64_t>::max()),
                         "vkWaitForFences");
                 for (FrameSlot& frame : frames_)
+                {
+                    consumeFrameViewportSample(frame);
                     frame.inFlightResources.clear();
+                }
             }
 
             void VulkanFrameScheduler::waitForCurrentFrame()
@@ -158,12 +176,63 @@ namespace Incubator
                 checkVk(vkWaitForFences(device_.handle(), 1, &frame.completionFence, VK_TRUE,
                                         std::numeric_limits<uint64_t>::max()),
                         "vkWaitForFences(frame update)");
+                consumeFrameViewportSample(frame);
                 frame.inFlightResources.clear();
             }
 
             uint32_t VulkanFrameScheduler::currentFrameIndex() const noexcept
             {
                 return frameIndex_;
+            }
+
+            bool VulkanFrameScheduler::supportsTimestamps() const noexcept
+            {
+                return supportsTimestamps_;
+            }
+
+            const std::optional<CompletedViewportSample>& VulkanFrameScheduler::lastCompletedViewportSample()
+                const noexcept
+            {
+                return lastCompletedViewportSample_;
+            }
+
+            uint64_t VulkanFrameScheduler::completedViewportSampleCount() const noexcept
+            {
+                return completedViewportSampleCount_;
+            }
+
+            void VulkanFrameScheduler::consumeFrameViewportSample(FrameSlot& frame)
+            {
+                if (!frame.viewportStatsPending)
+                    return;
+
+                CompletedViewportSample sample;
+                sample.sceneDrawCount = frame.pendingSceneDrawCount;
+                sample.shadowDrawCount = frame.pendingShadowDrawCount;
+
+                if (supportsTimestamps_ && frame.timestampPool != VK_NULL_HANDLE)
+                {
+                    std::array<uint64_t, 2> timestamps{};
+                    const VkResult queryResult = vkGetQueryPoolResults(
+                        device_.handle(), frame.timestampPool, 0, 2, sizeof(timestamps), timestamps.data(),
+                        sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+                    if (queryResult == VK_SUCCESS)
+                    {
+                        sample.gpuTimeMs = computeTimestampDurationMs(
+                            timestamps[0], timestamps[1], device_.queueFamilies().graphicsTimestampValidBits,
+                            device_.properties().limits.timestampPeriod);
+                    }
+                    else if (queryResult != VK_NOT_READY)
+                    {
+                        checkVk(queryResult, "vkGetQueryPoolResults");
+                    }
+                }
+
+                frame.viewportStatsPending = false;
+                frame.pendingSceneDrawCount = 0;
+                frame.pendingShadowDrawCount = 0;
+                lastCompletedViewportSample_ = sample;
+                ++completedViewportSampleCount_;
             }
 
             void VulkanFrameScheduler::waitForPresentation()
@@ -183,12 +252,14 @@ namespace Incubator
                                                         const VkClearColorValue& clearColor,
                                                         const std::function<void(VkCommandBuffer)>& recordScene,
                                                         std::span<const std::shared_ptr<void>> inFlightResources,
-                                                        const std::function<void(VkCommandBuffer)>& beforeScene)
+                                                        const std::function<void(VkCommandBuffer)>& beforeScene,
+                                                        const std::optional<ViewportSampleInput>& viewportSample)
             {
                 FrameSlot& frame = frames_[frameIndex_];
                 checkVk(vkWaitForFences(device_.handle(), 1, &frame.completionFence, VK_TRUE,
                                         std::numeric_limits<uint64_t>::max()),
                         "vkWaitForFences(frame)");
+                consumeFrameViewportSample(frame);
                 frame.inFlightResources.clear();
                 frame.inFlightResources.assign(inFlightResources.begin(), inFlightResources.end());
 
@@ -226,8 +297,11 @@ namespace Incubator
                 }
 
                 checkVk(vkResetCommandPool(device_.handle(), frame.commandPool, 0), "vkResetCommandPool");
+                const VkQueryPool timestampPool =
+                    (viewportSample.has_value() && supportsTimestamps_) ? frame.timestampPool : VK_NULL_HANDLE;
                 VulkanCommandList::record(frame.commandBuffer, swapchain, imageIndex, clearColor,
-                                          frame.depthAttachment->handle(), frame.depthAttachment->view(), recordScene, beforeScene);
+                                          frame.depthAttachment->handle(), frame.depthAttachment->view(), recordScene,
+                                          beforeScene, timestampPool);
 
                 VkSemaphoreSubmitInfo waitInfo{};
                 waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
@@ -253,6 +327,12 @@ namespace Incubator
                 checkVk(vkResetFences(device_.handle(), 1, &frame.completionFence), "vkResetFences(frame)");
                 checkVk(vkQueueSubmit2(device_.graphicsQueue(), 1, &submitInfo, frame.completionFence),
                         "vkQueueSubmit2");
+                if (viewportSample.has_value())
+                {
+                    frame.viewportStatsPending = true;
+                    frame.pendingSceneDrawCount = viewportSample->sceneDrawCount;
+                    frame.pendingShadowDrawCount = viewportSample->shadowDrawCount;
+                }
                 imageOwners_[imageIndex] = frame.completionFence;
 
                 VkSwapchainPresentFenceInfoEXT presentFenceInfo{};

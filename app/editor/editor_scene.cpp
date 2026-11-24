@@ -1078,6 +1078,28 @@ namespace Incubator::Editor
                 resetCamera(app);
             rowLabel("FXAA");
             ImGui::Checkbox("##fxaa", &app.fxaaEnabled());
+            ImGui::Separator();
+            const double cpuFrameMs = app.lastFrameTime().deltaSeconds() * 1000.0;
+            const auto stats = app.viewportStats();
+            rowLabel("CPU frame");
+            ImGui::Text("%.2f ms", cpuFrameMs);
+            rowLabel("GPU viewport");
+            if (!stats.gpuTimestampAvailable)
+                ImGui::TextUnformatted("Unavailable");
+            else if (!stats.hasCompletedSample || !stats.gpuTimeMs.has_value())
+                ImGui::TextUnformatted("--");
+            else
+                ImGui::Text("%.2f ms", *stats.gpuTimeMs);
+            rowLabel("Scene draws");
+            if (!stats.hasCompletedSample)
+                ImGui::TextUnformatted("--");
+            else
+                ImGui::Text("%u", stats.sceneDrawCount);
+            rowLabel("Shadow draws");
+            if (!stats.hasCompletedSample)
+                ImGui::TextUnformatted("--");
+            else
+                ImGui::Text("%u", stats.shadowDrawCount);
         }
         if (ImGui::CollapsingHeader("Scene settings", ImGuiTreeNodeFlags_DefaultOpen))
         {

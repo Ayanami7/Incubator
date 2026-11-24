@@ -111,6 +111,18 @@ namespace Incubator::App
         {
             return sceneDrawList_;
         }
+        /// @brief 返回当前主循环最近一帧的 CPU 帧时间。
+        const FrameTime& lastFrameTime() const
+        {
+            requireOpen();
+            return lastFrameTime_;
+        }
+        /// @brief 返回最近一次已完成的离屏视口帧统计样本。
+        Render::ViewportStats viewportStats() const
+        {
+            requireOpen();
+            return renderer_->lastViewportStats();
+        }
 
     private:
         struct FrameCallbacks
@@ -151,6 +163,7 @@ namespace Incubator::App
         Render::SceneOutput sceneOutput_;
         App::ViewportRegion viewportRegion_;
         ImDrawList* sceneDrawList_ = nullptr;
+        FrameTime lastFrameTime_{};
         bool sceneChanged_ = false;
         bool ownsRoutes_ = false;
         bool exitRequested_ = false;

@@ -90,6 +90,7 @@ namespace Incubator
                     vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, properties.data());
 
                     uint32_t firstGraphics = VK_QUEUE_FAMILY_IGNORED;
+                    uint32_t firstGraphicsTimestampValidBits = 0;
                     uint32_t firstPresent = VK_QUEUE_FAMILY_IGNORED;
                     for (uint32_t index = 0; index < count; ++index)
                     {
@@ -107,11 +108,13 @@ namespace Incubator
                         {
                             indices.graphics = index;
                             indices.present = index;
+                            indices.graphicsTimestampValidBits = properties[index].timestampValidBits;
                             return true;
                         }
                         if (graphics && firstGraphics == VK_QUEUE_FAMILY_IGNORED)
                         {
                             firstGraphics = index;
+                            firstGraphicsTimestampValidBits = properties[index].timestampValidBits;
                         }
                         if (present == VK_TRUE && firstPresent == VK_QUEUE_FAMILY_IGNORED)
                         {
@@ -121,6 +124,7 @@ namespace Incubator
 
                     indices.graphics = firstGraphics;
                     indices.present = firstPresent;
+                    indices.graphicsTimestampValidBits = firstGraphicsTimestampValidBits;
                     return firstGraphics != VK_QUEUE_FAMILY_IGNORED && firstPresent != VK_QUEUE_FAMILY_IGNORED;
                 }
 
@@ -294,6 +298,11 @@ namespace Incubator
             const VkPhysicalDeviceProperties& VulkanDevice::properties() const noexcept
             {
                 return properties_;
+            }
+
+            bool VulkanDevice::supportsGraphicsTimestamps() const noexcept
+            {
+                return queueFamilies_.graphicsTimestampValidBits > 0 && properties_.limits.timestampPeriod > 0.0f;
             }
 
             uint32_t VulkanDevice::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags required,

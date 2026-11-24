@@ -18,6 +18,7 @@ namespace Incubator
             {
                 uint32_t graphics = VK_QUEUE_FAMILY_IGNORED;
                 uint32_t present = VK_QUEUE_FAMILY_IGNORED;
+                uint32_t graphicsTimestampValidBits = 0;
             };
 
             class VulkanDevice
@@ -35,6 +36,8 @@ namespace Incubator
                 VkQueue presentQueue() const noexcept;
                 const QueueFamilyIndices& queueFamilies() const noexcept;
                 const VkPhysicalDeviceProperties& properties() const noexcept;
+                /// @brief 判断选定图形队列族是否支持有效时间戳与非零计时周期。
+                bool supportsGraphicsTimestamps() const noexcept;
                 uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags required,
                                         VkMemoryPropertyFlags preferred,
                                         VkMemoryPropertyFlags* selectedProperties = nullptr) const;

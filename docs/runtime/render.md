@@ -381,6 +381,8 @@ Scene 实体共享准备结果，`Scene::extractSceneFrame` 将实体整体变�
 后续 UI 采样沿用对应的 `RGBA8 UNORM` 图像（原 LDR 图或 FXAA 输出图），避免再次编码。图像方向与当前直接绘制一致；`drawFrame` 不支持也不录制 FXAA。
 旧附件在槽 Fence 完成后替换，稳定帧不分配目标或等待整个设备空闲；原 `drawFrame` 直接绘制入口继续可用。
 
+`Renderer::lastViewportStats()` 返回最近一次已完成的离屏视口帧统计样本 `ViewportStats`（包含 `hasCompletedSample`、`gpuTimestampAvailable`、`gpuTimeMs`、`sceneDrawCount`、`shadowDrawCount`）。时间戳仅在 `drawSceneTarget` 成功提交时随帧槽记录，覆盖可选阴影深度 Pass 前到显示 Pass / FXAA 结束（止于交换链 UI 之前），并在该帧槽既有 Fence 完成后以非等待方式读取（按图形队列 `timestampValidBits` 屏蔽与处理回绕，并乘以 `timestampPeriod` 换算毫秒）；`drawFrame` 与因窗口尺寸变化跳过的帧不产生样本，且不增加额外 GPU 等待。
+
 ### 场景图像与 UI 帧
 
 在 `beginUiFrame()` 之后，布局确定图像区域，再调用 `prepareSceneTarget` 和 `sceneImage` 取得当前槽对应输出（原 LDR 或 FXAA）的

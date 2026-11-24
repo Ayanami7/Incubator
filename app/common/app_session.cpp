@@ -204,6 +204,7 @@ namespace Incubator::App
                 const auto now = Clock::now();
                 const FrameTime time{now, now - previous};
                 previous = now;  // 每轮循环都推进时间，包括跳过渲染的循环。
+                lastFrameTime_ = time;
                 if (callbacks.update)
                     callbacks.update(time);
                 if (exitRequested_ || window_->shouldClose())

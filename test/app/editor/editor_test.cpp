@@ -3039,4 +3039,92 @@ namespace
         }
         cleanValidation();
     }
+
+    TEST_F(EditorAppTest, ViewStatsPanelCpuGpuAndDrawCountsTrackShadowToggle)
+    {
+        copyShowcaseModels();
+        {
+            Editor::EditorApp session(options(true, 1280, 800));
+            Editor::EditorScene editor;
+            int frame = 0;
+            int step = 0;
+            int waitCounter = 0;
+            uint32_t expectedSceneDraws = 0;
+            bool done = false;
+            auto* handle = static_cast<GLFWwindow*>(session.window().getNativeHandle());
+            enableGlfwCallbacks(handle, false);
+
+            session.run(
+                {[&](auto& app) {
+                     editor.initialize(app, "assets/scenes/mixed.json");
+                     EXPECT_FALSE(app.shadowSettings().enabled);
+                     EXPECT_FALSE(app.viewportStats().hasCompletedSample);
+                 },
+                 [&](auto& app, const auto&) {
+                     if (++frame > 180)
+                     {
+                         ADD_FAILURE() << "View stats editor integration test timeout at step=" << step;
+                         app.requestExit();
+                         return;
+                     }
+                     EXPECT_TRUE(std::isfinite(app.lastFrameTime().deltaSeconds()));
+                     EXPECT_GE(app.lastFrameTime().deltaSeconds(), 0.0);
+
+                     auto* propsWin = ImGui::FindWindowByName("Properties");
+                     if (frame < 6 || !propsWin || !app.sceneOutput().valid())
+                         return;
+
+                     const auto stats = app.viewportStats();
+                     switch (step)
+                     {
+                         case 0:
+                             if (stats.hasCompletedSample)
+                             {
+                                 EXPECT_GT(stats.sceneDrawCount, 0u);
+                                 EXPECT_EQ(stats.shadowDrawCount, 0u);
+                                 if (stats.gpuTimestampAvailable)
+                                 {
+                                     ASSERT_TRUE(stats.gpuTimeMs.has_value());
+                                     EXPECT_GE(*stats.gpuTimeMs, 0.0);
+                                 }
+                                 expectedSceneDraws = stats.sceneDrawCount;
+                                 propsWin->Scroll.y = propsWin->ScrollMax.y;
+                                 ImGui::ActivateItemByID(propsWin->GetID("##shadows"));
+                                 waitCounter = 0;
+                                 ++step;
+                             }
+                             break;
+                         case 1:
+                             EXPECT_TRUE(app.shadowSettings().enabled);
+                             if (++waitCounter >= 4 && stats.hasCompletedSample && stats.shadowDrawCount > 0u)
+                             {
+                                 EXPECT_EQ(stats.sceneDrawCount, expectedSceneDraws);
+                                 EXPECT_EQ(stats.shadowDrawCount, expectedSceneDraws);
+                                 propsWin->Scroll.y = propsWin->ScrollMax.y;
+                                 ImGui::ActivateItemByID(propsWin->GetID("##shadows"));
+                                 waitCounter = 0;
+                                 ++step;
+                             }
+                             break;
+                         case 2:
+                             EXPECT_FALSE(app.shadowSettings().enabled);
+                             if (++waitCounter >= 4 && stats.hasCompletedSample && stats.shadowDrawCount == 0u)
+                             {
+                                 EXPECT_EQ(stats.sceneDrawCount, expectedSceneDraws);
+                                 EXPECT_FALSE(editor.isDirty());
+                                 done = true;
+                                 app.requestExit();
+                             }
+                             break;
+                     }
+                 },
+                 [&](auto& app) { editor.ui(app); },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            EXPECT_TRUE(done);
+        }
+        cleanValidation();
+    }
 }  // namespace
