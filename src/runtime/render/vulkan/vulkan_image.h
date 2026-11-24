@@ -20,7 +20,8 @@ namespace Incubator
             {
             public:
                 VulkanImage(const VulkanDevice& device, VkExtent2D extent, VkFormat format, VkImageUsageFlags usage,
-                            VkImageAspectFlags aspect, uint32_t mipLevels = 1);
+                            VkImageAspectFlags aspect, uint32_t mipLevels = 1, uint32_t arrayLayers = 1,
+                            VkImageCreateFlags flags = 0, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
                 ~VulkanImage();
 
                 VulkanImage(const VulkanImage&) = delete;
@@ -30,6 +31,11 @@ namespace Incubator
                                                                 VkFormat format, std::span<const uint8_t> pixels,
                                                                 VkImageUsageFlags usage,
                                                                 TextureMipMode mipMode = TextureMipMode::BaseLevel);
+
+                /// @brief 上传线性 RGBA16F（2D 或 6 面 Cubemap）多级 mip 纹理。
+                static std::shared_ptr<VulkanImage> uploadRgba16f(
+                    const VulkanDevice& device, VkExtent2D extent, uint32_t arrayLayers,
+                    std::span<const std::span<const uint16_t>> mipPayloads, VkImageUsageFlags usage);
 
                 /// @brief 验证 RGBA8 图像和 mip 链是否受设备支持。
                 /// @param extent 基础 mip 的图像尺寸。
@@ -43,11 +49,19 @@ namespace Incubator
                                                  const VkImageFormatProperties& imageProperties,
                                                  uint32_t mipLevels = 1);
 
+                /// @brief 验证 RGBA16F（2D 或 Cubemap）图像和 mip 链是否受设备支持。
+                static void validateRgba16fSupport(VkExtent2D extent, uint32_t arrayLayers, uint32_t mipLevels,
+                                                   const VkPhysicalDeviceLimits& deviceLimits,
+                                                   const VkFormatProperties& formatProperties,
+                                                   const VkImageFormatProperties& imageProperties);
+
                 VkImage handle() const noexcept;
                 VkImageView view() const noexcept;
                 VkExtent2D extent() const noexcept;
                 VkFormat format() const noexcept;
                 uint32_t mipLevels() const noexcept;
+                uint32_t arrayLayers() const noexcept;
+                bool isCubemap() const noexcept;
 
             private:
                 const VulkanDevice& device_;
@@ -57,6 +71,8 @@ namespace Incubator
                 VkExtent2D extent_{};
                 VkFormat format_ = VK_FORMAT_UNDEFINED;
                 uint32_t mipLevels_ = 1;
+                uint32_t arrayLayers_ = 1;
+                bool isCubemap_ = false;
             };
         }  // namespace Vulkan
     }  // namespace Render

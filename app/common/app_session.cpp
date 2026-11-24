@@ -11,6 +11,7 @@
 #include "runtime/core/error/error.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/resource/loader/model_loader.h"
+#include "runtime/resource/loader/float_texture_resource.h"
 #include "runtime/resource/loader/shader_loader.h"
 #include "runtime/resource/loader/shader_resource.h"
 #include "runtime/resource/loader/texture_loader.h"
@@ -23,7 +24,10 @@ namespace Incubator::App
         : name_(std::move(name)),
           fileIO_(std::move(fileIO)),
           clearColor_(options.clearColor),
-          fxaaFragmentShader_(options.fxaaFragmentShader)
+          fxaaFragmentShader_(options.fxaaFragmentShader),
+          iblIrradiancePath_(options.iblIrradiance),
+          iblPrefilteredPath_(options.iblPrefiltered),
+          iblBrdfLutPath_(options.iblBrdfLut)
     {
         shadowSettings_.depthBias = 0.003f;
         auto& manager = Resource::ResourceManager::instance();
@@ -143,6 +147,18 @@ namespace Incubator::App
         return fxaaEnabled_;
     }
 
+    bool& AppSession::iblEnabled()
+    {
+        requireOpen();
+        return iblEnabled_;
+    }
+
+    bool AppSession::iblEnabled() const
+    {
+        requireOpen();
+        return iblEnabled_;
+    }
+
     const Render::SceneOutput& AppSession::sceneOutput() const
     {
         requireOpen();
@@ -249,8 +265,28 @@ namespace Incubator::App
                     renderer_->imgui().endFrame();
                     break;
                 }
-                const auto frame = Scene::extractSceneFrame(*scene_, renderExtent, true, shadowSettings_);
+                const auto frame = Scene::extractSceneFrame(*scene_, renderExtent, true, shadowSettings_, iblEnabled_);
                 renderer_->imgui().endFrame();
+                if (frame && frame->iblEnabled && !iblResourcesPrepared_)
+                {
+                    auto& manager = Resource::ResourceManager::instance();
+                    const auto irrHold =
+                        manager.hold<Resource::FloatTextureResource>(Resource::ResourceType::TEXTURE, iblIrradiancePath_);
+                    const auto preHold =
+                        manager.hold<Resource::FloatTextureResource>(Resource::ResourceType::TEXTURE, iblPrefilteredPath_);
+                    const auto lutHold =
+                        manager.hold<Resource::FloatTextureResource>(Resource::ResourceType::TEXTURE, iblBrdfLutPath_);
+                    const auto* irrData = irrHold.get<Resource::FloatTextureResource>();
+                    const auto* preData = preHold.get<Resource::FloatTextureResource>();
+                    const auto* lutData = lutHold.get<Resource::FloatTextureResource>();
+                    if (!irrData || !preData || !lutData)
+                        throw Error::Exception(Error::Code::RENDER, "Cannot load application IBL environment assets");
+                    const auto irr = renderer_->createTexture(*irrData);
+                    const auto pre = renderer_->createTexture(*preData);
+                    const auto lut = renderer_->createTexture(*lutData);
+                    renderer_->prepareIblResources(irr, pre, lut);
+                    iblResourcesPrepared_ = true;
+                }
                 if (callbacks.layout && frame && frame->shadow && !shadowResourcesPrepared_)
                 {
                     const auto depth = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(

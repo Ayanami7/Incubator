@@ -22,6 +22,7 @@ namespace Incubator
 
     namespace Resource
     {
+        class FloatTextureResource;
         class ShaderResource;
         class TextureResource;
     }  // namespace Resource
@@ -101,6 +102,14 @@ namespace Incubator
                                   TextureMipMode mipMode = TextureMipMode::BaseLevel,
                                   TextureColorSpace colorSpace = TextureColorSpace::Srgb);
 
+            /// @brief 同步上传线性 RGBA16F 浮点纹理（支持 2D 与 Cubemap 多级 mip 链）。
+            /// @param texture CPU 浮点纹理，仅在本次调用期间借用。
+            /// @return 由此 Renderer 持有的纹理引用。
+            Texture createTexture(const Resource::FloatTextureResource& texture);
+
+            /// @brief 同步上传线性 RGBA16F 浮点纹理并由指定资源组持有。
+            Texture createTexture(GpuResources& resources, const Resource::FloatTextureResource& texture);
+
             /// @brief 准备共享场景着色器以及帧和材质布局。
             /// @param vertexShader 顶点着色器资源。
             /// @param fragmentShader 片段着色器资源。
@@ -124,6 +133,13 @@ namespace Incubator
             /// @param fragmentShader FXAA 片元着色器资源。
             /// @note 须在 prepareDisplayResources 之后调用，复用全屏顶点着色器；仅复制 SPIR-V 字码，不保留 CPU Resource。
             void prepareFxaaResources(const Resource::ShaderResource& fragmentShader);
+
+            /// @brief 安装本 Renderer 会话共享的固定 IBL 环境贴图（漫反射辐照度、预过滤镜面与 BRDF 查找表）。
+            /// @param irradiance 6 面 Cubemap 漫反射辐照度纹理。
+            /// @param prefiltered 6 面 Cubemap 按粗糙度预过滤镜面环境纹理。
+            /// @param brdfLut 2D BRDF 查找表纹理。
+            /// @note 须在 prepareSceneResources 之后调用；三张纹理均须由此 Renderer 从 FloatTextureResource 上传。
+            void prepareIblResources(const Texture& irradiance, const Texture& prefiltered, const Texture& brdfLut);
 
             /// @brief 根据描述创建不可变材质绑定。
             /// @param desc 材质描述，仅在本次调用期间借用。

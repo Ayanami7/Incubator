@@ -145,11 +145,12 @@ auto otherMaterial = renderer.createMaterial({sharedTexture, {0.5f, 1.0f, 0.5f}}
 准备过程先在局部创建副本、Descriptor 和可用 extent 下的 Pipeline，全部成功后才安装；
 失败不留下部分准备状态，Renderer 仍可提交空帧或重新准备。Render 不通过 FileIO 或 Loader 读取资产。
 
-直接 `createTexture` 由 Renderer 持有至关闭，传入 GpuResources 的重载由资源组持有。复制/丢弃 Texture
+直接 `createTexture` 由 Renderer 持有至关闭，传入 GpuResources 的重载由资源组持有；除 `Resource::TextureResource`（RGBA8 2D）外，`createTexture` 同时支持从 `Resource::FloatTextureResource` 上传线性 `VK_FORMAT_R16G16B16A16_SFLOAT`（RGBA16F）2D 或 6 面 Cubemap 及其预生成 mip 链。复制/丢弃 Texture
 引用不影响持有；再次显式调用 `createTexture` 独立上传，不自动按路径或内容去重。
 `Texture::valid()` 表示实际对象尚被资源组、材质、在途帧或 Renderer 保留，空引用、最后持有结束或关闭后无效；
 移动 Renderer 后引用随其内部设备保持有效。
 Texture 仅标识 GPU 上传结果，与 CPU ResourceId 分别管理，也不使 Renderer 或设备延迟销毁。
+RGBA16F 纹理与 Cubemap 用于环境采样与查找表，不能绑定到材质的 2D RGBA8 贴图槽位。
 
 ## 最小材质与绑定
 
@@ -199,7 +200,7 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 
 设 `B = textureLinearRGB * materialColor`，`D` 为单位光线传播方向，`N` 为单位世界法线：
 Unlit 输出 `B`；Lambert 输出 `B * (ambient + lightColor * intensity * max(dot(N,-D),0) * shadowVisibility)`；
-Pbr 在切线空间法线扰动后（`normalScale > 0` 且切线与法线均非退化时构造正交 TBN，否则安全回退至几何法线）结合金属粗糙度贴图（`G` 通道为粗糙度并钳制至 `[0.04, 1]`，`B` 通道为金属度）与相机世界坐标 `cameraPosition`，计算能量守恒漫反射 `kD * B / PI` 与 Cook-Torrance GGX 镜面高光及阴影衰减。
+Pbr 在切线空间法线扰动后（`normalScale > 0` 且切线与法线均非退化时构造正交 TBN，否则安全回退至几何法线）结合金属粗糙度贴图（`G` 通道为粗糙度并钳制至 `[0.04, 1]`，`B` 通道为金属度）与相机世界坐标 `cameraPosition`，计算能量守恒漫反射 `kD * B / PI` 与 Cook-Torrance GGX 镜面高光及阴影衰减；当帧输入开启 `iblEnabled` 时，会话共享的漫反射辐照度 Cubemap、按粗糙度分级采样的预过滤镜面 Cubemap 与 BRDF 查找表（Split-Sum）替代 PBR 的常量环境项，方向光强度为零时仍正常输出环境漫反射与镜面反射，关闭时保持原常量环境项。
 计算在线性空间进行，最后 clamp 至 `[0,1]` 并使用原有精确 sRGB 编码一次，alpha 固定 1。
 零法线没有直接光贡献，仍保留环境项；直接光强度与环境系数同时为零时为黑色。
 这是最小漫反射预览，支持可选的单方向光硬阴影，不包含 PBR、源灯光或背面法线翻转。
@@ -208,10 +209,11 @@ Pbr 在切线空间法线扰动后（`normalScale > 0` 且切线与法线均非�
 
 | 数据 | 绑定与更新 |
 |---|---|
-| 帧相机与光照 | set 0 / binding 0，240 字节 FrameData，对 vertex/fragment 可见；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
+| 帧相机、光照与 IBL | set 0 / binding 0，272 字节 FrameData，对 vertex/fragment 可见；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
 | 材质纹理 | set 1 / binding 0，Combined Image Sampler；共享已有 Texture，不重复上传 |
 | 材质颜色与模式 | set 1 / binding 1，16 字节 fragment Uniform；仅创建时写入 |
 | 阴影深度图 | set 0 / binding 1，fragment Combined Image Sampler；内部 nearest/ClampToEdge、非比较采样，按帧槽更新 |
+| IBL 环境贴图与 LUT | set 0 / binding 2–4，分别绑定漫反射辐照度 `samplerCube`、预过滤镜面 `samplerCube` 与 BRDF 查找表 `sampler2D`；未调用 `prepareIblResources` 前绑定 1×1 安全占位纹理 |
 | 物体 model 与法线变换 | 112 字节 vertex push constant；逐物体录制 |
 
 帧与材质布局由 Renderer 各创建一份；同一 Shader、附件格式和固定状态下，所有材质共用一份
@@ -244,7 +246,7 @@ Pipeline；材质不绑定某个帧槽，可以被多帧同时读取。交换链
 提交签名为 `drawFrame(input, clearColor, recordUi)`，变换顺序为
 `projection * view * model * position`。输入和列表只在本次调用内借用：Frame Uniform 的
 view/projection 分别位于偏移 0、64，`lightDirectionIntensity`、`lightColorAmbient` 两个 vec4
-分别位于偏移 128、144；shadowViewProjection 位于 160，shadowParams 位于 224，总计 240 字节，
+分别位于偏移 128、144；shadowViewProjection 位于 160，shadowParams 位于 224，cameraPosition 位于 240，iblParams 位于 256，总计 272 字节，
 符合场景顶点、片元和阴影深度 Shader 的 std140 FrameData 布局。
 光照两个 vec4 的前者 xyz 为单位传播方向、w 为强度，后者 xyz 为线性 RGB、w 为环境系数。
 shadowParams.x 为接收深度偏移，y 为阴影启用标记；关闭时光源矩阵为单位矩阵、参数为零。

@@ -31,6 +31,7 @@
 #include "runtime/render/vulkan/vulkan_scene_target.h"
 #include "runtime/render/vulkan/vulkan_shadow_target.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
+#include "runtime/resource/loader/float_texture_resource.h"
 #include "runtime/resource/loader/shader_resource.h"
 #include "runtime/resource/loader/texture_resource.h"
 
@@ -158,8 +159,22 @@ namespace Incubator
                                                          texture.pixels(), VK_IMAGE_USAGE_SAMPLED_BIT, mipMode);
             }
 
+            Impl(const Vulkan::VulkanDevice& device, const Resource::FloatTextureResource& texture)
+                : owner(&device), colorSpace(TextureColorSpace::Linear), isFloat(true), isCubemap(texture.isCubemap())
+            {
+                std::vector<std::span<const uint16_t>> mipPayloads;
+                mipPayloads.reserve(texture.mips().size());
+                for (const auto& mip : texture.mips())
+                    mipPayloads.emplace_back(mip.rgba16f);
+                image = Vulkan::VulkanImage::uploadRgba16f(device, {texture.width(), texture.height()},
+                                                           texture.faceCount(), mipPayloads,
+                                                           VK_IMAGE_USAGE_SAMPLED_BIT);
+            }
+
             const Vulkan::VulkanDevice* owner;
             TextureColorSpace colorSpace = TextureColorSpace::Srgb;
+            bool isFloat = false;
+            bool isCubemap = false;
             std::shared_ptr<Vulkan::VulkanImage> image;
         };
 
@@ -370,6 +385,17 @@ namespace Incubator
                 return Texture(gpuTexture);
             }
 
+            Texture createTexture(const Resource::FloatTextureResource& texture,
+                                  const std::shared_ptr<GpuResources::Impl>& resources = {})
+            {
+                auto gpuTexture = std::make_shared<Texture::Impl>(device_, texture);
+                std::erase_if(textures_, [](const auto& entry) { return entry.object.expired(); });
+                textures_.push_back({gpuTexture, resources ? nullptr : gpuTexture});
+                if (resources)
+                    resources->objects.push_back(gpuTexture);
+                return Texture(gpuTexture);
+            }
+
             void prepareSceneResources(const Resource::ShaderResource& vertexShader,
                                        const Resource::ShaderResource& fragmentShader)
             {
@@ -431,6 +457,41 @@ namespace Incubator
                     VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0);
             }
 
+            void prepareIblResources(const Texture& irradiance, const Texture& prefiltered, const Texture& brdfLut)
+            {
+                if (!bindingSet_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare scene resources before IBL resources");
+                if (iblIrradiance_)
+                    throw Error::Exception(Error::Code::RENDER, "IBL resources are already prepared");
+                const auto resolveFloatTexture = [&](const Texture& handle, bool expectCubemap, const char* name) {
+                    auto resolved = handle.impl_.lock();
+                    if (!resolved || resolved->owner != &device_)
+                        throw Error::Exception(
+                            Error::Code::RENDER,
+                            fmt::format("IBL {} texture is invalid or belongs to another Renderer", name));
+                    if (!resolved->isFloat)
+                        throw Error::Exception(
+                            Error::Code::RENDER,
+                            fmt::format("IBL {} texture must use linear RGBA16F float format", name));
+                    if (resolved->isCubemap != expectCubemap)
+                        throw Error::Exception(
+                            Error::Code::RENDER,
+                            fmt::format("IBL {} texture dimensionality mismatch", name));
+                    return resolved;
+                };
+                auto irr = resolveFloatTexture(irradiance, true, "irradiance");
+                auto pre = resolveFloatTexture(prefiltered, true, "prefiltered");
+                auto lut = resolveFloatTexture(brdfLut, false, "BRDF LUT");
+
+                scheduler_->waitForFrames();
+                iblIrradiance_ = std::move(irr);
+                iblPrefiltered_ = std::move(pre);
+                iblBrdfLut_ = std::move(lut);
+                iblMaxPrefilteredLod_ = static_cast<float>(iblPrefiltered_->image->mipLevels() - 1u);
+                bindingSet_->setIblImages(iblIrradiance_->image.get(), iblPrefiltered_->image.get(),
+                                          iblBrdfLut_->image.get());
+            }
+
             Material createMaterial(const MaterialDesc& desc, const std::shared_ptr<GpuResources::Impl>& resources = {})
             {
                 if (!bindingSet_)
@@ -438,6 +499,8 @@ namespace Incubator
                 auto texture = desc.texture.impl_.lock();
                 if (!texture || texture->owner != &device_)
                     throw Error::Exception(Error::Code::RENDER, "Texture is invalid or belongs to another Renderer");
+                if (texture->isFloat || texture->isCubemap)
+                    throw Error::Exception(Error::Code::RENDER, "Material base color texture must be a 2D RGBA8 texture");
                 if (texture->colorSpace != TextureColorSpace::Srgb)
                     throw Error::Exception(Error::Code::RENDER, "Material base color texture must use Srgb color space");
 
@@ -450,6 +513,10 @@ namespace Incubator
                             throw Error::Exception(
                                 Error::Code::RENDER,
                                 fmt::format("{} texture is invalid or belongs to another Renderer", name));
+                        if (resolved->isFloat || resolved->isCubemap)
+                            throw Error::Exception(
+                                Error::Code::RENDER,
+                                fmt::format("{} texture must be a 2D RGBA8 texture", name));
                         if (resolved->colorSpace != TextureColorSpace::Linear)
                             throw Error::Exception(
                                 Error::Code::RENDER,
@@ -558,7 +625,9 @@ namespace Incubator
                 if (input.shadow)
                     throw Error::Exception(Error::Code::RENDER,
                                            "Shadow review requires the independent scene target path");
-                const auto frame = Vulkan::makeFrameUniform(input);
+                if (input.iblEnabled && !iblIrradiance_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare IBL resources before enabling IBL");
+                const auto frame = Vulkan::makeFrameUniform(input, iblMaxPrefilteredLod_);
                 std::vector<std::shared_ptr<void>> resources;
                 const auto draws = resolveDraws(input, resources);
                 if (!pipeline_)
@@ -568,6 +637,9 @@ namespace Incubator
                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
                 uniforms[0]->write(0, std::as_bytes(std::span(&frame, 1)));
                 Vulkan::VulkanBindingSet bindings(device_, uniforms);
+                if (iblIrradiance_)
+                    bindings.setIblImages(iblIrradiance_->image.get(), iblPrefiltered_->image.get(),
+                                          iblBrdfLut_->image.get());
                 record(device_, *pipeline_, bindings.descriptorSet(0), draws);
             }
 
@@ -577,7 +649,9 @@ namespace Incubator
             {
                 if (!bindingSet_)
                     throw Error::Exception(Error::Code::RENDER, "Prepare scene shaders before GPU review");
-                const auto frame = Vulkan::makeFrameUniform(input);
+                if (input.iblEnabled && !iblIrradiance_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare IBL resources before enabling IBL");
+                const auto frame = Vulkan::makeFrameUniform(input, iblMaxPrefilteredLod_);
                 std::vector<std::shared_ptr<void>> resources;
                 const auto draws = resolveDraws(input, resources);
                 std::vector<Vulkan::VulkanShadowDrawItem> shadowDraws;
@@ -606,6 +680,9 @@ namespace Incubator
                 uniforms[0]->write(0, std::as_bytes(std::span(&frame, 1)));
                 Vulkan::VulkanBindingSet bindings(device_, uniforms);
                 bindings.setShadowImage(0, shadowTarget ? &shadowTarget->image() : nullptr);
+                if (iblIrradiance_)
+                    bindings.setIblImages(iblIrradiance_->image.get(), iblPrefiltered_->image.get(),
+                                          iblBrdfLut_->image.get());
                 VkClearColorValue clear{};
                 std::copy(clearColor.begin(), clearColor.end(), clear.float32);
                 device_.executeImmediate([&](VkCommandBuffer cmd) {
@@ -626,7 +703,9 @@ namespace Incubator
             void drawFrame(const FrameInput& input, const std::array<float, 4>& clearColor,
                            const std::function<void(void*)>& recordUi)
             {
-                const auto frame = Vulkan::makeFrameUniform(input);
+                if (input.iblEnabled && !iblIrradiance_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare IBL resources before enabling IBL");
+                const auto frame = Vulkan::makeFrameUniform(input, iblMaxPrefilteredLod_);
                 if (input.shadow)
                     throw Error::Exception(Error::Code::RENDER,
                                            "Shadows require drawSceneTarget; drawFrame does not support shadows");
@@ -756,7 +835,9 @@ namespace Incubator
                     input.display.exposureEv < DisplaySettings::MIN_EXPOSURE_EV ||
                     input.display.exposureEv > DisplaySettings::MAX_EXPOSURE_EV)
                     throw Error::Exception(Error::Code::RENDER, "Exposure EV is out of range");
-                const auto frame = Vulkan::makeFrameUniform(input);
+                if (input.iblEnabled && !iblIrradiance_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare IBL resources before enabling IBL");
+                const auto frame = Vulkan::makeFrameUniform(input, iblMaxPrefilteredLod_);
                 std::vector<std::shared_ptr<void>> resources;
                 const auto draws = resolveDraws(input, resources);
                 if (!draws.empty() && !bindingSet_)
@@ -912,6 +993,11 @@ namespace Incubator
             std::vector<uint32_t> displayVertexShader_;
             std::vector<ResourceEntry<Mesh::Impl>> meshes_;
             std::vector<ResourceEntry<Texture::Impl>> textures_;
+            // 会话共享 IBL 纹理先声明，保证其存活至帧绑定描述符释放之后。
+            std::shared_ptr<Texture::Impl> iblIrradiance_;
+            std::shared_ptr<Texture::Impl> iblPrefiltered_;
+            std::shared_ptr<Texture::Impl> iblBrdfLut_;
+            float iblMaxPrefilteredLod_ = 0.0f;
             std::array<std::shared_ptr<Vulkan::VulkanBuffer>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
                 uniformBuffers_{};
             // 阴影图先声明，保证其存活至帧绑定描述符释放之后。
@@ -966,6 +1052,20 @@ namespace Incubator
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
             return impl_->createTexture(texture, mipMode, colorSpace, impl_->checkResources(resources));
+        }
+
+        Texture Renderer::createTexture(const Resource::FloatTextureResource& texture)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            return impl_->createTexture(texture);
+        }
+
+        Texture Renderer::createTexture(GpuResources& resources, const Resource::FloatTextureResource& texture)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            return impl_->createTexture(texture, impl_->checkResources(resources));
         }
 
         Material Renderer::createMaterial(GpuResources& resources, const MaterialDesc& desc)
@@ -1028,6 +1128,14 @@ namespace Incubator
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
             impl_->prepareFxaaResources(fragmentShader);
+        }
+
+        void Renderer::prepareIblResources(const Texture& irradiance, const Texture& prefiltered,
+                                           const Texture& brdfLut)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            impl_->prepareIblResources(irradiance, prefiltered, brdfLut);
         }
 
         Material Renderer::createMaterial(const MaterialDesc& desc)

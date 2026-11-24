@@ -9,6 +9,7 @@ layout(set = 0, binding = 0, std140) uniform FrameData
     mat4 shadowViewProjection;
     vec4 shadowParams;
     vec4 cameraPosition;
+    vec4 iblParams;
 } frame;
 
 layout(push_constant) uniform ObjectData

@@ -85,6 +85,15 @@ namespace Incubator::Editor
         {
             return session_.fxaaEnabled();
         }
+        /// @brief 编辑本会话的固定棚拍 IBL 预览开关；默认关闭，不参与场景或启动配置的保存加载。
+        bool& iblEnabled()
+        {
+            return session_.iblEnabled();
+        }
+        bool iblEnabled() const
+        {
+            return session_.iblEnabled();
+        }
         /// @brief 返回本轮布局准备的场景输出引用，供同一帧采样与提交共用。
         const Render::SceneOutput& sceneOutput() const
         {

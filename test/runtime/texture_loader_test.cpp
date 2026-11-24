@@ -24,6 +24,7 @@
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
+#include "runtime/resource/loader/float_texture_resource.h"
 #include "runtime/resource/loader/texture_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
@@ -600,4 +601,107 @@ namespace
 
     INSTANTIATE_TEST_SUITE_P(InputBoundaries, TextureInputLimitTest,
                              ::testing::Values(uint64_t{0}, uint64_t{64u * 1024u * 1024u + 1u}));
+
+    TEST_F(TextureLoaderTest, Ktx1FloatTextureCubemap2DAndInvalidInputHandling)
+    {
+        const auto buildRoot = Utils::Utf8::toFsPath(MODEL_DEMO_ASSET_DIR);
+        {
+            ResourceManager::instance().reset();
+            ResourceManager::instance().bindAssetSource(nullptr);
+            auto buildSource = std::make_unique<AssetSource>(*fileIO_, buildRoot);
+            ResourceManager::instance().bindAssetSource(buildSource.get());
+            ResourceManager::instance().registerLoader(ResourceType::TEXTURE,
+                                                       std::make_unique<TextureLoader>(*buildSource));
+            {
+                const auto irrHold = ResourceManager::instance().hold<FloatTextureResource>(
+                    ResourceType::TEXTURE, "ibl/studio_irradiance.ktx");
+                const auto preHold = ResourceManager::instance().hold<FloatTextureResource>(
+                    ResourceType::TEXTURE, "ibl/studio_prefiltered.ktx");
+                const auto lutHold = ResourceManager::instance().hold<FloatTextureResource>(
+                    ResourceType::TEXTURE, "ibl/studio_brdf_lut.ktx");
+                ASSERT_TRUE(irrHold);
+                ASSERT_TRUE(preHold);
+                ASSERT_TRUE(lutHold);
+
+                const auto* irr = irrHold.get<FloatTextureResource>();
+                const auto* pre = preHold.get<FloatTextureResource>();
+                const auto* lut = lutHold.get<FloatTextureResource>();
+                ASSERT_NE(irr, nullptr);
+                ASSERT_NE(pre, nullptr);
+                ASSERT_NE(lut, nullptr);
+
+                EXPECT_EQ(irr->dimension(), FloatTextureDimension::CubeMap);
+                EXPECT_EQ(irr->faceCount(), 6u);
+                EXPECT_EQ(irr->width(), 32u);
+                EXPECT_EQ(irr->height(), 32u);
+                EXPECT_EQ(irr->mipLevels(), 1u);
+
+                EXPECT_EQ(pre->dimension(), FloatTextureDimension::CubeMap);
+                EXPECT_EQ(pre->faceCount(), 6u);
+                EXPECT_EQ(pre->width(), 128u);
+                EXPECT_EQ(pre->height(), 128u);
+                EXPECT_EQ(pre->mipLevels(), 8u);
+
+                EXPECT_EQ(lut->dimension(), FloatTextureDimension::Texture2D);
+                EXPECT_EQ(lut->faceCount(), 1u);
+                EXPECT_EQ(lut->width(), 128u);
+                EXPECT_EQ(lut->height(), 128u);
+                EXPECT_EQ(lut->mipLevels(), 1u);
+
+                // 类型不匹配（以 RGBA8 TextureResource 请求 KTX1）应明确失败。
+                const auto mismatch =
+                    ResourceManager::instance().hold<TextureResource>(ResourceType::TEXTURE, "ibl/studio_brdf_lut.ktx");
+                EXPECT_FALSE(mismatch);
+                ASSERT_TRUE(mismatch.failure().has_value());
+                EXPECT_NE(mismatch.failure()->reason.find("mismatch"), std::string::npos);
+            }
+
+            ResourceManager::instance().reset();
+            ResourceManager::instance().bindAssetSource(nullptr);
+        }
+
+        // 重新绑定测试目录并验证非法 KTX1 载荷被明确拒绝。
+        ResourceManager::instance().bindAssetSource(source_.get());
+        ResourceManager::instance().registerLoader(ResourceType::TEXTURE, std::make_unique<TextureLoader>(*source_));
+
+        const auto writeKtxBytes = [&](std::string_view rel, const std::vector<uint8_t>& data) {
+            const auto target = testDirectory_ / "assets" / Utils::Utf8::toFsPath(rel);
+            fs::create_directories(target.parent_path());
+            std::ofstream out(target, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        };
+
+        writeKtxBytes("bad_magic.ktx", {'N', 'O', 'T', 'K', 'T', 'X'});
+        const auto badMagic = ResourceManager::instance().hold<FloatTextureResource>(ResourceType::TEXTURE, "bad_magic.ktx");
+        EXPECT_FALSE(badMagic);
+        ASSERT_TRUE(badMagic.failure().has_value());
+        EXPECT_NE(badMagic.failure()->reason.find("KTX1"), std::string::npos);
+
+        // 构造合法 KTX1 头但缺少载荷。
+        std::vector<uint8_t> truncated(64, 0);
+        const uint8_t magic[12] = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
+        std::copy(std::begin(magic), std::end(magic), truncated.begin());
+        const auto put32 = [&](size_t off, uint32_t v) {
+            truncated[off + 0] = static_cast<uint8_t>(v & 0xFFu);
+            truncated[off + 1] = static_cast<uint8_t>((v >> 8u) & 0xFFu);
+            truncated[off + 2] = static_cast<uint8_t>((v >> 16u) & 0xFFu);
+            truncated[off + 3] = static_cast<uint8_t>((v >> 24u) & 0xFFu);
+        };
+        put32(12, 0x04030201u);
+        put32(16, 0x140Bu);
+        put32(20, 2u);
+        put32(24, 0x1908u);
+        put32(28, 0x881Au);
+        put32(32, 0x1908u);
+        put32(36, 2u);
+        put32(40, 2u);
+        put32(52, 1u);
+        put32(56, 1u);
+        writeKtxBytes("truncated.ktx", truncated);
+        const auto badTrunc =
+            ResourceManager::instance().hold<FloatTextureResource>(ResourceType::TEXTURE, "truncated.ktx");
+        EXPECT_FALSE(badTrunc);
+        ASSERT_TRUE(badTrunc.failure().has_value());
+        EXPECT_NE(badTrunc.failure()->reason.find("Truncated"), std::string::npos);
+    }
 }  // namespace

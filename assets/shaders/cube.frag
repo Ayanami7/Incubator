@@ -11,9 +11,13 @@ layout(set = 0, binding = 0, std140) uniform FrameData
     mat4 shadowViewProjection;
     vec4 shadowParams;
     vec4 cameraPosition;
+    vec4 iblParams;
 } frame;
 
 layout(set = 0, binding = 1) uniform sampler2D shadowDepth;
+layout(set = 0, binding = 2) uniform samplerCube iblIrradiance;
+layout(set = 0, binding = 3) uniform samplerCube iblPrefiltered;
+layout(set = 0, binding = 4) uniform sampler2D iblBrdfLut;
 layout(set = 1, binding = 0) uniform sampler2D colorTexture;
 layout(set = 1, binding = 1, std140) uniform MaterialData
 {
@@ -78,7 +82,7 @@ void main()
         float normalLen2 = dot(worldNormal, worldNormal);
         if (normalLen2 <= 0.0)
         {
-            linearColor = ambient;
+            linearColor = frame.iblParams.x > 0.0 ? vec3(0.0) : ambient;
         }
         else
         {
@@ -116,6 +120,21 @@ void main()
                 V = vfLen2 > 0.0 ? vFallback * inversesqrt(vfLen2) : vec3(0.0, 0.0, 1.0);
             }
 
+            vec3 F0 = mix(vec3(0.04), baseColor, metallic);
+            if (frame.iblParams.x > 0.0)
+            {
+                float NdotVClamped = clamp(dot(N, V), 0.0, 1.0);
+                vec3 F_ibl = F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - NdotVClamped, 5.0);
+                vec3 kD_ibl = (1.0 - F_ibl) * (1.0 - metallic);
+                vec3 irradiance = texture(iblIrradiance, N).rgb;
+                vec3 diffuseIbl = kD_ibl * irradiance * baseColor;
+                vec3 R = reflect(-V, N);
+                vec3 prefiltered = textureLod(iblPrefiltered, R, roughness * frame.iblParams.y).rgb;
+                vec2 brdf = texture(iblBrdfLut, vec2(NdotVClamped, roughness)).rg;
+                vec3 specularIbl = prefiltered * (F0 * brdf.x + brdf.y);
+                ambient = diffuseIbl + specularIbl;
+            }
+
             vec3 L = -frame.lightDirectionIntensity.xyz;
             float NdotL = dot(N, L);
             float NdotV = dot(N, V);
@@ -136,7 +155,6 @@ void main()
                 float gL = NdotL / (NdotL * (1.0 - k) + k);
                 float G = gV * gL;
 
-                vec3 F0 = mix(vec3(0.04), baseColor, metallic);
                 vec3 F = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
                 vec3 spec = (D * G * F) / max(4.0 * NdotV * NdotL, 1e-4);
                 vec3 kD = (1.0 - F) * (1.0 - metallic);

@@ -28,21 +28,28 @@ namespace Incubator
             }  // namespace
 
             VulkanImage::VulkanImage(const VulkanDevice& device, VkExtent2D extent, VkFormat format,
-                                     VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t mipLevels)
-                : device_(device), extent_(extent), format_(format), mipLevels_(mipLevels)
+                                     VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t mipLevels,
+                                     uint32_t arrayLayers, VkImageCreateFlags flags, VkImageViewType viewType)
+                : device_(device),
+                  extent_(extent),
+                  format_(format),
+                  mipLevels_(mipLevels),
+                  arrayLayers_(arrayLayers),
+                  isCubemap_(viewType == VK_IMAGE_VIEW_TYPE_CUBE)
             {
                 if (extent_.width == 0 || extent_.height == 0 || format_ == VK_FORMAT_UNDEFINED || mipLevels_ == 0 ||
-                    mipLevels_ > std::bit_width(std::max(extent_.width, extent_.height)))
+                    mipLevels_ > std::bit_width(std::max(extent_.width, extent_.height)) || arrayLayers_ == 0)
                     throw Error::Exception(Error::Code::RENDER, "Cannot create an empty Vulkan image");
                 try
                 {
                     VkImageCreateInfo imageInfo{};
                     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+                    imageInfo.flags = flags;
                     imageInfo.imageType = VK_IMAGE_TYPE_2D;
                     imageInfo.format = format_;
                     imageInfo.extent = {extent_.width, extent_.height, 1};
                     imageInfo.mipLevels = mipLevels_;
-                    imageInfo.arrayLayers = 1;
+                    imageInfo.arrayLayers = arrayLayers_;
                     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
                     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
                     imageInfo.usage = usage;
@@ -64,13 +71,13 @@ namespace Incubator
                     VkImageViewCreateInfo viewInfo{};
                     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
                     viewInfo.image = image_;
-                    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                    viewInfo.viewType = viewType;
                     viewInfo.format = format_;
                     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
                                            VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
                     viewInfo.subresourceRange.aspectMask = aspect;
                     viewInfo.subresourceRange.levelCount = mipLevels_;
-                    viewInfo.subresourceRange.layerCount = 1;
+                    viewInfo.subresourceRange.layerCount = arrayLayers_;
                     checkVk(vkCreateImageView(device_.handle(), &viewInfo, nullptr, &view_), "vkCreateImageView");
                 }
                 catch (...)
@@ -271,6 +278,164 @@ namespace Incubator
             uint32_t VulkanImage::mipLevels() const noexcept
             {
                 return mipLevels_;
+            }
+
+            uint32_t VulkanImage::arrayLayers() const noexcept
+            {
+                return arrayLayers_;
+            }
+
+            bool VulkanImage::isCubemap() const noexcept
+            {
+                return isCubemap_;
+            }
+
+            std::shared_ptr<VulkanImage> VulkanImage::uploadRgba16f(
+                const VulkanDevice& device, VkExtent2D extent, uint32_t arrayLayers,
+                std::span<const std::span<const uint16_t>> mipPayloads, VkImageUsageFlags usage)
+            {
+                if (extent.width == 0 || extent.height == 0)
+                    throw Error::Exception(Error::Code::RENDER, "Cannot upload an empty RGBA16F image");
+                if (arrayLayers != 1u && arrayLayers != 6u)
+                    throw Error::Exception(Error::Code::RENDER, "RGBA16F upload supports 1 (2D) or 6 (Cubemap) layers");
+                if (arrayLayers == 6u && extent.width != extent.height)
+                    throw Error::Exception(Error::Code::RENDER, "RGBA16F cubemap requires square faces");
+                if (mipPayloads.empty() || mipPayloads.size() > std::bit_width(std::max(extent.width, extent.height)))
+                    throw Error::Exception(Error::Code::RENDER, "RGBA16F upload mip level count is invalid");
+                if ((usage & VK_IMAGE_USAGE_SAMPLED_BIT) == 0)
+                    throw Error::Exception(Error::Code::RENDER, "RGBA16F upload requires sampled image usage");
+
+                usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                const VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
+                const VkImageCreateFlags flags = arrayLayers == 6u ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u;
+                const VkImageViewType viewType =
+                    arrayLayers == 6u ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
+                const uint32_t mipLevels = static_cast<uint32_t>(mipPayloads.size());
+
+                VkFormatProperties formatProperties{};
+                vkGetPhysicalDeviceFormatProperties(device.physicalDevice(), format, &formatProperties);
+                VkImageFormatProperties imageProperties{};
+                checkVk(vkGetPhysicalDeviceImageFormatProperties(device.physicalDevice(), format, VK_IMAGE_TYPE_2D,
+                                                                 VK_IMAGE_TILING_OPTIMAL, usage, flags,
+                                                                 &imageProperties),
+                        "vkGetPhysicalDeviceImageFormatProperties(RGBA16F upload usage)");
+                validateRgba16fSupport(extent, arrayLayers, mipLevels, device.properties().limits, formatProperties,
+                                       imageProperties);
+
+                uint64_t totalBytes = 0;
+                VkExtent2D mipExtent = extent;
+                for (uint32_t level = 0; level < mipLevels; ++level)
+                {
+                    const uint64_t expectedHalfCount =
+                        static_cast<uint64_t>(arrayLayers) * mipExtent.width * mipExtent.height * 4u;
+                    if (mipPayloads[level].size() != expectedHalfCount)
+                        throw Error::Exception(Error::Code::RENDER,
+                                               "RGBA16F mip payload size does not match extent and layers");
+                    const uint64_t mipBytes = expectedHalfCount * sizeof(uint16_t);
+                    if (mipBytes > std::numeric_limits<VkDeviceSize>::max() - totalBytes)
+                        throw Error::Exception(Error::Code::RENDER, "RGBA16F staging size overflow");
+                    totalBytes += mipBytes;
+                    mipExtent = {std::max(1u, mipExtent.width / 2u), std::max(1u, mipExtent.height / 2u)};
+                }
+
+                VulkanBuffer staging(device, totalBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+                std::vector<VkBufferImageCopy> copies;
+                copies.reserve(mipLevels);
+                VkDeviceSize bufferOffset = 0;
+                mipExtent = extent;
+                for (uint32_t level = 0; level < mipLevels; ++level)
+                {
+                    const auto bytes = std::as_bytes(mipPayloads[level]);
+                    staging.write(bufferOffset, bytes);
+                    VkBufferImageCopy copy{};
+                    copy.bufferOffset = bufferOffset;
+                    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, arrayLayers};
+                    copy.imageExtent = {mipExtent.width, mipExtent.height, 1};
+                    copies.push_back(copy);
+                    bufferOffset += bytes.size();
+                    mipExtent = {std::max(1u, mipExtent.width / 2u), std::max(1u, mipExtent.height / 2u)};
+                }
+
+                auto image = std::make_shared<VulkanImage>(device, extent, format, usage, VK_IMAGE_ASPECT_COLOR_BIT,
+                                                           mipLevels, arrayLayers, flags, viewType);
+                device.executeImmediate([&](VkCommandBuffer commandBuffer) {
+                    VkImageMemoryBarrier2 toTransfer{};
+                    toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+                    toTransfer.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+                    toTransfer.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+                    toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                    toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    toTransfer.image = image->handle();
+                    toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, 0, arrayLayers};
+                    VkDependencyInfo dependency{};
+                    dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+                    dependency.imageMemoryBarrierCount = 1;
+                    dependency.pImageMemoryBarriers = &toTransfer;
+                    vkCmdPipelineBarrier2(commandBuffer, &dependency);
+
+                    vkCmdCopyBufferToImage(commandBuffer, staging.handle(), image->handle(),
+                                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           static_cast<uint32_t>(copies.size()), copies.data());
+
+                    VkImageMemoryBarrier2 toShaderRead{};
+                    toShaderRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+                    toShaderRead.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+                    toShaderRead.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+                    toShaderRead.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+                    toShaderRead.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+                    toShaderRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    toShaderRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                    toShaderRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    toShaderRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    toShaderRead.image = image->handle();
+                    toShaderRead.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, 0, arrayLayers};
+                    dependency.pImageMemoryBarriers = &toShaderRead;
+                    vkCmdPipelineBarrier2(commandBuffer, &dependency);
+                });
+                Log::Registry::get("render.vulkan")
+                    .debug("Uploaded RGBA16F {} texture: {}x{}, {} layers, {} mips, {} bytes",
+                           arrayLayers == 6u ? "cubemap" : "2D", extent.width, extent.height, arrayLayers, mipLevels,
+                           totalBytes);
+                return image;
+            }
+
+            void VulkanImage::validateRgba16fSupport(VkExtent2D extent, uint32_t arrayLayers, uint32_t mipLevels,
+                                                     const VkPhysicalDeviceLimits& deviceLimits,
+                                                     const VkFormatProperties& formatProperties,
+                                                     const VkImageFormatProperties& imageProperties)
+            {
+                constexpr VkFormatFeatureFlags requiredFeatures =
+                    VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
+                    VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+                const uint32_t maxDim =
+                    arrayLayers == 6u ? deviceLimits.maxImageDimensionCube : deviceLimits.maxImageDimension2D;
+                if (extent.width == 0 || extent.height == 0 || extent.width > maxDim || extent.height > maxDim)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           fmt::format("RGBA16F extent {}x{} exceeds device limit {}", extent.width,
+                                                       extent.height, maxDim));
+                if ((formatProperties.optimalTilingFeatures & requiredFeatures) != requiredFeatures)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "RGBA16F optimal tiling lacks sampled/transfer/linear filtering support");
+                if (extent.width > imageProperties.maxExtent.width ||
+                    extent.height > imageProperties.maxExtent.height || imageProperties.maxExtent.depth < 1 ||
+                    mipLevels == 0 || mipLevels > std::bit_width(std::max(extent.width, extent.height)) ||
+                    imageProperties.maxMipLevels < mipLevels || imageProperties.maxArrayLayers < arrayLayers ||
+                    (imageProperties.sampleCounts & VK_SAMPLE_COUNT_1_BIT) == 0)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "RGBA16F image format limits do not support this mip/layer configuration");
+                uint64_t remainingTexels = imageProperties.maxResourceSize / 8u;
+                for (uint32_t level = 0; level < mipLevels; ++level)
+                {
+                    const uint64_t texels = static_cast<uint64_t>(arrayLayers) * extent.width * extent.height;
+                    if (texels > remainingTexels)
+                        throw Error::Exception(Error::Code::RENDER, "RGBA16F mip chain exceeds image maxResourceSize");
+                    remainingTexels -= texels;
+                    extent = {std::max(1u, extent.width / 2u), std::max(1u, extent.height / 2u)};
+                }
             }
         }  // namespace Vulkan
     }  // namespace Render

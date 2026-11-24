@@ -28,6 +28,7 @@
 #include "runtime/model/prepared_model.h"
 #include "runtime/render/detail/renderer_review.h"
 #include "runtime/render/integration/imgui_renderer.h"
+#include "runtime/resource/loader/float_texture_resource.h"
 #include "runtime/resource/loader/texture_resource.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
@@ -229,6 +230,8 @@ namespace
             for (const char* dir : {"avocado", "utah_teapot", "ground"})
                 fs::copy(previous_ / "assets/models" / dir, sandbox_ / "assets/models" / dir,
                          fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+            fs::copy(previous_ / "assets/ibl", sandbox_ / "assets/ibl",
+                     fs::copy_options::recursive | fs::copy_options::overwrite_existing);
             fs::create_directories(sandbox_ / "assets/scenes");
             for (const char* file : {"mixed.json", "shadows.json", "pbr-showcase.json"})
                 fs::copy_file(previous_ / "assets/scenes" / file, sandbox_ / "assets/scenes" / file,
@@ -3284,6 +3287,112 @@ namespace
                              WindowCapture::save(
                                  {int(captureExtent.width), int(captureExtent.height), lambertPixels},
                                  reviewDir / "pbr-showcase-lambert.ppm");
+                             done = true;
+                             app.requestExit();
+                             break;
+                     }
+                 },
+                 [&](auto& app) { editor.ui(app); },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            EXPECT_TRUE(done);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, StudioIblViewCheckboxDefaultOffLazyLoadSameFrameOutputAndCleanDocumentUnderValidation)
+    {
+        copyShowcaseModels();
+        {
+            Editor::EditorApp session(options(true, 1280, 800));
+            Editor::EditorScene editor;
+            Render::FrameExtent baseExtent{};
+            std::vector<uint8_t> offPixels, onPixels, offAgainPixels;
+            int frame = 0, step = 0, waitFrames = 0;
+            bool done = false;
+            auto* handle = static_cast<GLFWwindow*>(session.window().getNativeHandle());
+            enableGlfwCallbacks(handle, false);
+
+            session.run(
+                {[&](auto& app) {
+                     editor.initialize(app, "assets/scenes/pbr-showcase.json");
+                     app.shadowSettings().enabled = true;
+                     EXPECT_FALSE(app.iblEnabled());
+                     EXPECT_FALSE(ResourceRegistry::instance()
+                                      .lookup(ResourceType::TEXTURE, "ibl/studio_irradiance.ktx")
+                                      .valid());
+                 },
+                 [&](auto& app, const auto&) {
+                     if (++frame > 180)
+                     {
+                         ADD_FAILURE() << "Studio IBL editor integration test timeout at step=" << step;
+                         app.requestExit();
+                         return;
+                     }
+                     auto* propsWin = ImGui::FindWindowByName("Properties");
+                     if (frame < 5 || !propsWin || !app.sceneOutput().valid())
+                         return;
+
+                     switch (step)
+                     {
+                         case 0:
+                             EXPECT_FALSE(app.iblEnabled());
+                             EXPECT_FALSE(ResourceRegistry::instance()
+                                              .lookup(ResourceType::TEXTURE, "ibl/studio_irradiance.ktx")
+                                              .valid());
+                             baseExtent = app.sceneOutput().extent();
+                             Render::Detail::RendererReviewAccess::withSceneOutput(
+                                 app.renderer(), app.sceneOutput(), [&](const auto& device, const auto& image) {
+                                     offPixels = TextureGpuReview::captureMip(
+                                         device, image, 0, {baseExtent.width, baseExtent.height});
+                                 });
+                             ASSERT_FALSE(offPixels.empty());
+                             propsWin->Scroll.y = propsWin->ScrollMax.y;
+                             ImGui::ActivateItemByID(propsWin->GetID("##ibl"));
+                             waitFrames = 0;
+                             ++step;
+                             break;
+                         case 1:
+                             EXPECT_TRUE(app.iblEnabled());
+                             if (++waitFrames < 2)
+                                 return;
+                             for (const char* iblPath :
+                                  {"ibl/studio_irradiance.ktx", "ibl/studio_prefiltered.ktx", "ibl/studio_brdf_lut.ktx"})
+                             {
+                                 const auto id = ResourceRegistry::instance().lookup(ResourceType::TEXTURE, iblPath);
+                                 ASSERT_TRUE(id.valid());
+                                 EXPECT_EQ(ResourceRegistry::instance().refCount(id), 0u);
+                             }
+                             Render::Detail::RendererReviewAccess::withSceneOutput(
+                                 app.renderer(), app.sceneOutput(), [&](const auto& device, const auto& image) {
+                                     onPixels = TextureGpuReview::captureMip(
+                                         device, image, 0, {baseExtent.width, baseExtent.height});
+                                 });
+                             ASSERT_EQ(onPixels.size(), offPixels.size());
+                             EXPECT_NE(onPixels, offPixels);
+                             EXPECT_FALSE(editor.isDirty());
+                             EXPECT_FALSE(editor.canUndo());
+
+                             // 关闭开关后须恢复关闭时的 PBR 像素基线且不产生脏状态或 Undo。
+                             propsWin->Scroll.y = propsWin->ScrollMax.y;
+                             ImGui::ActivateItemByID(propsWin->GetID("##ibl"));
+                             waitFrames = 0;
+                             ++step;
+                             break;
+                         case 2:
+                             EXPECT_FALSE(app.iblEnabled());
+                             if (++waitFrames < 2)
+                                 return;
+                             Render::Detail::RendererReviewAccess::withSceneOutput(
+                                 app.renderer(), app.sceneOutput(), [&](const auto& device, const auto& image) {
+                                     offAgainPixels = TextureGpuReview::captureMip(
+                                         device, image, 0, {baseExtent.width, baseExtent.height});
+                                 });
+                             EXPECT_EQ(offAgainPixels, offPixels);
+                             EXPECT_FALSE(editor.isDirty());
+                             EXPECT_FALSE(editor.canUndo());
                              done = true;
                              app.requestExit();
                              break;

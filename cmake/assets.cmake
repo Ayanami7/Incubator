@@ -38,6 +38,19 @@ foreach(SCENE_FILE IN ITEMS mixed.json shadows.json pbr-showcase.json)
 endforeach()
 add_custom_target(incubator_scenes DEPENDS ${APP_SCENE_OUTPUTS})
 
+set(APP_IBL_OUTPUTS)
+foreach(IBL_FILE IN ITEMS studio_irradiance.ktx studio_prefiltered.ktx studio_brdf_lut.ktx SOURCE.md)
+    set(IBL_OUTPUT "${CMAKE_BINARY_DIR}/assets/ibl/${IBL_FILE}")
+    add_custom_command(OUTPUT "${IBL_OUTPUT}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/assets/ibl"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ASSETS_DIR}/ibl/${IBL_FILE}" "${IBL_OUTPUT}"
+        DEPENDS "${ASSETS_DIR}/ibl/${IBL_FILE}"
+        COMMENT "部署固定棚拍 IBL 资源 ${IBL_FILE}"
+        VERBATIM)
+    list(APPEND APP_IBL_OUTPUTS "${IBL_OUTPUT}")
+endforeach()
+add_custom_target(incubator_ibl DEPENDS ${APP_IBL_OUTPUTS})
+
 set(APP_CONFIG_OUTPUT "${CMAKE_BINARY_DIR}/incubator.json")
 add_custom_command(OUTPUT "${APP_CONFIG_OUTPUT}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${INCUBATOR_ROOT_DIR}/incubator.json" "${APP_CONFIG_OUTPUT}"
@@ -62,4 +75,4 @@ add_custom_target(runtime_ui_fonts DEPENDS ${UI_FONT_OUTPUTS})
 
 # 应用直接依赖共同资源，单独构建 Editor 不需要构建 Demo。
 add_custom_target(incubator_assets)
-add_dependencies(incubator_assets incubator_models incubator_scenes incubator_config incubator_shaders runtime_ui_fonts)
+add_dependencies(incubator_assets incubator_models incubator_scenes incubator_ibl incubator_config incubator_shaders runtime_ui_fonts)

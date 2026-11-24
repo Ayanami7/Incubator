@@ -28,7 +28,7 @@ namespace Incubator
                 }
             }  // namespace
 
-            VulkanFrameUniform makeFrameUniform(const FrameInput& input)
+            VulkanFrameUniform makeFrameUniform(const FrameInput& input, float maxPrefilteredLod)
             {
                 const auto& lighting = input.lighting;
                 if (!lighting.valid())
@@ -74,7 +74,8 @@ namespace Incubator
                         glm::vec4(lighting.color, lighting.ambient),
                         input.shadow ? input.shadow->viewProjection : glm::mat4(1),
                         input.shadow ? glm::vec4(input.shadow->depthBias, 1, 0, 0) : glm::vec4(0),
-                        cameraPosition};
+                        cameraPosition,
+                        input.iblEnabled ? glm::vec4(1.0f, maxPrefilteredLod, 0.0f, 0.0f) : glm::vec4(0.0f)};
             }
 
             VulkanBindingSet::VulkanBindingSet(const VulkanDevice& device,
@@ -91,6 +92,17 @@ namespace Incubator
                                                                VK_IMAGE_USAGE_SAMPLED_BIT);
                     metallicRoughnessFallback_ = VulkanImage::uploadRgba8(
                         device_, {1, 1}, VK_FORMAT_R8G8B8A8_UNORM, white, VK_IMAGE_USAGE_SAMPLED_BIT);
+                    const std::array<uint16_t, 4> blackLut{0, 0, 0, 0x3C00u};
+                    std::array<uint16_t, 6 * 4> blackCube{};
+                    for (uint32_t f = 0; f < 6u; ++f)
+                        blackCube[f * 4u + 3u] = 0x3C00u;
+                    const std::array<std::span<const uint16_t>, 1> lutMips{blackLut};
+                    const std::array<std::span<const uint16_t>, 1> cubeMips{blackCube};
+                    iblCubeFallback_ =
+                        VulkanImage::uploadRgba16f(device_, {1, 1}, 6u, cubeMips, VK_IMAGE_USAGE_SAMPLED_BIT);
+                    iblLutFallback_ =
+                        VulkanImage::uploadRgba16f(device_, {1, 1}, 1u, lutMips, VK_IMAGE_USAGE_SAMPLED_BIT);
+
                     VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
                     sampler.magFilter = sampler.minFilter = VK_FILTER_NEAREST;
                     sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
@@ -99,10 +111,25 @@ namespace Incubator
                     sampler.maxAnisotropy = 1;
                     checkVk(vkCreateSampler(device_.handle(), &sampler, nullptr, &shadowSampler_),
                             "vkCreateSampler(shadow)");
-                    constexpr std::array<VkDescriptorSetLayoutBinding, 2> frameBindings{
+
+                    sampler.magFilter = sampler.minFilter = VK_FILTER_LINEAR;
+                    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+                    sampler.minLod = 0.0f;
+                    sampler.maxLod = VK_LOD_CLAMP_NONE;
+                    checkVk(vkCreateSampler(device_.handle(), &sampler, nullptr, &iblCubeSampler_),
+                            "vkCreateSampler(iblCube)");
+                    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+                    sampler.maxLod = 0.0f;
+                    checkVk(vkCreateSampler(device_.handle(), &sampler, nullptr, &iblLutSampler_),
+                            "vkCreateSampler(iblLut)");
+
+                    constexpr std::array<VkDescriptorSetLayoutBinding, 5> frameBindings{
                         {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-                         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
+                         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                         {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                         {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
                     VkDescriptorSetLayoutCreateInfo layoutInfo{};
                     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
                     layoutInfo.bindingCount = uint32_t(frameBindings.size());
@@ -123,7 +150,7 @@ namespace Incubator
 
                     const std::array<VkDescriptorPoolSize, 2> poolSizes{
                         {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, uint32_t(uniformBuffers.size())},
-                         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, uint32_t(uniformBuffers.size())}}};
+                         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4u * uint32_t(uniformBuffers.size())}}};
                     VkDescriptorPoolCreateInfo poolInfo{};
                     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
                     poolInfo.maxSets = static_cast<uint32_t>(uniformBuffers.size());
@@ -161,6 +188,7 @@ namespace Incubator
                         vkUpdateDescriptorSets(device_.handle(), 1, &write, 0, nullptr);
                         setShadowImage(uint32_t(index));
                     }
+                    setIblImages();
                 }
                 catch (...)
                 {
@@ -172,6 +200,10 @@ namespace Incubator
                         vkDestroyDescriptorSetLayout(device_.handle(), materialLayout_, nullptr);
                     if (shadowSampler_ != VK_NULL_HANDLE)
                         vkDestroySampler(device_.handle(), shadowSampler_, nullptr);
+                    if (iblCubeSampler_ != VK_NULL_HANDLE)
+                        vkDestroySampler(device_.handle(), iblCubeSampler_, nullptr);
+                    if (iblLutSampler_ != VK_NULL_HANDLE)
+                        vkDestroySampler(device_.handle(), iblLutSampler_, nullptr);
                     throw;
                 }
             }
@@ -186,6 +218,36 @@ namespace Incubator
                     vkDestroyDescriptorSetLayout(device_.handle(), materialLayout_, nullptr);
                 if (shadowSampler_ != VK_NULL_HANDLE)
                     vkDestroySampler(device_.handle(), shadowSampler_, nullptr);
+                if (iblCubeSampler_ != VK_NULL_HANDLE)
+                    vkDestroySampler(device_.handle(), iblCubeSampler_, nullptr);
+                if (iblLutSampler_ != VK_NULL_HANDLE)
+                    vkDestroySampler(device_.handle(), iblLutSampler_, nullptr);
+            }
+
+            void VulkanBindingSet::setIblImages(const VulkanImage* irradiance, const VulkanImage* prefiltered,
+                                                const VulkanImage* brdfLut)
+            {
+                const VkDescriptorImageInfo irrInfo{
+                    iblCubeSampler_, irradiance ? irradiance->view() : iblCubeFallback_->view(),
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                const VkDescriptorImageInfo preInfo{
+                    iblCubeSampler_, prefiltered ? prefiltered->view() : iblCubeFallback_->view(),
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                const VkDescriptorImageInfo lutInfo{
+                    iblLutSampler_, brdfLut ? brdfLut->view() : iblLutFallback_->view(),
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                for (VkDescriptorSet set : descriptorSets_)
+                {
+                    const std::array<VkWriteDescriptorSet, 3> writes{
+                        {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 2, 0, 1,
+                          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &irrInfo, nullptr, nullptr},
+                         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 3, 0, 1,
+                          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &preInfo, nullptr, nullptr},
+                         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 4, 0, 1,
+                          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &lutInfo, nullptr, nullptr}}};
+                    vkUpdateDescriptorSets(device_.handle(), static_cast<uint32_t>(writes.size()), writes.data(), 0,
+                                           nullptr);
+                }
             }
 
             void VulkanBindingSet::setShadowImage(uint32_t frameIndex, const VulkanImage* image)

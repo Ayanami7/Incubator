@@ -54,6 +54,7 @@ set(RESOURCE_HEADERS
     resource/loader/shader_resource.h
     resource/loader/shader_loader.h
     resource/loader/texture_resource.h
+    resource/loader/float_texture_resource.h
     resource/loader/texture_loader.h
 )
 set(RESOURCE_SOURCES
@@ -70,6 +71,7 @@ set(RESOURCE_SOURCES
     resource/loader/shader_resource.cpp
     resource/loader/shader_loader.cpp
     resource/loader/texture_resource.cpp
+    resource/loader/float_texture_resource.cpp
     resource/loader/texture_loader.cpp
 )
 

@@ -21,6 +21,7 @@ namespace Incubator::Scene
         std::optional<Render::ShadowFrame> shadow{};
         std::vector<Render::DrawItem> shadowDraws;
         Render::DisplaySettings display{};
+        bool iblEnabled = false;
 
         /// @brief 创建提交渲染所需的借用输入。
         /// @return 指向此帧两份绘制列表的输入视图。
@@ -34,9 +35,11 @@ namespace Incubator::Scene
     /// @param extent 实际渲染尺寸。
     /// @param frustumCulling 是否执行视锥体剔除。
     /// @param shadows 消费者阴影设置；启用时从全部可见且有模型的实体提取投射物，不执行光源裁剪。
+    /// @param iblEnabled 是否启用会话共享的 PBR IBL 环境光照。
     /// @return 成功提取的场景帧；尺寸无效时返回空值。
     /// @note 不执行 I/O、资源上传或 GPU 验证。仅剔除边界可靠且完全位于当前视锥体之外的实体。
     /// @throws Error::Exception 有效尺寸下，启用的阴影设置无效时抛出 CONFIG。
     std::optional<SceneFrame> extractSceneFrame(const Scene& scene, Render::FrameExtent extent,
-                                                bool frustumCulling = true, const Render::ShadowSettings& shadows = {});
+                                                bool frustumCulling = true, const Render::ShadowSettings& shadows = {},
+                                                bool iblEnabled = false);
 }  // namespace Incubator::Scene

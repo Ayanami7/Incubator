@@ -4,6 +4,9 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cctype>
+#include <cstring>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -16,6 +19,7 @@
 #include "runtime/core/log/logger.h"
 #include "runtime/core/path/path.h"
 #include "runtime/core/utils/utf8.h"
+#include "runtime/resource/loader/float_texture_resource.h"
 #include "runtime/resource/loader/texture_resource.h"
 
 namespace Incubator
@@ -105,6 +109,125 @@ namespace Incubator
                 }
                 return {width, height, static_cast<size_t>(pixelBytes)};
             }
+
+            constexpr std::array<uint8_t, 12> KTX1_MAGIC = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31,
+                                                            0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
+
+            uint32_t readLittleEndian32(const uint8_t* bytes)
+            {
+                return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8u) |
+                       (static_cast<uint32_t>(bytes[2]) << 16u) | (static_cast<uint32_t>(bytes[3]) << 24u);
+            }
+
+            bool hasKtxExtension(std::string_view virtualPath)
+            {
+                std::string ext = Utils::Utf8::toUtf8String(Utils::Utf8::toFsPath(virtualPath).extension());
+                std::transform(ext.begin(), ext.end(), ext.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                return ext == ".ktx";
+            }
+
+            std::unique_ptr<FloatTextureResource> decodeKtx1(const ResourceId& id, std::string_view pathUtf8,
+                                                             std::span<const uint8_t> bytes)
+            {
+                if (bytes.size() < 64 || !std::equal(KTX1_MAGIC.begin(), KTX1_MAGIC.end(), bytes.begin()))
+                    throw Error::Exception(Error::Code::IO, "Not a KTX1 file or incomplete KTX1 header");
+
+                const uint32_t endianness = readLittleEndian32(bytes.data() + 12);
+                const uint32_t glType = readLittleEndian32(bytes.data() + 16);
+                const uint32_t glTypeSize = readLittleEndian32(bytes.data() + 20);
+                const uint32_t glFormat = readLittleEndian32(bytes.data() + 24);
+                const uint32_t glInternalFormat = readLittleEndian32(bytes.data() + 28);
+                const uint32_t glBaseInternalFormat = readLittleEndian32(bytes.data() + 32);
+                const uint32_t width = readLittleEndian32(bytes.data() + 36);
+                const uint32_t height = readLittleEndian32(bytes.data() + 40);
+                const uint32_t depth = readLittleEndian32(bytes.data() + 44);
+                const uint32_t arrayElements = readLittleEndian32(bytes.data() + 48);
+                const uint32_t faces = readLittleEndian32(bytes.data() + 52);
+                const uint32_t mipLevels = readLittleEndian32(bytes.data() + 56);
+                const uint32_t keyValueBytes = readLittleEndian32(bytes.data() + 60);
+
+                if (endianness != 0x04030201u || glType != 0x140Bu || glTypeSize != 2u || glFormat != 0x1908u ||
+                    glInternalFormat != 0x881Au || glBaseInternalFormat != 0x1908u)
+                {
+                    throw Error::Exception(Error::Code::IO,
+                                           "Unsupported KTX1 format (requires little-endian GL_RGBA16F)");
+                }
+                if (depth != 0 || arrayElements != 0 || (faces != 1u && faces != 6u))
+                    throw Error::Exception(Error::Code::IO, "Unsupported KTX1 texture dimensionality or face count");
+                if (width == 0 || height == 0 || width > FloatTextureResource::MAX_DIMENSION ||
+                    height > FloatTextureResource::MAX_DIMENSION)
+                {
+                    throw Error::Exception(Error::Code::IO, "Invalid KTX1 dimensions (limit 4096)");
+                }
+                if (faces == 6u && width != height)
+                    throw Error::Exception(Error::Code::IO, "KTX1 cubemap requires square faces");
+                const uint32_t maxMipLevels = std::bit_width(std::max(width, height));
+                if (mipLevels == 0 || mipLevels > maxMipLevels)
+                    throw Error::Exception(Error::Code::IO, "Invalid KTX1 mipmap level count");
+
+                size_t offset = 64;
+                if (keyValueBytes > bytes.size() - offset)
+                    throw Error::Exception(Error::Code::IO, "Truncated KTX1 key-value metadata");
+                offset += keyValueBytes;
+
+                std::vector<FloatTextureMip> mips;
+                mips.reserve(mipLevels);
+                uint32_t mipWidth = width;
+                uint32_t mipHeight = height;
+                uint64_t totalBytes = 0;
+                for (uint32_t level = 0; level < mipLevels; ++level)
+                {
+                    if (bytes.size() - offset < 4)
+                        throw Error::Exception(Error::Code::IO, "Truncated KTX1 mip level size");
+                    const uint32_t imageSize = readLittleEndian32(bytes.data() + offset);
+                    offset += 4;
+                    const uint64_t faceBytes = static_cast<uint64_t>(mipWidth) * mipHeight * 8u;
+                    if (imageSize != faceBytes)
+                        throw Error::Exception(Error::Code::IO, "KTX1 mip imageSize does not match RGBA16F extent");
+                    if (faceBytes * faces > FloatTextureResource::MAX_PIXEL_BYTES - totalBytes)
+                        throw Error::Exception(Error::Code::IO, "KTX1 RGBA16F payload size exceeds supported limits");
+                    totalBytes += faceBytes * faces;
+
+                    const uint32_t cubePadding = (4u - (imageSize % 4u)) % 4u;
+                    FloatTextureMip mip{mipWidth, mipHeight, {}};
+                    mip.rgba16f.resize(static_cast<size_t>(faces) * mipWidth * mipHeight * 4u);
+                    const size_t faceHalfCount = static_cast<size_t>(mipWidth) * mipHeight * 4u;
+                    for (uint32_t face = 0; face < faces; ++face)
+                    {
+                        if (bytes.size() - offset < faceBytes)
+                            throw Error::Exception(Error::Code::IO, "Truncated KTX1 mip face payload");
+                        std::memcpy(mip.rgba16f.data() + static_cast<size_t>(face) * faceHalfCount,
+                                    bytes.data() + offset, static_cast<size_t>(faceBytes));
+                        offset += static_cast<size_t>(faceBytes);
+                        if (faces == 6u && cubePadding > 0)
+                        {
+                            if (bytes.size() - offset < cubePadding)
+                                throw Error::Exception(Error::Code::IO, "Truncated KTX1 cube padding");
+                            offset += cubePadding;
+                        }
+                    }
+                    if (faces == 1u)
+                    {
+                        const uint32_t mipPadding = (4u - (imageSize % 4u)) % 4u;
+                        if (bytes.size() - offset < mipPadding)
+                            throw Error::Exception(Error::Code::IO, "Truncated KTX1 mip padding");
+                        offset += mipPadding;
+                    }
+                    mips.push_back(std::move(mip));
+                    mipWidth = std::max(1u, mipWidth / 2u);
+                    mipHeight = std::max(1u, mipHeight / 2u);
+                }
+                if (offset != bytes.size())
+                    throw Error::Exception(Error::Code::IO, "Unexpected trailing bytes in KTX1 file");
+
+                Log::Registry::get("resource")
+                    .debug("Decoded KTX1 '{}': {}x{}, faces={}, mips={}, {} input bytes, {} RGBA16F bytes", pathUtf8,
+                           width, height, faces, mipLevels, bytes.size(), totalBytes);
+                return std::make_unique<FloatTextureResource>(
+                    id, faces == 6u ? FloatTextureDimension::CubeMap : FloatTextureDimension::Texture2D,
+                    std::move(mips));
+            }
         }  // namespace
 
         TextureLoader::TextureLoader(AssetSource& source) : source_(source) {}
@@ -114,12 +237,16 @@ namespace Incubator
             const std::string pathUtf8 = Utils::Utf8::toUtf8String(source_.resolve(virtualPath));
             try
             {
+                const bool isKtx = hasKtxExtension(virtualPath);
                 auto file = source_.open(virtualPath);
                 if (!file)
                 {
-                    throw Error::Exception(Error::Code::IO, "PNG file was not found");
+                    throw Error::Exception(Error::Code::IO,
+                                           isKtx ? "KTX texture file was not found" : "PNG file was not found");
                 }
                 const auto bytes = readInput(*file);
+                if (isKtx)
+                    return decodeKtx1(id, pathUtf8, bytes);
                 const auto header = checkHeader(bytes);
                 int width = 0;
                 int height = 0;

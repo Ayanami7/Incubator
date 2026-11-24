@@ -1078,6 +1078,8 @@ namespace Incubator::Editor
                 resetCamera(app);
             rowLabel("FXAA");
             ImGui::Checkbox("##fxaa", &app.fxaaEnabled());
+            rowLabel("Studio IBL");
+            ImGui::Checkbox("##ibl", &app.iblEnabled());
             ImGui::Separator();
             const double cpuFrameMs = app.lastFrameTime().deltaSeconds() * 1000.0;
             const auto stats = app.viewportStats();

@@ -47,6 +47,7 @@ namespace Incubator
             std::optional<ShadowFrame> shadow{};
             std::span<const DrawItem> shadowDraws{};  ///< 独立于主相机裁剪的投射物列表。
             DisplaySettings display{};
+            bool iblEnabled = false;
         };
     }  // namespace Render
 }  // namespace Incubator

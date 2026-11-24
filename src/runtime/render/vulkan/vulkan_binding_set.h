@@ -31,6 +31,7 @@ namespace Incubator
                 glm::mat4 shadowViewProjection;     ///< 固定光源投影与观察矩阵的乘积。
                 glm::vec4 shadowParams;             ///< x 为接收深度偏移，y 为阴影启用标记，其余为零。
                 glm::vec4 cameraPosition;           ///< 世界空间相机位置（xyz），由视图矩阵派生。
+                glm::vec4 iblParams;                ///< x 为 IBL 启用标记，y 为预过滤环境最大 mip 级，其余为零。
             };
             static_assert(std::is_standard_layout_v<VulkanFrameUniform>);
             static_assert(offsetof(VulkanFrameUniform, view) == 0);
@@ -41,11 +42,12 @@ namespace Incubator
             static_assert(offsetof(VulkanFrameUniform, shadowViewProjection) == 160);
             static_assert(offsetof(VulkanFrameUniform, shadowParams) == 224);
             static_assert(offsetof(VulkanFrameUniform, cameraPosition) == 240);
-            static_assert(sizeof(VulkanFrameUniform) == 256);
+            static_assert(offsetof(VulkanFrameUniform, iblParams) == 256);
+            static_assert(sizeof(VulkanFrameUniform) == 272);
 
-            /// @brief 校验光照并打包本次提交的相机与光照值，非单位方向在此归一化。
+            /// @brief 校验光照并打包本次提交的相机、光照与 IBL 参数，非单位方向在此归一化。
             /// @throws Error::Exception 光照输入无效时抛出 RENDER。
-            VulkanFrameUniform makeFrameUniform(const FrameInput& input);
+            VulkanFrameUniform makeFrameUniform(const FrameInput& input, float maxPrefilteredLod = 0.0f);
 
             class VulkanBindingSet
             {
@@ -63,6 +65,10 @@ namespace Incubator
                 /// @brief 更新阴影绑定；空指针选择已初始化的全亮白图。
                 /// @note 调用前须完成对应帧槽的 GPU 工作；外部图像须存活至改绑或绑定集销毁。
                 void setShadowImage(uint32_t frameIndex, const VulkanImage* image = nullptr);
+                /// @brief 更新全部帧槽的 IBL 绑定；任一空指针均选择安全占位纹理。
+                /// @note 调用前须等待所有帧槽 GPU 工作完成；外部图像须存活至改绑或绑定集销毁。
+                void setIblImages(const VulkanImage* irradiance = nullptr, const VulkanImage* prefiltered = nullptr,
+                                  const VulkanImage* brdfLut = nullptr);
                 /// @brief 返回 1×1 线性平坦法线回退图像（{128, 128, 255, 255}）。
                 const VulkanImage& normalFallback() const noexcept;
                 /// @brief 返回 1×1 线性金属粗糙度回退图像（{255, 255, 255, 255}）。
@@ -77,7 +83,11 @@ namespace Incubator
                 std::shared_ptr<VulkanImage> shadowFallback_;
                 std::shared_ptr<VulkanImage> normalFallback_;
                 std::shared_ptr<VulkanImage> metallicRoughnessFallback_;
+                std::shared_ptr<VulkanImage> iblCubeFallback_;
+                std::shared_ptr<VulkanImage> iblLutFallback_;
                 VkSampler shadowSampler_ = VK_NULL_HANDLE;
+                VkSampler iblCubeSampler_ = VK_NULL_HANDLE;
+                VkSampler iblLutSampler_ = VK_NULL_HANDLE;
                 std::vector<VkImageView> shadowViews_;
             };
         }  // namespace Vulkan

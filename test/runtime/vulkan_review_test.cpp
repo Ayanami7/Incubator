@@ -26,6 +26,7 @@
 #include "runtime/core/utils/utf8.h"
 #include "runtime/platform/fileio/fileio.h"
 #include "runtime/platform/window/window.h"
+#include "runtime/model/model_manager.h"
 #include "runtime/render/detail/renderer_review.h"
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
@@ -35,10 +36,17 @@
 #include "runtime/render/vulkan/vulkan_image.h"
 #include "runtime/render/vulkan/vulkan_instance.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
+#include "runtime/resource/loader/float_texture_resource.h"
+#include "runtime/resource/loader/model_loader.h"
 #include "runtime/resource/loader/shader_loader.h"
 #include "runtime/resource/loader/shader_resource.h"
+#include "runtime/resource/loader/texture_loader.h"
 #include "runtime/resource/resource_manager.h"
 #include "runtime/resource/resource_registry.h"
+#include "runtime/scene/scene.h"
+#include "runtime/scene/scene_file.h"
+#include "runtime/scene/scene_frame.h"
+#include "runtime/scene/scene_rebuild.h"
 #include "support/render_demo/scene_assets.h"
 #include "support/render_demo/scene_frame.h"
 #include "support/render_demo/scene_mesh.h"
@@ -2595,6 +2603,390 @@ namespace
             reportFile << report.str();
             std::cout << report.str() << std::endl;
         }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, IblFloatCubemapUploadAndPbrMaterialResponsesUnderValidation)
+    {
+        const auto buildDir = Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR).parent_path().parent_path();
+        const auto buildAssetsDir = buildDir / "assets";
+        const auto reviewDir = buildDir / "review";
+        std::filesystem::create_directories(reviewDir);
+
+        auto window = createWindow();
+        SceneAssets assets;
+        auto shadowHold = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
+            Resource::ResourceType::SHADER, "shaders/shadow.vert.spv");
+        ASSERT_TRUE(shadowHold);
+        const Resource::ShaderResource shadowShader({}, shadowHold.get<Resource::ShaderResource>()->words());
+        shadowHold.reset();
+
+        const Resource::ShaderResource vertexShader({}, assets.vertex->words());
+        const Resource::ShaderResource fragmentShader({}, assets.fragment->words());
+        const Resource::ShaderResource displayVertexShader({}, assets.displayVertex->words());
+        const Resource::ShaderResource displayFragmentShader({}, assets.displayFragment->words());
+        const Resource::TextureResource refTex({}, assets.texture->width(), assets.texture->height(),
+                                               assets.texture->pixels());
+        releaseCpuAssets(assets);
+
+        // 从构建部署根目录读取预生成的棚拍 IBL 资源与 Task 01 展示场景。
+        auto io = FileIO::createPlatformFileIO();
+        Resource::AssetSource buildSource(*io, buildAssetsDir);
+        Resource::ResourceManager::instance().bindAssetSource(&buildSource);
+        Resource::ResourceManager::instance().registerLoader(
+            Resource::ResourceType::TEXTURE, std::make_unique<Resource::TextureLoader>(buildSource));
+        Resource::ResourceManager::instance().registerLoader(
+            Resource::ResourceType::MODEL, std::make_unique<Resource::ModelLoader>(buildSource));
+
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            Texture irrTex, preTex, lutTex;
+            {
+                const auto irrHold = Resource::ResourceManager::instance().hold<Resource::FloatTextureResource>(
+                    Resource::ResourceType::TEXTURE, "ibl/studio_irradiance.ktx");
+                const auto preHold = Resource::ResourceManager::instance().hold<Resource::FloatTextureResource>(
+                    Resource::ResourceType::TEXTURE, "ibl/studio_prefiltered.ktx");
+                const auto lutHold = Resource::ResourceManager::instance().hold<Resource::FloatTextureResource>(
+                    Resource::ResourceType::TEXTURE, "ibl/studio_brdf_lut.ktx");
+                ASSERT_TRUE(irrHold);
+                ASSERT_TRUE(preHold);
+                ASSERT_TRUE(lutHold);
+                const auto* irrData = irrHold.get<Resource::FloatTextureResource>();
+                const auto* preData = preHold.get<Resource::FloatTextureResource>();
+                const auto* lutData = lutHold.get<Resource::FloatTextureResource>();
+                ASSERT_NE(irrData, nullptr);
+                ASSERT_NE(preData, nullptr);
+                ASSERT_NE(lutData, nullptr);
+
+                // 1. 准备顺序与非法 IBL 调用校验。
+                {
+                    auto scoped = renderer.createResources();
+                    const auto irrScoped = renderer.createTexture(scoped, *irrData);
+                    const auto preScoped = renderer.createTexture(scoped, *preData);
+                    const auto lutScoped = renderer.createTexture(scoped, *lutData);
+                    EXPECT_TRUE(irrScoped.valid() && preScoped.valid() && lutScoped.valid());
+                    EXPECT_THROW(renderer.prepareIblResources(irrScoped, preScoped, lutScoped), Error::Exception);
+                    scoped.reset();
+                    EXPECT_FALSE(irrScoped.valid() || preScoped.valid() || lutScoped.valid());
+                }
+
+                renderer.prepareSceneResources(vertexShader, fragmentShader);
+                renderer.prepareDisplayResources(displayVertexShader, displayFragmentShader);
+                renderer.prepareShadowResources(shadowShader);
+
+                irrTex = renderer.createTexture(*irrData);
+                preTex = renderer.createTexture(*preData);
+                lutTex = renderer.createTexture(*lutData);
+            }
+
+            const auto white = renderer.createTexture(
+                Resource::TextureResource({}, 1, 1, {255, 255, 255, 255}), TextureMipMode::BaseLevel,
+                TextureColorSpace::Srgb);
+
+            // 材质不得绑定浮点或立方体贴图；IBL 未准备前开启 iblEnabled 须抛出 RENDER；类型错配须拒绝。
+            EXPECT_THROW(renderer.createMaterial({irrTex}), Error::Exception);
+            EXPECT_THROW(renderer.createMaterial({lutTex}), Error::Exception);
+            EXPECT_THROW(renderer.prepareIblResources(white, preTex, lutTex), Error::Exception);
+            EXPECT_THROW(renderer.prepareIblResources(lutTex, preTex, lutTex), Error::Exception);
+            EXPECT_THROW(renderer.prepareIblResources(irrTex, preTex, irrTex), Error::Exception);
+
+            // 2. 构造球体网格用于光滑金属、粗糙金属与非金属响应检验。
+            std::vector<MeshVertex> sphereVertices;
+            std::vector<uint32_t> sphereIndices;
+            constexpr uint32_t RINGS = 24;
+            constexpr uint32_t SECTORS = 48;
+            constexpr float PI = 3.14159265359f;
+            for (uint32_t r = 0; r <= RINGS; ++r)
+            {
+                const float v = float(r) / RINGS;
+                const float phi = v * PI;
+                for (uint32_t s = 0; s <= SECTORS; ++s)
+                {
+                    const float u = float(s) / SECTORS;
+                    const float theta = u * 2.0f * PI;
+                    const glm::vec3 n{std::sin(phi) * std::sin(theta), std::cos(phi), std::sin(phi) * std::cos(theta)};
+                    sphereVertices.push_back({{n.x * 0.5f, n.y * 0.5f, n.z * 0.5f},
+                                              {u, v},
+                                              {n.x, n.y, n.z},
+                                              {std::cos(theta), 0.0f, -std::sin(theta), 1.0f}});
+                }
+            }
+            for (uint32_t r = 0; r < RINGS; ++r)
+            {
+                for (uint32_t s = 0; s < SECTORS; ++s)
+                {
+                    const uint32_t a = r * (SECTORS + 1) + s;
+                    const uint32_t b = a + SECTORS + 1;
+                    sphereIndices.push_back(a);
+                    sphereIndices.push_back(b);
+                    sphereIndices.push_back(a + 1);
+                    sphereIndices.push_back(a + 1);
+                    sphereIndices.push_back(b);
+                    sphereIndices.push_back(b + 1);
+                }
+            }
+            const auto sphereMesh = renderer.createMesh(sphereVertices, sphereIndices);
+            const auto quadData = Demo::makePlaneMesh();
+            const auto quadMesh = renderer.createMesh(quadData.vertices, quadData.indices);
+
+            MaterialDesc smoothMetalDesc{white, {0.95f, 0.95f, 0.95f}};
+            smoothMetalDesc.shading = ShadingMode::Pbr;
+            smoothMetalDesc.metallic = 1.0f;
+            smoothMetalDesc.roughness = 0.05f;
+            const auto smoothMetalMat = renderer.createMaterial(smoothMetalDesc);
+
+            MaterialDesc roughMetalDesc{white, {0.95f, 0.95f, 0.95f}};
+            roughMetalDesc.shading = ShadingMode::Pbr;
+            roughMetalDesc.metallic = 1.0f;
+            roughMetalDesc.roughness = 0.75f;
+            const auto roughMetalMat = renderer.createMaterial(roughMetalDesc);
+
+            MaterialDesc dielectricDesc{white, {0.82f, 0.28f, 0.18f}};
+            dielectricDesc.shading = ShadingMode::Pbr;
+            dielectricDesc.metallic = 0.0f;
+            dielectricDesc.roughness = 0.85f;
+            const auto dielectricMat = renderer.createMaterial(dielectricDesc);
+
+            // IBL 关闭像素基线：安装 IBL 前后 iblEnabled=false 须输出完全一致的像素。
+            const std::array<float, 4> blackClear{0.0f, 0.0f, 0.0f, 1.0f};
+            auto proj = glm::perspectiveRH_ZO(glm::radians(38.0f), 900.0f / 320.0f, 0.1f, 20.0f);
+            proj[1][1] *= -1.0f;
+            const CameraMatrices sampleCamera{
+                glm::lookAtRH(glm::vec3(0.0f, 0.0f, 4.1f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)), proj};
+            const std::array sampleDraws{
+                DrawItem{sphereMesh, smoothMetalMat, glm::translate(glm::mat4(1.0f), glm::vec3(-1.35f, 0.0f, 0.0f))},
+                DrawItem{sphereMesh, roughMetalMat, glm::mat4(1.0f)},
+                DrawItem{sphereMesh, dielectricMat, glm::translate(glm::mat4(1.0f), glm::vec3(1.35f, 0.0f, 0.0f))},
+            };
+
+            const auto captureSampleHdr = [&](const Lighting& lighting, bool iblEnabled) {
+                std::vector<std::array<float, 4>> pixels;
+                FrameInput input{{900, 320}, sampleCamera, sampleDraws, lighting};
+                input.iblEnabled = iblEnabled;
+                Detail::RendererReviewAccess::withHdrSceneTarget(
+                    renderer, input, blackClear, [&](const auto& d, const auto& img) {
+                        pixels = TextureGpuReview::captureRgba16f(d, img, {900, 320});
+                    });
+                return pixels;
+            };
+            const auto captureOffscreenLdr = [&](const FrameInput& input, const std::array<float, 4>& clear) {
+                std::vector<uint8_t> pixels;
+                const auto uiExtent = renderer.beginUiFrame();
+                EXPECT_TRUE(uiExtent);
+                const auto output = renderer.prepareSceneTarget(input.extent, false);
+                ImGui::Begin("IBL");
+                ImGui::Image(static_cast<ImTextureID>(renderer.sceneImage(output)),
+                             ImVec2(float(input.extent.width), float(input.extent.height)));
+                ImGui::End();
+                renderer.imgui().endFrame();
+                auto* drawData = renderer.imgui().drawData();
+                renderer.drawSceneTarget(output, input, clear,
+                                         [&](void* cmd) { renderer.imgui().recordDrawData(drawData, cmd); });
+                Detail::RendererReviewAccess::withSceneOutput(
+                    renderer, output, [&](const auto& d, const auto& img) {
+                        pixels = TextureGpuReview::captureMip(d, img, 0, {input.extent.width, input.extent.height});
+                    });
+                return pixels;
+            };
+
+            // 尚未准备 IBL 时开启 iblEnabled 必须抛 RENDER。
+            {
+                FrameInput badInput{{320, 180}, sampleCamera, sampleDraws};
+                badInput.iblEnabled = true;
+                EXPECT_THROW(renderer.drawFrame(badInput, blackClear), Error::Exception);
+            }
+
+            const Lighting directLighting{{0.0f, -0.5f, -1.0f}, {1.0f, 0.95f, 0.9f}, 1.5f, 0.12f};
+            const auto beforeIblPrepareOff = captureSampleHdr(directLighting, false);
+
+            // 安装共享 IBL 资源，验证不可重复安装且原关闭基线严格不变。
+            renderer.prepareIblResources(irrTex, preTex, lutTex);
+            EXPECT_THROW(renderer.prepareIblResources(irrTex, preTex, lutTex), Error::Exception);
+            const auto afterIblPrepareOff = captureSampleHdr(directLighting, false);
+            EXPECT_EQ(beforeIblPrepareOff, afterIblPrepareOff);
+
+            // 3. 方向光强度为零且常量 ambient=0：检验光滑金属、粗糙金属与非金属响应差异。
+            const Lighting zeroLighting{{0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, 0.0f, 0.0f};
+            FrameInput zeroOffInput{{900, 320}, sampleCamera, sampleDraws, zeroLighting};
+            zeroOffInput.display = {ToneMappingMode::Reinhard, 0.0f};
+            zeroOffInput.iblEnabled = false;
+            const auto zeroOffPx = captureOffscreenLdr(zeroOffInput, {0.06f, 0.07f, 0.09f, 1.0f});
+
+            FrameInput zeroOnInput = zeroOffInput;
+            zeroOnInput.iblEnabled = true;
+            const auto zeroOnPx = captureOffscreenLdr(zeroOnInput, {0.06f, 0.07f, 0.09f, 1.0f});
+            EXPECT_NE(zeroOnPx, zeroOffPx);
+            WindowCapture::save({900, 320, zeroOnPx}, reviewDir / "ibl-samples-zero-light.ppm");
+
+            struct RegionMetrics
+            {
+                double meanLuma = 0.0;
+                double meanR = 0.0;
+                double meanG = 0.0;
+                double meanB = 0.0;
+                double meanGrad = 0.0;
+            };
+            const auto measureSphereRegion = [&](std::span<const uint8_t> rgba, uint32_t xStart, uint32_t xEnd) {
+                RegionMetrics m{};
+                size_t count = 0;
+                size_t gradCount = 0;
+                const auto pxAt = [&](uint32_t x, uint32_t y, int c) -> double {
+                    return rgba[(size_t(y) * 900u + x) * 4u + c] / 255.0;
+                };
+                for (uint32_t y = 120; y < 200; ++y)
+                {
+                    for (uint32_t x = xStart; x < xEnd; ++x)
+                    {
+                        const double r = pxAt(x, y, 0);
+                        const double g = pxAt(x, y, 1);
+                        const double b = pxAt(x, y, 2);
+                        m.meanR += r;
+                        m.meanG += g;
+                        m.meanB += b;
+                        m.meanLuma += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                        ++count;
+                        if (x + 1 < xEnd && y + 1 < 200)
+                        {
+                            const double l0 = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                            const double lx = 0.2126 * pxAt(x + 1, y, 0) + 0.7152 * pxAt(x + 1, y, 1) +
+                                              0.0722 * pxAt(x + 1, y, 2);
+                            const double ly = 0.2126 * pxAt(x, y + 1, 0) + 0.7152 * pxAt(x, y + 1, 1) +
+                                              0.0722 * pxAt(x, y + 1, 2);
+                            m.meanGrad += std::abs(lx - l0) + std::abs(ly - l0);
+                            ++gradCount;
+                        }
+                    }
+                }
+                m.meanR /= count;
+                m.meanG /= count;
+                m.meanB /= count;
+                m.meanLuma /= count;
+                m.meanGrad /= gradCount;
+                return m;
+            };
+            const auto smoothM = measureSphereRegion(zeroOnPx, 257, 337);
+            const auto roughM = measureSphereRegion(zeroOnPx, 410, 490);
+            const auto dielM = measureSphereRegion(zeroOnPx, 563, 643);
+            EXPECT_GT(smoothM.meanLuma, 0.20);
+            EXPECT_GT(roughM.meanLuma, 0.20);
+            EXPECT_LT(roughM.meanGrad, smoothM.meanGrad * 0.65);
+            EXPECT_GT(dielM.meanR, 0.50);
+            EXPECT_GT(dielM.meanR, dielM.meanG * 1.25);
+            EXPECT_GT(dielM.meanG, dielM.meanB * 1.05);
+
+            // 4. 开启方向光与阴影时，IBL 之上仍保留直接光与 PCF 阴影衰减。
+            const auto orthoProj = [] {
+                auto p = glm::orthoRH_ZO(-2.0f, 2.0f, -2.0f, 2.0f, 0.1f, 10.0f);
+                p[1][1] *= -1.0f;
+                return p;
+            }();
+            const CameraMatrices shadowCam{
+                glm::lookAtRH(glm::vec3(0.0f, 1.5f, 3.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+                orthoProj};
+            const std::array<MeshVertex, 4> receiverVerts{{
+                {{-2.0f, 0.0f, -2.0f}, {0, 0}, {0, 1, 0}, {1, 0, 0, 1}},
+                {{2.0f, 0.0f, -2.0f}, {1, 0}, {0, 1, 0}, {1, 0, 0, 1}},
+                {{2.0f, 0.0f, 2.0f}, {1, 1}, {0, 1, 0}, {1, 0, 0, 1}},
+                {{-2.0f, 0.0f, 2.0f}, {0, 1}, {0, 1, 0}, {1, 0, 0, 1}},
+            }};
+            const std::array<uint32_t, 6> quadIndices{0, 1, 2, 0, 2, 3};
+            const auto xzQuadMesh = renderer.createMesh(receiverVerts, quadIndices);
+            MaterialDesc receiverDesc{white, {0.8f, 0.8f, 0.8f}};
+            receiverDesc.shading = ShadingMode::Pbr;
+            receiverDesc.metallic = 0.0f;
+            receiverDesc.roughness = 0.8f;
+            const auto matteReceiver = renderer.createMaterial(receiverDesc);
+            const std::array shadowDraws{
+                DrawItem{xzQuadMesh, matteReceiver, glm::mat4(1.0f)},
+                DrawItem{xzQuadMesh, matteReceiver,
+                         glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.8f, 0.0f)) *
+                             glm::scale(glm::mat4(1.0f), glm::vec3(0.225f, 1.0f, 0.225f))},
+            };
+            ShadowSettings shadowSettings;
+            shadowSettings.enabled = true;
+            shadowSettings.depthBias = 0.002f;
+            const Lighting topLight{{0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, 2.0f, 0.0f};
+            FrameInput iblShadowInput{{384, 256}, shadowCam, shadowDraws, topLight};
+            iblShadowInput.shadow = makeShadowFrame(shadowSettings, topLight.direction);
+            iblShadowInput.shadowDraws = shadowDraws;
+            iblShadowInput.display = {ToneMappingMode::Reinhard, 0.0f};
+            iblShadowInput.iblEnabled = true;
+            const auto shadowIblPx = captureOffscreenLdr(iblShadowInput, blackClear);
+            const auto centerShadowed = shadowIblPx[(128u * 384u + 192u) * 4u];
+            const auto sideLit = shadowIblPx[(128u * 384u + 80u) * 4u];
+            EXPECT_GT(sideLit, centerShadowed + 20u);
+
+            // 5. 在 Task 01 场景 pbr-showcase.json 上执行同机位 IBL OFF / ON 对照并记录 GPU 耗时。
+            const auto showcaseDesc = Scene::readScene(*io, Utils::Utf8::toUtf8String(buildAssetsDir / "scenes/pbr-showcase.json"));
+            Model::ModelManager modelManager(renderer);
+            const auto rebuilt = Scene::rebuildScene(
+                showcaseDesc, [&](const Model::ModelReference& ref) { return modelManager.resolve(ref); });
+            constexpr FrameExtent SHOWCASE_EXTENT{800, 600};
+            ShadowSettings showcaseShadow;
+            showcaseShadow.enabled = true;
+            showcaseShadow.depthBias = 0.003f;
+            const auto extractedOff =
+                Scene::extractSceneFrame(*rebuilt.scene, SHOWCASE_EXTENT, true, showcaseShadow, false);
+            const auto extractedOn =
+                Scene::extractSceneFrame(*rebuilt.scene, SHOWCASE_EXTENT, true, showcaseShadow, true);
+            ASSERT_TRUE(extractedOff.has_value());
+            ASSERT_TRUE(extractedOn.has_value());
+
+            constexpr int WARMUP_FRAMES = 4;
+            constexpr int SAMPLE_FRAMES = 11;
+            std::ostringstream report;
+            report << "Fixed Studio IBL Comparison (pbr-showcase.json, 800x600, Debug, Validation=Required)\n";
+            report << "ExposureEv=" << showcaseDesc.display.exposureEv << ", ToneMapping=Reinhard, Shadows=ON(bias="
+                   << showcaseShadow.depthBias << "), FXAA=OFF\n";
+            report << "Warmup=" << WARMUP_FRAMES << ", Samples=" << SAMPLE_FRAMES << "\n";
+
+            std::vector<uint8_t> showcaseOffPx, showcaseOnPx;
+            for (const bool enableIbl : {false, true})
+            {
+                const auto& frameSrc = enableIbl ? *extractedOn : *extractedOff;
+                for (int i = 0; i < WARMUP_FRAMES; ++i)
+                    (void)captureOffscreenLdr(frameSrc.input(), showcaseDesc.clearColor);
+                Detail::RendererReviewAccess::waitForFrames(renderer);
+
+                std::vector<double> gpuTimes;
+                uint32_t sceneDraws = 0;
+                uint32_t shadowDrawsCount = 0;
+                std::vector<uint8_t> lastPx;
+                for (int i = 0; i < SAMPLE_FRAMES; ++i)
+                {
+                    lastPx = captureOffscreenLdr(frameSrc.input(), showcaseDesc.clearColor);
+                    Detail::RendererReviewAccess::waitForFrames(renderer);
+                    const auto stats = renderer.lastViewportStats();
+                    EXPECT_TRUE(stats.hasCompletedSample);
+                    sceneDraws = stats.sceneDrawCount;
+                    shadowDrawsCount = stats.shadowDrawCount;
+                    if (stats.gpuTimeMs.has_value())
+                        gpuTimes.push_back(*stats.gpuTimeMs);
+                }
+                double medianMs = 0.0;
+                if (!gpuTimes.empty())
+                {
+                    std::sort(gpuTimes.begin(), gpuTimes.end());
+                    medianMs = gpuTimes[gpuTimes.size() / 2];
+                }
+                const char* ppmName = enableIbl ? "ibl-showcase-on.ppm" : "ibl-showcase-off.ppm";
+                WindowCapture::save({int(SHOWCASE_EXTENT.width), int(SHOWCASE_EXTENT.height), lastPx},
+                                    reviewDir / ppmName);
+                if (enableIbl)
+                    showcaseOnPx = std::move(lastPx);
+                else
+                    showcaseOffPx = std::move(lastPx);
+                report << (enableIbl ? "IblOn" : "IblOff") << ": medianGpuMs=" << medianMs
+                       << ", sceneDraws=" << sceneDraws << ", shadowDraws=" << shadowDrawsCount
+                       << ", ppm=" << ppmName << "\n";
+            }
+            EXPECT_NE(showcaseOnPx, showcaseOffPx);
+            std::ofstream reportOut(reviewDir / "ibl-comparison-report.txt");
+            reportOut << report.str();
+            std::cout << report.str() << std::endl;
+        }
+        Resource::ResourceManager::instance().reset();
+        Resource::ResourceManager::instance().bindAssetSource(nullptr);
         expectCleanValidation();
     }
 }  // namespace
