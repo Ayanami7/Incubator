@@ -25,6 +25,7 @@
 
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
+#include "runtime/resource/asset_importer.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/resource/loader/model_resource.h"
 #include "runtime/resource/loader/texture_loader.h"
@@ -119,6 +120,7 @@ namespace
     public:
         TrackedFileIO() : inner_(Fio::createPlatformFileIO()) {}
         IoCounters counters;
+        std::string reparseDirectory;
         bool exists(const fs::path& path) override
         {
             return inner_->exists(path);
@@ -145,6 +147,13 @@ namespace
         std::vector<Fio::DirectoryEntry> listDirectory(const std::filesystem::path& path) override
         {
             return inner_->listDirectory(path);
+        }
+        std::optional<Fio::DirectoryEntry> inspect(const fs::path& path) override
+        {
+            auto entry = inner_->inspect(path);
+            if (entry && entry->directory && entry->name == reparseDirectory)
+                entry->reparsePoint = true;
+            return entry;
         }
         bool directoryExists(const fs::path& path) override
         {
@@ -260,6 +269,153 @@ namespace
         std::vector<CpuResource> holds_;
         std::ostringstream messages_;
     };
+
+    class AssetImporterTest : public ModelLoaderTest
+    {
+    protected:
+        void writeExternal(std::string_view name, std::string_view bytes)
+        {
+            write(std::string("../external/") + std::string(name), bytes);
+        }
+
+        fs::path external(std::string_view name)
+        {
+            return temporary_ / "external" / Utils::Utf8::toFsPath(name);
+        }
+
+        void expectImportFailure(std::string_view name, std::string_view reason)
+        {
+            try
+            {
+                importExternalModel(*source_, external(name), {"new/imports"});
+                ADD_FAILURE() << "Expected import to fail for " << name;
+            }
+            catch (const Error::Exception& error)
+            {
+                EXPECT_EQ(error.code(), Error::Code::IO);
+                EXPECT_NE(error.message().find(reason), std::string::npos) << error.what();
+            }
+            EXPECT_FALSE(fs::exists(source_->root() / "new"));
+            expectClosed();
+        }
+
+        void expectModelTexture(const ImportedModelResult& imported, std::string_view texturePath)
+        {
+            const auto* model = load(imported.virtualPath);
+            ASSERT_NE(model, nullptr) << messages_.str();
+            ASSERT_EQ(model->parts().size(), 2u);
+            EXPECT_EQ(model->materials()[model->parts()[0].material].texturePath, texturePath);
+            expectClosed();
+        }
+    };
+
+    TEST_F(AssetImporterTest, GltfCopiesNestedDependenciesAndLoadsThroughManager)
+    {
+        auto text = read(GLTF);
+        const std::string originalUri = "../../textures/direction_rgba.png";
+        const auto uri = text.find(originalUri);
+        ASSERT_NE(uri, std::string::npos);
+        text.replace(uri, originalUri.size(), "textures/nested/with%20space.png");
+        writeExternal("External.GLTF", text);
+        const auto mesh = read("models/minimal_gltf/geometry/mesh.bin");
+        const auto texture = read("textures/direction_rgba.png");
+        ASSERT_FALSE(mesh.empty());
+        ASSERT_FALSE(texture.empty());
+        writeExternal("geometry/mesh.bin", mesh);
+        writeExternal("textures/nested/with space.png", texture);
+
+        const auto imported = importExternalModel(*source_, external("External.GLTF"));
+        EXPECT_EQ(imported.targetDirectory, "models/external");
+        EXPECT_EQ(imported.virtualPath, "models/external/external.gltf");
+        EXPECT_EQ(imported.copiedVirtualPaths,
+                  (std::vector<std::string>{"models/external/external.gltf", "models/external/geometry/mesh.bin",
+                                            "models/external/textures/nested/with space.png"}));
+        EXPECT_EQ(read(imported.virtualPath), text);
+        EXPECT_EQ(read("models/external/geometry/mesh.bin"), mesh);
+        EXPECT_EQ(read("models/external/textures/nested/with space.png"), texture);
+        expectModelTexture(imported, "models/external/textures/nested/with space.png");
+    }
+
+    TEST_F(AssetImporterTest, ObjResolvesDiffuseTextureRelativeToMtlAndLoadsThroughManager)
+    {
+        writeExternal("外部 模型.OBJ", read(OBJ));
+        const std::string material = "newmtl Direction\nKd 1 1 1\nmap_Kd -clamp on ../textures/with space.png\n"
+                                     "newmtl Solid\nKd 0.5 1 0.5\n";
+        writeExternal("materials/model.mtl", material);
+        const auto texture = read("textures/direction_rgba.png");
+        ASSERT_FALSE(texture.empty());
+        writeExternal("textures/with space.png", texture);
+
+        const auto imported = importExternalModel(*source_, external("外部 模型.OBJ"), {""});
+        EXPECT_EQ(imported.targetDirectory, "外部 模型");
+        EXPECT_EQ(imported.virtualPath, "外部 模型/外部 模型.obj");
+        EXPECT_EQ(imported.copiedVirtualPaths,
+                  (std::vector<std::string>{"外部 模型/外部 模型.obj", "外部 模型/materials/model.mtl",
+                                            "外部 模型/textures/with space.png"}));
+        EXPECT_EQ(read("外部 模型/materials/model.mtl"), material);
+        EXPECT_EQ(read("外部 模型/textures/with space.png"), texture);
+        expectModelTexture(imported, "外部 模型/textures/with space.png");
+    }
+
+    TEST_F(AssetImporterTest, RejectsUnsupportedFormatMissingDependenciesAndInvalidPaths)
+    {
+        writeExternal("model.glb", "{}");
+        expectImportFailure("model.glb", "Only external glTF and OBJ");
+        writeExternal("model.obj", "mtllib missing.mtl\n");
+        expectImportFailure("model.obj", "missing.mtl");
+        writeExternal("model.obj", "mtllib material.mtl\n");
+        writeExternal("material.mtl", "newmtl Surface\nmap_Kd textures/missing.png\n");
+        expectImportFailure("model.obj", "textures");
+        writeExternal("material.mtl", "newmtl Surface\nmap_Kd ../outside.png\n");
+        expectImportFailure("model.obj", "escapes");
+        writeExternal("model.gltf", R"({"buffers":[{"uri":"missing.bin"}]})");
+        expectImportFailure("model.gltf", "missing.bin");
+        writeExternal("model.gltf", R"({"images":[{"uri":"data:image/png;base64,AAAA"}]})");
+        expectImportFailure("model.gltf", "data:image");
+        writeExternal("model.gltf", R"({"buffers":[{"uri":"%2e%2e/outside.bin"}]})");
+        expectImportFailure("model.gltf", "escapes");
+        writeExternal("model.gltf", R"({"buffers":[{"uri":"/outside.bin"}]})");
+        expectImportFailure("model.gltf", "outside.bin");
+        writeExternal("model.gltf", R"({"buffers":[{"uri":"C:outside.bin"}]})");
+        expectImportFailure("model.gltf", "C:");
+    }
+
+    TEST_F(AssetImporterTest, RejectsDirectoryReparsePoints)
+    {
+        writeExternal("model.gltf", R"({"buffers":[{"uri":"linked/mesh.bin"}]})");
+        writeExternal("linked/mesh.bin", "mesh");
+        fileIO_.reparseDirectory = "linked";
+        expectImportFailure("model.gltf", "reparse point");
+    }
+
+    TEST_F(AssetImporterTest, RollsBackFilesAndDirectoriesOnCopyFailure)
+    {
+        writeExternal("model.gltf", R"({"buffers":[{"uri":"geometry/mesh.bin"}]})");
+        writeExternal("geometry/mesh.bin", "mesh");
+        fileIO_.counters.failPath = "mesh.bin";
+        fileIO_.counters.throwRead = true;
+        expectImportFailure("model.gltf", "controlled model read failure");
+        EXPECT_TRUE(fs::exists(source_->resolve(GLTF)));
+    }
+
+    TEST_F(AssetImporterTest, RepeatedImportsAvoidExistingFilesAndDirectories)
+    {
+        writeExternal("model.obj", read(OBJ));
+        writeExternal("materials/model.mtl", "newmtl Direction\nKd 1 1 1\nnewmtl Solid\nKd 0.5 1 0.5\n");
+        write("models/model", "existing file");
+        const auto first = importExternalModel(*source_, external("model.obj"));
+        EXPECT_EQ(first.virtualPath, "models/model_1/model.obj");
+        const auto firstModel = read(first.virtualPath);
+        const auto firstMaterial = read("models/model_1/materials/model.mtl");
+        writeExternal("model.obj", read(OBJ) + "\n# second import\n");
+        writeExternal("materials/model.mtl", firstMaterial + "\n# second import\n");
+        const auto second = importExternalModel(*source_, external("model.obj"));
+        EXPECT_EQ(second.virtualPath, "models/model_2/model.obj");
+        EXPECT_EQ(read("models/model"), "existing file");
+        EXPECT_EQ(read(first.virtualPath), firstModel);
+        EXPECT_EQ(read("models/model_1/materials/model.mtl"), firstMaterial);
+        EXPECT_EQ(read(second.virtualPath), firstModel + "\n# second import\n");
+    }
 
     TEST_F(ModelLoaderTest, GltfThroughManagerPreservesHierarchyPartsAndSharedMeshes)
     {

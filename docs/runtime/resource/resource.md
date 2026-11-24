@@ -49,6 +49,7 @@ src/runtime/resource/
 ├── resource_id.h/.cpp
 ├── asset_info.h
 ├── asset_source.h/.cpp
+├── asset_importer.h/.cpp
 ├── resource_object.h/.cpp
 ├── resource_registry.h/.cpp
 ├── resource_manager.h/.cpp
@@ -93,6 +94,20 @@ OBJ/glTF、PNG、bin/mtl 分别标为模型、纹理和依赖候选，其他项�
 
 会话先构造 FileIO 和 AssetSource，再 bindAssetSource(&source) 并注册 Loader。
 结束时释放全部 CPU 持有和载荷，reset 清除路由，再 bindAssetSource(nullptr)，最后销毁源及 FileIO。
+
+### 外部模型文件导入
+
+`Resource::importExternalModel(source, externalPath, options)` 同步将外部静态模型复制到 `source.root()`。
+glTF 收集外部缓冲和 PNG，按模型文件目录解析 URI。OBJ 收集声明的 MTL 以及各 MTL 的
+`map_Kd` PNG，贴图路径相对于声明它的 MTL 目录解析。模型目录内的依赖层级和文件内容原样保留。
+
+`options.targetDirectory` 默认是虚拟目录 `models`，空字符串表示资产根。导入为每个模型创建
+`<stem>`、`<stem>_1` 等独立目录，避让已有文件和目录。结果包含规范化模型路径、新建目录及复制文件的
+虚拟路径。调用方可将结果中的 `virtualPath` 交给 `ResourceManager::hold<ModelResource>` 加载。
+
+依赖必须可读且位于外部模型所在目录内。绝对路径、盘符路径、内嵌 URI 和目录重解析点均会触发 IO 异常。
+复制失败时回滚本次创建的文件和目录。使用默认资产源的应用会将文件写入 `<cwd>/assets/`。
+若应用从 `build/` 启动，清理 `build/` 会同时移除导入文件。
 换绑或解绑时仍有路由、CPU 持有或挂载对象会抛 CONFIG，原状态保持；零持有、无载荷的身份登记可以保留。
 同一进程后续绑定其他根时，旧登记仍使用相同 ID，但载荷必须重新从新根读取。
 Registry::hasLiveResources 检查持有或挂载状态，不强制销毁外部对象；reset 仍只清路由。

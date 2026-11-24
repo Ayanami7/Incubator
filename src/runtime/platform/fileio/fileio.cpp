@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include "runtime/core/error/error.h"
+#include "runtime/core/path/path.h"
 #include "runtime/core/utils/utf8.h"
 
 #include <string>
@@ -17,6 +18,17 @@ namespace Incubator
 {
     namespace FileIO
     {
+        std::optional<DirectoryEntry> FileIO::inspect(const std::filesystem::path& path)
+        {
+            const auto name = Path::toLowerASCII(Utils::Utf8::toUtf8String(path.filename()));
+            for (auto& entry : listDirectory(path.parent_path()))
+            {
+                if (Path::toLowerASCII(entry.name) == name)
+                    return std::move(entry);
+            }
+            return std::nullopt;
+        }
+
         namespace Detail
         {
 
@@ -365,6 +377,23 @@ namespace Incubator
                         throw Error::Exception(Error::Code::IO, "Cannot enumerate '" + Utils::Utf8::toUtf8String(path) +
                                                                     "': " + error.what());
                     }
+                }
+
+                std::optional<DirectoryEntry> inspect(const std::filesystem::path& path) override
+                {
+                    const DWORD attributes = GetFileAttributesW(path.c_str());
+                    if (attributes == INVALID_FILE_ATTRIBUTES)
+                    {
+                        const DWORD error = GetLastError();
+                        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+                            return std::nullopt;
+                        throw Error::Exception(
+                            Error::Code::IO,
+                            formatWin32Error(error, "GetFileAttributesW failed: " + Utils::Utf8::toUtf8String(path)));
+                    }
+                    return DirectoryEntry{Utils::Utf8::toUtf8String(path.filename()),
+                                          bool(attributes & FILE_ATTRIBUTE_DIRECTORY),
+                                          bool(attributes & FILE_ATTRIBUTE_REPARSE_POINT)};
                 }
 
                 bool directoryExists(const std::filesystem::path& path) override

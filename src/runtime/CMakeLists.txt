@@ -41,6 +41,7 @@ set(RESOURCE_HEADERS
     resource/resource_id.h
     resource/resource_registry.h
     resource/asset_source.h
+    resource/asset_importer.h
     resource/asset_info.h
     resource/resource_object.h
     resource/resource_manager.h
@@ -59,6 +60,7 @@ set(RESOURCE_HEADERS
 )
 set(RESOURCE_SOURCES
     resource/asset_source.cpp
+    resource/asset_importer.cpp
     resource/resource_id.cpp
     resource/resource_registry.cpp
     resource/resource_object.cpp

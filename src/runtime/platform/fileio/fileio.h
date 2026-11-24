@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -75,6 +76,9 @@ namespace Incubator
 
             /// @brief 枚举直接子项，不递归；空目录返回空列表，访问失败抛 IO。
             virtual std::vector<DirectoryEntry> listDirectory(const std::filesystem::path& path) = 0;
+
+            /// @brief 查询指定项的物理元数据，路径不存在时返回空值。
+            virtual std::optional<DirectoryEntry> inspect(const std::filesystem::path& path);
 
             // ---- 目录操作 ----
 
