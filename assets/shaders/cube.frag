@@ -39,9 +39,19 @@ float shadowVisibility()
     if (any(lessThan(ndc, vec3(-1.0, -1.0, 0.0))) || any(greaterThan(ndc, vec3(1.0))))
         return 1.0;
     vec2 shadowUv = ndc.xy * 0.5 + 0.5;
-    // 阴影图仅有基础层，显式读取以避免范围分支中的隐式导数依赖。
-    float storedDepth = textureLod(shadowDepth, shadowUv, 0.0).r;
-    return ndc.z - frame.shadowParams.x <= storedDepth ? 1.0 : 0.0;
+    // 阴影图仅有基础层；使用整数 texelFetch 执行固定 2×2 双线性加权 PCF，避免硬件线性比较差异与隐式导数依赖。
+    ivec2 shadowSize = textureSize(shadowDepth, 0);
+    vec2 texelPos = shadowUv * vec2(shadowSize) - 0.5;
+    ivec2 baseTexel = ivec2(floor(texelPos));
+    vec2 weight = fract(texelPos);
+    ivec2 maxTexel = shadowSize - 1;
+    float receiverDepth = ndc.z - frame.shadowParams.x;
+
+    float v00 = receiverDepth <= texelFetch(shadowDepth, clamp(baseTexel + ivec2(0, 0), ivec2(0), maxTexel), 0).r ? 1.0 : 0.0;
+    float v10 = receiverDepth <= texelFetch(shadowDepth, clamp(baseTexel + ivec2(1, 0), ivec2(0), maxTexel), 0).r ? 1.0 : 0.0;
+    float v01 = receiverDepth <= texelFetch(shadowDepth, clamp(baseTexel + ivec2(0, 1), ivec2(0), maxTexel), 0).r ? 1.0 : 0.0;
+    float v11 = receiverDepth <= texelFetch(shadowDepth, clamp(baseTexel + ivec2(1, 1), ivec2(0), maxTexel), 0).r ? 1.0 : 0.0;
+    return mix(mix(v00, v10, weight.x), mix(v01, v11, weight.x), weight.y);
 }
 
 void main()

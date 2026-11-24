@@ -444,13 +444,13 @@ Synchronization2 在深度早/晚测试写入与片元采样之间建立依赖�
 
 场景顶点 Shader 输出真实世界位置；片元用同一帧的光源矩阵执行投影、透视除法及唯一的 UV 映射。
 投影位于 XY 的 [-1,1] 或深度 [0,1] 之外时直接受光，不能依赖 ClampToEdge 把边缘深度重复到范围外。
-内部采样器使用 nearest min/mag/mip、ClampToEdge 和非比较模式，以 `textureLod(...,0)` 显式读取唯一基础层，
-使范围分支不依赖隐式导数（见 [GLSL 纹理函数约定](https://registry.khronos.org/OpenGL/specs/gl/GLSLangSpec.4.50.pdf)）。读取后执行：
+内部采样器继续使用 nearest min/mag/mip、ClampToEdge 和非比较模式；片元 `shadowVisibility()` 基于 `textureSize(shadowDepth, 0)` 与纹素中心坐标计算四邻域索引及双线性权重，对钳制在图边界内的 2×2 邻域逐点以 `texelFetch(..., 0)` 读取基础层深度并执行：
 
-`V = receiverDepth - depthBias <= storedDepth ? 1 : 0`
+`V_ij = receiverDepth - depthBias <= storedDepth_ij ? 1 : 0`
 
-只有 Lambert 的直接光乘 V，公式为 `B * (ambient + lightColor * intensity * max(dot(N,-D),0) * V)`。
-环境项、Unlit、背景与 UI 保持原行为；Unlit 仍可出现在独立投射列表中。RGB 在线性空间计算并只编码一次 sRGB。
+再按双线性权重加权四个比较结果，避免硬件线性深度比较的跨实现差异及范围分支中的隐式导数依赖（见 [GLSL 纹理函数约定](https://registry.khronos.org/OpenGL/specs/gl/GLSLangSpec.4.50.pdf)）。
+
+Lambert 与 PBR 的直接光共用该过滤可见度，Unlit、环境项、背景与 UI 保持原行为；Unlit 仍可出现在独立投射列表中。RGB 在线性空间计算并只编码一次 sRGB。
 
 Runtime 默认 depthBias=0.001；Demo 根据展示模型采用 0.003，控件范围为 [0,0.01]。范围约束属于 Demo 控件，Runtime 仍接受任意有限非负偏移。
 偏移单位为零到一光源深度；固定方向下对应的光线距离为 bias * (far-near)。精确夹具验证了 0.0005 深度差在

@@ -568,6 +568,87 @@ namespace
         cleanValidation();
     }
 
+    TEST_F(ModelPreparationTest, ShadowPcfProducesPartialVisibilityOnEdgesForLambertAndPbr)
+    {
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            shadowShader(renderer);
+            Model::PrepareOptions lambertOpt;
+            lambertOpt.shading = ShadingMode::Lambert;
+            Model::PrepareOptions pbrOpt;
+            pbrOpt.shading = ShadingMode::Pbr;
+            const auto lambertReceiver = Model::prepareModel(renderer, "models/shadows/receiver.obj", lambertOpt);
+            const auto pbrReceiver = Model::prepareModel(renderer, "models/shadows/receiver.obj", pbrOpt);
+            const auto unlitReceiver = Model::prepareModel(renderer, "models/shadows/receiver.obj");
+
+            const Lighting lighting{{0, 0, -1}, {0.6f, 0.7f, 0.8f}, 0.8f, 0.2f};
+            const ShadowSettings settings{true, {0, 0, 0}, {6, 6}, 1, 9, 0.001f};
+            // 将投射体旋转 25 度并置于 y=0.75 上方，使斜向阴影边缘横穿 (0,-0.75,0) 到 (0,0.75,0) 的投影扫描线。
+            const glm::mat4 casterModel =
+                glm::translate(glm::mat4(1), {0.0f, 0.75f, 2.0f}) *
+                glm::rotate(glm::mat4(1), glm::radians(25.0f), {0, 0, 1}) *
+                glm::scale(glm::mat4(1), {1.0f, 0.5f, 1.0f});
+
+            const auto scanEdge = [&](const std::shared_ptr<const Model::PreparedModel>& model) {
+                Scene::Scene scene;
+                scene.createEntity(model);
+                scene.setCamera(shadowReviewCamera());
+                scene.setLighting(lighting);
+                auto frame = Scene::extractSceneFrame(scene, {384, 256}, true, settings);
+                EXPECT_TRUE(frame);
+                frame->shadowDraws = {{model->meshes()[0], {}, casterModel}};
+                const auto pixels = shadowScenePixels(*native, renderer, *frame);
+
+                const auto toPixel = [&](glm::vec3 world) {
+                    const auto clip = frame->camera.projection * frame->camera.view * glm::vec4(world, 1.0f);
+                    const auto ndc = glm::vec3(clip) / clip.w;
+                    return std::pair{int((ndc.x * 0.5f + 0.5f) * 384.0f), int((ndc.y * 0.5f + 0.5f) * 256.0f)};
+                };
+                const auto [xLit, yLit] = toPixel({0.0f, -0.75f, 0.0f});
+                const auto [xDark, yDark] = toPixel({0.0f, 0.75f, 0.0f});
+                const int yMin = std::min(yLit, yDark);
+                const int yMax = std::max(yLit, yDark);
+                const uint8_t litR = pixels[(size_t(yLit) * 384u + size_t(xLit)) * 4u];
+                const uint8_t darkR = pixels[(size_t(yDark) * 384u + size_t(xDark)) * 4u];
+
+                int occludedCount = 0;
+                int partialCount = 0;
+                int litCount = 0;
+                for (int y = yMin; y <= yMax; ++y)
+                {
+                    const uint8_t r = pixels[(size_t(y) * 384u + size_t(xLit)) * 4u];
+                    if (r <= darkR + 2)
+                        ++occludedCount;
+                    else if (r >= litR - 2)
+                        ++litCount;
+                    else
+                        ++partialCount;
+                }
+                return std::tuple{darkR, litR, occludedCount, partialCount, litCount};
+            };
+
+            const auto [lambertDark, lambertLit, lambertOcc, lambertPart, lambertFull] = scanEdge(lambertReceiver);
+            EXPECT_LT(lambertDark + 40, lambertLit);
+            EXPECT_GT(lambertOcc, 5);
+            EXPECT_GT(lambertFull, 5);
+            EXPECT_GT(lambertPart, 0);
+
+            const auto [pbrDark, pbrLit, pbrOcc, pbrPart, pbrFull] = scanEdge(pbrReceiver);
+            EXPECT_LT(pbrDark + 40, pbrLit);
+            EXPECT_GT(pbrOcc, 5);
+            EXPECT_GT(pbrFull, 5);
+            EXPECT_GT(pbrPart, 0);
+
+            // Unlit 不受阴影过滤影响，扫描线上所有像素保持一致。
+            const auto [unlitDark, unlitLit, unlitOcc, unlitPart, unlitFull] = scanEdge(unlitReceiver);
+            EXPECT_NEAR(unlitDark, unlitLit, 2);
+            EXPECT_EQ(unlitPart, 0);
+        }
+        cleanValidation();
+    }
+
     TEST_F(ModelPreparationTest, ShadowDepthTargetsFollowSlotsAndSourceTransformsAcrossToggles)
     {
         ResourceManager::instance().registerLoader(ResourceType::MODEL, std::make_unique<TransformModelLoader>());
