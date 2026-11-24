@@ -2,7 +2,9 @@
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -137,6 +139,19 @@ namespace Incubator::Editor
         }
         /// @brief 返回上一级虚拟目录；根目录保持为根。
         bool parentDirectory();
+
+        /// @brief 导入外部模型，刷新并定位新模型，返回此次导入的虚拟路径。
+        std::optional<std::string> importExternalModel(Resource::AssetSource& assetSource,
+                                                       const std::filesystem::path& externalPath);
+        std::optional<std::string> importExternalModel(EditorApp& app, const std::filesystem::path& externalPath);
+        /// @brief 返回当前目录中最近导入并定位的模型路径，空串表示没有定位项。
+        const std::string& focusedAssetPath() const noexcept
+        {
+            return focusedAssetPath_;
+        }
+        /// @brief 显式重载此次会话已缓存的模型变体，返回操作是否成功。
+        bool reloadAsset(Scene::Scene& scene, std::string_view virtualPath);
+        bool reloadAsset(EditorApp& app, std::string_view virtualPath);
 
         /// @brief 使用统一预览选项准备模型，成功后才创建并选中实体；失败保留原场景和文件关联。
         bool addModel(Scene::Scene& scene, const std::array<float, 4>& clearColor, std::string_view path,
@@ -415,7 +430,9 @@ namespace Incubator::Editor
         bool pendingSaveAs_ = false;
         bool exitRequested_ = false;
         EditorOperations operations_;
+        bool browseDirectory(std::string_view path, const Resource::AssetSource* source);
         std::string assetDirectory_;
+        std::string focusedAssetPath_;
         std::vector<Resource::AssetEntry> assetEntries_;
         std::string assetError_;
         bool useObj_ = false;

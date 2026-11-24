@@ -11,6 +11,7 @@
 #include "runtime/core/utils/utf8.h"
 #include "runtime/model/prepared_model.h"
 #include "runtime/platform/fileio/fileio.h"
+#include "runtime/resource/asset_importer.h"
 #include "runtime/resource/resource_manager.h"
 
 namespace Incubator::Editor
@@ -43,10 +44,19 @@ namespace Incubator::Editor
 
     bool EditorController::browseDirectory(std::string_view path)
     {
+        return browseDirectory(path, nullptr);
+    }
+
+    bool EditorController::browseDirectory(std::string_view path, const Resource::AssetSource* source)
+    {
         try
         {
-            auto entries = Resource::ResourceManager::instance().listDirectory(path);
-            assetDirectory_ = path;
+            auto entries = source ? source->listDirectory(path) : Resource::ResourceManager::instance().listDirectory(path);
+            if (assetDirectory_ != path)
+            {
+                assetDirectory_ = path;
+                focusedAssetPath_.clear();
+            }
             assetEntries_ = std::move(entries);
             assetError_.clear();
             return true;
@@ -64,6 +74,43 @@ namespace Incubator::Editor
     {
         const auto slash = assetDirectory_.find_last_of('/');
         return browseDirectory(slash == std::string::npos ? std::string{} : assetDirectory_.substr(0, slash));
+    }
+
+    std::optional<std::string> EditorController::importExternalModel(Resource::AssetSource& assetSource,
+                                                                    const std::filesystem::path& externalPath)
+    {
+        Resource::ImportedModelResult imported;
+        try
+        {
+            imported = Resource::importExternalModel(assetSource, externalPath,
+                                                      {assetDirectory_.empty() ? "models" : assetDirectory_});
+        }
+        catch (const Error::Exception& error)
+        {
+            operations_.setStatus(fmt::format("Cannot import '{}': {}", Utils::Utf8::toUtf8String(externalPath),
+                                               error.message()), true);
+            return std::nullopt;
+        }
+        if (browseDirectory(imported.targetDirectory, &assetSource))
+            focusedAssetPath_ = imported.virtualPath;
+        operations_.setStatus("Imported: " + imported.virtualPath);
+        return std::move(imported.virtualPath);
+    }
+
+    std::optional<std::string> EditorController::importExternalModel(EditorApp& app,
+                                                                    const std::filesystem::path& externalPath)
+    {
+        return importExternalModel(app.assetSource(), externalPath);
+    }
+
+    bool EditorController::reloadAsset(Scene::Scene& scene, std::string_view virtualPath)
+    {
+        return operations_.reloadModel(scene, virtualPath).has_value();
+    }
+
+    bool EditorController::reloadAsset(EditorApp& app, std::string_view virtualPath)
+    {
+        return reloadAsset(app.scene(), virtualPath);
     }
 
     bool EditorController::addModel(Scene::Scene& scene, const std::array<float, 4>& clearColor, std::string_view path,

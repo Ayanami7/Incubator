@@ -1,16 +1,46 @@
 #include "editor_app.h"
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#include <commdlg.h>
 #include <imgui.h>
 
+#include <array>
 #include <utility>
 
 #include "editor_scene.h"
+#include "runtime/core/error/error.h"
 
 namespace Incubator::Editor
 {
     EditorApp::EditorApp(App::SessionOptions options, std::unique_ptr<FileIO::FileIO> fileIO)
         : session_("EditorApp", options, std::move(fileIO))
     {}
+
+    std::optional<std::filesystem::path> EditorApp::pickExternalModelFile()
+    {
+        std::array<wchar_t, 32768> path{};
+        OPENFILENAMEW dialog{};
+        dialog.lStructSize = sizeof(dialog);
+        dialog.hwndOwner = glfwGetWin32Window(static_cast<GLFWwindow*>(window().getNativeHandle()));
+        dialog.lpstrFilter = L"Model files (*.gltf;*.obj)\0*.gltf;*.obj\0";
+        dialog.lpstrFile = path.data();
+        dialog.nMaxFile = static_cast<DWORD>(path.size());
+        dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+        if (GetOpenFileNameW(&dialog))
+            return std::filesystem::path(path.data());
+        if (const DWORD error = CommDlgExtendedError())
+            throw Error::Exception(Error::Code::IO, fmt::format("Cannot open model file picker (error: {})", error));
+        return std::nullopt;
+    }
 
     void EditorApp::sceneViewport(const char* title, bool* open)
     {

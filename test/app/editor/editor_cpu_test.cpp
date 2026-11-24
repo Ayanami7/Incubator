@@ -2,6 +2,7 @@
 #include "app/editor/editor_controller.h"
 #include "app/editor/editor_operations.h"
 #include "app/editor/gizmo.h"
+#include "runtime/resource/asset_importer.h"
 
 #ifdef IMGUI_VERSION
 #error "editor_controller.h and viewport_input.h must not include imgui.h"
@@ -13,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <glm/ext/matrix_transform.hpp>
 #include <limits>
 #include <string>
@@ -1041,6 +1043,56 @@ namespace
         EXPECT_TRUE(controller.assetDirectory().empty());
         EXPECT_TRUE(controller.assetError().empty());
         EXPECT_FALSE(controller.assetEntries().empty());
+    }
+
+    TEST(EditorControllerTest, ImportRefreshesAndLocatesModelWithoutChangingDocument)
+    {
+        const auto tempRoot = fs::temp_directory_path() / "incubator_editor_asset_import_test";
+        fs::create_directories(tempRoot / "assets");
+        fs::create_directories(tempRoot / "external");
+        auto fileIO = FileIO::createPlatformFileIO();
+        Resource::AssetSource source(*fileIO, tempRoot / "assets");
+        struct CleanupGuard
+        {
+            fs::path path;
+            ~CleanupGuard()
+            {
+                Resource::ResourceManager::instance().bindAssetSource(nullptr);
+                std::error_code error;
+                fs::remove_all(path, error);
+            }
+        } guard{tempRoot};
+        Resource::ResourceManager::instance().bindAssetSource(&source);
+        const auto external = tempRoot / "external" / "Triangle.OBJ";
+        std::ofstream(external) << "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+
+        Editor::EditorController controller;
+        const auto first = controller.importExternalModel(source, external);
+        ASSERT_TRUE(first) << controller.message();
+        EXPECT_EQ(*first, "models/triangle/triangle.obj");
+        EXPECT_EQ(controller.assetDirectory(), "models/triangle");
+        EXPECT_EQ(controller.focusedAssetPath(), *first);
+        ASSERT_EQ(controller.assetEntries().size(), 1u);
+        EXPECT_EQ(controller.assetEntries()[0].path, *first);
+        EXPECT_EQ(controller.assetEntries()[0].kind, Resource::AssetKind::Model);
+        EXPECT_FALSE(controller.messageError());
+
+        ASSERT_TRUE(controller.browseDirectory("models"));
+        EXPECT_TRUE(controller.focusedAssetPath().empty());
+        const auto second = controller.importExternalModel(source, external);
+        ASSERT_TRUE(second);
+        EXPECT_EQ(*second, "models/triangle_1/triangle.obj");
+        EXPECT_EQ(controller.assetDirectory(), "models/triangle_1");
+        EXPECT_EQ(controller.focusedAssetPath(), *second);
+        EXPECT_FALSE(controller.importExternalModel(source, tempRoot / "missing.obj"));
+        EXPECT_TRUE(controller.messageError());
+        EXPECT_NE(controller.message().find("missing.obj"), std::string::npos);
+        EXPECT_EQ(controller.assetDirectory(), "models/triangle_1");
+        EXPECT_EQ(controller.focusedAssetPath(), *second);
+        ASSERT_EQ(controller.assetEntries().size(), 1u);
+        EXPECT_EQ(controller.assetEntries()[0].path, *second);
+        EXPECT_FALSE(controller.isDirty());
+        EXPECT_FALSE(controller.canUndo());
     }
 
     TEST(EditorControllerTest, ReparentUnparentUndoRedoAndDeleteChildGuardWorkWithoutWindow)

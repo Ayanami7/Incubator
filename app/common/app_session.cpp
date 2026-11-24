@@ -108,6 +108,12 @@ namespace Incubator::App
         return *fileIO_;
     }
 
+    Resource::AssetSource& AppSession::assetSource()
+    {
+        requireOpen();
+        return *assetSource_;
+    }
+
     Scene::Scene& AppSession::scene()
     {
         requireOpen();

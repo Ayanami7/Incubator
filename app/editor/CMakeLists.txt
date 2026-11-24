@@ -28,7 +28,7 @@ add_library(IncubatorEditorSupport STATIC
     ${EDITOR_HEADERS}
     ${EDITOR_SOURCES}
 )
-target_link_libraries(IncubatorEditorSupport PUBLIC IncubatorAppCommon)
+target_link_libraries(IncubatorEditorSupport PUBLIC IncubatorAppCommon PRIVATE comdlg32)
 set_target_properties(IncubatorEditorSupport PROPERTIES FOLDER "app/editor")
 
 add_executable(${TARGET_NAME} main.cpp)

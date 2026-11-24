@@ -2354,6 +2354,188 @@ namespace
         cleanValidation();
     }
 
+    ImGuiID assetRowAction(ImGuiWindow& panel, std::string_view path, const char* action)
+    {
+        const auto row = ImHashStr(path.data(), path.size(), panel.GetID("##assets"));
+        return ImHashStr(action, 0, row);
+    }
+
+    TEST_F(EditorAppTest, AssetsImportCancelRefreshAddSaveAndReopen)
+    {
+        const auto external = sandbox_ / "external";
+        fs::copy("assets/models/minimal_gltf", external, fs::copy_options::recursive);
+        fs::create_directories(external / "textures");
+        fs::copy_file(fs::path("assets") / PNG, external / PNG);
+        const auto modelFile = external / "model.gltf";
+        std::ifstream input(modelFile, std::ios::binary);
+        std::string text{std::istreambuf_iterator<char>(input), {}};
+        input.close();
+        const auto uri = text.find("../../textures/direction_rgba.png");
+        ASSERT_NE(uri, std::string::npos);
+        text.erase(uri, 6);
+        std::ofstream(modelFile, std::ios::binary) << text;
+
+        Editor::EditorApp session(options(true, 1280, 800));
+        int pickerCalls = 0;
+        Editor::EditorScene editor([&](Editor::EditorApp&) -> std::optional<fs::path> {
+            if (++pickerCalls == 1)
+                return std::nullopt;
+            return modelFile;
+        });
+        constexpr auto imported = "models/model/model.gltf";
+        std::string originalMessage;
+        int step = 0;
+        int frames = 0;
+        const auto hasNote = [&] {
+            return std::ranges::any_of(editor.assetEntries(), [](const auto& entry) { return entry.name == "note.txt"; });
+        };
+        session.run({[&](auto& app) {
+                         editor.initialize(app, "");
+                         originalMessage = editor.message();
+                     },
+                     [&](auto& app, const auto&) {
+                         if (++frames > 120)
+                         {
+                             ADD_FAILURE() << "Assets import timed out at step " << step;
+                             app.requestExit();
+                             return;
+                         }
+                         auto* panel = ImGui::FindWindowByName("Assets");
+                         if (!panel || frames < 4)
+                             return;
+                         if (step == 0)
+                         {
+                             ImGui::SetWindowFocus("Assets");
+                             ++step;
+                             return;
+                         }
+                         if (panel->Hidden)
+                             return;
+                         switch (step)
+                         {
+                             case 1:
+                                 ImGui::ActivateItemByID(panel->GetID("Import..."));
+                                 break;
+                             case 2:
+                                 EXPECT_EQ(pickerCalls, 1);
+                                 EXPECT_EQ(editor.message(), originalMessage);
+                                 EXPECT_FALSE(editor.controller().messageError());
+                                 EXPECT_TRUE(editor.assetDirectory().empty());
+                                 EXPECT_TRUE(editor.controller().focusedAssetPath().empty());
+                                 EXPECT_FALSE(fs::exists("assets/models/model"));
+                                 ImGui::ActivateItemByID(panel->GetID("Import..."));
+                                 break;
+                             case 3:
+                                 EXPECT_EQ(pickerCalls, 2);
+                                 EXPECT_EQ(editor.assetDirectory(), "models/model");
+                                 EXPECT_EQ(editor.controller().focusedAssetPath(), imported);
+                                 EXPECT_EQ(editor.message(), std::string("Imported: ") + imported);
+                                 EXPECT_TRUE(app.scene().entities().empty());
+                                 EXPECT_FALSE(editor.isDirty());
+                                 EXPECT_EQ(editor.cachedModels(), 0u);
+                                 std::ofstream("assets/models/model/note.txt") << "refresh";
+                                 EXPECT_FALSE(hasNote());
+                                 ImGui::ActivateItemByID(panel->GetID("Refresh"));
+                                 break;
+                             case 4:
+                                 EXPECT_TRUE(hasNote());
+                                 EXPECT_EQ(editor.controller().focusedAssetPath(), imported);
+                                 ImGui::ActivateItemByID(assetRowAction(*panel, imported, "Add"));
+                                 break;
+                             case 5:
+                                 ASSERT_EQ(app.scene().entities().size(), 1u) << editor.message();
+                                 EXPECT_EQ(app.scene().entities().front().model->source().path(), imported);
+                                 EXPECT_TRUE(editor.isDirty());
+                                 ASSERT_TRUE(editor.save(app, "imported-scene.json"));
+                                 editor.clear(app);
+                                 ASSERT_TRUE(app.scene().entities().empty());
+                                 ASSERT_TRUE(editor.load(app, "imported-scene.json", true));
+                                 ASSERT_EQ(app.scene().entities().size(), 1u);
+                                 EXPECT_EQ(app.scene().entities().front().model->source().path(), imported);
+                                 EXPECT_FALSE(editor.isDirty());
+                                 app.requestExit();
+                                 break;
+                         }
+                         ++step;
+                     },
+                     [&](auto& app) { editor.ui(app); },
+                     {}, {}, [&](auto& app) { editor.layout(app); }});
+        EXPECT_EQ(step, 6);
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, AssetsReloadButtonKeepsNewDiskModelAfterUndo)
+    {
+        Editor::EditorApp session(options(true, 1280, 800));
+        Editor::EditorScene editor;
+        Scene::EntityId id;
+        std::shared_ptr<const Model::PreparedModel> oldModel;
+        const glm::vec3 edited{2, 3, 4};
+        int step = 0;
+        int frames = 0;
+        session.run({[&](auto& app) {
+                         editor.initialize(app, "");
+                         ASSERT_TRUE(editor.browseDirectory("models/minimal_gltf"));
+                         ASSERT_TRUE(editor.addModel(app, GLTF));
+                         id = editor.selected();
+                         oldModel = app.scene().find(id)->model;
+                         ASSERT_TRUE(editor.save(app, "reload-baseline.json"));
+                         ASSERT_TRUE(editor.controller().operations().setTransform(
+                             app.scene(), app.clearColor(), Scene::Transform(edited)));
+                         const auto file = fs::path("assets") / GLTF;
+                         std::ifstream input(file, std::ios::binary);
+                         std::string text{std::istreambuf_iterator<char>(input), {}};
+                         input.close();
+                         const auto translation = text.find("0.25");
+                         ASSERT_NE(translation, std::string::npos);
+                         text.replace(translation, 4, "0.75");
+                         std::ofstream(file, std::ios::binary) << text;
+                     },
+                     [&](auto& app, const auto&) {
+                         if (++frames > 120)
+                         {
+                             ADD_FAILURE() << "Assets reload timed out at step " << step;
+                             app.requestExit();
+                             return;
+                         }
+                         auto* panel = ImGui::FindWindowByName("Assets");
+                         if (!panel || frames < 4)
+                             return;
+                         if (step == 0)
+                         {
+                             ImGui::SetWindowFocus("Assets");
+                             ++step;
+                         }
+                         else if (step == 1 && !panel->Hidden)
+                         {
+                             ImGui::ActivateItemByID(assetRowAction(*panel, GLTF, "Reload"));
+                             ++step;
+                         }
+                         else if (step == 2)
+                         {
+                             const auto* entity = app.scene().find(id);
+                             ASSERT_NE(entity, nullptr);
+                             const auto reloaded = entity->model;
+                             ASSERT_NE(reloaded, oldModel) << editor.message();
+                             EXPECT_NE(reloaded->draws().front().model, oldModel->draws().front().model);
+                             EXPECT_EQ(entity->transform.position(), edited);
+                             EXPECT_EQ(editor.cachedModels(), 1u);
+                             EXPECT_TRUE(editor.isDirty());
+                             EXPECT_FALSE(editor.controller().messageError());
+                             ASSERT_TRUE(editor.undo(app));
+                             EXPECT_EQ(app.scene().find(id)->transform.position(), glm::vec3(0));
+                             EXPECT_EQ(app.scene().find(id)->model, reloaded);
+                             EXPECT_FALSE(editor.isDirty());
+                             ++step;
+                             app.requestExit();
+                         }
+                     },
+                     [&](auto& app) { editor.ui(app); },
+                     {}, {}, [&](auto& app) { editor.layout(app); }});
+        EXPECT_EQ(step, 3);
+        cleanValidation();
+    }
+
     TEST_F(EditorAppTest, ToolbarBreadcrumbsTransformResetAndSceneFileBrowserUnderValidation)
     {
         copyShowcaseModels();

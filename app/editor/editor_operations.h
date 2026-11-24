@@ -127,6 +127,8 @@ namespace Incubator::Editor
         {
             return messageError_;
         }
+        /// @brief 更新编辑器状态栏消息。
+        void setStatus(std::string message, bool error = false);
 
     private:
         struct HistorySnapshot

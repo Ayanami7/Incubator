@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -17,6 +18,10 @@ namespace Incubator::Editor
     class EditorScene
     {
     public:
+        using ExternalModelPicker = std::function<std::optional<std::filesystem::path>(EditorApp&)>;
+        /// @brief 构造场景视图，默认使用 EditorApp 的系统文件选择框。
+        explicit EditorScene(ExternalModelPicker picker = &EditorApp::pickExternalModelFile);
+
         EditorController& controller() noexcept
         {
             return controller_;
@@ -146,6 +151,7 @@ namespace Incubator::Editor
         void materialPanel(Editor::EditorApp& app);
 
         EditorController controller_;
+        ExternalModelPicker pickExternalModel_;
         Workspace workspace_;
         std::unordered_set<uint64_t> collapsedEntities_;
         bool viewportOpen_ = true;

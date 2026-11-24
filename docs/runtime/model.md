@@ -69,6 +69,8 @@ const size_t cached = models.size();            // 缓存条目数，不是 GPU 
 可提供同步验证回调，在提交前根据新模型重编调用方持有的材质覆盖。回调抛出异常或任一变体准备失败时，缓存保留原模型。
 当前模型或重读所需贴图仍有 CPU 持有或挂载载荷时，重载会抛出包含资源路径的 `Model::LoadError`。
 调用方通过返回值替换其持有的模型引用。在途帧仍由帧槽和 Fence 保留关联 GPU 对象。
+Editor 的 Assets 面板通过 `EditorOperations::reloadModel` 使用此入口，同时刷新当前实体和 Undo/Redo 快照中的模型引用与材质绑定。
+文档修订号保留，Undo/Redo 恢复普通编辑值时继续使用重载后的模型。面板操作见 [Editor 说明](../app/editor.md)。
 
 路径相对资产根，经现有 ResourceManager/Registry 规范化和查找；应用须提前注册 MODEL 和 TEXTURE 的 Loader。
 函数不安装或替换 Loader，不准备 Shader，不修改全局 Manager 的路由。线程安全仍由调用方保证，

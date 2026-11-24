@@ -1,5 +1,8 @@
 #pragma once
 
+#include <filesystem>
+#include <optional>
+
 #include "app/common/app_session.h"
 
 namespace Incubator::Editor
@@ -53,6 +56,14 @@ namespace Incubator::Editor
         {
             return session_.fileIO();
         }
+        /// @brief 获取当前会话绑定的资产源，借用期截至会话关闭。
+        Resource::AssetSource& assetSource()
+        {
+            return session_.assetSource();
+        }
+        /// @brief 打开外部模型文件选择框，取消时返回空值。
+        /// @throws Error::Exception 系统对话框失败时抛出 IO。
+        std::optional<std::filesystem::path> pickExternalModelFile();
         /// @brief 获取当前 Scene 的借用引用。
         /// @note 仅在会话打开时有效；调用 setScene 后必须重新获取。
         Scene::Scene& scene()

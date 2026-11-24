@@ -16,10 +16,14 @@
 #include "app/common/lighting_controls.h"
 #include "app/common/viewport.h"
 #include "editor_theme.h"
+#include "runtime/core/error/error.h"
 #include "runtime/model/prepared_model.h"
 
 namespace Incubator::Editor
 {
+    EditorScene::EditorScene(ExternalModelPicker picker) : pickExternalModel_(std::move(picker))
+    {}
+
     bool EditorScene::addModel(Editor::EditorApp& app, std::string_view path, const Scene::Transform& transform)
     {
         return controller_.addModel(app, path, transform);
@@ -463,6 +467,20 @@ namespace Incubator::Editor
                 parentDirectory();
             ImGui::SameLine();
         }
+        bool revealImported = false;
+        if (ImGui::Button("Import..."))
+        {
+            try
+            {
+                if (const auto path = pickExternalModel_(app))
+                    revealImported = controller_.importExternalModel(app, *path).has_value();
+            }
+            catch (const Error::Exception& error)
+            {
+                controller_.operations().setStatus(error.message(), true);
+            }
+        }
+        ImGui::SameLine();
         if (ImGui::Button("Refresh"))
             browseDirectory(controller_.assetDirectory());
         ImGui::Text("Listed: %zu | Cached: %zu", controller_.assetEntries().size(), cachedModels());
@@ -491,13 +509,19 @@ namespace Incubator::Editor
         if (ImGui::BeginTable("##assets", 2, tableFlags))
         {
             ImGui::TableSetupColumn("Name / type", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 3.8f);
+            const auto& style = ImGui::GetStyle();
+            const auto actionsWidth = ImGui::CalcTextSize("Add").x + ImGui::CalcTextSize("Reload").x +
+                                      4 * style.FramePadding.x + style.ItemSpacing.x;
+            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, actionsWidth);
             ImGui::TableHeadersRow();
             for (const auto& entry : controller_.assetEntries())
             {
                 ImGui::PushID(entry.path.c_str());
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
+                const bool focused = entry.path == controller_.focusedAssetPath();
+                if (focused)
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_Header));
                 const char* kind = "File";
                 const char* badge = "[FILE]";
                 ImVec4 badgeColor = EditorTheme::mutedTextColor();
@@ -529,13 +553,21 @@ namespace Incubator::Editor
                 ImGui::PopStyleColor();
                 ImGui::SameLine(0.0f, 6.0f);
                 ImGui::TextUnformatted(entry.name.c_str());
+                if (focused && revealImported)
+                    ImGui::SetScrollHereY();
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s\n%s", entry.path.c_str(), kind);
                 ImGui::TableNextColumn();
                 if (entry.kind == Resource::AssetKind::Directory && ImGui::Button("Enter"))
                     enter = entry.path;
-                if (entry.kind == Resource::AssetKind::Model && ImGui::Button("Add"))
-                    addModel(app, entry.path);
+                if (entry.kind == Resource::AssetKind::Model)
+                {
+                    if (ImGui::Button("Add"))
+                        addModel(app, entry.path);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reload"))
+                        controller_.reloadAsset(app, entry.path);
+                }
                 ImGui::PopID();
             }
             ImGui::EndTable();

@@ -649,6 +649,12 @@ namespace Incubator::Editor
         return report;
     }
 
+    void EditorOperations::setStatus(std::string message, bool error)
+    {
+        message_ = std::move(message);
+        messageError_ = error;
+    }
+
     std::string EditorOperations::logPath(std::string_view path)
     {
         std::error_code error;
