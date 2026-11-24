@@ -169,6 +169,17 @@ namespace Incubator::Scene
         return true;
     }
 
+    bool Scene::setReloadedModel(EntityId id, std::shared_ptr<const Model::PreparedModel> model,
+                                 std::vector<EntityMaterialOverride> overrides) noexcept
+    {
+        auto* entity = findMutable(id);
+        if (!entity)
+            return false;
+        entity->materialOverrides = std::move(overrides);
+        entity->model = std::move(model);
+        return true;
+    }
+
     bool Scene::setMaterialOverride(EntityId id, MaterialOverride overrideValue,
                                     std::shared_ptr<const Model::PreparedMaterialOverride> compiled)
     {

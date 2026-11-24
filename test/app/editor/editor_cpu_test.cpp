@@ -975,6 +975,27 @@ namespace
         EXPECT_FALSE(scene.find(second)->visible);
     }
 
+    TEST(EditorOperationsTest, ReloadWithoutCachedModelsRespectsActiveTransaction)
+    {
+        Editor::EditorOperations operations;
+        Scene::Scene scene;
+        const std::array<float, 4> clearColor{0, 0, 0, 1};
+        operations.beginTransaction(scene, clearColor);
+        EXPECT_FALSE(operations.reloadModel(scene, "models/model.gltf"));
+        EXPECT_TRUE(operations.messageError());
+        EXPECT_TRUE(operations.inTransaction());
+        EXPECT_FALSE(operations.commitTransaction(scene, clearColor));
+
+        const auto result = operations.reloadModel(scene, "models/model.gltf");
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->reloadedVariants, 0u);
+        EXPECT_EQ(result->updatedEntities, 0u);
+        EXPECT_EQ(result->updatedHistorySnapshots, 0u);
+        EXPECT_FALSE(operations.messageError());
+        EXPECT_FALSE(operations.isDirty());
+        EXPECT_FALSE(operations.canUndo());
+    }
+
     TEST(EditorControllerTest, AssetBrowserTracksDirectoriesParentEmptyAndErrorsWithoutWindow)
     {
         const auto tempRoot = fs::temp_directory_path() / "incubator_editor_asset_browser_test";

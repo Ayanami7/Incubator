@@ -49,23 +49,31 @@ namespace Incubator
             const std::array<float, 3>& color, Render::MaterialParameterMode roughnessMode, float roughness,
             Render::MaterialParameterMode metallicMode, float metallic);
 
-        /// @brief 资源门面已经记录的 CPU 模型或依赖加载失败，异常保留模型上下文与原始原因。
-        /// @note 消费者可以展示该异常，但不再次记录同一失败；GPU 创建异常仍沿用 Renderer 契约。
+        /// @brief 模型加载或重载失败，保留模型上下文与原始原因。
         class LoadError final : public Error::Exception
         {
         public:
             explicit LoadError(std::string message) : Error::Exception(Error::Code::RENDER, std::move(message)) {}
         };
 
+        /// @brief 选择复用 CPU 资源或要求从磁盘重新读取。
+        enum class ModelReadMode
+        {
+            ReuseCpu,
+            ReloadFromDisk
+        };
+
         /// @brief 通过资源门面准备可供场景使用的模型。
         /// @param renderer 已初始化且已准备场景着色器的 Renderer。
         /// @param virtualPath 虚拟模型路径。
         /// @param options 模型纹理的 mip、采样及着色配置。
+        /// @param readMode 重读磁盘时，模型或本次使用的贴图存在 CPU 持有或载荷即拒绝准备。
         /// @return 可共享的不可变模型数据。
         /// @throws Error::Exception 加载或准备失败时抛出异常。
         /// @note 需要 MODEL/TEXTURE Loader 路由；成功释放本次 CPU 持有，失败同时释放本次未发布 GPU 资源。
         std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer& renderer, std::string_view virtualPath,
-                                                          PrepareOptions options = {});
+                                                          PrepareOptions options = {},
+                                                          ModelReadMode readMode = ModelReadMode::ReuseCpu);
 
         /// @brief 通过 shared_ptr 共享的不可变元数据与 GPU 资源组。
         /// @note 不保留 CPU 资源；最后模型持有结束后撤销本组 GPU 持有，在途帧另受 Fence 保护。
@@ -129,7 +137,8 @@ namespace Incubator
             }
 
         private:
-            friend std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer&, std::string_view, PrepareOptions);
+            friend std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer&, std::string_view, PrepareOptions,
+                                                                      ModelReadMode);
             explicit PreparedModel(ModelReference source) : source_(std::move(source)) {}
 
             ModelReference source_;

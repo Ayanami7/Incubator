@@ -19,11 +19,19 @@ namespace Incubator::Model
     }  // namespace
 
     std::shared_ptr<const PreparedModel> prepareModel(Render::Renderer& renderer, std::string_view virtualPath,
-                                                    PrepareOptions options)
+                                                    PrepareOptions options, ModelReadMode readMode)
     {
         ModelReference sourceReference(virtualPath, options);
-        auto modelHold = Resource::ResourceManager::instance().hold<Resource::ModelResource>(
-            Resource::ResourceType::MODEL, sourceReference.path());
+        auto& resources = Resource::ResourceManager::instance();
+        const auto requireUnloaded = [&](Resource::ResourceType type, std::string_view path) {
+            const auto state = resources.query(type, path);
+            if (state && (state->references != 0 || state->loaded))
+                throw LoadError(fmt::format("Cannot reload model '{}': CPU resource '{}' is still held or loaded",
+                                            virtualPath, path));
+        };
+        if (readMode == ModelReadMode::ReloadFromDisk)
+            requireUnloaded(Resource::ResourceType::MODEL, sourceReference.path());
+        auto modelHold = resources.hold<Resource::ModelResource>(Resource::ResourceType::MODEL, sourceReference.path());
         const auto* source = modelHold.get<Resource::ModelResource>();
         if (!source)
             throw LoadError(fmt::format("Cannot prepare model '{}': {}", virtualPath, modelHold.failure()->reason));
@@ -82,14 +90,33 @@ namespace Incubator::Model
         std::vector<MaterialTextureSlots> materialTextures;
         uint32_t whiteIndex = NO_INDEX;
 
+        const auto usesPbrTextures = [&](const Resource::ModelMaterial& material) {
+            return !material.unlit && options.shading == Render::ShadingMode::Pbr;
+        };
+        if (readMode == ModelReadMode::ReloadFromDisk)
+        {
+            // 先检查所有需要的贴图，避免同一贴图用于多个槽时把本次持有误判为外部持有。
+            for (const auto index : materials)
+            {
+                const auto& material = source->materials()[index];
+                if (material.texturePath)
+                    requireUnloaded(Resource::ResourceType::TEXTURE, *material.texturePath);
+                if (usesPbrTextures(material))
+                {
+                    if (material.normalTexturePath)
+                        requireUnloaded(Resource::ResourceType::TEXTURE, *material.normalTexturePath);
+                    if (material.metallicRoughnessTexturePath)
+                        requireUnloaded(Resource::ResourceType::TEXTURE, *material.metallicRoughnessTexturePath);
+                }
+            }
+        }
+
         const auto acquireTexture = [&](const std::string& path, Render::TextureColorSpace colorSpace) -> uint32_t {
             auto [entry, inserted] = textureMap.emplace(std::make_pair(path, colorSpace),
                                                         static_cast<uint32_t>(textureRequests.size()));
             if (inserted)
             {
-                textureHolds.push_back(
-                    Resource::ResourceManager::instance().hold<Resource::TextureResource>(
-                        Resource::ResourceType::TEXTURE, path));
+                textureHolds.push_back(resources.hold<Resource::TextureResource>(Resource::ResourceType::TEXTURE, path));
                 const auto* texture = textureHolds.back().get<Resource::TextureResource>();
                 if (!texture)
                     throw LoadError(fmt::format("Cannot prepare model '{}': texture '{}': {}", virtualPath, path,
@@ -116,7 +143,7 @@ namespace Incubator::Model
                 }
                 slots.baseColor = whiteIndex;
             }
-            if (!material.unlit && options.shading == Render::ShadingMode::Pbr)
+            if (usesPbrTextures(material))
             {
                 if (material.normalTexturePath)
                     slots.normal = acquireTexture(*material.normalTexturePath, Render::TextureColorSpace::Linear);

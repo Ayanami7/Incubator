@@ -1153,6 +1153,79 @@ namespace
         cleanValidation();
     }
 
+    TEST_F(ModelPreparationTest, ReloadReadsChangedTextureAndCommitsAllVariantsTogether)
+    {
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            Model::ModelManager cache(renderer);
+            const Model::ModelReference unlit(GLTF);
+            const Model::ModelReference pbr(GLTF, {{}, {}, ShadingMode::Pbr});
+            const auto oldUnlit = cache.resolve(unlit);
+            const auto oldPbr = cache.resolve(pbr);
+            const auto pixels = [&](const Model::PreparedModel& model) {
+                auto draw = model.draws().front();
+                draw.model = glm::translate(glm::mat4(1), glm::vec3(0.5f, 0, 0.2f));
+                const std::array draws{draw};
+                return TextureGpuReview::captureFrame(
+                    renderer, {{384, 256}, {glm::mat4(1), glm::mat4(1)}, draws});
+            };
+            const auto initialPixels = pixels(*oldUnlit);
+            ASSERT_EQ(initialPixels.size(), 384u * 256u * 4u);
+
+            auto& resources = ResourceManager::instance();
+            {
+                const auto held = resources.hold<ModelResource>(ResourceType::MODEL, GLTF);
+                ASSERT_TRUE(held);
+                EXPECT_THROW(cache.reload(unlit), Model::LoadError);
+                EXPECT_THROW(cache.reloadByPath(GLTF), Model::LoadError);
+            }
+            {
+                const auto held = resources.hold<TextureResource>(ResourceType::TEXTURE, PNG);
+                ASSERT_TRUE(held);
+                EXPECT_THROW(cache.reloadByPath(GLTF), Model::LoadError);
+            }
+            fs::copy_file("assets/textures/reference_rgba.png", fs::path("assets") / PNG,
+                          fs::copy_options::overwrite_existing);
+            EXPECT_THROW(cache.reloadByPath(GLTF, [](std::span<const Model::ReloadedModel> variants) {
+                EXPECT_EQ(variants.size(), 2u);
+                throw Error::Exception(Error::Code::RENDER, "Rejected prepared variants");
+            }), Error::Exception);
+            EXPECT_EQ(cache.resolve(unlit), oldUnlit);
+            EXPECT_EQ(cache.resolve(pbr), oldPbr);
+
+            const auto changed = cache.reloadByPath("Models/minimal_gltf/./MODEL.GLTF");
+            ASSERT_EQ(changed.size(), 2u);
+            EXPECT_EQ(cache.size(), 2u);
+            EXPECT_EQ(changed[0].previous, oldUnlit);
+            EXPECT_EQ(changed[1].previous, oldPbr);
+            const auto newUnlit = cache.resolve(unlit);
+            const auto newPbr = cache.resolve(pbr);
+            EXPECT_EQ(changed[0].current, newUnlit);
+            EXPECT_EQ(changed[1].current, newPbr);
+            EXPECT_NE(newUnlit, oldUnlit);
+            EXPECT_NE(newPbr, oldPbr);
+            const auto reloadedPixels = pixels(*newUnlit);
+            ASSERT_EQ(reloadedPixels.size(), initialPixels.size());
+            EXPECT_NE(reloadedPixels, initialPixels);
+            EXPECT_EQ(pixels(*oldUnlit), initialPixels);
+
+            std::ofstream(fs::path("assets") / GLTF) << "{";
+            EXPECT_THROW(cache.reloadByPath(GLTF), Model::LoadError);
+            EXPECT_EQ(cache.resolve(unlit), newUnlit);
+            EXPECT_EQ(cache.resolve(pbr), newPbr);
+            EXPECT_EQ(cache.size(), 2u);
+            EXPECT_EQ(pixels(*newUnlit), reloadedPixels);
+            EXPECT_TRUE(cache.reloadByPath(OBJ).empty());
+            const Model::ModelReference obj(OBJ);
+            const auto inserted = cache.reload(obj);
+            EXPECT_EQ(inserted, cache.resolve(obj));
+            EXPECT_EQ(cache.size(), 3u);
+        }
+        cleanValidation();
+    }
+
     TEST_F(ModelPreparationTest, SceneRebuildReusesSessionModelsAndPreservesFailures)
     {
         using Model::ModelManager;

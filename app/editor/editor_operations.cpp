@@ -1,5 +1,6 @@
 #include "editor_operations.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <utility>
 
@@ -549,6 +550,103 @@ namespace Incubator::Editor
         messageError_ = false;
         message_ = "Removed " + std::to_string(removed) + " unused cached models";
         return removed;
+    }
+
+    std::optional<ModelReloadReport> EditorOperations::reloadModel(Scene::Scene& scene, std::string_view virtualPath)
+    {
+        if (inTransaction())
+        {
+            message_ = "Finish the active edit before reloading a model";
+            messageError_ = true;
+            return std::nullopt;
+        }
+
+        struct Replacement
+        {
+            Scene::EntityId id;
+            Scene::Entity* snapshotEntity;
+            std::shared_ptr<const Model::PreparedModel> model;
+            std::vector<Scene::EntityMaterialOverride> overrides;
+        };
+        std::vector<Replacement> replacements;
+        ModelReloadReport report;
+        std::string success = fmt::format("No cached model for '{}'", virtualPath);
+        try
+        {
+            if (cache_)
+            {
+                cache_->reloadByPath(virtualPath, [&](std::span<const Model::ReloadedModel> variants) {
+                    report.reloadedVariants = variants.size();
+                    const auto prepare = [&](const Scene::Entity& entity, Scene::Entity* snapshotEntity) {
+                        const auto variant = std::ranges::find(variants, entity.model, &Model::ReloadedModel::previous);
+                        if (variant == variants.end())
+                            return;
+                        Replacement replacement{entity.id, snapshotEntity, variant->current, {}};
+                        replacement.overrides.reserve(entity.materialOverrides.size());
+                        for (const auto& entry : entity.materialOverrides)
+                        {
+                            const auto& value = entry.value;
+                            try
+                            {
+                                auto compiled = Model::prepareMaterialOverride(
+                                    *renderer_, *variant->current, value.materialSlot, value.color,
+                                    value.roughnessMode, value.roughness, value.metallicMode, value.metallic);
+                                replacement.overrides.push_back({value, std::move(compiled)});
+                            }
+                            catch (const Error::Exception& error)
+                            {
+                                throw Error::Exception(
+                                    error.code(), fmt::format("Entity '{}' ({}), material slot {}: {}",
+                                                              entity.name, entity.id.value(), value.materialSlot,
+                                                              error.message()));
+                            }
+                        }
+                        replacements.push_back(std::move(replacement));
+                    };
+                    for (const auto& entity : scene.entities())
+                        prepare(entity, nullptr);
+                    report.updatedEntities = replacements.size();
+                    for (auto* stack : {&undoStack_, &redoStack_})
+                    {
+                        for (auto& snapshot : *stack)
+                        {
+                            const auto before = replacements.size();
+                            for (auto& entity : snapshot.entities)
+                                prepare(entity, &entity);
+                            if (replacements.size() != before)
+                                ++report.updatedHistorySnapshots;
+                        }
+                    }
+                    success = fmt::format("Reloaded '{}': {} variants, {} entities, {} history snapshots",
+                                          variants.front().current->source().path(), report.reloadedVariants,
+                                          report.updatedEntities, report.updatedHistorySnapshots);
+                });
+            }
+        }
+        catch (const Error::Exception& error)
+        {
+            message_ = error.message();
+            messageError_ = true;
+            return std::nullopt;
+        }
+
+        // 缓存已通过验证，场景与历史只移动准备完成的模型和覆盖。
+        for (auto& replacement : replacements)
+        {
+            if (auto* entity = replacement.snapshotEntity)
+            {
+                entity->materialOverrides = std::move(replacement.overrides);
+                entity->model = std::move(replacement.model);
+            }
+            else
+            {
+                scene.setReloadedModel(replacement.id, std::move(replacement.model),
+                                       std::move(replacement.overrides));
+            }
+        }
+        message_ = std::move(success);
+        messageError_ = false;
+        return report;
     }
 
     std::string EditorOperations::logPath(std::string_view path)

@@ -18,6 +18,14 @@
 
 namespace Incubator::Editor
 {
+    /// @brief 一次资产重载替换的缓存变体、场景实体和历史快照数量。
+    struct ModelReloadReport
+    {
+        size_t reloadedVariants = 0;
+        size_t updatedEntities = 0;
+        size_t updatedHistorySnapshots = 0;
+    };
+
     /// @brief 组合选择状态并执行场景编辑与文件操作，维护文档脏状态与编辑历史，不持有场景或实体指针。
     class EditorOperations
     {
@@ -104,6 +112,9 @@ namespace Incubator::Editor
             return cache_->size();
         }
         size_t collectUnusedModels();
+        /// @brief 重读指定资产，原地更新缓存、场景和编辑历史，保留文档修订号。
+        /// @return 失败时为空，路径未缓存时返回计数均为零的报告。
+        std::optional<ModelReloadReport> reloadModel(Scene::Scene& scene, std::string_view virtualPath);
         const std::string& currentFile() const
         {
             return currentFile_;

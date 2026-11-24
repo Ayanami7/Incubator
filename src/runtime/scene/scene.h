@@ -58,6 +58,13 @@ namespace Incubator::Scene
         bool setName(EntityId id, std::string name);
         /// @brief 替换实体模型；若更换为不同模型则清理原有材质覆盖。
         bool setModel(EntityId id, std::shared_ptr<const Model::PreparedModel> model);
+        /// @brief 原地提交已准备的重载模型及覆盖，保留实体的其他字段。
+        /// @param id 已存在的实体标识。
+        /// @param model 替换后的模型。
+        /// @param overrides 已针对新模型验证并准备的材质覆盖，按源槽位排序。
+        /// @return 实体不存在时返回 false，其余情况提交成功。
+        bool setReloadedModel(EntityId id, std::shared_ptr<const Model::PreparedModel> model,
+                              std::vector<EntityMaterialOverride> overrides) noexcept;
         /// @brief 为实体指定源模型材质槽设置或更新 PBR 覆盖；需要有效模型且槽位支持 PBR。
         bool setMaterialOverride(EntityId id, MaterialOverride overrideValue,
                                  std::shared_ptr<const Model::PreparedMaterialOverride> compiled = {});

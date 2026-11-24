@@ -292,6 +292,127 @@ namespace
         std::ostringstream renderLog_;
     };
 
+    TEST_F(EditorAppTest, ReloadUpdatesSharedEntitiesUndoRedoAndRejectsIncompatibleOverrides)
+    {
+        Editor::EditorApp session(options());
+        session.run({[&](auto& app) {
+                         app.requestExit();
+                         Scene::Scene scene;
+                         auto clearColor = app.clearColor();
+                         Editor::EditorOperations operations;
+                         operations.initialize(app.renderer());
+                         const auto uncached = operations.reloadModel(scene, GLTF);
+                         ASSERT_TRUE(uncached);
+                         EXPECT_EQ(uncached->reloadedVariants, 0u);
+
+                         ASSERT_TRUE(operations.addModel(scene, clearColor, GLTF)) << operations.message();
+                         const auto first = operations.selected();
+                         ASSERT_TRUE(operations.setEntityShading(scene, clearColor, Render::ShadingMode::Pbr));
+                         const Scene::MaterialOverride overrideValue{0, {0.9f, 0.5f, 0.2f}};
+                         ASSERT_TRUE(operations.setMaterialOverride(scene, clearColor, overrideValue));
+                         const auto child = operations.duplicate(scene, clearColor);
+                         ASSERT_TRUE(child.valid());
+                         ASSERT_TRUE(operations.setParent(scene, clearColor, child, first));
+                         ASSERT_TRUE(operations.setVisible(scene, clearColor, child, false));
+                         operations.select(first);
+                         const auto oldModel = scene.find(first)->model;
+                         const auto oldCompiled = scene.find(first)->materialOverrides[0].compiled;
+                         ASSERT_TRUE(oldCompiled);
+                         ASSERT_EQ(scene.find(child)->model, oldModel);
+                         const auto childName = scene.find(child)->name;
+                         const auto childTransform = scene.find(child)->transform.matrix();
+                         const auto initialPosition = scene.find(first)->transform.position();
+                         ASSERT_TRUE(operations.save(app.fileIO(), scene, clearColor, "reload-test.json"));
+                         const glm::vec3 moved{2, 3, 4};
+                         ASSERT_TRUE(operations.setTransform(scene, clearColor, Scene::Transform(moved)));
+
+                         const auto modelFile = fs::path("assets") / GLTF;
+                         std::ifstream input(modelFile, std::ios::binary);
+                         std::string modelText{std::istreambuf_iterator<char>(input), {}};
+                         input.close();
+                         const auto translation = modelText.find("0.25");
+                         ASSERT_NE(translation, std::string::npos);
+                         modelText.replace(translation, 4, "0.75");
+                         std::ofstream(modelFile, std::ios::binary) << modelText;
+
+                         operations.beginTransaction(scene, clearColor);
+                         EXPECT_FALSE(operations.reloadModel(scene, GLTF));
+                         EXPECT_NE(operations.message().find("active edit"), std::string::npos);
+                         EXPECT_EQ(scene.find(first)->model, oldModel);
+                         EXPECT_FALSE(operations.commitTransaction(scene, clearColor));
+
+                         const auto cached = operations.cachedModels();
+                         ASSERT_TRUE(operations.isDirty());
+                         const auto report = operations.reloadModel(scene, GLTF);
+                         ASSERT_TRUE(report) << operations.message();
+                         EXPECT_EQ(report->reloadedVariants, 2u);
+                         EXPECT_EQ(report->updatedEntities, 2u);
+                         EXPECT_GT(report->updatedHistorySnapshots, 0u);
+                         EXPECT_EQ(operations.cachedModels(), cached);
+                         EXPECT_TRUE(operations.isDirty());
+                         EXPECT_EQ(operations.selected(), first);
+                         const auto newModel = scene.find(first)->model;
+                         EXPECT_NE(newModel, oldModel);
+                         EXPECT_NE(newModel->draws().front().model, oldModel->draws().front().model);
+                         EXPECT_EQ(scene.find(first)->id, first);
+                         EXPECT_EQ(scene.find(first)->transform.position(), moved);
+                         EXPECT_EQ(scene.find(child)->id, child);
+                         EXPECT_EQ(scene.find(child)->parent, first);
+                         EXPECT_EQ(scene.find(child)->name, childName);
+                         EXPECT_EQ(scene.find(child)->transform.matrix(), childTransform);
+                         EXPECT_FALSE(scene.find(child)->visible);
+                         EXPECT_EQ(scene.find(child)->model, newModel);
+                         ASSERT_EQ(scene.find(first)->materialOverrides.size(), 1u);
+                         const auto newCompiled = scene.find(first)->materialOverrides[0].compiled;
+                         ASSERT_TRUE(newCompiled);
+                         EXPECT_NE(newCompiled, oldCompiled);
+                         EXPECT_EQ(scene.find(first)->materialOverrides[0].value, overrideValue);
+
+                         ASSERT_TRUE(operations.undo(scene, clearColor));
+                         EXPECT_FALSE(operations.isDirty());
+                         EXPECT_EQ(scene.find(first)->transform.position(), initialPosition);
+                         EXPECT_EQ(scene.find(first)->model, newModel);
+                         const auto cleanReload = operations.reloadModel(scene, GLTF);
+                         ASSERT_TRUE(cleanReload) << operations.message();
+                         EXPECT_GT(cleanReload->updatedHistorySnapshots, 1u);
+                         EXPECT_FALSE(operations.isDirty());
+                         const auto latestModel = scene.find(first)->model;
+                         EXPECT_NE(latestModel, newModel);
+                         ASSERT_TRUE(operations.redo(scene, clearColor));
+                         EXPECT_EQ(scene.find(first)->transform.position(), moved);
+                         EXPECT_EQ(scene.find(first)->model, latestModel);
+                         const auto redoCompiled = scene.find(first)->materialOverrides[0].compiled;
+                         EXPECT_NE(redoCompiled, newCompiled);
+                         ASSERT_TRUE(operations.undo(scene, clearColor));
+                         const auto beforeFailure = scene.find(first)->materialOverrides[0].compiled;
+
+                         const std::string materialName = "\"name\": \"Direction\",";
+                         const auto material = modelText.find(materialName);
+                         ASSERT_NE(material, std::string::npos);
+                         modelText.insert(material + materialName.size(),
+                                          R"("extensions":{"KHR_materials_unlit":{}},)");
+                         modelText.insert(1, R"("extensionsUsed":["KHR_materials_unlit"],)");
+                         std::ofstream(modelFile, std::ios::binary) << modelText;
+                         EXPECT_FALSE(operations.reloadModel(scene, GLTF));
+                         EXPECT_TRUE(operations.messageError());
+                         EXPECT_NE(operations.message().find("material slot 0"), std::string::npos)
+                             << operations.message();
+                         EXPECT_NE(operations.message().find("not PBR"), std::string::npos) << operations.message();
+                         EXPECT_FALSE(operations.isDirty());
+                         EXPECT_EQ(operations.cachedModels(), cached);
+                         EXPECT_EQ(scene.find(first)->model, latestModel);
+                         EXPECT_EQ(scene.find(child)->model, latestModel);
+                         EXPECT_EQ(scene.find(first)->materialOverrides[0].compiled, beforeFailure);
+                         ASSERT_TRUE(operations.redo(scene, clearColor));
+                         EXPECT_EQ(scene.find(first)->model, latestModel);
+                         EXPECT_EQ(scene.find(first)->materialOverrides[0].compiled, redoCompiled);
+                         ASSERT_TRUE(operations.addModel(scene, clearColor, GLTF));
+                         ASSERT_TRUE(operations.setEntityShading(scene, clearColor, Render::ShadingMode::Pbr));
+                         EXPECT_EQ(scene.find(operations.selected())->model, latestModel);
+                     }, {}, {}});
+        cleanValidation();
+    }
+
     TEST_F(EditorAppTest, NewVirtualModelsShareAndFailuresPreserveEditingStateUntilRetry)
     {
         copyShowcaseModels();
