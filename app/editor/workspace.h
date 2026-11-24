@@ -37,15 +37,25 @@ namespace Incubator::Editor
                 ImGui::DockBuilderDockWindow("Objects", left);
                 ImGui::DockBuilderDockWindow("Assets", left);
                 ImGui::DockBuilderDockWindow("Properties", right);
+                ImGui::DockBuilderDockWindow("Material", right);
                 ImGui::DockBuilderDockWindow("Scene", center);
                 ImGui::DockBuilderFinish(id);
                 reset_ = false;
+                justBuilt_ = true;
             }
             ImGui::DockSpaceOverViewport(id, ImGui::GetMainViewport());
+        }
+
+        bool consumeJustBuilt() noexcept
+        {
+            const bool result = justBuilt_;
+            justBuilt_ = false;
+            return result;
         }
 
     private:
         bool initialized_ = false;
         bool reset_ = false;
+        bool justBuilt_ = false;
     };
 }  // namespace Incubator::Editor

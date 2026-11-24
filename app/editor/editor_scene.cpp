@@ -250,6 +250,12 @@ namespace Incubator::Editor
         objects(app);
         assets(app);
         properties(app);
+        materialPanel(app);
+        if (workspace_.consumeJustBuilt())
+        {
+            ImGui::SetWindowFocus("Objects");
+            ImGui::SetWindowFocus("Properties");
+        }
         if (controller_.pendingAction() != PendingAction::None && !controller_.pendingSaveAs())
         {
             bool open = true;
@@ -580,6 +586,8 @@ namespace Incubator::Editor
         if (ImGui::BeginMenu("View"))
         {
             ImGui::MenuItem("Scene viewport", nullptr, &viewportOpen_);
+            if (ImGui::MenuItem("Material", nullptr, &materialOpen_) && materialOpen_)
+                focusMaterialNextFrame_ = true;
             if (ImGui::MenuItem("Restore default layout"))
                 restoreLayout();
             ImGui::EndMenu();
@@ -1178,6 +1186,211 @@ namespace Incubator::Editor
         }
         if (controller_.activePanelTransaction() == PanelTransactionKind::Entity && !entityWidgetActive)
             finishEntityTransaction();
+        ImGui::End();
+    }
+
+    void EditorScene::materialPanel(Editor::EditorApp& app)
+    {
+        controller_.syncPanelTransactionState();
+        if (!materialOpen_)
+        {
+            if (controller_.activePanelTransaction() == PanelTransactionKind::Material)
+                controller_.commitPanelTransactions(app);
+            return;
+        }
+        if (focusMaterialNextFrame_)
+        {
+            ImGui::SetNextWindowFocus();
+            focusMaterialNextFrame_ = false;
+        }
+        if (!ImGui::Begin("Material", &materialOpen_))
+        {
+            if (controller_.activePanelTransaction() == PanelTransactionKind::Material)
+                controller_.commitPanelTransactions(app);
+            ImGui::End();
+            return;
+        }
+
+        const bool windowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        const float fontSize = ImGui::GetFontSize();
+        const float labelWidth = fontSize * 7.8f;
+        const float controlWidth = std::max(120.0f, ImGui::GetContentRegionAvail().x - labelWidth -
+                                                        ImGui::GetStyle().ItemSpacing.x);
+        const auto rowLabel = [&](const char* label) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(label);
+            ImGui::SameLine(labelWidth);
+        };
+
+        const auto selectedId = controller_.selected();
+        if (selectedId != lastMaterialEntity_)
+        {
+            lastMaterialEntity_ = selectedId;
+            selectedMaterialSlot_ = 0;
+        }
+        const auto* entity = app.scene().find(selectedId);
+        if (!entity)
+        {
+            if (controller_.activePanelTransaction() == PanelTransactionKind::Material)
+                controller_.commitPanelTransactions(app);
+            ImGui::TextColored(EditorTheme::mutedTextColor(), "Select an entity to edit materials.");
+            ImGui::End();
+            return;
+        }
+        const std::string entityLabel =
+            entity->name.empty() ? fmt::format("Unnamed (#{})", entity->id.value())
+                                 : fmt::format("{} (#{})", entity->name, entity->id.value());
+        ImGui::TextUnformatted(entityLabel.c_str());
+        ImGui::Separator();
+
+        if (!entity->model || entity->model->materialSlots().empty())
+        {
+            if (controller_.activePanelTransaction() == PanelTransactionKind::Material)
+                controller_.commitPanelTransactions(app);
+            ImGui::TextColored(EditorTheme::mutedTextColor(), "Selected entity has no model materials.");
+            ImGui::End();
+            return;
+        }
+
+        const auto& slots = entity->model->materialSlots();
+        if (selectedMaterialSlot_ >= slots.size())
+            selectedMaterialSlot_ = 0;
+
+        auto shadingLabel = [](Render::ShadingMode mode) -> const char* {
+            switch (mode)
+            {
+                case Render::ShadingMode::Unlit:
+                    return "Unlit";
+                case Render::ShadingMode::Lambert:
+                    return "Lambert";
+                case Render::ShadingMode::Pbr:
+                default:
+                    return "PBR";
+            }
+        };
+
+        const auto& activeSlot = slots[selectedMaterialSlot_];
+        const std::string activeSlotLabel =
+            fmt::format("Slot {} ({})", activeSlot.sourceMaterialIndex, shadingLabel(activeSlot.sourceDesc.shading));
+        rowLabel("Material slot");
+        ImGui::SetNextItemWidth(controlWidth);
+        if (ImGui::BeginCombo("##mat-slot", activeSlotLabel.c_str()))
+        {
+            for (size_t i = 0; i < slots.size(); ++i)
+            {
+                const bool isSelected = (i == selectedMaterialSlot_);
+                const std::string itemLabel =
+                    fmt::format("Slot {} ({})", slots[i].sourceMaterialIndex, shadingLabel(slots[i].sourceDesc.shading));
+                if (ImGui::Selectable(itemLabel.c_str(), isSelected))
+                {
+                    if (controller_.activePanelTransaction() == PanelTransactionKind::Material)
+                        controller_.commitPanelTransactions(app);
+                    selectedMaterialSlot_ = i;
+                }
+                if (isSelected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        const auto& slot = slots[selectedMaterialSlot_];
+        if (slot.sourceDesc.shading != Render::ShadingMode::Pbr)
+        {
+            if (controller_.activePanelTransaction() == PanelTransactionKind::Material)
+                controller_.commitPanelTransactions(app);
+            ImGui::Spacing();
+            ImGui::TextColored(
+                EditorTheme::mutedTextColor(),
+                slot.sourceDesc.shading == Render::ShadingMode::Unlit
+                    ? "Source Unlit material preserves imported appearance and cannot be overridden."
+                    : "Switch entity shading to PBR in Properties to edit PBR material parameters.");
+            ImGui::End();
+            return;
+        }
+
+        auto& operations = controller_.operations();
+        const Scene::MaterialOverride* currentOverride = nullptr;
+        for (const auto& entry : entity->materialOverrides)
+        {
+            if (entry.value.materialSlot == slot.sourceMaterialIndex)
+            {
+                currentOverride = &entry.value;
+                break;
+            }
+        }
+
+        Scene::MaterialOverride edited{
+            slot.sourceMaterialIndex,
+            currentOverride ? currentOverride->color : slot.sourceDesc.color,
+            currentOverride ? currentOverride->roughnessMode : slot.sourceDesc.roughnessMode,
+            currentOverride ? currentOverride->roughness : slot.sourceDesc.roughness,
+            currentOverride ? currentOverride->metallicMode : slot.sourceDesc.metallicMode,
+            currentOverride ? currentOverride->metallic : slot.sourceDesc.metallic,
+        };
+
+        ImGui::Separator();
+        rowLabel("Base color");
+        const bool colorChanged = ImGui::ColorEdit3("##mat-color", edited.color.data(), ImGuiColorEditFlags_NoInputs);
+        ImGui::PushID("##mat-color");
+        const bool colorPickerOpen = ImGui::IsPopupOpen("picker");
+        ImGui::PopID();
+        const bool colorActive = (ImGui::IsItemActive() || colorPickerOpen) && windowFocused;
+
+        rowLabel("Roughness mode");
+        ImGui::SetNextItemWidth(controlWidth);
+        int roughnessModeIdx = edited.roughnessMode == Render::MaterialParameterMode::FixedValue ? 1 : 0;
+        const bool roughnessModeChanged =
+            ImGui::Combo("##mat-roughness-mode", &roughnessModeIdx, "Texture x Factor\0Fixed value\0");
+
+        rowLabel("Roughness");
+        ImGui::SetNextItemWidth(controlWidth);
+        const bool roughnessChanged =
+            ImGui::SliderFloat("##mat-roughness", &edited.roughness, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        const bool roughnessActive = ImGui::IsItemActive() && windowFocused;
+
+        rowLabel("Metallic mode");
+        ImGui::SetNextItemWidth(controlWidth);
+        int metallicModeIdx = edited.metallicMode == Render::MaterialParameterMode::FixedValue ? 1 : 0;
+        const bool metallicModeChanged =
+            ImGui::Combo("##mat-metallic-mode", &metallicModeIdx, "Texture x Factor\0Fixed value\0");
+
+        rowLabel("Metallic");
+        ImGui::SetNextItemWidth(controlWidth);
+        const bool metallicChanged =
+            ImGui::SliderFloat("##mat-metallic", &edited.metallic, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        const bool metallicActive = ImGui::IsItemActive() && windowFocused;
+
+        const bool matWidgetActive = colorActive || roughnessActive || metallicActive;
+        if (matWidgetActive && controller_.activePanelTransaction() != PanelTransactionKind::Material)
+            controller_.beginPanelTransaction(app, PanelTransactionKind::Material);
+
+        if (colorChanged || roughnessChanged || metallicChanged)
+            operations.setMaterialOverride(app.scene(), app.clearColor(), edited);
+
+        if (!matWidgetActive && controller_.activePanelTransaction() == PanelTransactionKind::Material)
+            controller_.commitPanelTransactions(app);
+
+        if (roughnessModeChanged || metallicModeChanged)
+        {
+            edited.roughnessMode = roughnessModeIdx == 1 ? Render::MaterialParameterMode::FixedValue
+                                                         : Render::MaterialParameterMode::TextureFactor;
+            edited.metallicMode = metallicModeIdx == 1 ? Render::MaterialParameterMode::FixedValue
+                                                       : Render::MaterialParameterMode::TextureFactor;
+            controller_.setMaterialOverride(app, edited);
+        }
+
+        ImGui::Spacing();
+        const float halfWidth = std::max(60.0f, (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f);
+        ImGui::BeginDisabled(currentOverride == nullptr);
+        if (ImGui::Button("Reset slot##mat-reset-slot", {halfWidth, 0.0f}))
+            controller_.resetMaterialOverride(app, slot.sourceMaterialIndex);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(entity->materialOverrides.empty());
+        if (ImGui::Button("Reset all##mat-reset-all", {halfWidth, 0.0f}))
+            controller_.resetAllMaterialOverrides(app);
+        ImGui::EndDisabled();
+
         ImGui::End();
     }
 

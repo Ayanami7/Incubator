@@ -51,8 +51,24 @@ namespace Incubator::Scene
 
     bool SceneDescription::valid() const noexcept
     {
-        return lighting.valid() && display.valid() &&
-               std::ranges::all_of(entities, [](const auto& entity) { return validEntityName(entity.name); }) &&
+        const auto validEntity = [](const EntityDescription& entity) {
+            if (!validEntityName(entity.name))
+                return false;
+            if (!entity.materialOverrides.empty() && !entity.model)
+                return false;
+            for (size_t i = 0; i < entity.materialOverrides.size(); ++i)
+            {
+                if (!entity.materialOverrides[i].valid())
+                    return false;
+                for (size_t j = i + 1; j < entity.materialOverrides.size(); ++j)
+                {
+                    if (entity.materialOverrides[i].materialSlot == entity.materialOverrides[j].materialSlot)
+                        return false;
+                }
+            }
+            return true;
+        };
+        return lighting.valid() && display.valid() && std::ranges::all_of(entities, validEntity) &&
                std::ranges::all_of(clearColor,
                                    [](float value) { return std::isfinite(value) && value >= 0.0f && value <= 1.0f; }) &&
                !findInvalidParentHierarchy(entities).has_value();
@@ -82,7 +98,13 @@ namespace Incubator::Scene
             std::optional<size_t> parentIndex;
             if (entity.parent.valid())
                 parentIndex = idToIndex.at(entity.parent.value());
-            result.entities.push_back({std::move(model), entity.transform, entity.visible, entity.name, parentIndex});
+            std::vector<MaterialOverride> overrides;
+            overrides.reserve(entity.materialOverrides.size());
+            for (const auto& entry : entity.materialOverrides)
+                overrides.push_back(entry.value);
+            std::ranges::sort(overrides, {}, &MaterialOverride::materialSlot);
+            result.entities.push_back(
+                {std::move(model), entity.transform, entity.visible, entity.name, parentIndex, std::move(overrides)});
         }
         return result;
     }

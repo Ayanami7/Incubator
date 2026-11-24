@@ -154,8 +154,8 @@ RGBA16F 纹理与 Cubemap 用于环境采样与查找表，不能绑定到材质
 
 ## 最小材质与绑定
 
-`material.h` 定义 `MaterialDesc { Texture texture; std::array<float, 3> color; SamplerDesc sampler; ShadingMode shading; Texture normalTexture; Texture metallicRoughnessTexture; float normalScale; float metallic; float roughness; }` 与 `Material` 引用。
-基色纹理 `texture` 是必需输入且必须为 `TextureColorSpace::Srgb`，color 是有限的 0–1 线性 RGB，默认 `{1, 1, 1}`。可选的 `normalTexture` 与 `metallicRoughnessTexture` 若非空则必须属于同一 Renderer 且为 `TextureColorSpace::Linear`（未指定时自动绑定共享 1×1 线性回退纹理，分别对应平坦法线 `{128,128,255,255}` 与白色 `{255,255,255,255}`）。`normalScale` 须有限且 `>= 0`（默认 `1.0f`），`metallic`（默认 `0.0f`）与 `roughness`（默认 `1.0f`）须有限且位于 `[0, 1]`。例如：
+`material.h` 定义 `MaterialDesc { Texture texture; std::array<float, 3> color; SamplerDesc sampler; ShadingMode shading; Texture normalTexture; Texture metallicRoughnessTexture; float normalScale; float metallic; float roughness; MaterialParameterMode roughnessMode; MaterialParameterMode metallicMode; }` 与 `Material` 引用。
+基色纹理 `texture` 是必需输入且必须为 `TextureColorSpace::Srgb`，color 是有限的 0–1 线性 RGB，默认 `{1, 1, 1}`。可选的 `normalTexture` 与 `metallicRoughnessTexture` 若非空则必须属于同一 Renderer 且为 `TextureColorSpace::Linear`（未指定时自动绑定共享 1×1 线性回退纹理，分别对应平坦法线 `{128,128,255,255}` 与白色 `{255,255,255,255}`）。`normalScale` 须有限且 `>= 0`（默认 `1.0f`），`metallic`（默认 `0.0f`）与 `roughness`（默认 `1.0f`）须有限且位于 `[0, 1]`；`roughnessMode` 与 `metallicMode` 默认均为 `MaterialParameterMode::TextureFactor`（贴图通道乘以因子），设为 `MaterialParameterMode::FixedValue` 时在 Shader 中按独立模式位忽略对应贴图通道并直接采用固定覆盖值（即金属度贴图为 0 时也可调成金属）。例如：
 
 ```cpp
 MaterialDesc desc{texture, {0.25f, 0.5f, 1.0f}};
@@ -190,7 +190,7 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 
 `createMaterial` 要求先准备共享 Shader，并在分配 GPU 资源前检查颜色和 Texture 从属关系。
 空、过期、跨 Renderer 纹理，NaN、无穷或越界颜色均明确失败，不替换白图或钳制非法输入。
-创建时将参数复制进 32 字节 std140 `MaterialData`（`vec4 colorShading` 与 `vec4 surfaceParams`），`colorShading.w` 精确编码模式（0 为 Unlit、1 为 Lambert、2 为 Pbr），不是 alpha；之后不改写该 Buffer
+创建时将参数复制进 32 字节 std140 `MaterialData`（`vec4 colorShading` 与 `vec4 surfaceParams`），`colorShading.w` 精确编码模式（0 为 Unlit、1 为 Lambert、2 为 Pbr），`surfaceParams.w` 编码粗糙度/金属度独立模式位（bit 0 为固定粗糙度，bit 1 为固定金属度）；之后不改写该 Buffer
 或 Descriptor。无论 PNG alpha 或颜色参数如何，场景输出 alpha 始终为 1，不启用透明混合。
 
 `ShadingMode` 包含默认 `Unlit`、显式 `Lambert` 与 `Pbr`；旧 `{texture}`、`{texture,color}`、

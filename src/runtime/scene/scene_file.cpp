@@ -5,6 +5,7 @@
 #include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <span>
@@ -169,13 +170,15 @@ namespace Incubator::Scene
                                        fmt::format("Invalid scene model reference: {}", e.message()));
             }
         }
+        const bool hasMaterialOverrides =
+            std::ranges::any_of(d.entities, [](const auto& e) { return !e.materialOverrides.empty(); });
         rapidjson::StringBuffer buffer;
         Writer w(buffer);
         w.StartObject();
         key(w, "version");
         w.Int(1);
         key(w, "minorVersion");
-        w.Int(1);
+        w.Int(hasMaterialOverrides ? 2 : 1);
         key(w, "entities");
         w.StartArray();
         for (const auto& e : d.entities)
@@ -230,6 +233,34 @@ namespace Incubator::Scene
             w.EndObject();
             key(w, "visible");
             w.Bool(e.visible);
+            if (hasMaterialOverrides && !e.materialOverrides.empty())
+            {
+                key(w, "materialOverrides");
+                w.StartArray();
+                for (const auto& ov : e.materialOverrides)
+                {
+                    w.StartObject();
+                    key(w, "materialSlot");
+                    w.Uint(ov.materialSlot);
+                    key(w, "color");
+                    w.StartArray();
+                    for (float c : ov.color)
+                        w.Double(c);
+                    w.EndArray();
+                    key(w, "roughnessMode");
+                    text(w, ov.roughnessMode == Render::MaterialParameterMode::FixedValue ? "fixed"
+                                                                                          : "textureFactor");
+                    key(w, "roughness");
+                    w.Double(ov.roughness);
+                    key(w, "metallicMode");
+                    text(w, ov.metallicMode == Render::MaterialParameterMode::FixedValue ? "fixed"
+                                                                                         : "textureFactor");
+                    key(w, "metallic");
+                    w.Double(ov.metallic);
+                    w.EndObject();
+                }
+                w.EndArray();
+            }
             w.EndObject();
         }
         w.EndArray();
@@ -293,8 +324,9 @@ namespace Incubator::Scene
         int minorVersion = 0;
         if (const auto minorIt = doc.FindMember("minorVersion"); minorIt != doc.MemberEnd())
         {
-            if (!minorIt->value.IsInt() || (minorIt->value.GetInt() != 0 && minorIt->value.GetInt() != 1))
-                fail("minorVersion", "expected integer 0 or 1");
+            if (!minorIt->value.IsInt() ||
+                (minorIt->value.GetInt() != 0 && minorIt->value.GetInt() != 1 && minorIt->value.GetInt() != 2))
+                fail("minorVersion", "expected integer 0, 1 or 2");
             minorVersion = minorIt->value.GetInt();
         }
         const auto& entities = member(doc, "entities", "root");
@@ -314,7 +346,7 @@ namespace Incubator::Scene
                 if (!validEntityName(item.name))
                     fail(p + ".name", "expected UTF-8 without NUL");
             }
-            if (minorVersion == 1)
+            if (minorVersion >= 1)
             {
                 const auto& parent = member(e, "parent", p);
                 if (!parent.IsNull())
@@ -341,6 +373,50 @@ namespace Incubator::Scene
             if (!visible.IsBool())
                 fail(p + ".visible", "expected boolean");
             item.visible = visible.GetBool();
+            if (minorVersion >= 2)
+            {
+                if (const auto ovIt = e.FindMember("materialOverrides"); ovIt != e.MemberEnd())
+                {
+                    const auto op = p + ".materialOverrides";
+                    if (!ovIt->value.IsArray())
+                        fail(op, "expected array");
+                    if (!ovIt->value.Empty() && !item.model)
+                        fail(op, "materialOverrides requires non-null model");
+                    for (rapidjson::SizeType k = 0; k < ovIt->value.Size(); ++k)
+                    {
+                        const auto kp = op + "[" + std::to_string(k) + "]";
+                        const auto& ovObj = ovIt->value[k];
+                        const auto& slotVal = member(ovObj, "materialSlot", kp);
+                        if (!slotVal.IsUint64() && (!slotVal.IsInt64() || slotVal.GetInt64() < 0))
+                            fail(kp + ".materialSlot", "expected non-negative integer");
+                        const uint64_t slot64 = slotVal.GetUint64();
+                        if (slot64 > std::numeric_limits<uint32_t>::max())
+                            fail(kp + ".materialSlot", "materialSlot out of range");
+                        MaterialOverride ov;
+                        ov.materialSlot = static_cast<uint32_t>(slot64);
+                        ov.color = array<3>(member(ovObj, "color", kp), kp + ".color");
+                        ov.roughnessMode = choice<Render::MaterialParameterMode>(
+                            member(ovObj, "roughnessMode", kp), kp + ".roughnessMode",
+                            {{"textureFactor", Render::MaterialParameterMode::TextureFactor},
+                             {"fixed", Render::MaterialParameterMode::FixedValue}});
+                        ov.roughness = number(member(ovObj, "roughness", kp), kp + ".roughness");
+                        ov.metallicMode = choice<Render::MaterialParameterMode>(
+                            member(ovObj, "metallicMode", kp), kp + ".metallicMode",
+                            {{"textureFactor", Render::MaterialParameterMode::TextureFactor},
+                             {"fixed", Render::MaterialParameterMode::FixedValue}});
+                        ov.metallic = number(member(ovObj, "metallic", kp), kp + ".metallic");
+                        if (!ov.valid())
+                            fail(kp, "material override values must be finite in [0, 1]");
+                        const bool dup = std::ranges::any_of(item.materialOverrides, [&](const MaterialOverride& prev) {
+                            return prev.materialSlot == ov.materialSlot;
+                        });
+                        if (dup)
+                            fail(kp + ".materialSlot", "duplicate materialSlot override");
+                        item.materialOverrides.push_back(ov);
+                    }
+                    std::ranges::sort(item.materialOverrides, {}, &MaterialOverride::materialSlot);
+                }
+            }
             result.entities.push_back(std::move(item));
         }
         if (const auto hierarchyError = findInvalidParentHierarchy(result.entities))

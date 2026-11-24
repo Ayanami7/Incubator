@@ -12,6 +12,7 @@
 #include "runtime/model/model_reference.h"
 #include "runtime/render/frame_input.h"
 #include "runtime/render/gpu_resources.h"
+#include "runtime/render/material.h"
 #include "runtime/render/sampler.h"
 #include "runtime/render/texture.h"
 #include "runtime/resource/loader/model_resource.h"
@@ -26,6 +27,27 @@ namespace Incubator
     namespace Model
     {
         class PreparedModel;
+
+        /// @brief 准备模型中单个活跃材质槽的源索引与原始准备描述。
+        struct PreparedMaterialSlot
+        {
+            uint32_t sourceMaterialIndex = 0;  ///< 对应 ModelResource::materials() 中的源材质槽索引。
+            Render::MaterialDesc sourceDesc;   ///< 源材质描述（保留共享纹理、采样器、着色模式与默认因子）。
+        };
+
+        /// @brief 按独立资源组按需构建并持有的实体材质覆盖绑定；替换或销毁时仍受在途帧 Fence 保护。
+        struct PreparedMaterialOverride
+        {
+            Render::GpuResources resources;
+            Render::Material material;
+        };
+
+        /// @brief 为 PreparedModel 指定源材质槽构建不可变覆盖材质，复用原模型贴图，由独立资源组持有。
+        /// @throws Error::Exception 源槽位不存在、非 PBR 槽位或参数非法时抛出 RENDER。
+        std::shared_ptr<const PreparedMaterialOverride> prepareMaterialOverride(
+            Render::Renderer& renderer, const PreparedModel& model, uint32_t sourceMaterialIndex,
+            const std::array<float, 3>& color, Render::MaterialParameterMode roughnessMode, float roughness,
+            Render::MaterialParameterMode metallicMode, float metallic);
 
         /// @brief 资源门面已经记录的 CPU 模型或依赖加载失败，异常保留模型上下文与原始原因。
         /// @note 消费者可以展示该异常，但不再次记录同一失败；GPU 创建异常仍沿用 Renderer 契约。
@@ -64,6 +86,13 @@ namespace Incubator
             {
                 return materials_;
             }
+            /// @brief 返回各活跃材质槽的源索引与原始参数描述（与 materials() 一一对应）。
+            const std::vector<PreparedMaterialSlot>& materialSlots() const noexcept
+            {
+                return materialSlots_;
+            }
+            /// @brief 按源模型材质槽索引查找已准备槽位；未找到返回空指针。
+            const PreparedMaterialSlot* findMaterialSlot(uint32_t sourceMaterialIndex) const noexcept;
             const std::vector<Render::Texture>& textures() const noexcept
             {
                 return textures_;
@@ -86,6 +115,11 @@ namespace Incubator
             {
                 return draws_;
             }
+            /// @brief 返回各绘制项对应的 materialSlots() 下标（与 draws() 一一对应）。
+            const std::vector<uint32_t>& drawMaterialSlots() const noexcept
+            {
+                return drawMaterialSlots_;
+            }
 
             /// @brief 返回包含源节点变换的模型整体边界。
             /// @note 不包含实例变换。绘制内容为空或无法计算边界时返回空值；调用方必须保留对应绘制项。
@@ -102,11 +136,13 @@ namespace Incubator
             Render::GpuResources resources_;
             std::vector<Render::Mesh> meshes_;
             std::vector<Render::Material> materials_;
+            std::vector<PreparedMaterialSlot> materialSlots_;
             std::vector<Render::Texture> textures_;
             std::vector<Resource::ModelPart> parts_;
             std::vector<Resource::ModelNode> nodes_;
             uint32_t rootNode_ = 0;
             std::vector<Render::DrawItem> draws_;
+            std::vector<uint32_t> drawMaterialSlots_;
             std::optional<Math::Aabb> bounds_;
         };
     }  // namespace Model

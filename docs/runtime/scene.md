@@ -22,17 +22,18 @@ scene.destroyEntity(first);
 
 Scene 不可复制或移动，使用一个 vector 保存实体，属于单线程 Runtime，支持通过可空 `parent` 组织实体父子层级（不引入 ECS、组件系统或持续变换缓存）。
 场景内容捕获、JSON 文件读写和重建由同模块的独立接口提供，见下文。
-Entity 保存 `id`、UTF-8 `name`、局部 `transform`、`visible`、可空的 `shared_ptr<const PreparedModel> model` 与可空 `parent`（`EntityId`）。名称允许为空或重复，不参与身份识别；非法 UTF-8 或内嵌 NUL 被拒绝。
+Entity 保存 `id`、UTF-8 `name`、局部 `transform`、`visible`、可空的 `shared_ptr<const PreparedModel> model`、可空 `parent`（`EntityId`）及按源模型材质槽索引排序的 PBR 材质覆盖列表 `materialOverrides`（保存显式 `MaterialOverride` 值与对应不可变 GPU 覆盖材质引用）。名称允许为空或重复，不参与身份识别；非法 UTF-8 或内嵌 NUL 被拒绝。
 Transform 是实体的局部 TRS 真源，实体的世界矩阵由 `worldMatrix(id)` 按 `parentWorld * localMatrix` 按需计算，实体不另存缓存矩阵。
 模型内部节点仍属于 PreparedModel，不按节点创建实体。
 
 | 接口 | 行为 |
 |---|---|
 | createEntity(model={}, transform=Transform{}, visible=true, name={}) | 返回新 EntityId；无模型也可创建合法逻辑实体，名称默认为空、父级为空 |
-| duplicateEntity(EntityId) | 复制名称、局部 Transform、可见性、同一父级和共享模型（不连带子树），返回新 ID；无效 ID 返回无效值，不加载或上传资源 |
+| duplicateEntity(EntityId) | 复制名称、局部 Transform、可见性、同一父级、材质覆盖与共享模型（不连带子树），返回新 ID；无效 ID 返回无效值，不加载或上传资源 |
 | setName(EntityId, name) | 按 ID 修改名称；无效 ID 返回 false，非法名称抛 CONFIG 且保留原值 |
 | find(EntityId) const | 返回只读 Entity 指针；无效、已删除或其他 Scene 的 ID 返回 nullptr |
-| setTransform/setVisible/setModel | 通过 ID 修改指定实体；未命中返回 false，其他实体不变；setModel 可传空解除绑定；隐藏父级不隐藏子级 |
+| setTransform/setVisible/setModel | 通过 ID 修改指定实体；未命中返回 false，其他实体不变；setModel 更换为不同模型或传入空模型时自动清理原有材质覆盖；隐藏父级不隐藏子级 |
+| setMaterialOverride / clearMaterialOverride / clearMaterialOverrides | 按源模型材质槽为 PBR 实体设置、按槽清除或全量清除材质覆盖；无效槽位或非 PBR 槽位抛 CONFIG |
 | setParent(EntityId, EntityId) | 设置或解除父级（传入无效 ID 解除挂接）并保留局部 Transform；无效/跨场景父级、自挂接或形成循环返回 false 且保持原关系；重复设置同一父级返回 true |
 | hasChildren(EntityId) const | 查询实体是否拥有直接子级 |
 | worldMatrix(EntityId) const | 按需计算 `parentWorld * localMatrix` 世界矩阵；实体不存在返回 `std::nullopt` |
@@ -89,7 +90,7 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
 ## 场景 JSON 文件
 
 `runtime/scene/scene_file.h` 提供 `encodeScene`、`decodeScene` 以及显式接收 FileIO 的
-`readScene` / `writeScene`。文本为 UTF-8、无 BOM 的 JSON：写出格式为 **1.1**（`"version": 1, "minorVersion": 1`，每个实体含可空 `parent` 零基索引，允许父级位于子级之后），同时兼容读取平铺 **1.0**（省略 `minorVersion` 或为 `0`，全部实体视为根）：
+`readScene` / `writeScene`。文本为 UTF-8、无 BOM 的 JSON：无材质覆盖时写出格式为 **1.1**（`"version": 1, "minorVersion": 1`，每个实体含可空 `parent` 零基索引，允许父级位于子级之后），包含实体材质覆盖时写出 **1.2**（`"version": 1, "minorVersion": 2`，保留 1.1 全部层级字段并为含覆盖实体写出 `materialOverrides` 数组，记录 `materialSlot`、`color`、`roughnessMode` / `roughness` 与 `metallicMode` / `metallic`），同时兼容读取平铺 **1.0**（省略 `minorVersion` 或为 `0`，全部实体视为根且无覆盖）与 **1.1**（无覆盖）：
 
 ```json
 {
@@ -124,8 +125,8 @@ JSON v1 的 `name` 为可选字符串，旧文件缺省时为空；新文件保�
 保存先完整编码，再创建或截断目标并同步写入、flush；打开后发生 I/O 错误可能留下截断或部分文件，
 调用方的内存场景不受影响。接口不自动创建目录，也不提供原子替换。
 
-`runtime/scene/scene_rebuild.h` 的 `rebuildScene(description, resolver)` 先校验内容，按实体顺序通过
-调用方解析器取得模型并构造新 Scene，返回新场景及背景；空模型不调用解析器。新实体分配新 ID，
+`runtime/scene/scene_rebuild.h` 的 `rebuildScene(description, resolver, resolveMaterialOverride = {})` 先校验内容，按实体顺序通过
+调用方解析器取得模型并按需重建各实体材质槽的 GPU 覆盖引用，返回新场景及背景；空模型不调用解析器。新实体分配新 ID，
 真实 Transform、Camera 和 Lighting 原样恢复，不重复应用模型源根或展示缩放。解析失败或返回空模型时抛出异常，
 不返回部分场景；调用方应在成功后替换当前场景。单个模型准备失败会清理本次未发布资源，
 解析期间已成功加入 ModelManager 的模型按缓存的显式清理策略保留，不改变原场景。
@@ -155,7 +156,7 @@ SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera`、`v
 - 读取当前 Camera，按实际 extent 生成一次最终相机矩阵，供视锥判断和返回结果共用；不再次翻转 Y。
 - 复制当前光照值；后续修改 Scene 光照或替换 Scene 不影响已提取帧，复制/移动后的帧也独立持有光照。
 - 按存活实体创建顺序遍历，跳过隐藏及无模型实体；默认以当前实体 Transform 变换模型整体边界，
-  只排除世界 AABB 完全位于视锥外的实体，再直接从 `PreparedModel::draws()` 展开绘制项。
+  只排除世界 AABB 完全位于视锥外的实体，再按 `PreparedModel::draws()` 与 `drawMaterialSlots()` 展开绘制项并应用该实体对应材质槽的覆盖材质（未覆盖或非 PBR 槽位继续复用模型源材质）。
   每个模型沿用其缓存的节点/部分顺序；最终矩阵为 `entity.transform.matrix() * cachedDraw.model`，源根只包含一次。
 - 每次返回新列表；空 Scene、全部隐藏、全部被裁剪、无模型或无可绘制部分时返回有效的空 draws，仍可清屏和显示 UI。
 - 两个结果可并存，默认复制/移动同时处理各自的值和 vector。Scene 更新、clear、下一次提取及 Scene 销毁

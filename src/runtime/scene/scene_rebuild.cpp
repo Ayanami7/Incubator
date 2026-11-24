@@ -3,12 +3,14 @@
 #include <utility>
 
 #include "runtime/core/error/error.h"
+#include "runtime/model/prepared_model.h"
 
 namespace Incubator::Scene
 {
     RebuiltScene rebuildScene(
         const SceneDescription& description,
-        const std::function<std::shared_ptr<const Model::PreparedModel>(const Model::ModelReference&)>& resolve)
+        const std::function<std::shared_ptr<const Model::PreparedModel>(const Model::ModelReference&)>& resolve,
+        const MaterialOverrideResolver& resolveMaterialOverride)
     {
         if (const auto hierarchyError = findInvalidParentHierarchy(description.entities))
             throw Error::Exception(
@@ -49,7 +51,25 @@ namespace Incubator::Scene
                 if (!model)
                     throw Error::Exception(Error::Code::CONFIG, "Scene model resolver returned null");
             }
-            createdIds.push_back(scene->createEntity(std::move(model), entity.transform, entity.visible, entity.name));
+            const auto createdId =
+                scene->createEntity(model, entity.transform, entity.visible, entity.name);
+            createdIds.push_back(createdId);
+            if (!entity.materialOverrides.empty())
+            {
+                if (!model)
+                    throw Error::Exception(Error::Code::CONFIG, "Material override requires an entity model");
+                for (const auto& ov : entity.materialOverrides)
+                {
+                    std::shared_ptr<const Model::PreparedMaterialOverride> compiled;
+                    if (resolveMaterialOverride)
+                    {
+                        compiled = resolveMaterialOverride(*model, ov);
+                        if (!compiled)
+                            throw Error::Exception(Error::Code::CONFIG, "Material override resolver returned null");
+                    }
+                    scene->setMaterialOverride(createdId, ov, std::move(compiled));
+                }
+            }
         }
         for (size_t i = 0; i < description.entities.size(); ++i)
         {

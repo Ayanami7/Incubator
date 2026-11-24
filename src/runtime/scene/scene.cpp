@@ -36,6 +36,8 @@ namespace Incubator::Scene
             return {};
         const auto copy = *entity;
         const auto created = createEntity(copy.model, copy.transform, copy.visible, copy.name);
+        if (auto* createdEntity = findMutable(created))
+            createdEntity->materialOverrides = copy.materialOverrides;
         if (copy.parent.valid())
             setParent(created, copy.parent);
         return created;
@@ -55,6 +57,27 @@ namespace Incubator::Scene
                 throw Error::Exception(Error::Code::CONFIG, "Entity name must be UTF-8 without NUL");
             if (!idToIndex.emplace(entity.id.value(), i).second)
                 throw Error::Exception(Error::Code::CONFIG, "Entity restore requires unique EntityIds");
+            if (!entity.materialOverrides.empty())
+            {
+                if (!entity.model)
+                    throw Error::Exception(Error::Code::CONFIG, "Entity restore material override requires a model");
+                for (size_t a = 0; a < entity.materialOverrides.size(); ++a)
+                {
+                    const auto& ov = entity.materialOverrides[a].value;
+                    if (!ov.valid())
+                        throw Error::Exception(Error::Code::CONFIG, "Entity restore requires valid material override");
+                    const auto* slot = entity.model->findMaterialSlot(ov.materialSlot);
+                    if (!slot || slot->sourceDesc.shading != Render::ShadingMode::Pbr)
+                        throw Error::Exception(Error::Code::CONFIG,
+                                               "Entity restore material override requires a PBR model slot");
+                    for (size_t b = a + 1; b < entity.materialOverrides.size(); ++b)
+                    {
+                        if (entity.materialOverrides[b].value.materialSlot == ov.materialSlot)
+                            throw Error::Exception(Error::Code::CONFIG,
+                                                   "Entity restore cannot contain duplicate material slot overrides");
+                    }
+                }
+            }
             maxId = std::max(maxId, entity.id.value());
         }
 
@@ -140,7 +163,63 @@ namespace Incubator::Scene
         auto* entity = findMutable(id);
         if (!entity)
             return false;
+        if (entity->model != model)
+            entity->materialOverrides.clear();
         entity->model = std::move(model);
+        return true;
+    }
+
+    bool Scene::setMaterialOverride(EntityId id, MaterialOverride overrideValue,
+                                    std::shared_ptr<const Model::PreparedMaterialOverride> compiled)
+    {
+        auto* entity = findMutable(id);
+        if (!entity)
+            return false;
+        if (!overrideValue.valid())
+            throw Error::Exception(Error::Code::CONFIG, "Material override parameters are invalid");
+        if (!entity->model)
+            throw Error::Exception(Error::Code::CONFIG, "Material override requires an entity model");
+        const auto* slot = entity->model->findMaterialSlot(overrideValue.materialSlot);
+        if (!slot)
+            throw Error::Exception(Error::Code::CONFIG, "Material override slot does not exist on entity model");
+        if (slot->sourceDesc.shading != Render::ShadingMode::Pbr)
+            throw Error::Exception(Error::Code::CONFIG, "Material override is only supported on PBR slots");
+
+        auto existing = std::ranges::find(entity->materialOverrides, overrideValue.materialSlot,
+                                          [](const EntityMaterialOverride& entry) { return entry.value.materialSlot; });
+        if (existing != entity->materialOverrides.end())
+        {
+            existing->value = overrideValue;
+            existing->compiled = std::move(compiled);
+        }
+        else
+        {
+            entity->materialOverrides.push_back({overrideValue, std::move(compiled)});
+            std::ranges::sort(entity->materialOverrides,
+                              [](const EntityMaterialOverride& a, const EntityMaterialOverride& b) {
+                                  return a.value.materialSlot < b.value.materialSlot;
+                              });
+        }
+        return true;
+    }
+
+    bool Scene::clearMaterialOverride(EntityId id, uint32_t materialSlot)
+    {
+        auto* entity = findMutable(id);
+        if (!entity)
+            return false;
+        return std::erase_if(entity->materialOverrides,
+                             [materialSlot](const EntityMaterialOverride& entry) {
+                                 return entry.value.materialSlot == materialSlot;
+                             }) != 0;
+    }
+
+    bool Scene::clearMaterialOverrides(EntityId id)
+    {
+        auto* entity = findMutable(id);
+        if (!entity || entity->materialOverrides.empty())
+            return false;
+        entity->materialOverrides.clear();
         return true;
     }
 

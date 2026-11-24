@@ -199,7 +199,7 @@ namespace Incubator
                   binding(device, bindingSet.materialLayout(), *texture->image, *colorSampler,
                           normalImage(bindingSet), *normalSampler, metallicRoughnessImage(bindingSet), *mrSampler,
                           desc.color, desc.shading, normalTexture ? desc.normalScale : 0.0f, desc.roughness,
-                          desc.metallic)
+                          desc.metallic, desc.roughnessMode, desc.metallicMode)
             {}
 
             const Vulkan::VulkanImage& normalImage(const Vulkan::VulkanBindingSet& bindingSet) const noexcept
@@ -541,6 +541,11 @@ namespace Incubator
                 if (desc.shading != ShadingMode::Unlit && desc.shading != ShadingMode::Lambert &&
                     desc.shading != ShadingMode::Pbr)
                     throw Error::Exception(Error::Code::RENDER, "Material shading mode is invalid");
+                if ((desc.roughnessMode != MaterialParameterMode::TextureFactor &&
+                     desc.roughnessMode != MaterialParameterMode::FixedValue) ||
+                    (desc.metallicMode != MaterialParameterMode::TextureFactor &&
+                     desc.metallicMode != MaterialParameterMode::FixedValue))
+                    throw Error::Exception(Error::Code::RENDER, "Material parameter mode is invalid");
 
                 const auto checkLinearFiltering = [&](const Vulkan::VulkanImage& image) {
                     if (desc.sampler.minFilter == TextureFilter::Linear ||

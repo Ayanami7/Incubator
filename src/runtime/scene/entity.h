@@ -1,20 +1,58 @@
 #pragma once
 
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "runtime/core/utils/utf8.h"
+#include "runtime/render/material.h"
 #include "runtime/scene/transform.h"
 
 namespace Incubator::Model
 {
     class PreparedModel;
+    struct PreparedMaterialOverride;
 }
 
 namespace Incubator::Scene
 {
+    /// @brief 实体对源模型指定材质槽的显式 PBR 参数覆盖值（纯数据，不含 GPU 引用）。
+    struct MaterialOverride
+    {
+        uint32_t materialSlot = 0;
+        std::array<float, 3> color{1.0f, 1.0f, 1.0f};
+        Render::MaterialParameterMode roughnessMode = Render::MaterialParameterMode::TextureFactor;
+        float roughness = 1.0f;
+        Render::MaterialParameterMode metallicMode = Render::MaterialParameterMode::TextureFactor;
+        float metallic = 0.0f;
+
+        bool operator==(const MaterialOverride&) const = default;
+
+        bool valid() const noexcept
+        {
+            for (const float c : color)
+                if (!std::isfinite(c) || c < 0.0f || c > 1.0f)
+                    return false;
+            if ((roughnessMode != Render::MaterialParameterMode::TextureFactor &&
+                 roughnessMode != Render::MaterialParameterMode::FixedValue) ||
+                (metallicMode != Render::MaterialParameterMode::TextureFactor &&
+                 metallicMode != Render::MaterialParameterMode::FixedValue))
+                return false;
+            return std::isfinite(roughness) && roughness >= 0.0f && roughness <= 1.0f && std::isfinite(metallic) &&
+                   metallic >= 0.0f && metallic <= 1.0f;
+        }
+    };
+
+    /// @brief 实体持有的材质槽覆盖条目，同时关联可按需替换的不可变 GPU 覆盖材质引用。
+    struct EntityMaterialOverride
+    {
+        MaterialOverride value;
+        std::shared_ptr<const Model::PreparedMaterialOverride> compiled;
+    };
     /// @brief 检查实体名称是否为不含 NUL 的 UTF-8；空名称合法。
     inline bool validEntityName(std::string_view name)
     {
@@ -57,5 +95,6 @@ namespace Incubator::Scene
         std::shared_ptr<const Model::PreparedModel> model;
         std::string name;
         EntityId parent;
+        std::vector<EntityMaterialOverride> materialOverrides;
     };
 }  // namespace Incubator::Scene

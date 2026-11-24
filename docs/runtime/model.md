@@ -89,12 +89,16 @@ Renderer 在提交时由最终 DrawItem::model 计算法线逆转置，包含实
 | `source()` | 拥有规范化虚拟路径和请求配置的只读 ModelReference |
 | `meshes()` | 唯一已上传 Mesh 的紧凑数组 |
 | `materials()` | 被使用源材质对应的不可变 Material 紧凑数组 |
+| `materialSlots()` / `findMaterialSlot(idx)` | 与 `materials()` 一一对应的 `PreparedMaterialSlot` 数组，保留源模型材质槽索引 `sourceMaterialIndex` 及含共享纹理引用在内的原始 `MaterialDesc` |
 | `textures()` | 唯一 PNG Texture 和可选共享白纹理的数组 |
 | `parts()` | 自有 ModelPart 描述，geometry/material 分别索引结果的 meshes/materials |
 | `nodes()` | 自有 ModelNode 元数据；保留名称、局部矩阵、子节点顺序，parts 改为结果内部索引 |
 | `rootNode()` | 源根在 nodes 中的索引；保留源根及非单位局部矩阵 |
 | `draws()` | 缓存的只读 DrawItem 数组；每项 model 是从源根到所属节点的局部矩阵乘积，尚未包含实例整体变换 |
+| `drawMaterialSlots()` | 与 `draws()` 一一对应的 `materialSlots()` 下标映射，用于逐实体按槽应用覆盖材质 |
 | `bounds()` | `const std::optional<Math::Aabb>&`；实际绘制内容的模型局部整体边界，已含源根和内部节点矩阵，尚未包含实例整体变换 |
+
+此外，`prepareMaterialOverride(renderer, model, sourceMaterialIndex, ...)` 可按源材质槽复用原模型纹理与采样器，在独立 `GpuResources` 资源组中构建不可变的 `PreparedMaterialOverride`，用于实体级 PBR 参数覆盖而不影响共享同模型的其他实体。
 
 节点数组及子节点索引保持源模型的顺序。资源和部分按节点数组中的首次引用组织为紧凑数组，
 结果内部索引不可当作原 CPU 资产索引或 ResourceId。手工消费部分时，关联方式为：

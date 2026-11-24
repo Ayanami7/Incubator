@@ -28,7 +28,9 @@ namespace Incubator
                                       const VulkanImage& metallicRoughnessImage,
                                       const VulkanSampler& metallicRoughnessSampler, const std::array<float, 3>& color,
                                       ShadingMode shading = ShadingMode::Unlit, float normalScale = 0.0f,
-                                      float roughness = 1.0f, float metallic = 0.0f);
+                                      float roughness = 1.0f, float metallic = 0.0f,
+                                      MaterialParameterMode roughnessMode = MaterialParameterMode::TextureFactor,
+                                      MaterialParameterMode metallicMode = MaterialParameterMode::TextureFactor);
                 ~VulkanMaterialBinding();
 
                 VulkanMaterialBinding(const VulkanMaterialBinding&) = delete;

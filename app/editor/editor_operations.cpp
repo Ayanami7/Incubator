@@ -6,6 +6,7 @@
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
 #include "runtime/core/utils/utf8.h"
+#include "runtime/model/prepared_model.h"
 #include "runtime/scene/scene_file.h"
 #include "runtime/scene/scene_rebuild.h"
 
@@ -18,10 +19,24 @@ namespace Incubator::Editor
             return a.position() == b.position() && a.rotation() == b.rotation() && a.scale() == b.scale();
         }
 
+        bool sameMaterialOverrides(std::span<const Scene::EntityMaterialOverride> a,
+                                   std::span<const Scene::EntityMaterialOverride> b) noexcept
+        {
+            if (a.size() != b.size())
+                return false;
+            for (size_t i = 0; i < a.size(); ++i)
+            {
+                if (a[i].value != b[i].value)
+                    return false;
+            }
+            return true;
+        }
+
         bool sameEntity(const Scene::Entity& a, const Scene::Entity& b) noexcept
         {
             return a.id == b.id && a.parent == b.parent && a.name == b.name && a.visible == b.visible &&
-                   a.model == b.model && sameTransform(a.transform, b.transform);
+                   a.model == b.model && sameTransform(a.transform, b.transform) &&
+                   sameMaterialOverrides(a.materialOverrides, b.materialOverrides);
         }
 
         bool sameSnapshotState(const std::vector<Scene::Entity>& beforeEntities, const Render::Lighting& beforeLighting,
@@ -206,6 +221,85 @@ namespace Incubator::Editor
                 Log::Registry::get("editor").error("{}", message_);
             return false;
         }
+    }
+
+    bool EditorOperations::setMaterialOverride(Scene::Scene& scene, const std::array<float, 4>& clearColor,
+                                               const Scene::MaterialOverride& overrideValue)
+    {
+        const auto* entity = scene.find(selection_.selected());
+        if (!entity || !entity->model)
+            return false;
+        const auto* slot = entity->model->findMaterialSlot(overrideValue.materialSlot);
+        if (!slot || slot->sourceDesc.shading != Render::ShadingMode::Pbr)
+            return false;
+        for (const auto& existing : entity->materialOverrides)
+        {
+            if (existing.value == overrideValue)
+                return true;
+        }
+        try
+        {
+            std::shared_ptr<const Model::PreparedMaterialOverride> compiled;
+            if (renderer_)
+            {
+                compiled = Model::prepareMaterialOverride(
+                    *renderer_, *entity->model, overrideValue.materialSlot, overrideValue.color,
+                    overrideValue.roughnessMode, overrideValue.roughness, overrideValue.metallicMode,
+                    overrideValue.metallic);
+            }
+            if (transaction_)
+                return scene.setMaterialOverride(entity->id, overrideValue, std::move(compiled));
+            auto before = captureSnapshot(scene, clearColor, currentRevision_);
+            if (!scene.setMaterialOverride(entity->id, overrideValue, std::move(compiled)))
+                return false;
+            pushUndoSnapshot(std::move(before));
+            messageError_ = false;
+            return true;
+        }
+        catch (const Error::Exception& error)
+        {
+            messageError_ = true;
+            message_ = error.message();
+            Log::Registry::get("editor").error("Failed to override material slot {}: {}", overrideValue.materialSlot,
+                                               error.message());
+            return false;
+        }
+    }
+
+    bool EditorOperations::resetMaterialOverride(Scene::Scene& scene, const std::array<float, 4>& clearColor,
+                                                 uint32_t materialSlot)
+    {
+        const auto* entity = scene.find(selection_.selected());
+        if (!entity)
+            return false;
+        const bool hasSlot = std::ranges::any_of(entity->materialOverrides, [materialSlot](const auto& entry) {
+            return entry.value.materialSlot == materialSlot;
+        });
+        if (!hasSlot)
+            return false;
+        if (transaction_)
+            return scene.clearMaterialOverride(entity->id, materialSlot);
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
+        if (!scene.clearMaterialOverride(entity->id, materialSlot))
+            return false;
+        pushUndoSnapshot(std::move(before));
+        messageError_ = false;
+        return true;
+    }
+
+    bool EditorOperations::resetAllMaterialOverrides(Scene::Scene& scene, const std::array<float, 4>& clearColor)
+    {
+        const auto* entity = scene.find(selection_.selected());
+        if (!entity || entity->materialOverrides.empty())
+            return false;
+        if (transaction_)
+            return scene.clearMaterialOverrides(entity->id);
+        auto before = captureSnapshot(scene, clearColor, currentRevision_);
+        if (!scene.clearMaterialOverrides(entity->id))
+            return false;
+        pushUndoSnapshot(std::move(before));
+        messageError_ = false;
+        return true;
     }
 
     bool EditorOperations::setParent(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id,
@@ -414,8 +508,16 @@ namespace Incubator::Editor
         try
         {
             const auto description = Scene::readScene(file, path);
-            auto rebuilt =
-                Scene::rebuildScene(description, [this](const auto& source) { return cache_->resolve(source); });
+            Scene::MaterialOverrideResolver overrideResolver;
+            if (renderer_)
+            {
+                overrideResolver = [this](const Model::PreparedModel& model, const Scene::MaterialOverride& ov) {
+                    return Model::prepareMaterialOverride(*renderer_, model, ov.materialSlot, ov.color,
+                                                          ov.roughnessMode, ov.roughness, ov.metallicMode, ov.metallic);
+                };
+            }
+            auto rebuilt = Scene::rebuildScene(
+                description, [this](const auto& source) { return cache_->resolve(source); }, overrideResolver);
             currentFile_ = path;
             message_ = "Loaded: " + currentFile_;
             messageError_ = false;

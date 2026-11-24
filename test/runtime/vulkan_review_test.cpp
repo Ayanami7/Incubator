@@ -2989,4 +2989,251 @@ namespace
         Resource::ResourceManager::instance().bindAssetSource(nullptr);
         expectCleanValidation();
     }
+
+    TEST_F(VulkanReviewTest, MaterialParameterModesFixedOverrideSharedModelIsolationAndZeroTextureReuploadUnderValidation)
+    {
+        const auto buildDir = Utils::Utf8::toFsPath(RUNTIME_TEST_ASSET_DIR).parent_path().parent_path();
+        const auto buildAssetsDir = buildDir / "assets";
+        const auto reviewDir = buildDir / "review";
+        std::filesystem::create_directories(reviewDir);
+
+        auto window = createWindow();
+        SceneAssets assets;
+        const Resource::ShaderResource vertexShader({}, assets.vertex->words());
+        const Resource::ShaderResource fragmentShader({}, assets.fragment->words());
+        const Resource::ShaderResource displayVertexShader({}, assets.displayVertex->words());
+        const Resource::ShaderResource displayFragmentShader({}, assets.displayFragment->words());
+        releaseCpuAssets(assets);
+
+        auto io = FileIO::createPlatformFileIO();
+        Resource::AssetSource buildSource(*io, buildAssetsDir);
+        Resource::ResourceManager::instance().bindAssetSource(&buildSource);
+        Resource::ResourceManager::instance().registerLoader(
+            Resource::ResourceType::TEXTURE, std::make_unique<Resource::TextureLoader>(buildSource));
+        Resource::ResourceManager::instance().registerLoader(
+            Resource::ResourceType::MODEL, std::make_unique<Resource::ModelLoader>(buildSource));
+
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(vertexShader, fragmentShader);
+            renderer.prepareDisplayResources(displayVertexShader, displayFragmentShader);
+            {
+                const auto irrHold = Resource::ResourceManager::instance().hold<Resource::FloatTextureResource>(
+                    Resource::ResourceType::TEXTURE, "ibl/studio_irradiance.ktx");
+                const auto preHold = Resource::ResourceManager::instance().hold<Resource::FloatTextureResource>(
+                    Resource::ResourceType::TEXTURE, "ibl/studio_prefiltered.ktx");
+                const auto lutHold = Resource::ResourceManager::instance().hold<Resource::FloatTextureResource>(
+                    Resource::ResourceType::TEXTURE, "ibl/studio_brdf_lut.ktx");
+                ASSERT_TRUE(irrHold && preHold && lutHold);
+                renderer.prepareIblResources(renderer.createTexture(*irrHold.get<Resource::FloatTextureResource>()),
+                                             renderer.createTexture(*preHold.get<Resource::FloatTextureResource>()),
+                                             renderer.createTexture(*lutHold.get<Resource::FloatTextureResource>()));
+            }
+
+            // 1. 验证 MaterialParameterMode 非法枚举拒绝，以及固定粗糙度/金属度替换贴图通道。
+            const auto white = renderer.createTexture(
+                Resource::TextureResource({}, 1, 1, {255, 255, 255, 255}), TextureMipMode::BaseLevel,
+                TextureColorSpace::Srgb);
+            // 贴图 G=230 (~0.902 粗糙), B=0 (0.0 金属)。
+            const auto roughNonMetalTex = renderer.createTexture(
+                Resource::TextureResource({}, 1, 1, {0, 230, 0, 255}), TextureMipMode::BaseLevel,
+                TextureColorSpace::Linear);
+            {
+                MaterialDesc invalidDesc{white};
+                invalidDesc.shading = ShadingMode::Pbr;
+                invalidDesc.roughnessMode = static_cast<MaterialParameterMode>(7);
+                EXPECT_THROW(renderer.createMaterial(invalidDesc), Error::Exception);
+                invalidDesc.roughnessMode = MaterialParameterMode::TextureFactor;
+                invalidDesc.metallicMode = static_cast<MaterialParameterMode>(7);
+                EXPECT_THROW(renderer.createMaterial(invalidDesc), Error::Exception);
+            }
+
+            MaterialDesc texFactorDesc{white};
+            texFactorDesc.shading = ShadingMode::Pbr;
+            texFactorDesc.metallicRoughnessTexture = roughNonMetalTex;
+            texFactorDesc.roughness = 1.0f;
+            texFactorDesc.metallic = 1.0f;
+            const auto matTexFactor = renderer.createMaterial(texFactorDesc);
+
+            MaterialDesc fixedOverrideDesc = texFactorDesc;
+            fixedOverrideDesc.roughnessMode = MaterialParameterMode::FixedValue;
+            fixedOverrideDesc.roughness = 0.05f;
+            fixedOverrideDesc.metallicMode = MaterialParameterMode::FixedValue;
+            fixedOverrideDesc.metallic = 1.0f;
+            const auto matFixedMetal = renderer.createMaterial(fixedOverrideDesc);
+
+            const auto quadData = Demo::makePlaneMesh();
+            const std::array<MeshVertex, 4> tangentQuad{{
+                {{-1, -1, 0}, {0, 0}, {0, 0, 1}, {1, 0, 0, 1}},
+                {{1, -1, 0}, {1, 0}, {0, 0, 1}, {1, 0, 0, 1}},
+                {{1, 1, 0}, {1, 1}, {0, 0, 1}, {1, 0, 0, 1}},
+                {{-1, 1, 0}, {0, 1}, {0, 0, 1}, {1, 0, 0, 1}},
+            }};
+            const std::array<uint32_t, 6> quadIndices{0, 1, 2, 0, 2, 3};
+            const auto tangentMesh = renderer.createMesh(tangentQuad, quadIndices);
+
+            auto ortho = glm::orthoRH_ZO(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
+            ortho[1][1] *= -1.0f;
+            const CameraMatrices cam{
+                glm::lookAtRH(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f)), ortho};
+            const auto captureHdrCenter = [&](const Material& mat, const Lighting& l, bool ibl) {
+                std::vector<std::array<float, 4>> hdr;
+                FrameInput input{{64, 64}, cam, std::array{DrawItem{tangentMesh, mat, glm::mat4(1.0f)}}, l};
+                input.iblEnabled = ibl;
+                Detail::RendererReviewAccess::withHdrSceneTarget(
+                    renderer, input, {0, 0, 0, 1}, [&](const auto& d, const auto& img) {
+                        hdr = TextureGpuReview::captureRgba16f(d, img, {64, 64});
+                    });
+                return hdr[(32u * 64u + 32u)];
+            };
+            // 正向光源与视线对准半向量 H=(0,0,1)：高粗糙度(0.9)高光极弱，固定粗糙度(0.05) + 固定金属度(1.0)产生强高光。
+            const Lighting frontLight{{0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, 1.0f, 0.0f};
+            const auto factorPx = captureHdrCenter(matTexFactor, frontLight, false);
+            const auto fixedPx = captureHdrCenter(matFixedMetal, frontLight, false);
+            EXPECT_GT(fixedPx[0], factorPx[0] * 10.0f);
+
+            // 2. 加载共享 Avocado 模型并建立双实体，验证 PreparedModel 槽位映射、隔离、零贴图重传及 Fence 回收。
+            Model::PrepareOptions pbrOpts;
+            pbrOpts.mipMode = TextureMipMode::FullChain;
+            pbrOpts.sampler = {TextureFilter::Linear, TextureFilter::Linear, MipFilter::Linear};
+            pbrOpts.shading = ShadingMode::Pbr;
+            const auto avocado = Model::prepareModel(renderer, "models/avocado/gltf/avocado.gltf", pbrOpts);
+            ASSERT_EQ(avocado->materialSlots().size(), 1u);
+            EXPECT_EQ(avocado->materialSlots()[0].sourceMaterialIndex, 0u);
+            ASSERT_EQ(avocado->drawMaterialSlots().size(), avocado->draws().size());
+            EXPECT_EQ(avocado->drawMaterialSlots()[0], 0u);
+
+            const auto countsBeforeOverride = Detail::RendererReviewAccess::resourceCounts(renderer);
+            const std::string logsBefore = messages_.str();
+            const size_t uploadsBefore = TextureGpuReview::countSceneTextureUploads(logsBefore);
+
+            Scene::Scene scene;
+            scene.setCamera(Scene::Camera({0.0f, 0.0f, 2.6f}));
+            scene.setLighting({{0.5f, -0.5f, -0.7f}, {1.0f, 0.96f, 0.9f}, 1.2f, 0.12f});
+            const auto leftId =
+                scene.createEntity(avocado, Scene::Transform({-0.65f, -0.75f, 0.0f}, {1, 0, 0, 0}, glm::vec3(24.0f)),
+                                   true, "Left");
+            const auto rightId =
+                scene.createEntity(avocado, Scene::Transform({0.65f, -0.75f, 0.0f}, {1, 0, 0, 0}, glm::vec3(24.0f)),
+                                   true, "Right");
+
+            const auto renderSceneLdr = [&](FrameExtent ext) {
+                std::vector<uint8_t> pixels;
+                const auto extracted = Scene::extractSceneFrame(scene, ext, true, {}, true);
+                EXPECT_TRUE(extracted.has_value());
+                const auto uiExt = renderer.beginUiFrame();
+                EXPECT_TRUE(uiExt);
+                const auto output = renderer.prepareSceneTarget(ext, false);
+                ImGui::Begin("OverrideReview");
+                ImGui::Image(static_cast<ImTextureID>(renderer.sceneImage(output)),
+                             ImVec2(float(ext.width), float(ext.height)));
+                ImGui::End();
+                renderer.imgui().endFrame();
+                auto* dd = renderer.imgui().drawData();
+                renderer.drawSceneTarget(output, extracted->input(), {0.08f, 0.095f, 0.125f, 1.0f},
+                                         [&](void* cmd) { renderer.imgui().recordDrawData(dd, cmd); });
+                Detail::RendererReviewAccess::withSceneOutput(
+                    renderer, output, [&](const auto& d, const auto& img) {
+                        pixels = TextureGpuReview::captureMip(d, img, 0, {ext.width, ext.height});
+                    });
+                return pixels;
+            };
+
+            const auto basePx = renderSceneLdr({640, 480});
+
+            // 仅对左侧实体应用覆盖（红色染色 + 固定光滑金属），右侧实体保持原样。
+            Scene::MaterialOverride ov{
+                0u,
+                {1.0f, 0.25f, 0.2f},
+                MaterialParameterMode::FixedValue,
+                0.12f,
+                MaterialParameterMode::FixedValue,
+                1.0f,
+            };
+            auto compiled = Model::prepareMaterialOverride(renderer, *avocado, ov.materialSlot, ov.color,
+                                                           ov.roughnessMode, ov.roughness, ov.metallicMode, ov.metallic);
+            ASSERT_TRUE(scene.setMaterialOverride(leftId, ov, compiled));
+            compiled.reset();
+
+            // 验证零纹理/网格重传，只新增 1 份独立材质绑定。
+            const auto countsAfterOverride = Detail::RendererReviewAccess::resourceCounts(renderer);
+            EXPECT_EQ(countsAfterOverride.meshes, countsBeforeOverride.meshes);
+            EXPECT_EQ(countsAfterOverride.textures, countsBeforeOverride.textures);
+            EXPECT_EQ(countsAfterOverride.materials, countsBeforeOverride.materials + 1u);
+            EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), uploadsBefore);
+
+            const auto overriddenPx = renderSceneLdr({640, 480});
+            WindowCapture::save({640, 480, overriddenPx}, reviewDir / "material-override-isolation.ppm");
+
+            // 验证左半屏变化且右半屏（共享同模型的右侧实体）逐像素严格不变。
+            bool leftChanged = false;
+            for (uint32_t y = 0; y < 480; ++y)
+            {
+                for (uint32_t x = 0; x < 310; ++x)
+                {
+                    const size_t off = (size_t(y) * 640u + x) * 4u;
+                    if (overriddenPx[off] != basePx[off] || overriddenPx[off + 1] != basePx[off + 1] ||
+                        overriddenPx[off + 2] != basePx[off + 2])
+                    {
+                        leftChanged = true;
+                        break;
+                    }
+                }
+                if (leftChanged)
+                    break;
+            }
+            EXPECT_TRUE(leftChanged);
+            for (uint32_t y = 0; y < 480; ++y)
+            {
+                for (uint32_t x = 330; x < 640; ++x)
+                {
+                    const size_t off = (size_t(y) * 640u + x) * 4u;
+                    ASSERT_EQ(overriddenPx[off + 0], basePx[off + 0]);
+                    ASSERT_EQ(overriddenPx[off + 1], basePx[off + 1]);
+                    ASSERT_EQ(overriddenPx[off + 2], basePx[off + 2]);
+                }
+            }
+
+            // 连续替换覆盖并重置，验证在途帧 Fence 完成前安全且最终回收独立覆盖材质资源。
+            for (int k = 1; k <= 3; ++k)
+            {
+                ov.roughness = 0.1f * float(k);
+                auto nextCompiled =
+                    Model::prepareMaterialOverride(renderer, *avocado, ov.materialSlot, ov.color, ov.roughnessMode,
+                                                   ov.roughness, ov.metallicMode, ov.metallic);
+                ASSERT_TRUE(scene.setMaterialOverride(leftId, ov, std::move(nextCompiled)));
+                (void)renderSceneLdr({640, 480});
+            }
+            ASSERT_TRUE(scene.clearMaterialOverride(leftId, 0u));
+            const auto restoredPx = renderSceneLdr({640, 480});
+            EXPECT_EQ(restoredPx, basePx);
+            Detail::RendererReviewAccess::waitForFrames(renderer);
+            EXPECT_EQ(Detail::RendererReviewAccess::resourceCounts(renderer).materials, countsBeforeOverride.materials);
+
+            // 验证 Scene 1.2 捕获、序列化与 rebuildScene GPU 重建恢复。
+            ASSERT_TRUE(scene.setMaterialOverride(
+                leftId, ov,
+                Model::prepareMaterialOverride(renderer, *avocado, ov.materialSlot, ov.color, ov.roughnessMode,
+                                               ov.roughness, ov.metallicMode, ov.metallic)));
+            const auto desc12 = Scene::captureScene(scene, {0.08f, 0.095f, 0.125f, 1.0f});
+            const auto decoded12 = Scene::decodeScene(Scene::encodeScene(desc12));
+            const auto rebuilt12 = Scene::rebuildScene(
+                decoded12, [&](const Model::ModelReference&) { return avocado; },
+                [&](const Model::PreparedModel& model, const Scene::MaterialOverride& item) {
+                    return Model::prepareMaterialOverride(renderer, model, item.materialSlot, item.color,
+                                                          item.roughnessMode, item.roughness, item.metallicMode,
+                                                          item.metallic);
+                });
+            ASSERT_EQ(rebuilt12.scene->entities().size(), 2u);
+            EXPECT_EQ(rebuilt12.scene->entities()[0].materialOverrides.size(), 1u);
+            EXPECT_TRUE(rebuilt12.scene->entities()[1].materialOverrides.empty());
+            ASSERT_TRUE(rebuilt12.scene->entities()[0].materialOverrides[0].compiled != nullptr);
+            EXPECT_TRUE(rebuilt12.scene->entities()[0].materialOverrides[0].compiled->material.valid());
+            EXPECT_TRUE(rebuilt12.scene->find(rebuilt12.scene->entities()[1].id)->materialOverrides.empty());
+            EXPECT_EQ(scene.find(rightId)->materialOverrides.size(), 0u);
+        }
+        Resource::ResourceManager::instance().reset();
+        Resource::ResourceManager::instance().bindAssetSource(nullptr);
+        expectCleanValidation();
+    }
 }  // namespace

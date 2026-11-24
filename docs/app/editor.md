@@ -80,6 +80,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | Reset view | 恢复位置 `(0,0,6)`、默认朝向和投影的相机，不重建实体或改变选择 |
 | View：FXAA | 控制独立视口 LDR FXAA 预览开关（控件 `##fxaa`，默认关闭）；仅本会话有效，切换在下一个有效视口帧生效，不产生脏状态或 Undo 记录 |
 | View：Studio IBL | 控制固定棚拍 PBR IBL 预览开关（控件 `##ibl`，默认关闭）；首次开启按需经 `FloatTextureResource` 加载 `ibl/studio_{irradiance,prefiltered,brdf_lut}.ktx` 并按 Renderer 会话共享，不产生脏状态或 Undo 记录 |
+| View → Material 面板 | 可停靠材质检查器，跟随选中实体并按源模型材质槽选择；支持编辑 PBR 材质的基色染色、粗糙度与金属度（各自独立支持 `Texture x Factor` 与 `Fixed value` 模式）及单槽/全部重置；连续拖动折叠为 1 步 Undo，源 Unlit 保持导入行为，更换模型自动清理覆盖，随场景 JSON 1.2 保存并在打开时重建 GPU 引用 |
 | View：性能统计 | 显示 `CPU frame`（主循环 `FrameTime::delta`，毫秒）、`GPU viewport`（最近完成视口帧 GPU 总耗时，毫秒）、`Scene draws`（主场景绘制项数）与 `Shadow draws`（阴影绘制项数，关闭时为 0）；首帧等待完成样本显示 `--`，队列不支持时间戳时 GPU 耗时显示 `Unavailable` |
 | Background | 修改背景颜色（调色盘或面板改动合并为单步 Undo） |
 | Shadows / Receiver depth bias | 开关阴影预览，调整接收偏移；仅本会话有效，不写入场景文件，不置脏也不进入 Undo 栈 |
@@ -196,7 +197,7 @@ Camera 与实体状态提取场景并合成 UI。视口关闭、折叠或没有�
 
 ## 停靠工作区与文件关联
 
-默认窗口及缺省配置为 1920×1080，显式窗口尺寸仍有效。顶部菜单同时提供 File（打开、保存、另存为、退出）、Edit（Undo / Redo / Duplicate / Delete）与 View（场景视口开关、Restore default layout）。顶部及状态栏在文档处于脏状态时显示 `*` 标记；触发打开、清空、退出或直接点击窗口关闭按钮会经 `AppSession` 的 `closeRequested` 拦截并确认保存或放弃，保证与输入窗口 `Enter` / `Escape` 及活动面板事务一致。Objects / Assets 作为左侧标签页共用高度，Scene 居中，Properties 位于右侧；对象列表使用左侧剩余高度，属性面板依次提供选中对象、观察操作和场景设置，空间不足时纵向滚动。底部仅保留一行当前文件与操作结果，错误显示为红色，悬停可查看完整路径与消息。面板可以停靠与重排，恢复默认布局不改变场景。
+默认窗口及缺省配置为 1920×1080，显式窗口尺寸仍有效。顶部菜单同时提供 File（打开、保存、另存为、退出）、Edit（Undo / Redo / Duplicate / Delete）与 View（场景视口开关、Material 面板开关、Restore default layout）。顶部及状态栏在文档处于脏状态时显示 `*` 标记；触发打开、清空、退出或直接点击窗口关闭按钮会经 `AppSession` 的 `closeRequested` 拦截并确认保存或放弃，保证与输入窗口 `Enter` / `Escape` 及活动面板事务一致。Objects / Assets 作为左侧标签页共用高度，Scene 居中，Properties 与 Material 停靠在右侧；对象列表使用左侧剩余高度，属性面板依次提供选中对象、观察操作和场景设置，空间不足时纵向滚动。底部仅保留一行当前文件与操作结果，错误显示为红色，悬停可查看完整路径与消息。面板可以停靠与重排，恢复默认布局不改变场景。
 布局使用 ImGui 自带的 `incubator-editor-layout.ini`，相对运行 cwd；该本地文件不属于场景 JSON 或 incubator.json。生产启动恢复上次布局，测试在隔离目录保存自己的布局。已有布局不会被新版默认布局覆盖；需要应用新布局时使用 View → Restore default layout。
 
 当前文件和待操作路径分别保存。Save 使用当前文件；没有关联时进入 Save As 确认流程。Open／Save As 成功才更新关联；取消、失败和单独编辑目标路径均不改变当前文件。清空仍然编辑当前文件对应的内容。Open／Save As 使用独立路径窗口，失败反馈留在窗口中；恢复文件内容时通过 Open 重新打开当前文件。默认启动目标是构建目录的部署副本，保存不会回写源资产；清理 build 会删除副本，重新部署资产也可能覆盖副本。相关说明可在 File → About saved files 和路径窗口查看。写入仍为同步直接覆盖，打开后的失败可能留下部分文件。

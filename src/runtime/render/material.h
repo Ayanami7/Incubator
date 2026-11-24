@@ -19,6 +19,13 @@ namespace Incubator
             Pbr = 2
         };
 
+        /// @brief PBR 标量表面参数（粗糙度 / 金属度）的取值模式。
+        enum class MaterialParameterMode : uint32_t
+        {
+            TextureFactor = 0,  ///< 使用贴图对应通道乘以默认因子（默认导入行为）。
+            FixedValue = 1      ///< 忽略贴图对应通道，直接使用固定覆盖值。
+        };
+
         struct MaterialDesc
         {
             Texture texture;
@@ -29,8 +36,10 @@ namespace Incubator
             Texture normalTexture{};             ///< 可选线性法线贴图（切线空间）。
             Texture metallicRoughnessTexture{};  ///< 可选线性金属粗糙度贴图（G=粗糙度，B=金属度）。
             float normalScale = 1.0f;            ///< 法线贴图 XY 缩放系数，有限且 >= 0。
-            float metallic = 0.0f;               ///< 金属度因子，有限且位于 [0, 1]。
-            float roughness = 1.0f;              ///< 粗糙度因子，有限且位于 [0, 1]。
+            float metallic = 0.0f;               ///< 金属度因子或固定覆盖值，有限且位于 [0, 1]。
+            float roughness = 1.0f;              ///< 粗糙度因子或固定覆盖值，有限且位于 [0, 1]。
+            MaterialParameterMode roughnessMode = MaterialParameterMode::TextureFactor;  ///< 粗糙度取值模式。
+            MaterialParameterMode metallicMode = MaterialParameterMode::TextureFactor;   ///< 金属度取值模式。
         };
 
         /// @brief 不可变材质的非拥有引用，副本指向同一份实际对象。

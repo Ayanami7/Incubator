@@ -10,6 +10,7 @@
 #include "runtime/render/display.h"
 #include "runtime/render/lighting.h"
 #include "runtime/scene/camera.h"
+#include "runtime/scene/entity.h"
 #include "runtime/scene/transform.h"
 
 namespace Incubator::Scene
@@ -24,6 +25,7 @@ namespace Incubator::Scene
         bool visible = true;
         std::string name;
         std::optional<size_t> parent;
+        std::vector<MaterialOverride> materialOverrides;
     };
 
     /// @brief 描述实体层级校验失败时的定位与原因。

@@ -3407,4 +3407,210 @@ namespace
         }
         cleanValidation();
     }
+
+    TEST_F(EditorAppTest, MaterialPanelSlotSelectionContinuousTransactionUndoRedoResetAndSaveReopen12UnderValidation)
+    {
+        copyShowcaseModels();
+        {
+            Editor::EditorApp session(options(true, 1280, 800));
+            Editor::EditorScene editor;
+            Scene::EntityId cutId{}, peelId{};
+            Render::FrameExtent extent{};
+            std::vector<uint8_t> initialPixels, overriddenPixels, savedPixels, reopenedPixels, resetPixels;
+            const std::string savePath = "saved-material-v12.json";
+            int frame = 0, step = 0, waitFrames = 0;
+            bool done = false;
+            auto* handle = static_cast<GLFWwindow*>(session.window().getNativeHandle());
+            enableGlfwCallbacks(handle, false);
+
+            session.run(
+                {[&](auto& app) {
+                     editor.initialize(app, "assets/scenes/pbr-showcase.json");
+                     app.shadowSettings().enabled = true;
+                     app.iblEnabled() = true;
+                     ASSERT_GE(app.scene().entities().size(), 2u);
+                     cutId = app.scene().entities()[0].id;
+                     peelId = app.scene().entities()[1].id;
+                     editor.select(app, cutId);
+                 },
+                 [&](auto& app, const auto&) {
+                     if (++frame > 240)
+                     {
+                         ADD_FAILURE() << "Material panel test timeout at step=" << step;
+                         app.requestExit();
+                         return;
+                     }
+                     auto* matWin = ImGui::FindWindowByName("Material");
+                     if (frame < 6 || !matWin || !app.sceneOutput().valid())
+                         return;
+
+                     switch (step)
+                     {
+                         case 0:
+                             // 确保 Material 面板聚焦在前，等 1 帧提交控件后再操作。
+                             ImGui::SetWindowFocus("Material");
+                             if (matWin->Hidden)
+                                 return;
+                             extent = app.sceneOutput().extent();
+                             Render::Detail::RendererReviewAccess::withSceneOutput(
+                                 app.renderer(), app.sceneOutput(), [&](const auto& d, const auto& img) {
+                                     initialPixels = TextureGpuReview::captureMip(d, img, 0, {extent.width, extent.height});
+                                 });
+                             ASSERT_FALSE(initialPixels.empty());
+                             // 验证源槽位选择器存在并切到 Fixed value 金属度模式。
+                             EXPECT_NE(matWin->GetID("##mat-slot"), 0u);
+                             ImGui::ActivateItemByID(matWin->GetID("##mat-metallic-mode"));
+                             ++step;
+                             break;
+                         case 1:
+                             if (!ImGui::GetCurrentContext()->OpenPopupStack.empty())
+                             {
+                                 auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
+                                 if (popup)
+                                 {
+                                     ImGui::ActivateItemByID(ImHashStr("Fixed value", 0, popup->GetID(1)));
+                                     ++step;
+                                 }
+                             }
+                             break;
+                         case 2:
+                             // 验证模式切换记 1 步撤销，随后在 PanelTransactionKind::Material 内连续拖动三步折叠为 1 步。
+                             ASSERT_EQ(app.scene().find(cutId)->materialOverrides.size(), 1u);
+                             EXPECT_EQ(app.scene().find(cutId)->materialOverrides[0].value.metallicMode,
+                                       Render::MaterialParameterMode::FixedValue);
+                             EXPECT_TRUE(editor.canUndo());
+                             EXPECT_TRUE(editor.undo(app));
+                             EXPECT_TRUE(app.scene().find(cutId)->materialOverrides.empty());
+                             EXPECT_TRUE(editor.redo(app));
+                             ASSERT_EQ(app.scene().find(cutId)->materialOverrides.size(), 1u);
+
+                             // 开始连续拖动事务，模拟颜色+粗糙度+金属度连续调整（最后应仅压入 1 步 Undo）。
+                             ASSERT_TRUE(editor.controller().beginPanelTransaction(
+                                 app, Editor::PanelTransactionKind::Material));
+                             for (const float rough : {0.4f, 0.25f, 0.12f})
+                             {
+                                 Scene::MaterialOverride ov{
+                                     0u,
+                                     {0.95f, 0.35f, 0.25f},
+                                     Render::MaterialParameterMode::FixedValue,
+                                     rough,
+                                     Render::MaterialParameterMode::FixedValue,
+                                     1.0f,
+                                 };
+                                 ASSERT_TRUE(editor.controller().operations().setMaterialOverride(
+                                     app.scene(), app.clearColor(), ov));
+                             }
+                             editor.controller().commitPanelTransactions(app);
+                             EXPECT_TRUE(editor.isDirty());
+                             // 再撤销 1 步即回退整次连续拖动，重做 1 步恢复到最终覆盖。
+                             EXPECT_TRUE(editor.undo(app));
+                             EXPECT_FLOAT_EQ(app.scene().find(cutId)->materialOverrides[0].value.roughness, 1.0f);
+                             EXPECT_TRUE(editor.redo(app));
+                             EXPECT_FLOAT_EQ(app.scene().find(cutId)->materialOverrides[0].value.roughness, 0.12f);
+                             EXPECT_TRUE(app.scene().find(peelId)->materialOverrides.empty());
+                             waitFrames = 0;
+                             ++step;
+                             break;
+                         case 3:
+                             if (++waitFrames < 2)
+                                 return;
+                             Render::Detail::RendererReviewAccess::withSceneOutput(
+                                 app.renderer(), app.sceneOutput(), [&](const auto& d, const auto& img) {
+                                     overriddenPixels =
+                                         TextureGpuReview::captureMip(d, img, 0, {extent.width, extent.height});
+                                 });
+                             EXPECT_NE(overriddenPixels, initialPixels);
+
+                             // 测试实体复制保留覆盖、隔离编辑与 1.2 保存重开恢复 GPU 引用。
+                             ASSERT_TRUE(editor.save(app, savePath));
+                             {
+                                 std::ifstream in(savePath, std::ios::binary);
+                                 const std::string savedText((std::istreambuf_iterator<char>(in)),
+                                                             std::istreambuf_iterator<char>());
+                                 EXPECT_NE(savedText.find("\"minorVersion\": 2"), std::string::npos);
+                                 EXPECT_NE(savedText.find("\"materialOverrides\""), std::string::npos);
+                             }
+                             savedPixels = overriddenPixels;
+                             ASSERT_TRUE(editor.load(app, "assets/scenes/mixed.json"));
+                             ASSERT_TRUE(editor.load(app, savePath));
+                             ASSERT_EQ(app.scene().entities().size(), 3u);
+                             cutId = app.scene().entities()[0].id;
+                             peelId = app.scene().entities()[1].id;
+                             ASSERT_EQ(app.scene().find(cutId)->materialOverrides.size(), 1u);
+                             EXPECT_TRUE(app.scene().find(peelId)->materialOverrides.empty());
+                             editor.select(app, cutId);
+                             waitFrames = 0;
+                             ++step;
+                             break;
+                         case 4:
+                             if (++waitFrames < 2)
+                                 return;
+                             Render::Detail::RendererReviewAccess::withSceneOutput(
+                                 app.renderer(), app.sceneOutput(), [&](const auto& d, const auto& img) {
+                                     reopenedPixels =
+                                         TextureGpuReview::captureMip(d, img, 0, {extent.width, extent.height});
+                                 });
+                             EXPECT_EQ(reopenedPixels, savedPixels);
+
+                             // 点击 Reset slot 按钮重置覆盖并验证恢复源材质（随后保存写回 minorVersion: 1）。
+                             ImGui::SetWindowFocus("Material");
+                             if (matWin->Hidden)
+                                 return;
+                             ImGui::ActivateItemByID(matWin->GetID("Reset slot##mat-reset-slot"));
+                             waitFrames = 0;
+                             ++step;
+                             break;
+                         case 5:
+                             EXPECT_TRUE(app.scene().find(cutId)->materialOverrides.empty());
+                             if (++waitFrames < 2)
+                                 return;
+                             Render::Detail::RendererReviewAccess::withSceneOutput(
+                                 app.renderer(), app.sceneOutput(), [&](const auto& d, const auto& img) {
+                                     resetPixels =
+                                         TextureGpuReview::captureMip(d, img, 0, {extent.width, extent.height});
+                                 });
+                             EXPECT_EQ(resetPixels, initialPixels);
+                             EXPECT_TRUE(editor.undo(app));
+                             EXPECT_EQ(app.scene().find(cutId)->materialOverrides.size(), 1u);
+                             EXPECT_TRUE(editor.redo(app));
+                             EXPECT_TRUE(app.scene().find(cutId)->materialOverrides.empty());
+
+                             // 复制实体与更换模型时正确处理覆盖，且源 Unlit 保留导入行为不被面板覆写。
+                             ASSERT_TRUE(editor.controller().setMaterialOverride(
+                                 app, {0u, {0.4f, 0.8f, 0.9f}, Render::MaterialParameterMode::FixedValue, 0.2f,
+                                       Render::MaterialParameterMode::FixedValue, 0.9f}));
+                             const auto dupId = editor.duplicateSelected(app);
+                             ASSERT_TRUE(dupId.valid());
+                             EXPECT_EQ(app.scene().find(dupId)->materialOverrides.size(), 1u);
+                             EXPECT_TRUE(editor.setEntityShading(app, Render::ShadingMode::Lambert));
+                             EXPECT_TRUE(app.scene().find(dupId)->materialOverrides.empty());
+                             EXPECT_TRUE(editor.setEntityShading(app, Render::ShadingMode::Unlit));
+                             EXPECT_FALSE(editor.controller().setMaterialOverride(
+                                 app, {0u, {1.0f, 1.0f, 1.0f}, Render::MaterialParameterMode::FixedValue, 0.5f,
+                                       Render::MaterialParameterMode::FixedValue, 0.5f}));
+                             EXPECT_TRUE(app.scene().find(dupId)->materialOverrides.empty());
+                             EXPECT_EQ(app.scene().find(cutId)->materialOverrides.size(), 1u);
+                             editor.select(app, cutId);
+                             EXPECT_TRUE(editor.controller().resetAllMaterialOverrides(app));
+                             ASSERT_TRUE(editor.save(app, savePath));
+                             {
+                                 std::ifstream in(savePath, std::ios::binary);
+                                 const std::string savedNoOverride((std::istreambuf_iterator<char>(in)),
+                                                                   std::istreambuf_iterator<char>());
+                                 EXPECT_NE(savedNoOverride.find("\"minorVersion\": 1"), std::string::npos);
+                             }
+                             done = true;
+                             app.requestExit();
+                             break;
+                     }
+                 },
+                 [&](auto& app) { editor.ui(app); },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            EXPECT_TRUE(done);
+        }
+        cleanValidation();
+    }
 }  // namespace

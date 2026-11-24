@@ -59,6 +59,7 @@ namespace Incubator::Editor
     {
         None,
         Entity,
+        Material,
         Lighting,
         Display,
         Background
@@ -328,6 +329,16 @@ namespace Incubator::Editor
         /// @brief 先结算 Gizmo 与面板事务，再为选中实体切换模型准备着色模式。
         bool setEntityShading(Scene::Scene& scene, std::array<float, 4>& clearColor, Render::ShadingMode shading);
         bool setEntityShading(EditorApp& app, Render::ShadingMode shading);
+        /// @brief 先结算 Gizmo 与其他面板事务，再为选中实体设置 PBR 材质槽覆盖。
+        bool setMaterialOverride(Scene::Scene& scene, std::array<float, 4>& clearColor,
+                                 const Scene::MaterialOverride& overrideValue);
+        bool setMaterialOverride(EditorApp& app, const Scene::MaterialOverride& overrideValue);
+        /// @brief 先结算 Gizmo 与面板事务，再重置选中实体指定源材质槽的覆盖。
+        bool resetMaterialOverride(Scene::Scene& scene, std::array<float, 4>& clearColor, uint32_t materialSlot);
+        bool resetMaterialOverride(EditorApp& app, uint32_t materialSlot);
+        /// @brief 先结算 Gizmo 与面板事务，再清除选中实体全部材质槽的覆盖。
+        bool resetAllMaterialOverrides(Scene::Scene& scene, std::array<float, 4>& clearColor);
+        bool resetAllMaterialOverrides(EditorApp& app);
         /// @brief 先结算 Gizmo 与面板事务，再更新场景显示（色调映射与曝光）设置并记一步历史。
         bool setDisplay(Scene::Scene& scene, std::array<float, 4>& clearColor, Render::DisplaySettings display);
         bool setDisplay(EditorApp& app, Render::DisplaySettings display);

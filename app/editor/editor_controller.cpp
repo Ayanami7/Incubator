@@ -524,6 +524,44 @@ namespace Incubator::Editor
         return setEntityShading(app.scene(), app.clearColor(), shading);
     }
 
+    bool EditorController::setMaterialOverride(Scene::Scene& scene, std::array<float, 4>& clearColor,
+                                               const Scene::MaterialOverride& overrideValue)
+    {
+        cancelGizmoDrag(scene, clearColor);
+        commitPanelTransactions(scene, clearColor);
+        return operations_.setMaterialOverride(scene, clearColor, overrideValue);
+    }
+
+    bool EditorController::setMaterialOverride(EditorApp& app, const Scene::MaterialOverride& overrideValue)
+    {
+        return setMaterialOverride(app.scene(), app.clearColor(), overrideValue);
+    }
+
+    bool EditorController::resetMaterialOverride(Scene::Scene& scene, std::array<float, 4>& clearColor,
+                                                 uint32_t materialSlot)
+    {
+        cancelGizmoDrag(scene, clearColor);
+        commitPanelTransactions(scene, clearColor);
+        return operations_.resetMaterialOverride(scene, clearColor, materialSlot);
+    }
+
+    bool EditorController::resetMaterialOverride(EditorApp& app, uint32_t materialSlot)
+    {
+        return resetMaterialOverride(app.scene(), app.clearColor(), materialSlot);
+    }
+
+    bool EditorController::resetAllMaterialOverrides(Scene::Scene& scene, std::array<float, 4>& clearColor)
+    {
+        cancelGizmoDrag(scene, clearColor);
+        commitPanelTransactions(scene, clearColor);
+        return operations_.resetAllMaterialOverrides(scene, clearColor);
+    }
+
+    bool EditorController::resetAllMaterialOverrides(EditorApp& app)
+    {
+        return resetAllMaterialOverrides(app.scene(), app.clearColor());
+    }
+
     bool EditorController::setDisplay(Scene::Scene& scene, std::array<float, 4>& clearColor,
                                       Render::DisplaySettings display)
     {

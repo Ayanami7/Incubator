@@ -143,10 +143,16 @@ namespace Incubator::Editor
 
         void properties(Editor::EditorApp& app);
 
+        void materialPanel(Editor::EditorApp& app);
+
         EditorController controller_;
         Workspace workspace_;
         std::unordered_set<uint64_t> collapsedEntities_;
         bool viewportOpen_ = true;
+        bool materialOpen_ = true;
+        bool focusMaterialNextFrame_ = false;
+        size_t selectedMaterialSlot_ = 0;
+        Scene::EntityId lastMaterialEntity_;
         FileAction lastFileAction_ = FileAction::None;
     };
 

@@ -1,5 +1,6 @@
 #include "runtime/scene/scene_frame.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "runtime/model/prepared_model.h"
@@ -25,10 +26,24 @@ namespace Incubator::Scene
         std::vector<Render::DrawItem> draws;
         std::vector<Render::DrawItem> shadowDraws;
         const auto appendDraws = [](std::vector<Render::DrawItem>& target, const Model::PreparedModel& model,
-                                    const glm::mat4& transform) {
-            for (auto draw : model.draws())
+                                    const glm::mat4& transform,
+                                    std::span<const EntityMaterialOverride> overrides = {}) {
+            const auto& modelDraws = model.draws();
+            const auto& drawSlots = model.drawMaterialSlots();
+            const auto& slots = model.materialSlots();
+            for (size_t i = 0; i < modelDraws.size(); ++i)
             {
+                auto draw = modelDraws[i];
                 draw.model = transform * draw.model;
+                if (!overrides.empty() && i < drawSlots.size() && drawSlots[i] < slots.size())
+                {
+                    const uint32_t sourceSlot = slots[drawSlots[i]].sourceMaterialIndex;
+                    const auto found = std::ranges::find(overrides, sourceSlot, [](const EntityMaterialOverride& e) {
+                        return e.value.materialSlot;
+                    });
+                    if (found != overrides.end() && found->compiled && found->compiled->material.valid())
+                        draw.material = found->compiled->material;
+                }
                 target.push_back(std::move(draw));
             }
         };
@@ -48,7 +63,7 @@ namespace Incubator::Scene
                 if (worldBounds && !frustum.intersects(*worldBounds))
                     continue;
             }
-            appendDraws(draws, *entity.model, transform);
+            appendDraws(draws, *entity.model, transform, entity.materialOverrides);
         }
         return SceneFrame{extent,           camera,     std::move(draws),
                           scene.lighting(), shadow,     std::move(shadowDraws), scene.display(), iblEnabled};

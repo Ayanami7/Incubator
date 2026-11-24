@@ -75,8 +75,13 @@ void main()
         const float PI = 3.14159265359;
         vec3 baseColor = linearColor;
         vec4 mr = texture(metallicRoughnessTexture, uv);
-        float roughness = clamp(mr.g * material.surfaceParams.y, 0.04, 1.0);
-        float metallic = clamp(mr.b * material.surfaceParams.z, 0.0, 1.0);
+        uint modeBits = uint(material.surfaceParams.w + 0.5);
+        bool fixedRoughness = (modeBits & 1u) != 0u;
+        bool fixedMetallic = (modeBits & 2u) != 0u;
+        float rawRoughness = fixedRoughness ? material.surfaceParams.y : (mr.g * material.surfaceParams.y);
+        float rawMetallic = fixedMetallic ? material.surfaceParams.z : (mr.b * material.surfaceParams.z);
+        float roughness = clamp(rawRoughness, 0.04, 1.0);
+        float metallic = clamp(rawMetallic, 0.0, 1.0);
         vec3 ambient = baseColor * (1.0 - metallic) * frame.lightColorAmbient.w;
 
         float normalLen2 = dot(worldNormal, worldNormal);

@@ -1,5 +1,6 @@
 #include "runtime/model/prepared_model.h"
 
+#include <algorithm>
 #include <limits>
 #include <map>
 #include <utility>
@@ -167,6 +168,7 @@ namespace Incubator::Model
                 sourceMat.roughness,
             };
             result->materials_.push_back(renderer.createMaterial(result->resources_, desc));
+            result->materialSlots_.push_back({materials[i], std::move(desc)});
         }
 
         // 模型相对绘制项只缓存一次。树结构已经验证，每帧无需重新遍历或
@@ -188,6 +190,7 @@ namespace Incubator::Model
             {
                 const auto& part = result->parts_[index];
                 result->draws_.push_back({result->meshes_[part.geometry], result->materials_[part.material], world});
+                result->drawMaterialSlots_.push_back(part.material);
                 if (boundsAvailable)
                 {
                     const auto bounds = source->geometryBounds()[geometries[part.geometry]].transformed(world);
@@ -217,5 +220,36 @@ namespace Incubator::Model
             : options.shading == Render::ShadingMode::Lambert ? "lambert"
                                                               : "unlit");
         return result;
+    }
+
+    const PreparedMaterialSlot* PreparedModel::findMaterialSlot(uint32_t sourceMaterialIndex) const noexcept
+    {
+        const auto found = std::ranges::find(materialSlots_, sourceMaterialIndex, &PreparedMaterialSlot::sourceMaterialIndex);
+        return found == materialSlots_.end() ? nullptr : &*found;
+    }
+
+    std::shared_ptr<const PreparedMaterialOverride> prepareMaterialOverride(
+        Render::Renderer& renderer, const PreparedModel& model, uint32_t sourceMaterialIndex,
+        const std::array<float, 3>& color, Render::MaterialParameterMode roughnessMode, float roughness,
+        Render::MaterialParameterMode metallicMode, float metallic)
+    {
+        const auto* slot = model.findMaterialSlot(sourceMaterialIndex);
+        if (!slot)
+            throw Error::Exception(Error::Code::RENDER,
+                                   fmt::format("Material slot {} not found in model '{}'", sourceMaterialIndex,
+                                               model.source().path()));
+        if (slot->sourceDesc.shading != Render::ShadingMode::Pbr)
+            throw Error::Exception(Error::Code::RENDER,
+                                   fmt::format("Material slot {} in model '{}' is not PBR", sourceMaterialIndex,
+                                               model.source().path()));
+        Render::MaterialDesc desc = slot->sourceDesc;
+        desc.color = color;
+        desc.roughnessMode = roughnessMode;
+        desc.roughness = roughness;
+        desc.metallicMode = metallicMode;
+        desc.metallic = metallic;
+        auto resources = renderer.createResources();
+        auto material = renderer.createMaterial(resources, desc);
+        return std::make_shared<PreparedMaterialOverride>(PreparedMaterialOverride{std::move(resources), std::move(material)});
     }
 }  // namespace Incubator::Model

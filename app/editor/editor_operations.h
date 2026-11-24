@@ -26,6 +26,7 @@ namespace Incubator::Editor
 
         void initialize(Render::Renderer& renderer)
         {
+            renderer_ = &renderer;
             cache_ = std::make_unique<Model::ModelManager>(renderer);
         }
 
@@ -45,6 +46,13 @@ namespace Incubator::Editor
         bool setVisible(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id, bool visible);
         /// @brief 为选中实体切换模型准备着色模式，成功替换后压入一条撤销记录；失败保留原模型与历史。
         bool setEntityShading(Scene::Scene& scene, const std::array<float, 4>& clearColor, Render::ShadingMode shading);
+        /// @brief 为选中实体指定源材质槽设置 PBR 覆盖，按需构建独立 GPU 材质并支持连续事务或单步历史。
+        bool setMaterialOverride(Scene::Scene& scene, const std::array<float, 4>& clearColor,
+                                 const Scene::MaterialOverride& overrideValue);
+        /// @brief 重置选中实体指定源材质槽的覆盖并恢复源材质，压入一条撤销记录。
+        bool resetMaterialOverride(Scene::Scene& scene, const std::array<float, 4>& clearColor, uint32_t materialSlot);
+        /// @brief 清除选中实体全部材质槽覆盖并恢复源材质，压入一条撤销记录。
+        bool resetAllMaterialOverrides(Scene::Scene& scene, const std::array<float, 4>& clearColor);
         /// @brief 设置或解除实体父级（保留局部变换）；成功变更时压入一条撤销记录，无变化或拒绝不入栈。
         bool setParent(Scene::Scene& scene, const std::array<float, 4>& clearColor, Scene::EntityId id,
                        Scene::EntityId parent);
@@ -131,6 +139,7 @@ namespace Incubator::Editor
             {Render::TextureFilter::Linear, Render::TextureFilter::Linear, Render::MipFilter::Linear},
             Render::ShadingMode::Lambert};
         EditorSelection selection_;
+        Render::Renderer* renderer_ = nullptr;
         std::unique_ptr<Model::ModelManager> cache_;
         std::string currentFile_;
         std::string message_;

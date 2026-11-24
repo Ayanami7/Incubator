@@ -45,6 +45,7 @@ namespace
             EXPECT_EQ(a.entities[i].visible, b.entities[i].visible);
             EXPECT_EQ(a.entities[i].name, b.entities[i].name);
             EXPECT_EQ(a.entities[i].parent, b.entities[i].parent);
+            EXPECT_EQ(a.entities[i].materialOverrides, b.entities[i].materialOverrides);
             EXPECT_EQ(a.entities[i].transform.position(), b.entities[i].transform.position());
             EXPECT_EQ(a.entities[i].transform.scale(), b.entities[i].transform.scale());
             EXPECT_NEAR(std::abs(glm::dot(a.entities[i].transform.rotation(), b.entities[i].transform.rotation())), 1,
@@ -102,7 +103,7 @@ namespace
         };
         check(replace("\"version\": 1", "\"version\": 2"), "version");
         check(replace("\"version\": 1", "\"version\": 1.0"), "version");
-        check(replace("\"minorVersion\": 1", "\"minorVersion\": 2"), "minorVersion");
+        check(replace("\"minorVersion\": 1", "\"minorVersion\": 3"), "minorVersion");
         check(replace("\"minorVersion\": 1", "\"minorVersion\": -1"), "minorVersion");
         check(replace("\"minorVersion\": 1", "\"minorVersion\": 1.0"), "minorVersion");
         check(replace("\"visible\": false", "\"visible\": 0"), "visible");
@@ -477,5 +478,91 @@ namespace
             EXPECT_NE(e.message().find("entities[0].parent"), std::string::npos) << e.message();
         }
         EXPECT_EQ(badResolveCalls, 0);
+    }
+
+    TEST(SceneFileTest, MaterialOverrideVersion12RoundTripCompatibilityAndValidation)
+    {
+        auto d = sample();
+        // sample() 无材质覆盖，仍应写出 minorVersion: 1。
+        const std::string json11 = Scene::encodeScene(d);
+        EXPECT_NE(json11.find("\"minorVersion\": 1"), std::string::npos);
+        EXPECT_EQ(json11.find("materialOverrides"), std::string::npos);
+
+        // 为首个有模型的实体增加材质槽覆盖及父子关系，验证写出 1.2 并完整往返。
+        d.entities[1].parent = 0u;
+        d.entities[0].materialOverrides.push_back({
+            0u,
+            {0.9f, 0.35f, 0.2f},
+            Render::MaterialParameterMode::FixedValue,
+            0.125f,
+            Render::MaterialParameterMode::FixedValue,
+            0.95f,
+        });
+        d.entities[0].materialOverrides.push_back({
+            2u,
+            {0.4f, 0.7f, 1.0f},
+            Render::MaterialParameterMode::TextureFactor,
+            0.65f,
+            Render::MaterialParameterMode::TextureFactor,
+            0.0f,
+        });
+
+        const std::string json12 = Scene::encodeScene(d);
+        EXPECT_NE(json12.find("\"version\": 1"), std::string::npos);
+        EXPECT_NE(json12.find("\"minorVersion\": 2"), std::string::npos);
+        EXPECT_NE(json12.find("\"materialOverrides\""), std::string::npos);
+        compare(d, Scene::decodeScene(json12));
+
+        // 1.2 文件中无 materialOverrides 字段的实体也应默认无覆盖。
+        {
+            const auto pos = json12.find("\"parent\": 0");
+            ASSERT_NE(pos, std::string::npos);
+            EXPECT_EQ(d.entities[1].materialOverrides.size(), 0u);
+        }
+
+        // 旧 1.0 / 1.1 文件读取时按无覆盖恢复。
+        const std::string legacy10 = R"({
+  "version": 1,
+  "entities": [{"model": null, "transform": {"position": [0,0,0], "rotation": [0,0,0,1], "scale": [1,1,1]}, "visible": true}],
+  "camera": {"position": [0,0,6], "rotation": [0,0,0,1], "perspective": {"verticalFov": 0.7853982, "nearPlane": 0.1, "farPlane": 100}},
+  "lighting": {"direction": [0,0,-1], "color": [1,1,1], "intensity": 1, "ambient": 0.1},
+  "display": {"toneMapping": "reinhard", "exposureEv": 0},
+  "clearColor": [0.1, 0.2, 0.3, 1]
+})";
+        const auto decoded10 = Scene::decodeScene(legacy10);
+        ASSERT_EQ(decoded10.entities.size(), 1u);
+        EXPECT_TRUE(decoded10.entities[0].materialOverrides.empty());
+
+        // 非法材质覆盖字段拒绝验证：重复槽位、非法枚举、超界值与无模型实体的覆盖。
+        const auto expectInvalid = [&](std::string text, std::string_view expected) {
+            try
+            {
+                (void)Scene::decodeScene(text);
+                FAIL() << "accepted invalid 1.2 scene JSON";
+            }
+            catch (const Error::Exception& e)
+            {
+                EXPECT_EQ(e.code(), Error::Code::IO);
+                EXPECT_NE(e.message().find(expected), std::string::npos) << e.message();
+            }
+        };
+        auto replaceFirst = [&](std::string text, std::string_view from, std::string_view to) {
+            const auto at = text.find(from);
+            EXPECT_NE(at, std::string::npos);
+            if (at != std::string::npos)
+                text.replace(at, from.size(), to);
+            return text;
+        };
+        expectInvalid(replaceFirst(json12, "\"materialSlot\": 2", "\"materialSlot\": 0"), "materialSlot");
+        expectInvalid(replaceFirst(json12, "\"roughnessMode\": \"fixed\"", "\"roughnessMode\": \"auto\""),
+                      "roughnessMode");
+        expectInvalid(replaceFirst(json12, "\"metallicMode\": \"fixed\"", "\"metallicMode\": \"blend\""),
+                      "metallicMode");
+        expectInvalid(replaceFirst(json12, "\"roughness\": 0.125", "\"roughness\": 1.5"), "materialOverrides");
+
+        auto invalidDesc = d;
+        invalidDesc.entities[1].materialOverrides.push_back({0u});
+        EXPECT_FALSE(invalidDesc.valid());
+        EXPECT_THROW((void)Scene::encodeScene(invalidDesc), Error::Exception);
     }
 }  // namespace

@@ -56,7 +56,15 @@ namespace Incubator::Scene
         bool setVisible(EntityId id, bool visible);
         /// @brief 修改名称；无效 ID 返回 false，非法名称抛 CONFIG 并保留原值。
         bool setName(EntityId id, std::string name);
+        /// @brief 替换实体模型；若更换为不同模型则清理原有材质覆盖。
         bool setModel(EntityId id, std::shared_ptr<const Model::PreparedModel> model);
+        /// @brief 为实体指定源模型材质槽设置或更新 PBR 覆盖；需要有效模型且槽位支持 PBR。
+        bool setMaterialOverride(EntityId id, MaterialOverride overrideValue,
+                                 std::shared_ptr<const Model::PreparedMaterialOverride> compiled = {});
+        /// @brief 移除实体指定源材质槽的显式覆盖并恢复源材质。
+        bool clearMaterialOverride(EntityId id, uint32_t materialSlot);
+        /// @brief 清除实体的全部材质覆盖。
+        bool clearMaterialOverrides(EntityId id);
         /// @brief 设置或解除实体的父级（传入无效 EntityId 表示解除挂接），保留局部 Transform。
         /// @return 实体或非空父级不存在、自挂接或形成循环时返回 false 且保持原关系；重复设置同一父级返回 true。
         bool setParent(EntityId id, EntityId parent);

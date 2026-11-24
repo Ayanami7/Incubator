@@ -32,7 +32,9 @@ namespace Incubator
                                                          const VulkanImage& metallicRoughnessImage,
                                                          const VulkanSampler& metallicRoughnessSampler,
                                                          const std::array<float, 3>& color, ShadingMode shading,
-                                                         float normalScale, float roughness, float metallic)
+                                                         float normalScale, float roughness, float metallic,
+                                                         MaterialParameterMode roughnessMode,
+                                                         MaterialParameterMode metallicMode)
                 : device_(device)
             {
                 struct MaterialUniformData
@@ -41,10 +43,13 @@ namespace Incubator
                     std::array<float, 4> surfaceParams;
                 };
                 static_assert(sizeof(MaterialUniformData) == 32);
-                // std140：colorShading.w 编码 ShadingMode，surfaceParams 依次为 normalScale、roughness、metallic。
+                // std140：colorShading.w 编码 ShadingMode，surfaceParams 依次为 normalScale、roughness、metallic、参数模式位。
+                const uint32_t modeBits =
+                    (roughnessMode == MaterialParameterMode::FixedValue ? 1u : 0u) |
+                    (metallicMode == MaterialParameterMode::FixedValue ? 2u : 0u);
                 const MaterialUniformData parameters{
                     {color[0], color[1], color[2], static_cast<float>(shading)},
-                    {normalScale, roughness, metallic, 0.0f},
+                    {normalScale, roughness, metallic, static_cast<float>(modeBits)},
                 };
                 uniform_ = std::make_unique<VulkanBuffer>(
                     device_, sizeof(parameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
