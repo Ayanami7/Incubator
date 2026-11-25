@@ -1,4 +1,4 @@
-# PNG 测试纹理
+# 测试纹理
 
 本目录保存纹理加载和渲染测试使用的固定输入。文件与生成脚本由本项目编写，按 **CC0-1.0** 提供：
 https://creativecommons.org/publicdomain/zero/1.0/
@@ -36,6 +36,12 @@ https://creativecommons.org/publicdomain/zero/1.0/
 
 `generate_fixtures.py` 还生成用于单元测试的编码样本和 `manifest.json`。它们覆盖 Gray/RGB/Gray+Alpha、
 调色板、RGB/RGBA16、Adam7 与 CgBI；其他字节变体在测试内构造，不在构建时运行生成器。
+
+## JPEG 解码器输入
+
+`reference_rgb.jpg` 以 Pillow 12.2.0 生成，尺寸为 3×2，源像素为 RGB (225, 40, 70)，编码参数为
+`quality=95, optimize=True, subsampling=0`。该文件用于解码、发现和模型依赖测试，构建时直接部署固定文件。
+SHA-256 为 `31d2d2a79215d85c38b6e1a875960acffd78eab9af2c298b695612fc7e2aecb7`。
 
 - RGB/Gray tRNS 由测试向基准 Gray/RGB 图插入 chunk；gray2/gray4 由有效的单黑像素 gray1 图修改位深并重算 IHDR CRC。
 - gAMA/cHRM/sRGB chunk 在测试内插入；iCCP 保留包含压缩 profile 的样本。测试 profile 是合成字节，

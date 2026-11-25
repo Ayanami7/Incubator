@@ -8,6 +8,6 @@
 - `LICENSE` SHA-256: `bebfe904b14301657e4e5d655c811d51fd31b97c455b9cc2d8600d6bac6cff63`
 
 The project implementation is compiled once by the `stb_image` static target.
-It enables PNG only, disables stdio, and limits dimensions to 4096. Runtime
+It enables PNG and JPEG, disables stdio, and limits dimensions to 4096. Runtime
 links this target privately and supplies bytes through FileIO. Successful
 decoding does not validate PNG CRCs or guarantee complete file integrity.

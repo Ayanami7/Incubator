@@ -63,7 +63,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | 三轴 Gizmo 拖拽与子级范围 | 根实体支持世界平移、世界旋转与局部缩放（单次拖拽折叠为 1 步 Undo，失焦自动回滚），驱动所有后代随动；选中子实体时保持当前 `GizmoMode` 值不变，首版仅在 `Translate` 且父级世界矩阵可逆时显示 Gizmo 并支持世界轴平移（通过父级世界逆矩阵反算局部位置），处于 `Rotate` / `Scale` 或父级奇异时隐藏 Gizmo、停用手势并在面板提示使用 `Properties` 局部编辑 |
 | Name | 编辑选中实体名称，允许重名和空名；连续输入在确认/失焦后折叠为单步历史；名称不影响实体身份或模型缓存 |
 | Objects：New model / Create object | 选择 Avocado 或 Teapot，在画面中央按该模型的创建预设添加共享实体，并选中 |
-| Assets：面包屑导航 / Up / Refresh | 点击面包屑直接跳转，使用 `Up` 返回上级，使用 `Refresh` 重新列出当前目录；列表按 `[DIR]` / `[MODEL]` / `[PNG]` / `[DEP]` 展示 |
+| Assets：面包屑导航 / Up / Refresh | 点击面包屑直接跳转，使用 `Up` 返回上级，使用 `Refresh` 重新列出当前目录；列表按 `[DIR]` / `[MODEL]` / `[TEX]` / `[DEP]` 展示 |
 | Assets：Import... | 从 Windows 文件选择框选取外部 OBJ 或 glTF，复制主文件与依赖并定位到导入项 |
 | Assets：Add | 对 OBJ/glTF 候选文件按需准备，成功后加入场景并选中；其他文件没有加入入口 |
 | Assets：Reload | 从磁盘重新读取指定模型及所需贴图，同步更新已缓存变体、场景实体和 Undo/Redo 快照 |
@@ -92,7 +92,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 相同规范化来源与完整准备选项在当前会话内复用；不同选项分别准备。
 创建及场景重建共用 Runtime ModelManager；Editor 不再维护单独的模型缓存实现。
 资产列表通过 ResourceManager 获取单层目录，显示根内虚拟路径；不创建递归索引，不进入目录链接。
-PNG、bin/mtl 和未知文件分别显示类型，扩展名只代表候选类别，不证明内容可加载。
+PNG/JPEG、bin/mtl 和未知文件分别显示类型，扩展名只代表候选类别，不证明内容可加载。
 新模型路径不需要加入内置模型表；Assets 的 Add 使用单位 Transform，保持模型原有单位，必要时通过属性缩放或聚焦观察。
 准备选项沿用 FullChain、线性 min/mag/mip 和 Lambert，并随虚拟来源一起保存，不写物理资产根或 GPU 引用。
 加载失败时 Assets 和状态栏显示本次调用的模型路径及具体依赖或解析原因，保留原场景、选择和文件关联；修复文件后再次 Add 即可。
@@ -100,7 +100,7 @@ PNG、bin/mtl 和未知文件分别显示类型，扩展名只代表候选类别
 Listed 只统计当前目录发现项，Cached 只统计 PreparedModel 缓存项，二者均不代表 CPU 加载数或 GPU 存活数。
 删除、清空或打开其他场景后，模型仍可由缓存复用；Clear unused models 在编辑阶段、帧提取前显式移出未使用条目。
 清理结果表示移出的缓存项数；此前已提交的主场景及阴影帧继续持有 GPU 对象，相关 Fence 完成并释放帧槽持有后才实际回收，不逐次等待整个设备空闲。
-准备后 CPU 模型和 PNG 持有已释放，Loader/FileIO 继续存活，因此后续操作仍走原有资源服务。
+准备后 CPU 模型和贴图持有已释放，Loader/FileIO 继续存活，因此后续操作仍走原有资源服务。
 场景及阴影 Shader 同样通过 ResourceManager::hold 取得只可移动的 CPU 持有，准备结束后自动释放，不直接配对 Registry 引用。
 调整姿态和可见性复用现有 GPU 引用。
 

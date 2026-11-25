@@ -5,6 +5,7 @@
 #include <spdlog/sinks/ostream_sink.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -242,9 +243,9 @@ namespace
             fs::remove_all(testDirectory_);
         }
 
-        void writeBytes(const std::vector<uint8_t>& bytes)
+        void writeBytes(const std::vector<uint8_t>& bytes, std::string_view virtualPath = "纹理/测试.png")
         {
-            const auto path = Utils::Utf8::toFsPath("assets/纹理/测试.png");
+            const auto path = fs::path("assets") / Utils::Utf8::toFsPath(virtualPath);
             fs::create_directories(path.parent_path());
             std::ofstream output(path, std::ios::binary);
             output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
@@ -278,6 +279,71 @@ namespace
         EXPECT_EQ(texture->height(), 3u);
         EXPECT_EQ(texture->pixels(), REFERENCE_PIXELS);
         EXPECT_TRUE(messages_.str().empty());
+    }
+
+    TEST_F(TextureLoaderTest, JpegExtensionsLoadOpaqueRgbaAndAreDiscoveredAsTextures)
+    {
+        const auto jpeg = readBytes(Utils::Utf8::toFsPath(TEXTURE_TEST_FIXTURE_DIR) / "reference_rgb.jpg");
+        for (const auto* path : {"纹理/样本.JPG", "纹理/样本.JpEg"})
+        {
+            SCOPED_TRACE(path);
+            writeBytes(jpeg, path);
+            const auto hold = ResourceManager::instance().hold<TextureResource>(ResourceType::TEXTURE, path);
+            const auto* texture = hold.get<TextureResource>();
+            ASSERT_NE(texture, nullptr);
+            EXPECT_EQ(texture->width(), 3u);
+            EXPECT_EQ(texture->height(), 2u);
+            ASSERT_EQ(texture->pixels().size(), 24u);
+            for (size_t pixel = 0; pixel < texture->pixels().size(); pixel += 4)
+            {
+                EXPECT_NEAR(texture->pixels()[pixel], 225, 2);
+                EXPECT_NEAR(texture->pixels()[pixel + 1], 40, 2);
+                EXPECT_NEAR(texture->pixels()[pixel + 2], 70, 2);
+                EXPECT_EQ(texture->pixels()[pixel + 3], 255u);
+            }
+        }
+        const auto entries = source_->listDirectory("纹理");
+        ASSERT_EQ(entries.size(), 2u);
+        EXPECT_EQ(entries[0].path, "纹理/样本.jpeg");
+        EXPECT_EQ(entries[1].path, "纹理/样本.jpg");
+        EXPECT_EQ(entries[0].kind, AssetKind::Texture);
+        EXPECT_EQ(entries[1].kind, AssetKind::Texture);
+    }
+
+    TEST_F(TextureLoaderTest, JpegRejectsInvalidMagicTruncationAndOversizedDimensions)
+    {
+        const auto jpeg = readBytes(Utils::Utf8::toFsPath(TEXTURE_TEST_FIXTURE_DIR) / "reference_rgb.jpg");
+        auto badMagic = jpeg;
+        badMagic[0] = 0;
+        auto truncated = jpeg;
+        truncated.resize(truncated.size() - 3);
+        auto oversized = jpeg;
+        constexpr std::array<uint8_t, 2> SOF = {0xff, 0xc0};
+        const auto header = std::ranges::search(oversized, SOF).begin();
+        ASSERT_GE(std::distance(header, oversized.end()), 9);
+        header[7] = 0x10;
+        header[8] = 0x01;
+
+        constexpr auto path = "invalid.jpeg";
+        TextureLoader loader(*source_);
+        const auto id = ResourceId::fromPath(ResourceType::TEXTURE, path);
+        for (const auto& [bytes, reason] : {std::pair{&badMagic, "JPEG SOI"},
+                                            std::pair{&truncated, "JPEG: missing final EOI"},
+                                            std::pair{&oversized, "JPEG header"}})
+        {
+            SCOPED_TRACE(reason);
+            writeBytes(*bytes, path);
+            try
+            {
+                loader.load(id, path);
+                ADD_FAILURE() << "Expected IO error";
+            }
+            catch (const Error::Exception& error)
+            {
+                EXPECT_EQ(error.code(), Error::Code::IO);
+                EXPECT_NE(error.message().find(reason), std::string::npos) << error.message();
+            }
+        }
     }
 
     TEST_F(TextureLoaderTest, CacheReferenceCountingAndAcquireAfterUnloadFollowManagerContract)

@@ -539,8 +539,8 @@ namespace Incubator::Editor
                 }
                 else if (entry.kind == Resource::AssetKind::Texture)
                 {
-                    kind = "PNG";
-                    badge = "[PNG]";
+                    kind = "Texture";
+                    badge = "[TEX]";
                     badgeColor = EditorTheme::badgeTextureColor();
                 }
                 else if (entry.kind == Resource::AssetKind::Dependency)

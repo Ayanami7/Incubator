@@ -357,6 +357,48 @@ namespace
         expectModelTexture(imported, "外部 模型/textures/with space.png");
     }
 
+    TEST_F(AssetImporterTest, ImportsGltfAndObjWithExternalJpegTextures)
+    {
+        const auto jpeg = read("textures/reference_rgb.jpg");
+        ASSERT_FALSE(jpeg.empty());
+        auto gltf = read(GLTF);
+        constexpr std::string_view oldUri = "../../textures/direction_rgba.png";
+        const auto uri = gltf.find(oldUri);
+        ASSERT_NE(uri, std::string::npos);
+        gltf.replace(uri, oldUri.size(), "textures/reference.JPG");
+        const auto pbr = gltf.find("\"pbrMetallicRoughness\"");
+        ASSERT_NE(pbr, std::string::npos);
+        gltf.insert(pbr, R"("normalTexture":{"index":0},)");
+        writeExternal("gltf/model.gltf", gltf);
+        writeExternal("gltf/geometry/mesh.bin", read("models/minimal_gltf/geometry/mesh.bin"));
+        writeExternal("gltf/textures/reference.JPG", jpeg);
+        writeExternal("obj/triangle.obj", read(OBJ));
+        writeExternal("obj/materials/model.mtl",
+                      "newmtl Direction\nmap_Kd ../textures/reference.JPEG\nnewmtl Solid\n");
+        writeExternal("obj/textures/reference.JPEG", jpeg);
+
+        const auto gltfImport = importExternalModel(*source_, external("gltf/model.gltf"));
+        const auto objImport = importExternalModel(*source_, external("obj/triangle.obj"));
+        ResourceManager::instance().registerLoader(ResourceType::TEXTURE, std::make_unique<TextureLoader>(*source_));
+        for (const auto& [imported, texture] :
+             {std::pair{&gltfImport, "models/model/textures/reference.jpg"},
+              std::pair{&objImport, "models/triangle/textures/reference.jpeg"}})
+        {
+            SCOPED_TRACE(imported->virtualPath);
+            EXPECT_EQ(read(texture), jpeg);
+            expectModelTexture(*imported, texture);
+            if (imported == &gltfImport)
+            {
+                const auto* model = load(imported->virtualPath);
+                ASSERT_NE(model, nullptr);
+                EXPECT_EQ(model->materials()[model->parts()[0].material].normalTexturePath, texture);
+            }
+            const auto hold = ResourceManager::instance().hold<TextureResource>(ResourceType::TEXTURE, texture);
+            ASSERT_TRUE(hold);
+            EXPECT_EQ(hold.get<TextureResource>()->width(), 3u);
+        }
+    }
+
     TEST_F(AssetImporterTest, RejectsUnsupportedFormatMissingDependenciesAndInvalidPaths)
     {
         writeExternal("model.glb", "{}");
@@ -795,10 +837,10 @@ namespace
                     "data:application/octet-stream;base64,AAAA", a);
                 reason = "Unsupported model dependency";
             }
-            else if (name == "non_png")
+            else if (name == "unsupported_image_format")
             {
-                source["images"][0]["uri"].SetString("../../textures/image.jpg", a);
-                reason = "external PNG";
+                source["images"][0]["uri"].SetString("../../textures/image.webp", a);
+                reason = "external PNG or JPEG";
             }
             else if (name == "animation" || name == "skin")
             {
@@ -857,7 +899,8 @@ namespace
                                                "identity_uv_transform", "transform_uv_override", "mask", "blend",
                                                "unknown_alpha", "negative_color", "high_color", "root_escape",
                                                "absolute_uri", "network_uri", "encoded_escape", "bad_texture_uri",
-                                               "embedded_image", "embedded_buffer", "non_png", "animation", "skin",
+                                               "embedded_image", "embedded_buffer", "unsupported_image_format",
+                                               "animation", "skin",
                                                "morph", "draco", "meshopt", "version1", "point_primitive", "cycle",
                                                "multiple_parents", "bad_node"),
                              [](const auto& info) { return info.param; });
@@ -1247,13 +1290,13 @@ namespace
             write(GLTF, saved);
         }
 
-        // 3. 非 .png 与路径逃逸
+        // 3. 不支持的图片格式与路径逃逸。
         {
             const std::string saved = read(GLTF);
             editGltf([&](auto& source) {
-                addSimpleNormalOrMr(source, "normalTexture", "textures/normal.jpg", false);
+                addSimpleNormalOrMr(source, "normalTexture", "textures/normal.webp", false);
             });
-            expectFailure(GLTF, "PNG");
+            expectFailure(GLTF, "PNG or JPEG");
             write(GLTF, saved);
         }
         {

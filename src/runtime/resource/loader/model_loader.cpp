@@ -1,4 +1,5 @@
 #include "runtime/resource/loader/model_loader.h"
+#include "runtime/resource/loader/detail/image_decode.h"
 
 #include <assimp/GltfMaterial.h>
 #include <assimp/config.h>
@@ -131,8 +132,8 @@ namespace Incubator::Resource
                 if (path.length == 0 || path.data[0] == '*')
                     reject("Embedded model image is unsupported");
                 std::string resolved = Detail::modelDependencyPath(directory, path.C_Str(), gltf);
-                if (!Path::hasExtension(resolved, "png"))
-                    reject("Only external PNG images are supported");
+                if (!Detail::imageFormatFromPath(resolved))
+                    reject("Only external PNG or JPEG images are supported");
                 return resolved;
             };
 

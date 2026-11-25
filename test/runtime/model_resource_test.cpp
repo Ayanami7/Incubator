@@ -477,7 +477,7 @@ namespace
 
     TEST(ModelResourceTest, RejectsInvalidPbrMaterialPathsAndFactors)
     {
-        for (const std::string& badPath : {"", ".", "../escape.png", "textures/normal.jpg"})
+        for (const std::string& badPath : {"", ".", "../escape.png", "textures/normal.webp"})
         {
             ModelInput input;
             input.materials[0].normalTexturePath = badPath;

@@ -13,6 +13,7 @@
 #include "runtime/core/path/path.h"
 #include "runtime/core/utils/utf8.h"
 #include "runtime/resource/asset_source.h"
+#include "runtime/resource/loader/detail/image_decode.h"
 #include "runtime/resource/loader/detail/model_source.h"
 
 namespace Incubator::Resource
@@ -107,16 +108,18 @@ namespace Incubator::Resource
             return text;
         }
 
-        std::string dependency(std::string_view directory, std::string_view reference, bool uriEncoded,
-                               std::string_view extension)
+        std::string dependency(std::string_view directory, std::string_view reference, bool uriEncoded)
         {
             const auto decoded = uriEncoded ? Detail::decodeModelUri(reference) : std::string(reference);
             checkComponents(decoded);
             Detail::modelDependencyPath(directory, decoded, false);
-            auto relative = Path::normalize(Path::join(directory, decoded));
-            if (!extension.empty() && !Path::hasExtension(relative, extension))
-                fail(toFsPath(relative), "Unsupported import dependency extension");
-            return relative;
+            return Path::normalize(Path::join(directory, decoded));
+        }
+
+        void checkImageDependency(std::string_view path)
+        {
+            if (!Detail::imageFormatFromPath(path))
+                fail(toFsPath(path), "Unsupported import image extension (expected PNG or JPEG)");
         }
 
         template <class Callback>
@@ -129,7 +132,7 @@ namespace Incubator::Resource
             if (!document.IsObject())
                 fail(path, "Expected a glTF JSON object");
 
-            const auto collect = [&](const char* field, std::string_view extension) {
+            const auto collect = [&](const char* field, bool image) {
                 const auto array = document.FindMember(field);
                 if (array == document.MemberEnd())
                     return;
@@ -140,11 +143,14 @@ namespace Incubator::Resource
                     if (!item.IsObject() || !item.HasMember("uri") || !item["uri"].IsString())
                         fail(path, std::string("Expected an external glTF URI in ") + field);
                     const auto& uri = item["uri"];
-                    add(dependency({}, {uri.GetString(), uri.GetStringLength()}, true, extension));
+                    auto relative = dependency({}, {uri.GetString(), uri.GetStringLength()}, true);
+                    if (image)
+                        checkImageDependency(relative);
+                    add(std::move(relative));
                 }
             };
-            collect("buffers", {});
-            collect("images", "png");
+            collect("buffers", false);
+            collect("images", true);
         }
 
         std::string_view trimLeft(std::string_view text)
@@ -262,7 +268,9 @@ namespace Incubator::Resource
         else
         {
             textReferences(text, "mtllib", [&](std::string_view reference) {
-                const auto material = dependency({}, reference, false, "mtl");
+                const auto material = dependency({}, reference, false);
+                if (!Path::hasExtension(material, "mtl"))
+                    fail(toFsPath(material), "Unsupported import dependency extension");
                 if (!add(material))
                     return;
                 const auto path = root / toFsPath(material);
@@ -270,7 +278,9 @@ namespace Incubator::Resource
                 std::unordered_set<std::string> diffuseMaterials;
                 Detail::checkModelSource(material, materialText, diffuseMaterials);
                 textReferences(materialText, "map_kd", [&](std::string_view texture) {
-                    add(dependency(Path::getParentPath(material), diffuseTexturePath(texture, path), false, "png"));
+                    auto relative = dependency(Path::getParentPath(material), diffuseTexturePath(texture, path), false);
+                    checkImageDependency(relative);
+                    add(std::move(relative));
                 });
             });
         }

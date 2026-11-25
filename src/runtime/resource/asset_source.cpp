@@ -5,6 +5,7 @@
 #include "runtime/core/error/error.h"
 #include "runtime/core/path/path.h"
 #include "runtime/core/utils/utf8.h"
+#include "runtime/resource/loader/detail/image_decode.h"
 
 namespace Incubator::Resource
 {
@@ -56,7 +57,7 @@ namespace Incubator::Resource
                 kind = AssetKind::Directory;
             else if (Path::hasExtension(path, "gltf") || Path::hasExtension(path, "obj"))
                 kind = AssetKind::Model;
-            else if (Path::hasExtension(path, "png"))
+            else if (Detail::imageFormatFromPath(path))
                 kind = AssetKind::Texture;
             else if (Path::hasExtension(path, "bin") || Path::hasExtension(path, "mtl"))
                 kind = AssetKind::Dependency;

@@ -1,4 +1,5 @@
 #include "runtime/resource/loader/detail/model_source.h"
+#include "runtime/resource/loader/detail/image_decode.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
@@ -115,9 +116,9 @@ namespace Incubator::Resource::Detail
                         }
                         const auto key = modelDependencyPath(
                             directory, std::string_view(uri->GetString(), uri->GetStringLength()), true);
-                        if (std::string_view(name) == "images" && !Path::hasExtension(key, "png"))
+                        if (std::string_view(name) == "images" && !imageFormatFromPath(key))
                         {
-                            throw Error::Exception(Error::Code::IO, "Only external PNG model images are supported");
+                            throw Error::Exception(Error::Code::IO, "Only external PNG or JPEG model images are supported");
                         }
                     }
                 }

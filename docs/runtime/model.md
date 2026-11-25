@@ -79,7 +79,7 @@ GPU 准备在 Renderer 所在线程完成，FileIO 至少覆盖 CPU 导入与依
 准备依次完成：
 
 1. 取得 ModelResource 的本次持有，复制节点和局部矩阵，建立被节点引用的部分、几何及材质映射。
-2. 通过 Manager 加载所有被使用材质的唯一 PNG 依赖，确认依赖完整后开始 GPU 创建。
+2. 通过 Manager 加载实际使用的 PNG/JPEG 贴图，确认依赖完整后开始创建 GPU 对象。
 3. 每份被使用几何上传一次，每个被使用的源材质创建一次；不同材质引用相同规范化路径时共享 Texture。
 4. 纯色/默认材质共享本次准备内的一张显式 1×1 RGBA 全白纹理，无此类材质时不创建白纹理。
 5. 从源根按深度优先顺序缓存绘制项及模型内部累计矩阵，同时合并实际绘制内容的边界；返回完整结果，并释放本次 CPU 模型和图片持有。
@@ -98,7 +98,7 @@ Renderer 在提交时由最终 DrawItem::model 计算法线逆转置，包含实
 | `meshes()` | 唯一已上传 Mesh 的紧凑数组 |
 | `materials()` | 被使用源材质对应的不可变 Material 紧凑数组 |
 | `materialSlots()` / `findMaterialSlot(idx)` | 与 `materials()` 一一对应的 `PreparedMaterialSlot` 数组，保留源模型材质槽索引 `sourceMaterialIndex` 及含共享纹理引用在内的原始 `MaterialDesc` |
-| `textures()` | 唯一 PNG Texture 和可选共享白纹理的数组 |
+| `textures()` | 去重后的贴图及可选共享白纹理 |
 | `parts()` | 自有 ModelPart 描述，geometry/material 分别索引结果的 meshes/materials |
 | `nodes()` | 自有 ModelNode 元数据；保留名称、局部矩阵、子节点顺序，parts 改为结果内部索引 |
 | `rootNode()` | 源根在 nodes 中的索引；保留源根及非单位局部矩阵 |
@@ -160,13 +160,13 @@ PreparedModel 不保存阴影开关、光源范围或另一份几何；主相机
   该失败已由资源门面记录，准备层、缓存及消费者仅传递或展示，不重复记错；其他 GPU/配置异常由承担处理责任的消费者记录。
 - 准备结果拥有元数据与一个 GpuResources，公开 Mesh/Material/Texture 访问器返回非拥有引用，不借用 ModelResource、TextureResource、ShaderResource
   或 Importer。CPU 载荷卸载、Loader 销毁之后仍可使用结果。
-- 已声明 PNG 缺失或解码失败使整个准备失败；不创建 GPU 对象，不以白纹理替代缺失的贴图。
+- 已声明贴图缺失或解码失败时，模型在创建 GPU 对象前终止准备。
   Manager 保留其既有日志 + nullptr 门面，准备入口抛出含模型/依赖路径的 RENDER 错误，不重复记录日志。
 - GPU 创建错误沿用 Renderer 异常，结果只在全部创建成功后返回；准备中途失败会析构本次未发布资源组，清理已创建对象，已有模型不受影响。
 - 最后 PreparedModel 持有结束时撤销其 GPU 资源组；对应在途对象在 Fence 完成并清除帧槽持有后回收，未提交的快照不保留它们。
   Mesh、Texture、Material 和 PreparedModel 不延长设备寿命；Renderer 关闭后引用失效，提交旧引用由既有边界拒绝。
 
-RGB 使用源材质的线性 0–1 参数，白纹理采样后保持该颜色；PNG 沿用 sRGB 采样后乘线性 RGB，输出 alpha=1。
+RGB 使用源材质的线性 0–1 参数，白纹理采样后保持该颜色。PNG/JPEG 基色贴图使用 sRGB 采样，再乘线性 RGB，输出 alpha=1。
 默认最近邻、repeat、LOD=0；显式 PrepareOptions 可改变过滤及 mip 策略。
 UV 方向、opaque 与其他显示约定见 [ModelLoader](./resource/loader/model_loader.md)
 和 [Render 材质](./render.md)。

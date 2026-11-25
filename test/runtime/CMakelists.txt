@@ -57,7 +57,7 @@ foreach(AVOCADO_FILE IN ITEMS Avocado.gltf Avocado.bin Avocado_baseColor.png Avo
     )
     list(APPEND RUNTIME_TEST_FIXTURE_OUTPUTS "${AVOCADO_OUTPUT}")
 endforeach()
-foreach(TEXTURE_FILE IN ITEMS reference_rgba.png direction_rgba.png)
+foreach(TEXTURE_FILE IN ITEMS reference_rgba.png direction_rgba.png reference_rgb.jpg)
     set(TEXTURE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/textures/${TEXTURE_FILE}")
     set(TEXTURE_OUTPUT "${RUNTIME_TEST_ASSET_DIR}/textures/${TEXTURE_FILE}")
     add_custom_command(

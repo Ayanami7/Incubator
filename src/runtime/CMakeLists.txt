@@ -37,6 +37,7 @@ set(PLATFORM_SOURCES
 
 # resource 模块头文件、源文件
 set(RESOURCE_HEADERS
+    resource/loader/detail/image_decode.h
     resource/resource_type.h
     resource/resource_id.h
     resource/resource_registry.h

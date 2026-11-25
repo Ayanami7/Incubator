@@ -44,7 +44,7 @@ IOStream 累积短读，保留完整元素计数、seek/tell/size 语义；提�
 - 允许在资产根内使用 `..`，拒绝绝对、盘符、UNC、网络和词法越根依赖。只保证词法边界，不对文件链接的最终物理位置提供隔离承诺。
 - 中文、空格和 Emoji 路径经 UTF-8 工具转换进入原生 FileIO。
 - 必需 bin/mtl 缺失、读取失败或请求了不存在的命名材质均使模型导入失败；正常 Exists 探测不记为加载失败。
-- PNG 只保留规范化虚拟路径，不由 ModelLoader 读取、登记或持有。PNG 缺失/解码失败属于后续准备入口的错误。
+- 外部 PNG/JPEG 只保留规范化虚拟路径。后续准备入口负责读取贴图并报告缺失或解码失败。
 
 ## 支持范围
 
@@ -54,11 +54,11 @@ IOStream 累积短读，保留完整元素计数、seek/tell/size 语义；提�
 
 | 输入 | 行为 |
 |---|---|
-| 静态 `.gltf` 2.0 | 外部 bin/PNG，保留源根、节点局部矩阵、部分及共享 aiMesh 关系 |
-| `.obj` + 外部 `.mtl`/PNG | 三角化，保留导入器提供的根/物体节点，读取 Kd/map_Kd |
+| 静态 `.gltf` 2.0 | 外部 bin 及 PNG/JPEG，保留源根、节点局部矩阵、部分及共享 aiMesh 关系 |
+| `.obj` + 外部 `.mtl` 及 PNG/JPEG | 三角化，保留导入器提供的根/物体节点，读取 Kd/map_Kd |
 | 几何 | position、UV0、局部 normal、tangent[4]（xyz 切线方向 + w 手性 $\pm 1$）、三角形列表；源顶点数量须能由 Assimp 表示，源索引转换为内部 uint32，越界索引拒绝 |
 | 无贴图材质 | 默认白色或显式 0–1 线性 RGB；无 UV 时补固定 `(0,0)` |
-| 纹理槽（基色 / 法线 / 金属粗糙度） | 仅外部 PNG、UV0；glTF 额外解析 `normalTexture`（含 `scale`）、`metallicRoughnessTexture`、`metallicFactor`（省略取 `1.0`）与 `roughnessFactor`（省略取 `1.0`），OBJ 默认 `normalScale = 1.0`、`metallic = 0.0`、`roughness = 0.45`；贴图材质缺少 UV0、非 UV0、显式 UV 变换（包括恒等）或同槽多重贴图均拒绝 |
+| 纹理槽（基色 / 法线 / 金属粗糙度） | 外部 PNG/JPEG、UV0；glTF 额外解析 `normalTexture`（含 `scale`）、`metallicRoughnessTexture`、`metallicFactor`（省略取 `1.0`）与 `roughnessFactor`（省略取 `1.0`），OBJ 默认 `normalScale = 1.0`、`metallic = 0.0`、`roughness = 0.45`；贴图材质缺少 UV0、非 UV0、显式 UV 变换（包括恒等）或同槽多重贴图均拒绝 |
 | glTF 透明字段 | 仅缺省/OPAQUE；忽略基色 alpha，不用通用 opacity 反向拒绝 OPAQUE；MASK/BLEND/未知模式失败 |
 | OBJ 透明字段 | 最终 opacity 必须有限且等于 1，拒绝 map_d；d 直接赋值，Tr 赋 `1-Tr`，固定版本按最后声明覆盖 |
 | 其他特征 | 拒绝动画、骨骼、Morph、GLB/嵌入图像或缓冲、压缩几何/图片及未支持的必需扩展；仅支持无需额外实现的 KHR_materials_unlit 必需扩展 |
@@ -91,7 +91,7 @@ Assimp 矩阵字段 a/b/c/d 表示行，转换时逐元素写入 GLM 列；局�
 节点只保存部分索引；多个源节点引用同一 aiMesh 时继续共享几何。
 
 固定版本先把 glTF 的 V 翻到 Assimp 的左下约定。转换层对 glTF 和 OBJ 输出统一使用 `(u, 1-v)`，
-恢复引擎 `(0,0)` 指向 PNG 左上；图片解码、上传和 Shader 不再翻转。投影 Y 适配不属于模型导入。
+恢复引擎 `(0,0)` 指向图像左上；图片解码、上传和 Shader 不再翻转。投影 Y 适配不属于模型导入。
 
 `incubator_models` 将展示模型和 sidecar 部署到构建资产目录；
 本接口只交付 CPU 资产，GPU 依赖与资源由

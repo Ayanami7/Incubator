@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "runtime/core/error/error.h"
-#include "runtime/core/path/path.h"
+#include "runtime/resource/loader/detail/image_decode.h"
 
 namespace Incubator
 {
@@ -105,7 +105,7 @@ namespace Incubator
                             fmt::format("Model material {} requires finite linear RGB in [0, 1]", i));
                     }
                 }
-                const auto canonicalizeSlot = [i](std::optional<std::string>& slot, bool requirePng,
+                const auto canonicalizeSlot = [i](std::optional<std::string>& slot, bool requireImageFormat,
                                                   const char* label) {
                     if (!slot)
                         return;
@@ -116,11 +116,11 @@ namespace Incubator
                             Error::Code::CONFIG,
                             fmt::format("Model material {} has an invalid {} virtual path", i, label));
                     }
-                    if (requirePng && !Path::hasExtension(key, "png"))
+                    if (requireImageFormat && !Detail::imageFormatFromPath(key))
                     {
                         throw Error::Exception(
                             Error::Code::CONFIG,
-                            fmt::format("Model material {} {} requires a .png virtual path", i, label));
+                            fmt::format("Model material {} {} requires a PNG or JPEG virtual path", i, label));
                     }
                     slot = std::move(key);
                 };

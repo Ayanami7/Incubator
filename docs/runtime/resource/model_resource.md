@@ -94,7 +94,7 @@ ModelResource 构造时一次性校验，失败抛出 `Error::Exception(CONFIG)`
 | 节点 | 局部矩阵所有元素有限，部分和子节点索引有效；无重复父边、环、断开节点或指回根的边 |
 
 路径必须由导入方先相对声明文件目录解析为 assets 根内的虚拟路径；ModelResource 不解析 sidecar、
-探测文件或加载 PNG。纯色仅保存颜色；未来准备层显式共享白纹理，Renderer 仍要求明确 Texture。
+探测文件或加载外部 PNG/JPEG。纯色仅保存颜色；未来准备层显式共享白纹理，Renderer 仍要求明确 Texture。
 导入方将合法源索引转换为内部 uint32；源几何顶点数量仍须能由当前 Assimp 表示。
 内部不按 16 位索引范围限制顶点数，也不拆分网格。
 
@@ -116,7 +116,7 @@ instanceTransform * root.localTransform * ... * node.localTransform
 
 ## 文件导入
 
-ModelLoader 将静态 glTF 2.0（外部 bin/PNG）及 OBJ（外部 mtl/PNG）统一转换为上述数据。
+ModelLoader 将静态 glTF 2.0（外部 bin、PNG/JPEG）及 OBJ（外部 mtl、PNG/JPEG）统一转换为上述数据。
 CPU 载荷保存 position、UV0、normal、uint32 三角形索引和基色；贴图材质要求 UV0，纯色几何可由导入方补固定 UV。
 normal 位于几何局部空间，未乘节点矩阵；默认零向量表示无可用法线，原两字段顶点初始化仍有效。
 ModelResource 只验证法线有限性，不归一化或改写手工输入；法线不影响几何边界，未引用顶点及退化三角形可保留零法线。
@@ -125,5 +125,5 @@ ModelLoader 归一化非零源法线并按格式补齐缺失法线，具体策�
 glTF baseColorFactor/Texture、OBJ Kd/map_Kd 映射为线性颜色和外部纹理路径，采样和输出沿用
 [Render 材质约定](../render.md)。动画、骨骼、Morph、GLB/嵌入图像、透明混合及完整 PBR 不在首批范围。
 具体文件格式和材质拒绝规则见 [ModelLoader](./loader/model_loader.md)；手工 CPU 构造不读取或检查实际文件。
-CPU 资产及 PNG 依赖通过 Runtime 的 [模型准备入口](../model.md) 转换为共享 GPU 引用与独立元数据，
+CPU 资产及 PNG/JPEG 依赖通过 Runtime 的 [模型准备入口](../model.md) 转换为共享 GPU 引用与独立元数据，
 准备完成后可卸载 CPU 载荷；Resource 层本身不依赖 Render。

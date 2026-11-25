@@ -24,10 +24,17 @@ Loader 只使用已打开 FileHandle 的 `size()`，检查 `0 < size <= 64 MiB` 
 解码前检查 PNG 签名、完整的首个 13-byte IHDR，以及尺寸、输出乘法和范围。
 只接收非隔行 8-bit Gray、RGB、Gray+Alpha、RGBA，compression/filter method 均为 0。
 调色板、低位深、16-bit、Adam7 与 CgBI 输入明确失败。灰度复制 RGB，缺省 alpha 为 255；
-合法 Gray/RGB tRNS 按解码器语义展开。后缀不用于判断格式。
+合法 Gray/RGB tRNS 按解码器语义展开。`.jpg` / `.jpeg` 选择 JPEG 校验，`.ktx` 进入 KTX 载荷路径，其余后缀沿用 PNG 签名校验。
+
+## JPEG 解码范围
+
+`.jpg` 和 `.jpeg` 的扩展名按 ASCII 忽略大小写。输入须以 JPEG SOI 开头、EOI 结束，大小上限为 64 MiB。
+分配像素前通过 `stbi_info_from_memory` 检查尺寸及 RGBA8 载荷上限，解码后核对宽高，输出 alpha 恒为 255。
+
+## 图片解码实现
 
 stb_image v2.30 固定提交、MIT 许可及指纹保存在 `3rdparty/stb/SOURCE.md`。
-唯一实现文件由独立 `stb_image` 静态目标编译，集中定义 `STBI_ONLY_PNG`、
+唯一实现文件由独立 `stb_image` 静态目标编译，集中定义 `STBI_ONLY_PNG`、`STBI_ONLY_JPEG`、
 `STBI_NO_STDIO`、`STBI_MAX_DIMENSIONS=4096`，Runtime PRIVATE 链接。
 TextureLoader 从内存解码，要求 4 通道；临时像素由 RAII 调用 `stbi_image_free`，
 核对返回尺寸后复制到引擎 vector，转存或构造异常时也释放临时结果。
@@ -39,7 +46,7 @@ CRC/chunk 完整性检查或色彩管理。gAMA/cHRM/iCCP/sRGB 元数据均不�
 ## 失败与生命周期
 
 文件缺失、输入范围不支持、读取或解码失败均抛出带 UTF-8 物理路径和原因的 IO 异常。
-空 decoder reason 使用 `PNG decode failed (decoder supplied no reason)`。
+解码器未给出原因时，错误会保留图片格式和通用失败说明。
 Loader 不记录同一异常；经 Manager 调用时，Manager 记录一次并返回 nullptr，失败不挂载对象。
 保持有效持有时，修正文件后可重试。挂载对象重复加载会复用；release 到零卸载像素，
 登记保留，重新 acquire 后才能重新持有并加载。覆盖 Loader 或 reset 不使旧缓存失效。

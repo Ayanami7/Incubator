@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cctype>
 #include <cstring>
 #include <exception>
 #include <limits>
@@ -19,6 +18,7 @@
 #include "runtime/core/log/logger.h"
 #include "runtime/core/path/path.h"
 #include "runtime/core/utils/utf8.h"
+#include "runtime/resource/loader/detail/image_decode.h"
 #include "runtime/resource/loader/float_texture_resource.h"
 #include "runtime/resource/loader/texture_resource.h"
 
@@ -33,14 +33,19 @@ namespace Incubator
                           MAX_INPUT_BYTES <= std::numeric_limits<size_t>::max());
             constexpr std::array<uint8_t, 8> PNG_SIGNATURE = {137, 80, 78, 71, 13, 10, 26, 10};
 
-            std::vector<uint8_t> readInput(FileIO::FileHandle& file)
+            void checkInputSize(uint64_t size, std::string_view format)
             {
-                const uint64_t size = file.size();
                 if (size == 0 || size > MAX_INPUT_BYTES)
                 {
-                    throw Error::Exception(Error::Code::IO,
-                                           fmt::format("Invalid PNG input size: {} (limit 64 MiB)", size));
+                    throw Error::Exception(
+                        Error::Code::IO, fmt::format("Invalid {} input size: {} (limit 64 MiB)", format, size));
                 }
+            }
+
+            std::vector<uint8_t> readInput(FileIO::FileHandle& file, std::string_view format)
+            {
+                const uint64_t size = file.size();
+                checkInputSize(size, format);
                 std::vector<uint8_t> bytes(static_cast<size_t>(size));
                 size_t offset = 0;
                 while (offset < bytes.size())
@@ -49,7 +54,8 @@ namespace Incubator
                     if (read == 0)
                     {
                         throw Error::Exception(
-                            Error::Code::IO, fmt::format("Incomplete PNG read: expected {}, actual {}", size, offset));
+                            Error::Code::IO,
+                            fmt::format("Incomplete {} read: expected {}, actual {}", format, size, offset));
                     }
                     offset += read;
                 }
@@ -62,14 +68,14 @@ namespace Incubator
                        (static_cast<uint32_t>(bytes[2]) << 8u) | bytes[3];
             }
 
-            struct PngHeader
+            struct ImageHeader
             {
                 uint32_t width;
                 uint32_t height;
                 size_t pixelBytes;
             };
 
-            PngHeader checkHeader(std::span<const uint8_t> bytes)
+            ImageHeader checkPngHeader(std::span<const uint8_t> bytes)
             {
                 if (bytes.size() < PNG_SIGNATURE.size() ||
                     !std::equal(PNG_SIGNATURE.begin(), PNG_SIGNATURE.end(), bytes.begin()))
@@ -110,6 +116,38 @@ namespace Incubator
                 return {width, height, static_cast<size_t>(pixelBytes)};
             }
 
+            ImageHeader checkJpegHeader(std::span<const uint8_t> bytes)
+            {
+                if (bytes.size() < 2 || bytes[0] != 0xff || bytes[1] != 0xd8)
+                    throw Error::Exception(Error::Code::IO, "Not a JPEG file or incomplete JPEG SOI");
+                // stb_image 可容忍扫描数据提前结束，因此先确认文件以 JPEG 结束标记收尾。
+                if (bytes.size() < 4 || bytes[bytes.size() - 2] != 0xff || bytes.back() != 0xd9)
+                    throw Error::Exception(Error::Code::IO, "Incomplete JPEG: missing final EOI marker");
+                int width = 0;
+                int height = 0;
+                if (!stbi_info_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height, nullptr))
+                {
+                    const auto* reason = stbi_failure_reason();
+                    throw Error::Exception(Error::Code::IO,
+                                           fmt::format("Invalid JPEG header ({})", reason ? reason : "unknown error"));
+                }
+                if (width <= 0 || height <= 0 || width > TextureResource::MAX_DIMENSION ||
+                    height > TextureResource::MAX_DIMENSION)
+                {
+                    throw Error::Exception(
+                        Error::Code::IO, fmt::format("Invalid JPEG dimensions: {}x{} (limit 4096)", width, height));
+                }
+                const auto pixelBytes = static_cast<uint64_t>(width) * height * 4u;
+                if (pixelBytes > TextureResource::MAX_PIXEL_BYTES || pixelBytes > std::numeric_limits<size_t>::max())
+                    throw Error::Exception(Error::Code::IO, "JPEG RGBA8 output size exceeds supported limits");
+                return {static_cast<uint32_t>(width), static_cast<uint32_t>(height), static_cast<size_t>(pixelBytes)};
+            }
+
+            std::string_view formatName(Detail::ImageFormat format)
+            {
+                return format == Detail::ImageFormat::Png ? "PNG" : "JPEG";
+            }
+
             constexpr std::array<uint8_t, 12> KTX1_MAGIC = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31,
                                                             0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
 
@@ -117,14 +155,6 @@ namespace Incubator
             {
                 return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8u) |
                        (static_cast<uint32_t>(bytes[2]) << 16u) | (static_cast<uint32_t>(bytes[3]) << 24u);
-            }
-
-            bool hasKtxExtension(std::string_view virtualPath)
-            {
-                std::string ext = Utils::Utf8::toUtf8String(Utils::Utf8::toFsPath(virtualPath).extension());
-                std::transform(ext.begin(), ext.end(), ext.begin(),
-                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                return ext == ".ktx";
             }
 
             std::unique_ptr<FloatTextureResource> decodeKtx1(const ResourceId& id, std::string_view pathUtf8,
@@ -230,6 +260,32 @@ namespace Incubator
             }
         }  // namespace
 
+        Detail::DecodedImage Detail::decodeRgba8(std::span<const uint8_t> bytes, ImageFormat format)
+        {
+            const auto name = formatName(format);
+            checkInputSize(bytes.size(), name);
+            const auto header = format == ImageFormat::Png ? checkPngHeader(bytes) : checkJpegHeader(bytes);
+            int width = 0;
+            int height = 0;
+            std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> decoded(
+                stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height, nullptr, 4),
+                &stbi_image_free);
+            if (!decoded)
+            {
+                const char* reason = stbi_failure_reason();
+                throw Error::Exception(Error::Code::IO,
+                                       fmt::format("{} decode failed ({})",
+                                                   name, reason && *reason ? reason : "decoder supplied no reason"));
+            }
+            if (width != static_cast<int>(header.width) || height != static_cast<int>(header.height))
+            {
+                throw Error::Exception(Error::Code::IO,
+                                       format == ImageFormat::Png ? "PNG decoded dimensions do not match IHDR"
+                                                                  : "JPEG decoded dimensions do not match header");
+            }
+            return {header.width, header.height, std::vector<uint8_t>(decoded.get(), decoded.get() + header.pixelBytes)};
+        }
+
         TextureLoader::TextureLoader(AssetSource& source) : source_(source) {}
 
         std::unique_ptr<ResourceObject> TextureLoader::load(const ResourceId& id, std::string_view virtualPath)
@@ -237,38 +293,22 @@ namespace Incubator
             const std::string pathUtf8 = Utils::Utf8::toUtf8String(source_.resolve(virtualPath));
             try
             {
-                const bool isKtx = hasKtxExtension(virtualPath);
+                const bool isKtx = Path::hasExtension(virtualPath, "ktx");
+                const auto format = Detail::imageFormatFromPath(virtualPath).value_or(Detail::ImageFormat::Png);
+                const auto name = isKtx ? std::string_view{"KTX"} : formatName(format);
                 auto file = source_.open(virtualPath);
                 if (!file)
                 {
-                    throw Error::Exception(Error::Code::IO,
-                                           isKtx ? "KTX texture file was not found" : "PNG file was not found");
+                    throw Error::Exception(Error::Code::IO, fmt::format("{} file was not found", name));
                 }
-                const auto bytes = readInput(*file);
+                const auto bytes = readInput(*file, name);
                 if (isKtx)
                     return decodeKtx1(id, pathUtf8, bytes);
-                const auto header = checkHeader(bytes);
-                int width = 0;
-                int height = 0;
-                std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> decoded(
-                    stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height, nullptr, 4),
-                    &stbi_image_free);
-                if (!decoded)
-                {
-                    const char* reason = stbi_failure_reason();
-                    throw Error::Exception(Error::Code::IO,
-                                           fmt::format("PNG decode failed ({})",
-                                                       reason && *reason ? reason : "decoder supplied no reason"));
-                }
-                if (width != static_cast<int>(header.width) || height != static_cast<int>(header.height))
-                {
-                    throw Error::Exception(Error::Code::IO, "PNG decoded dimensions do not match IHDR");
-                }
-                std::vector<uint8_t> pixels(decoded.get(), decoded.get() + header.pixelBytes);
+                auto image = Detail::decodeRgba8(bytes, format);
                 Log::Registry::get("resource")
-                    .debug("Decoded PNG '{}': {}x{}, {} input bytes, {} RGBA8 bytes", pathUtf8, header.width,
-                           header.height, bytes.size(), header.pixelBytes);
-                return std::make_unique<TextureResource>(id, header.width, header.height, std::move(pixels));
+                    .debug("Decoded {} '{}': {}x{}, {} input bytes, {} RGBA8 bytes", name, pathUtf8, image.width,
+                           image.height, bytes.size(), image.pixels.size());
+                return std::make_unique<TextureResource>(id, image.width, image.height, std::move(image.pixels));
             }
             catch (const Error::Exception& ex)
             {
