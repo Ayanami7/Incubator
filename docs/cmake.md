@@ -66,34 +66,39 @@ Incubator/
 - 平台相关配置（如 MSVC 的 `/utf-8` 编码支持）在库目标处集中设置
 
 `scene/transform.h/.cpp`、`scene/camera.h/.cpp`、`scene/entity.h`、`scene/scene.h/.cpp`、`scene/scene_frame.h/.cpp`
-及内部共享输入校验头显式收集到 Runtime 的 Scene 文件组；纯 CPU 场景、数学、资源与渲染校验用例共同归入 `runtime_cpu_test`，不依赖窗口或 GPU。真实模型的 Scene 组合验证复用 `model_preparation_test`
+及内部共享输入校验头显式收集到 Runtime 的 Scene 文件组；纯 CPU 场景、数学与渲染输入校验用例归入 `runtime_scene_cpu_test`，不依赖窗口或 GPU。真实模型的 Scene 组合验证复用 `model_preparation_test`
 及其现有资源部署、串行 GPU 执行约定，使用正式 SceneFrame 提取和 Renderer 提交接口。
 
 EditorApp 和 DemoApp 均组合 `app/common/` 的 AppSession，由后者管理 Window、FileIO、资源路由、Scene、Renderer 和帧循环。Runtime 提供会话所用能力，应用负责组装。
 
 ### 测试目标（test/ 下）
 
-- 按模块与依赖分组组织共 12 个测试可执行目标：Runtime `runtime_cpu_test`、`render_input_test` 与 4 个 GPU/窗口测试（`vulkan_review_test`、`imgui_integration_test`、`window_test`、`model_preparation_test`），`app/common`（`orbit_camera_test`、`startup_config_test`），`app/editor`（`editor_cpu_test`、`editor_test`、`editor_scene_restart`）及 `examples/demo`（`demo_test`）
+- 按模块与依赖分组组织共 13 个测试可执行目标（12 个 GTest 目标 + 1 个非 GTest 独立重启程序）：
+  - Runtime 纯 CPU（3 个）：`runtime_core_cpu_test`（Core/Platform，零 Assimp/Vulkan 依赖）、`runtime_asset_cpu_test`（Resource/Importer/ModelLoader）与 `runtime_scene_cpu_test`（Scene/RenderInput）
+  - Runtime GPU/窗口（4 个）：`window_test`、`vulkan_review_test`、`model_preparation_test`、`imgui_integration_test`
+  - `app/common`（1 个）：`app_common_cpu_test`（合并轨道相机与启动配置）
+  - `app/editor`（4 个）：`editor_cpu_test`、`editor_test`、`editor_showcase_test`（独立隔离内置展示场景与截图验收）、`editor_scene_restart`
+  - `examples/demo`（1 个）：`demo_test`
 - 链接测试框架与对应的运行时库
 - Runtime 测试使用 `FOLDER "UnitTest/runtime"`，Editor、共用组件和 Demo 测试分别使用 UnitTest/app/editor、UnitTest/app/common、UnitTest/examples/demo 分组
 
-`test/runtime/` 保存 Runtime 模块及跨模块集成测试。`editor_cpu_test` 仅链接 `IncubatorEditorSupport` 与 `GTest::gtest_main`，独立验证不依赖 Vulkan、窗口或磁盘夹具复制的 Editor 纯 CPU 操作、选框投影与 Gizmo 逻辑；`editor_test` 和 `editor_scene_restart` 同链接 `IncubatorEditorSupport` 覆盖 GPU/窗口会话及跨进程场景恢复。
-`demo_test` 编译 demo_app.cpp 并链接 `IncubatorAppCommon` 验证最小展示。`orbit_camera_test` 与 `startup_config_test` 同样为不创建窗口或 GPU 的 CPU 测试。
+`test/runtime/` 保存 Runtime 模块及跨模块集成测试。`editor_cpu_test` 仅链接 `IncubatorEditorSupport` 与 `GTest::gtest_main`，独立验证不依赖 Vulkan、窗口或磁盘夹具复制的 Editor 纯 CPU 操作、选框投影与 Gizmo 逻辑；`editor_test`、`editor_showcase_test` 和 `editor_scene_restart` 同链接 `IncubatorEditorSupport` 覆盖 GPU/窗口会话、重型展示验收及跨进程场景恢复。
+`demo_test` 编译 demo_app.cpp 并链接 `IncubatorAppCommon` 验证最小展示。`app_common_cpu_test` 同样为不创建窗口或 GPU 的纯 CPU 测试。
 共享截图、GPU 回读和渲染样本辅助代码位于 `test/support/`，精确 fixture 保留在 `test/runtime/fixtures/`。
 
-正式测试由 CTest 注册和运行，保留 `gtest_discover_tests()` 的逐用例注册及各目标的 `WORKING_DIRECTORY`、`RUN_SERIAL`、`TIMEOUT` 属性。
+正式测试由 CTest 注册和运行，保留 `gtest_discover_tests()` 的逐用例注册及各目标的 `WORKING_DIRECTORY`、`RUN_SERIAL`、`TIMEOUT` 与细化两维标签属性。
 VS Code 测试面板使用 TestMate 提供程序/套件/用例层级及批量运行，关闭 CMake Tools 的 CTest 面板集成；命令行 CTest 继续用于正式复核和阶段验收，入口分工见 [开发工作流](../WORKFLOW.md#6-运行测试)。
 
 | 入口 | 初始工作目录 | 执行与超时 |
 |---|---|---|
 | TestMate | `<build>/` | 全局并发为 1，允许同一程序批量运行；600 秒限制整个进程 |
-| CTest 纯 CPU 测试（`runtime_cpu_test` / `render_input_test` / `editor_cpu_test` / `orbit_camera_test` / `startup_config_test`） | 各构建/测试子目录 | 逐用例独立进程 |
-| CTest editor_test / demo_test / model_preparation_test | `<build>/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
+| CTest 纯 CPU 测试（`runtime_core_cpu_test` / `runtime_asset_cpu_test` / `runtime_scene_cpu_test` / `app_common_cpu_test` / `editor_cpu_test`） | 各构建/测试子目录 | 逐用例独立进程 |
+| CTest editor_test / editor_showcase_test / demo_test / model_preparation_test | `<build>/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
 | CTest vulkan_review_test / imgui_integration_test / window_test | `<build>/test-fixtures/` 或 `<build>/test/runtime/` | `RUN_SERIAL TRUE`，逐用例超时 120 秒 |
 
 TestMate 不自动读取 CTest 属性；批量与逐用例隔离、超时粒度和初始目录存在上述差异，编辑器通过结果不替代正式 CTest 验收。窗口/GPU 测试同一时间只运行一轮。
 TestMate 通过 `build/test/{runtime,app/editor,app/common,examples/demo}/*_test.exe` 发现 Runtime、Editor、共用组件和 Demo 的测试程序。迁移或删除目标后，
-应定点删除旧可执行文件，避免编辑器继续发现失效目标。
+应定点删除旧可执行文件（如已退役的 `runtime_cpu_test`、`render_input_test`、`orbit_camera_test`、`startup_config_test`），避免编辑器继续发现失效目标。
 Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直接运行测试程序即可；正式验收使用 CTest。
 `VulkanReviewTest` 和 `ImGuiIntegrationTest` 夹具通过编译时的 `RUNTIME_TEST_ASSET_DIR` 进入独立测试资产根，并在结束时恢复原目录；
 因此从构建目录直接运行或通过编辑器运行时，也使用 `<build>/test-fixtures/assets/` 中的精确样本。
@@ -161,7 +166,7 @@ Runtime 私有链接，生成文件及库位于 `build/3rdparty/assimp`。
 
 1. 在 `src/runtime/` 对应逻辑模块目录创建源码文件
 2. 在 `src/runtime/CMakeLists.txt` 中，把头文件/源文件加入对应模块分组变量
-3. 纯 CPU Runtime 测试加入 `test/runtime/CMakeLists.txt` 的 `runtime_cpu_test` 源文件清单；确需独立 GPU/窗口夹具的测试再声明独立目标
+3. 纯 CPU Runtime 测试加入 `test/runtime/CMakeLists.txt` 对应子域目标（`runtime_core_cpu_test`、`runtime_asset_cpu_test`、`runtime_scene_cpu_test`）的源文件清单；确需独立 GPU/窗口夹具的测试再声明独立目标
 4. 若需要示例，在 `examples/` 下添加或修改示例
 
 ## 注意事项

@@ -9,6 +9,7 @@
 #include "runtime/core/error/error.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
 #include "runtime/render/vulkan/vulkan_device.h"
+#include "runtime/render/vulkan/vulkan_frame_scheduler.h"
 #include "runtime/render/vulkan/vulkan_image.h"
 #include "runtime/render/vulkan/vulkan_shadow_target.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
@@ -335,4 +336,32 @@ namespace
         EXPECT_EQ(selectBestPhysicalDevice(identical), 0u);
     }
 
+
+    TEST(VulkanTimestampMathTest, ComputesDurationWithValidBitsWrapAroundAndValidation)
+    {
+        using Vulkan::computeTimestampDurationMs;
+        EXPECT_FALSE(computeTimestampDurationMs(10, 20, 0, 1.0f).has_value());
+        EXPECT_FALSE(computeTimestampDurationMs(10, 20, 32, 0.0f).has_value());
+        EXPECT_FALSE(computeTimestampDurationMs(10, 20, 32, -1.0f).has_value());
+
+        // 普通递增与毫秒换算（1,000,000 ticks * 1 ns = 1.0 ms）。
+        const auto normalMs = computeTimestampDurationMs(500, 1'000'500, 36, 1.0f);
+        ASSERT_TRUE(normalMs.has_value());
+        EXPECT_NEAR(*normalMs, 1.0, 1e-9);
+
+        // 仅保留低 32 位有效位，忽略高位脏位。
+        const auto maskedMs = computeTimestampDurationMs(0xABCD0000'00000100ULL, 0x12340000'00000500ULL, 32, 10.0f);
+        ASSERT_TRUE(maskedMs.has_value());
+        EXPECT_NEAR(*maskedMs, 0x400 * 10.0 / 1'000'000.0, 1e-9);
+
+        // 32 位计数器回绕：0xFFFFFF00 -> 0x00000100 经过 0x200 ticks。
+        const auto wrapped32Ms = computeTimestampDurationMs(0xFFFFFF00ULL, 0x00000100ULL, 32, 1000.0f);
+        ASSERT_TRUE(wrapped32Ms.has_value());
+        EXPECT_NEAR(*wrapped32Ms, 0x200 * 1000.0 / 1'000'000.0, 1e-9);
+
+        // 64 位计数器回绕。
+        const auto wrapped64Ms = computeTimestampDurationMs(std::numeric_limits<uint64_t>::max() - 99ULL, 100ULL, 64, 5.0f);
+        ASSERT_TRUE(wrapped64Ms.has_value());
+        EXPECT_NEAR(*wrapped64Ms, 200.0 * 5.0 / 1'000'000.0, 1e-9);
+    }
 }  // namespace

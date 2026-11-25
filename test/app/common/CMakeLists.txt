@@ -1,9 +1,8 @@
 include(GoogleTest)
-add_executable(orbit_camera_test orbit_camera_test.cpp)
-target_link_libraries(orbit_camera_test PRIVATE GTest::gtest_main IncubatorRuntime imgui)
-target_include_directories(orbit_camera_test PRIVATE "${CMAKE_SOURCE_DIR}")
-gtest_discover_tests(orbit_camera_test WORKING_DIRECTORY "${CMAKE_BINARY_DIR}" PROPERTIES LABELS "cpu\\;common")
-add_executable(startup_config_test startup_config_test.cpp)
-target_link_libraries(startup_config_test PRIVATE GTest::gtest_main IncubatorAppCommon)
-set_target_properties(orbit_camera_test startup_config_test PROPERTIES FOLDER "UnitTest/app/common")
-gtest_discover_tests(startup_config_test WORKING_DIRECTORY "${CMAKE_BINARY_DIR}" PROPERTIES LABELS "cpu\\;common")
+add_executable(app_common_cpu_test
+    orbit_camera_test.cpp
+    startup_config_test.cpp
+)
+target_link_libraries(app_common_cpu_test PRIVATE GTest::gtest_main IncubatorAppCommon)
+set_target_properties(app_common_cpu_test PROPERTIES FOLDER "UnitTest/app/common")
+gtest_discover_tests(app_common_cpu_test WORKING_DIRECTORY "${CMAKE_BINARY_DIR}" PROPERTIES LABELS "cpu\\;common")

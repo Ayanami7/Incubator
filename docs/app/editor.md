@@ -174,8 +174,7 @@ Debug 示例沿用 Optional Validation，Release 为 Disabled；需要强制验�
 Editor 的应用实现、面板、编辑操作和选中框由 `IncubatorEditorSupport` 编译，供 Editor 及其测试共用。
 `EditorApp` 组合 `IncubatorAppCommon` 的 AppSession，由公共会话持有并驱动当前 Scene。
 
-Editor 纯 CPU 操作、选中框投影与 Gizmo 解算测试位于 `test/app/editor/editor_cpu_test.cpp`（目标 `editor_cpu_test`，不依赖 Vulkan 或磁盘夹具）；GPU/窗口集成测试位于 `test/app/editor/editor_test.cpp`（目标为 `editor_test`，启动 cwd 为构建目录，需要修改输入的夹具在独立工作副本中按需复制模型并恢复 cwd）。纯 CPU 轨道相机测试位于 `test/app/common/orbit_camera_test.cpp`。TestMate 和 CTest 的执行约定见 [开发工作流](../../WORKFLOW.md#6-运行测试)。
-`startup_config_test` 验证不依赖窗口或 GPU 的配置解析与文件读取行为。
+Editor 纯 CPU 操作、选中框投影、Gizmo 解算、辅助线生成与 PNG 写入测试位于 `test/app/editor/editor_*_cpu_test.cpp`（目标 `editor_cpu_test`，不依赖 Vulkan 或磁盘夹具）；GPU/窗口集成测试位于 `test/app/editor/editor_{workspace_docs,interaction,render_wiring}_test.cpp`（目标 `editor_test`），内置展示场景端到端对照与截图导出位于 `test/app/editor/editor_showcase_test.cpp`（目标 `editor_showcase_test`），两者启动 cwd 均为构建目录，需要修改输入的夹具在独立工作副本中按需复制模型并恢复 cwd。共用纯 CPU 轨道相机与启动配置测试归入 `test/app/common/` 的 `app_common_cpu_test`。TestMate 和 CTest 的执行约定见 [开发工作流](../../WORKFLOW.md#6-运行测试)。
 展示冒烟、场景命令与输入接入分别验证，精确光照、采样和裁剪由 Runtime 专项覆盖。
 合成输入按 ImGui 已消费的批次安排；焦点丢失会清空鼠标位置，恢复后先提供有效坐标，再按下并移动，
 不能按固定 update 轮数假定位移已经被消费。

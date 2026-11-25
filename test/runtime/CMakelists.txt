@@ -66,7 +66,7 @@ foreach(TEXTURE_FILE IN ITEMS reference_rgba.png direction_rgba.png reference_rg
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${RUNTIME_TEST_ASSET_DIR}/textures"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${TEXTURE_SOURCE}" "${TEXTURE_OUTPUT}"
         DEPENDS "${TEXTURE_SOURCE}"
-        COMMENT "Deploying texture test fixture ${TEXTURE_FILE}"
+        COMMENT "部署纹理测试夹具 ${TEXTURE_FILE}"
         VERBATIM
     )
     list(APPEND RUNTIME_TEST_FIXTURE_OUTPUTS "${TEXTURE_OUTPUT}")
@@ -85,7 +85,7 @@ foreach(SHADER_FILE IN ITEMS cube.vert.spv cube.frag.spv shadow.vert.spv shadow_
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${RUNTIME_TEST_ASSET_DIR}/shaders"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SHADER_SOURCE}" "${SHADER_OUTPUT}"
         DEPENDS "${SHADER_SOURCE}"
-        COMMENT "Deploying production shader fixture ${SHADER_FILE}"
+        COMMENT "部署生产 Shader 夹具 ${SHADER_FILE}"
         VERBATIM
     )
     list(APPEND RUNTIME_TEST_SHADER_OUTPUTS "${SHADER_OUTPUT}")
@@ -95,60 +95,110 @@ add_dependencies(runtime_test_shaders incubator_shaders)
 
 include(GoogleTest)
 
-# 收集并归并全部无窗口纯 CPU 测试为单一 runtime_cpu_test 目标。
-file(GLOB TEST_SOURCES CONFIGURE_DEPENDS "*.cpp")
-set(RUNTIME_GPU_WINDOW_TESTS
-    "${CMAKE_CURRENT_SOURCE_DIR}/imgui_integration_test.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/model_preparation_test.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/render_input_test.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/vulkan_review_test.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/window_test.cpp"
+# 1. Core 与 Platform 纯 CPU 测试目标（零 Assimp/Vulkan 依赖）。
+add_executable(runtime_core_cpu_test
+    aabb_test.cpp
+    clock_test.cpp
+    error_test.cpp
+    hash_test.cpp
+    log_test.cpp
+    path_test.cpp
+    utf8_test.cpp
+    fileio_test.cpp
+    input_test.cpp
+    input_state_test.cpp
 )
-set(RUNTIME_CPU_SOURCES ${TEST_SOURCES})
-list(REMOVE_ITEM RUNTIME_CPU_SOURCES ${RUNTIME_GPU_WINDOW_TESTS})
+target_link_libraries(runtime_core_cpu_test PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime)
+target_include_directories(runtime_core_cpu_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
+set_target_properties(runtime_core_cpu_test PROPERTIES FOLDER "UnitTest/runtime")
+gtest_discover_tests(runtime_core_cpu_test PROPERTIES LABELS "cpu\\;runtime\\;core\\;platform")
 
-add_executable(runtime_cpu_test ${RUNTIME_CPU_SOURCES})
-target_link_libraries(runtime_cpu_test PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime assimp::assimp)
-target_include_directories(runtime_cpu_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
-target_include_directories(runtime_cpu_test SYSTEM PRIVATE "${THIRD_PARTY_DIR}/assimp/contrib/rapidjson/include")
-target_compile_definitions(runtime_cpu_test PRIVATE
-    SCENE_FIXTURE_DIR="${RUNTIME_TEST_ASSET_DIR}/scenes"
+# 2. Resource 与 Model 导入/加载纯 CPU 测试目标。
+add_executable(runtime_asset_cpu_test
+    asset_source_test.cpp
+    assimp_fileio_test.cpp
+    resource_id_test.cpp
+    resource_registry_test.cpp
+    resource_access_test.cpp
+    shader_loader_test.cpp
+    texture_loader_test.cpp
+    texture_resource_test.cpp
+    model_resource_test.cpp
+    asset_importer_test.cpp
+    model_loader_gltf_test.cpp
+    model_loader_obj_test.cpp
+)
+target_link_libraries(runtime_asset_cpu_test PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime assimp::assimp)
+target_include_directories(runtime_asset_cpu_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
+target_include_directories(runtime_asset_cpu_test SYSTEM PRIVATE "${THIRD_PARTY_DIR}/assimp/contrib/rapidjson/include")
+target_compile_definitions(runtime_asset_cpu_test PRIVATE
     MODEL_BUILD_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}"
     MODEL_DEMO_ASSET_DIR="${CMAKE_BINARY_DIR}/assets"
     TEXTURE_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/textures"
     TEXTURE_REFERENCE_FILE="${RUNTIME_TEST_ASSET_DIR}/textures/reference_rgba.png"
     TEXTURE_BUILD_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}"
 )
-add_dependencies(runtime_cpu_test runtime_test_fixtures runtime_test_shaders incubator_models)
-set_target_properties(runtime_cpu_test PROPERTIES FOLDER "UnitTest/runtime")
-gtest_discover_tests(runtime_cpu_test PROPERTIES LABELS "cpu\\;runtime")
+add_dependencies(runtime_asset_cpu_test runtime_test_fixtures runtime_test_shaders incubator_models incubator_ibl)
+set_target_properties(runtime_asset_cpu_test PROPERTIES FOLDER "UnitTest/runtime")
+gtest_discover_tests(runtime_asset_cpu_test PROPERTIES LABELS "cpu\\;runtime\\;resource\\;model")
 
-# 需要窗口或 Vulkan GPU 的独立测试目标保持按工作目录与串行属性注册。
-foreach(TEST_SOURCE IN LISTS RUNTIME_GPU_WINDOW_TESTS)
-    get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
-    add_executable(${TEST_NAME} ${TEST_SOURCE})
-    target_link_libraries(${TEST_NAME} PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime)
-    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
-    set_target_properties(${TEST_NAME} PROPERTIES FOLDER "UnitTest/runtime")
+# 3. Scene 与 Render 输入纯 CPU 测试目标。
+add_executable(runtime_scene_cpu_test
+    frustum_test.cpp
+    scene_transform_camera_test.cpp
+    scene_test.cpp
+    scene_file_test.cpp
+    scene_frame_test.cpp
+    render_input_test.cpp
+)
+target_link_libraries(runtime_scene_cpu_test PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime vulkan)
+target_include_directories(runtime_scene_cpu_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
+target_compile_definitions(runtime_scene_cpu_test PRIVATE SCENE_FIXTURE_DIR="${RUNTIME_TEST_ASSET_DIR}/scenes")
+add_dependencies(runtime_scene_cpu_test runtime_test_fixtures incubator_scenes)
+set_target_properties(runtime_scene_cpu_test PROPERTIES FOLDER "UnitTest/runtime")
+gtest_discover_tests(runtime_scene_cpu_test PROPERTIES LABELS "cpu\\;runtime\\;scene\\;render")
 
-    if(TEST_NAME STREQUAL "render_input_test")
-        target_link_libraries(${TEST_NAME} PRIVATE vulkan)
-        gtest_discover_tests(${TEST_NAME} PROPERTIES LABELS "cpu\\;runtime")
-    elseif(TEST_NAME STREQUAL "window_test")
-        gtest_discover_tests(${TEST_NAME} PROPERTIES LABELS "window\\;runtime")
-    else()
-        target_link_libraries(${TEST_NAME} PRIVATE vulkan imgui)
-        add_dependencies(${TEST_NAME} runtime_test_fixtures runtime_test_shaders)
-        target_compile_definitions(${TEST_NAME} PRIVATE RUNTIME_TEST_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}")
-        if(TEST_NAME STREQUAL "model_preparation_test")
-            add_dependencies(${TEST_NAME} incubator_models)
-            gtest_discover_tests(${TEST_NAME}
-                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-                PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 LABELS "gpu\\;runtime")
-        else()
-            gtest_discover_tests(${TEST_NAME}
-                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/test-fixtures"
-                PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 LABELS "gpu\\;runtime")
-        endif()
-    endif()
-endforeach()
+# 4. 窗口与 Vulkan GPU 独立测试目标，保持工作目录与串行属性注册。
+add_executable(window_test window_test.cpp)
+target_link_libraries(window_test PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime)
+target_include_directories(window_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
+set_target_properties(window_test PROPERTIES FOLDER "UnitTest/runtime")
+gtest_discover_tests(window_test PROPERTIES LABELS "window\\;runtime\\;platform")
+
+add_executable(vulkan_review_test
+    vulkan_lifecycle_test.cpp
+    vulkan_shading_test.cpp
+    vulkan_shadow_test.cpp
+    vulkan_postprocess_test.cpp
+)
+target_link_libraries(vulkan_review_test PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime vulkan imgui)
+target_include_directories(vulkan_review_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
+target_compile_definitions(vulkan_review_test PRIVATE RUNTIME_TEST_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}")
+add_dependencies(vulkan_review_test runtime_test_fixtures runtime_test_shaders)
+set_target_properties(vulkan_review_test PROPERTIES FOLDER "UnitTest/runtime")
+gtest_discover_tests(vulkan_review_test
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/test-fixtures"
+    PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 LABELS "gpu\\;runtime\\;render")
+
+add_executable(model_preparation_test
+    model_preparation_lifecycle_test.cpp
+    model_scene_integration_test.cpp
+)
+target_link_libraries(model_preparation_test PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime vulkan imgui)
+target_include_directories(model_preparation_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
+target_compile_definitions(model_preparation_test PRIVATE RUNTIME_TEST_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}")
+add_dependencies(model_preparation_test runtime_test_fixtures runtime_test_shaders incubator_models)
+set_target_properties(model_preparation_test PROPERTIES FOLDER "UnitTest/runtime")
+gtest_discover_tests(model_preparation_test
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+    PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 LABELS "gpu\\;runtime\\;model\\;scene")
+
+add_executable(imgui_integration_test imgui_integration_test.cpp)
+target_link_libraries(imgui_integration_test PRIVATE GTest::gtest_main GTest::gmock_main IncubatorRuntime vulkan imgui)
+target_include_directories(imgui_integration_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/test)
+target_compile_definitions(imgui_integration_test PRIVATE RUNTIME_TEST_ASSET_DIR="${RUNTIME_TEST_ASSET_DIR}")
+add_dependencies(imgui_integration_test runtime_test_fixtures runtime_test_shaders)
+set_target_properties(imgui_integration_test PROPERTIES FOLDER "UnitTest/runtime")
+gtest_discover_tests(imgui_integration_test
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/test-fixtures"
+    PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 LABELS "gpu\\;runtime\\;ui")

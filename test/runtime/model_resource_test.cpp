@@ -13,6 +13,10 @@
 #include <vector>
 
 #include "runtime/core/error/error.h"
+#include "runtime/model/model_reference.h"
+#include "runtime/model/prepared_model.h"
+#include "runtime/render/material.h"
+#include "runtime/render/sampler.h"
 
 namespace
 {
@@ -561,5 +565,38 @@ namespace
             input.materials[0].roughness = badFactor;
             expectInvalid(input, "roughness");
         }
+    }
+
+    static_assert(
+        std::is_same_v<decltype(std::declval<Model::PreparedModel&>().bounds()), const std::optional<Math::Aabb>&>);
+    static_assert(
+        std::is_same_v<decltype(std::declval<Model::PreparedModel&>().source()), const Model::ModelReference&>);
+
+    TEST(ModelReferenceTest, NormalizesAndComparesEveryOptionAndRejectsInvalidValues)
+    {
+        const Model::ModelReference base("Models\\Unused\\..\\Scene.GLTF");
+        EXPECT_EQ(base.path(), "models/scene.gltf");
+        EXPECT_EQ(base, Model::ModelReference("models/./scene.gltf"));
+        EXPECT_NE(base, Model::ModelReference("models/other.gltf"));
+        for (const auto& variant : {Model::PrepareOptions{Render::TextureMipMode::FullChain},
+                                    Model::PrepareOptions{{}, {Render::TextureFilter::Linear}},
+                                    Model::PrepareOptions{{}, {Render::TextureFilter::Nearest, Render::TextureFilter::Linear}},
+                                    Model::PrepareOptions{{}, {Render::TextureFilter::Nearest, Render::TextureFilter::Nearest, Render::MipFilter::Nearest}},
+                                    Model::PrepareOptions{{}, {Render::TextureFilter::Nearest, Render::TextureFilter::Nearest, Render::MipFilter::Linear}},
+                                    Model::PrepareOptions{{}, {}, Render::ShadingMode::Lambert},
+                                    Model::PrepareOptions{{}, {}, Render::ShadingMode::Pbr}})
+            EXPECT_NE(base, Model::ModelReference("models/scene.gltf", variant));
+        const Model::ModelReference pbr("models/scene.gltf", {{}, {}, Render::ShadingMode::Pbr});
+        EXPECT_EQ(pbr, Model::ModelReference("Models\\Scene.GLTF", {{}, {}, Render::ShadingMode::Pbr}));
+        EXPECT_NE(pbr, Model::ModelReference("models/scene.gltf", {{}, {}, Render::ShadingMode::Lambert}));
+        for (const auto& path : {std::string(""), std::string("../escape.gltf"), std::string("C:asset.gltf"),
+                                 std::string("x\0y", 3), std::string("\xff", 1)})
+            EXPECT_THROW((void)Model::ModelReference{path}, Error::Exception);
+        for (const auto& bad : {Model::PrepareOptions{static_cast<Render::TextureMipMode>(99)},
+                                Model::PrepareOptions{{}, {static_cast<Render::TextureFilter>(99)}},
+                                Model::PrepareOptions{{}, {Render::TextureFilter::Nearest, static_cast<Render::TextureFilter>(99)}},
+                                Model::PrepareOptions{{}, {Render::TextureFilter::Nearest, Render::TextureFilter::Nearest, static_cast<Render::MipFilter>(99)}},
+                                Model::PrepareOptions{{}, {}, static_cast<Render::ShadingMode>(99)}})
+            EXPECT_THROW((void)(Model::ModelReference{"models/scene.gltf", bad}), Error::Exception);
     }
 }  // namespace
