@@ -190,6 +190,11 @@ namespace Incubator::Resource::Detail
             {
                 throw Error::Exception(Error::Code::IO, "Required model file was not found");
             }
+            if (Path::hasExtension(resolved, "glb"))
+            {
+                checkGlb(*file);
+                file->seek(0, FileIO::SeekOrigin::Begin);
+            }
             auto stream = std::make_unique<AssimpFileStream>(std::move(file), resolved, state_);
             if (Path::hasExtension(resolved, "gltf") || Path::hasExtension(resolved, "mtl"))
             {

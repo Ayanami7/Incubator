@@ -55,7 +55,8 @@ namespace Incubator::Resource
             auto kind = AssetKind::File;
             if (entry.directory)
                 kind = AssetKind::Directory;
-            else if (Path::hasExtension(path, "gltf") || Path::hasExtension(path, "obj"))
+            else if (Path::hasExtension(path, "gltf") || Path::hasExtension(path, "glb") ||
+                     Path::hasExtension(path, "obj"))
                 kind = AssetKind::Model;
             else if (Detail::imageFormatFromPath(path))
                 kind = AssetKind::Texture;

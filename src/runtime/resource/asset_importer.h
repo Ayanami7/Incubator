@@ -22,7 +22,7 @@ namespace Incubator::Resource
         std::vector<std::string> copiedVirtualPaths;
     };
 
-    /// @brief 将外部 glTF 或 OBJ 及其依赖复制到资产根下的新目录，同名时自动添加数字后缀。
+    /// @brief 将外部 glTF、GLB 或 OBJ 及所需依赖复制到资产根下的新目录，同名时添加数字后缀。
     /// @throws Error::Exception 路径、源依赖或复制无效时抛出 IO，并回滚本次创建的项。
     ImportedModelResult importExternalModel(AssetSource& targetSource, const std::filesystem::path& externalSourcePath,
                                             const ModelImportOptions& options = {});

@@ -31,7 +31,7 @@ namespace Incubator::Editor
         OPENFILENAMEW dialog{};
         dialog.lStructSize = sizeof(dialog);
         dialog.hwndOwner = glfwGetWin32Window(static_cast<GLFWwindow*>(window().getNativeHandle()));
-        dialog.lpstrFilter = L"Model files (*.gltf;*.obj)\0*.gltf;*.obj\0";
+        dialog.lpstrFilter = L"Model files (*.gltf;*.glb;*.obj)\0*.gltf;*.glb;*.obj\0";
         dialog.lpstrFile = path.data();
         dialog.nMaxFile = static_cast<DWORD>(path.size());
         dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;

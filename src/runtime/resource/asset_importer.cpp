@@ -244,8 +244,9 @@ namespace Incubator::Resource
         const auto filename = toUtf8String(source.filename());
         const auto stem = toUtf8String(source.stem());
         const bool gltf = Path::hasExtension(filename, "gltf");
-        if (!gltf && !Path::hasExtension(filename, "obj"))
-            fail(source, "Only external glTF and OBJ models can be imported");
+        const bool glb = Path::hasExtension(filename, "glb");
+        if (!gltf && !glb && !Path::hasExtension(filename, "obj"))
+            fail(source, "Only external glTF, GLB and OBJ models can be imported");
         checkComponents(filename);
         checkComponents(stem);
         checkInput(io, source);
@@ -262,12 +263,22 @@ namespace Incubator::Resource
             files.push_back(std::move(relative));
             return true;
         };
-        const auto text = readText(io, source);
-        if (gltf)
-            gltfReferences(text, source, add);
+        if (glb)
+        {
+            try
+            {
+                Detail::checkGlb(*openInput(io, source));
+            }
+            catch (const Error::Exception& exception)
+            {
+                fail(source, exception.message());
+            }
+        }
+        else if (gltf)
+            gltfReferences(readText(io, source), source, add);
         else
         {
-            textReferences(text, "mtllib", [&](std::string_view reference) {
+            textReferences(readText(io, source), "mtllib", [&](std::string_view reference) {
                 const auto material = dependency({}, reference, false);
                 if (!Path::hasExtension(material, "mtl"))
                     fail(toFsPath(material), "Unsupported import dependency extension");

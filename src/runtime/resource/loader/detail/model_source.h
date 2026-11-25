@@ -4,8 +4,17 @@
 #include <string_view>
 #include <unordered_set>
 
+namespace Incubator::FileIO
+{
+    class FileHandle;
+}
+
 namespace Incubator::Resource::Detail
 {
+    /// @brief 从文件起点校验自包含 GLB 2.0 容器及 JSON，文件上限为 256 MiB。
+    /// @throws Error::Exception 容器或 JSON 不符合静态单文件模型约定时抛出 IO。
+    void checkGlb(FileIO::FileHandle& file);
+
     /// @brief 将相对于源文件的依赖路径解析为相对于资产根目录的键。
     /// @param directory 源文件所在目录。
     /// @param path 源文件中记录的依赖路径。

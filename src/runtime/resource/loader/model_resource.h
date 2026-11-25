@@ -18,15 +18,26 @@ namespace Incubator
         struct ModelMaterial
         {
             /// @brief 相对于资产根目录的纹理路径，由导入器解析。
-            /// @note 路径为空时使用纯色。
+            /// @note 基色贴图可使用外部路径或内嵌索引。两个字段均为空时使用纯色。
             std::optional<std::string> texturePath;
             std::array<float, 3> color{1.0f, 1.0f, 1.0f};  ///< 线性 RGB；输出不透明。
             bool unlit = false;  ///< 源材质显式声明不受光；不包含消费者的着色策略。
-            std::optional<std::string> normalTexturePath;             ///< 相对资产根的线性法线贴图路径（外部 PNG）。
-            std::optional<std::string> metallicRoughnessTexturePath;  ///< 相对资产根的线性金属粗糙度贴图路径（外部 PNG，G=粗糙度，B=金属度）。
+            std::optional<std::string> normalTexturePath;             ///< 相对资产根的线性法线贴图路径。
+            std::optional<std::string> metallicRoughnessTexturePath;  ///< 线性金属粗糙度贴图路径，G 为粗糙度，B 为金属度。
             float normalScale = 1.0f;                                 ///< 法线贴图 XY 缩放系数，有限且 >= 0。
             float metallic = 0.0f;                                    ///< 金属度因子，有限且位于 [0, 1]。
             float roughness = 1.0f;                                   ///< 粗糙度因子，有限且位于 [0, 1]。
+            std::optional<uint32_t> embeddedTextureIndex;                 ///< 内嵌基色贴图索引。
+            std::optional<uint32_t> embeddedNormalTextureIndex;            ///< 内嵌法线贴图索引。
+            std::optional<uint32_t> embeddedMetallicRoughnessTextureIndex; ///< 内嵌金属粗糙度贴图索引。
+        };
+
+        /// @brief 模型拥有的紧密 RGBA8 像素，颜色空间由使用该贴图的材质槽决定。
+        struct EmbeddedTexture
+        {
+            uint32_t width;
+            uint32_t height;
+            std::vector<uint8_t> rgba8;
         };
 
         struct ModelPart
@@ -49,7 +60,8 @@ namespace Incubator
         {
         public:
             ModelResource(ResourceId id, std::vector<MeshData> geometries, std::vector<ModelMaterial> materials,
-                          std::vector<ModelPart> parts, std::vector<ModelNode> nodes, uint32_t rootNode);
+                          std::vector<ModelPart> parts, std::vector<ModelNode> nodes, uint32_t rootNode,
+                          std::vector<EmbeddedTexture> embeddedTextures = {});
 
             const std::vector<MeshData>& geometries() const noexcept
             {
@@ -66,6 +78,12 @@ namespace Incubator
             const std::vector<ModelMaterial>& materials() const noexcept
             {
                 return materials_;
+            }
+
+            /// @brief 返回材质的内嵌索引所引用的图片数据。
+            const std::vector<EmbeddedTexture>& embeddedTextures() const noexcept
+            {
+                return embeddedTextures_;
             }
 
             const std::vector<ModelPart>& parts() const noexcept
@@ -87,6 +105,7 @@ namespace Incubator
             std::vector<MeshData> geometries_;
             std::vector<Math::Aabb> geometryBounds_;
             std::vector<ModelMaterial> materials_;
+            std::vector<EmbeddedTexture> embeddedTextures_;
             std::vector<ModelPart> parts_;
             std::vector<ModelNode> nodes_;
             uint32_t rootNode_;

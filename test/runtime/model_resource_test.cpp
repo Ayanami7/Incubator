@@ -43,6 +43,7 @@ namespace
         std::vector<ModelPart> parts{{0, 0}};
         std::vector<ModelNode> nodes{{"root", glm::mat4(1.0f), {}, {0}}};
         uint32_t rootNode = 0;
+        std::vector<EmbeddedTexture> embeddedTextures;
     };
 
     const ResourceId MODEL_ID = ResourceId::fromPath(ResourceType::MODEL, "models/manual.gltf");
@@ -50,7 +51,8 @@ namespace
     std::unique_ptr<ModelResource> makeModel(ModelInput input)
     {
         return std::make_unique<ModelResource>(MODEL_ID, std::move(input.geometries), std::move(input.materials),
-                                               std::move(input.parts), std::move(input.nodes), input.rootNode);
+                                               std::move(input.parts), std::move(input.nodes), input.rootNode,
+                                               std::move(input.embeddedTextures));
     }
 
     void expectInvalid(const ModelInput& input, std::string_view reason)
@@ -473,6 +475,24 @@ namespace
                 expectInvalid(input, "non-finite tangent");
             }
         }
+    }
+
+    TEST(ModelResourceTest, ValidatesEmbeddedTexturePayloadAndExclusiveSlotReferences)
+    {
+        ModelInput input;
+        input.embeddedTextures = {{1, 1, {0, 0, 0, 255}}};
+        input.materials[0].embeddedTextureIndex = 0;
+        EXPECT_EQ(makeModel(input)->embeddedTextures().size(), 1u);
+        input.materials[0].texturePath = "textures/base.png";
+        expectInvalid(input, "embedded texture index");
+        input.materials[0].texturePath.reset();
+        input.materials[0].embeddedNormalTextureIndex = 1;
+        expectInvalid(input, "embedded normal texture index");
+        input.materials[0].embeddedNormalTextureIndex.reset();
+        input.embeddedTextures[0].rgba8.pop_back();
+        expectInvalid(input, "RGBA8 payload size");
+        input.embeddedTextures[0].width = 4097;
+        expectInvalid(input, "embedded texture dimensions");
     }
 
     TEST(ModelResourceTest, RejectsInvalidPbrMaterialPathsAndFactors)

@@ -54,7 +54,7 @@ name 保留实际 UTF-8 名称，path 为规范化的小写 ASCII 虚拟路径�
 因此手动刷新可以看到新增或删除的文件；空目录返回空列表，未绑定源抛 CONFIG，访问错误抛 IO。
 词法越根被拒绝，目录链接和目录重解析点不列出也不可进入；根仍为受信任目录，不承诺文件链接的物理隔离。
 
-`AssetKind` 包括 Directory、Model（OBJ/glTF）、Texture（PNG）、Dependency（bin/mtl）及 File。
+`AssetKind` 包括 Directory、Model（OBJ/glTF/GLB）、Texture（PNG/JPEG）、Dependency（bin/mtl）及 File。
 扩展名分类不解析内容、不代表可以成功导入；依赖及普通文件不能直接作为场景模型。
 
 `query(type, path)` 仅返回已有登记的 `ResourceInfo{id, type, path, references, loaded}`，不存在返回空 optional。

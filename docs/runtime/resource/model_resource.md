@@ -116,13 +116,15 @@ instanceTransform * root.localTransform * ... * node.localTransform
 
 ## 文件导入
 
-ModelLoader 将静态 glTF 2.0（外部 bin、PNG/JPEG）及 OBJ（外部 mtl、PNG/JPEG）统一转换为上述数据。
+ModelLoader 将静态 glTF 2.0、GLB 和 OBJ 统一转换为上述数据。
+GLB 的 PNG/JPEG 解码为 `embeddedTextures()` 中的 `EmbeddedTexture`，包含尺寸与紧密排列的 RGBA8 像素。
+基色、法线和金属粗糙度槽各自使用外部虚拟路径或内嵌索引。构造时检查两种引用互斥、索引有效和像素长度与尺寸一致。
 CPU 载荷保存 position、UV0、normal、uint32 三角形索引和基色；贴图材质要求 UV0，纯色几何可由导入方补固定 UV。
 normal 位于几何局部空间，未乘节点矩阵；默认零向量表示无可用法线，原两字段顶点初始化仍有效。
 ModelResource 只验证法线有限性，不归一化或改写手工输入；法线不影响几何边界，未引用顶点及退化三角形可保留零法线。
 ModelLoader 归一化非零源法线并按格式补齐缺失法线，具体策略见 [ModelLoader](./loader/model_loader.md)。
 `ModelMaterial::unlit` 只记录源材质不受光语义，默认 false，不包含 Render 类型或消费者的预览策略。
-glTF baseColorFactor/Texture、OBJ Kd/map_Kd 映射为线性颜色和外部纹理路径，采样和输出沿用
+glTF baseColorFactor/Texture、OBJ Kd/map_Kd 映射为线性颜色和纹理引用，采样和输出沿用
 [Render 材质约定](../render.md)。动画、骨骼、Morph、GLB/嵌入图像、透明混合及完整 PBR 不在首批范围。
 具体文件格式和材质拒绝规则见 [ModelLoader](./loader/model_loader.md)；手工 CPU 构造不读取或检查实际文件。
 CPU 资产及 PNG/JPEG 依赖通过 Runtime 的 [模型准备入口](../model.md) 转换为共享 GPU 引用与独立元数据，

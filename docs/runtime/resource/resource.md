@@ -39,7 +39,7 @@ CPU 资产 release 与路由销毁分别管理，运行期间可再次显式准�
 | ShaderResource + ShaderLoader（SPIR-V CPU 载荷） | [loader/shader_loader.md](./loader/shader_loader.md) | ✅ 已实现 |
 | TextureResource + TextureLoader（PNG/JPEG → RGBA8 CPU 载荷） | [loader/texture_loader.md](./loader/texture_loader.md) | ✅ 已实现 |
 | MeshData + ModelResource（CPU 几何、材质与节点组合） | [model_resource.md](./model_resource.md) | ✅ 已实现 |
-| ModelLoader（Assimp 静态 glTF / OBJ 导入） | [loader/model_loader.md](./loader/model_loader.md) | ✅ CPU 导入已实现；GPU 消费见 [Model](../model.md) |
+| ModelLoader（Assimp 静态 glTF / GLB / OBJ 导入） | [loader/model_loader.md](./loader/model_loader.md) | ✅ CPU 导入已实现；GPU 消费见 [Model](../model.md) |
 
 ## 文件布局（镜像 src）
 
@@ -74,8 +74,8 @@ TextureLoader 经 FileIO 完整读取并在内存解码 PNG/JPEG，TextureResour
 
 ModelResource 使用 MODEL 类型，拥有独立的 MeshData（含局部法线）、线性基色/外部纹理路径及源 Unlit 描述、几何与材质关联，
 以及显式源根和节点局部矩阵。构造时校验几何和单根树结构，之后只读访问；多个节点可复用同一几何。
-ModelLoader 通过 FileIO 和固定 Assimp 导入静态 glTF 2.0（外部 bin、PNG/JPEG）及 OBJ（外部 mtl、PNG/JPEG），
-返回自有 CPU 资产，图片仅保留路径。GPU 资源准备和实例绘制由 [Model 消费层](../model.md)
+ModelLoader 通过 FileIO 和固定 Assimp 导入静态 glTF 2.0、GLB 和 OBJ。
+返回的 CPU 资产包含外部图片虚拟路径或内嵌图像像素。GPU 资源准备和实例绘制由 [Model 消费层](../model.md)
 基于 Resource 与 Render 完成，Resource 本身仍负责 CPU 资源。数据及矩阵约定见
 [ModelResource](./model_resource.md)，格式与材质支持范围见 [ModelLoader](./loader/model_loader.md)。
 
@@ -87,7 +87,7 @@ Shader/Texture/Model Loader 都借用同一源，模型主文件、bin/mtl 及�
 源保证非空相对文件路径的词法边界；根视为本地受信任目录，不承诺链接解析后的文件访问隔离。
 `ResourceManager::listDirectory()` 列出根目录，传相对虚拟路径列出子目录；每次重新枚举直接子项并按规范化路径排序。
 目录链接和目录重解析点从结果中排除，直接请求其后代路径也被拒绝。空目录返回空列表，枚举失败抛 IO。
-OBJ/glTF、PNG/JPEG、bin/mtl 分别标为模型、纹理和依赖候选，其他项为普通文件；分类不代表内容已验证。
+OBJ/glTF/GLB、PNG/JPEG、bin/mtl 分别标为模型、纹理和依赖候选，其他项为普通文件。分类不代表内容已验证。
 列表和 `query(type, path)` 不登记、不加载、不改变引用；CPU 已加载状态与文件发现、GPU 准备相互独立。
 普通消费者通过 `hold<T>(type, path)` 取得只可移动的 `CpuResource`，使用期间借用 `get<T>()`，析构或 reset 释放本次持有。
 失败值的 `failure()` 保存本次调用的虚拟路径及具体原因；后续调用不会覆盖它。详见 [ResourceManager](./resource_manager.md)。
@@ -104,6 +104,7 @@ Registry::hasLiveResources 检查持有或挂载状态，不强制销毁外部�
 `Resource::importExternalModel(source, externalPath, options)` 同步将外部静态模型复制到 `source.root()`。
 glTF 收集外部缓冲和 PNG/JPEG，按模型文件目录解析 URI。OBJ 收集声明的 MTL 以及各 MTL 的
 `map_Kd` PNG/JPEG，贴图路径相对于声明它的 MTL 目录解析。模型目录内的依赖层级和文件内容原样保留。
+GLB 校验容器及 JSON 中的内嵌依赖后按单文件复制。
 
 `options.targetDirectory` 默认是虚拟目录 `models`，空字符串表示资产根。导入为每个模型创建
 `<stem>`、`<stem>_1` 等独立目录，避让已有文件和目录。结果包含规范化模型路径、新建目录及复制文件的

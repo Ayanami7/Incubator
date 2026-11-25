@@ -10,6 +10,7 @@
 #include <assimp/DefaultLogger.hpp>
 #include <assimp/Importer.hpp>
 #include <assimp/LogStream.hpp>
+#include <charconv>
 #include <cmath>
 #include <exception>
 #include <glm/glm.hpp>
@@ -63,8 +64,9 @@ namespace Incubator::Resource
             bool ownsLogger_;
         };
 
-        ModelMaterial convertMaterial(const aiMaterial& source, uint32_t index, bool gltf, std::string_view directory,
-                                      bool objDiffuseSpecified)
+        ModelMaterial convertMaterial(const aiMaterial& source, uint32_t index, bool gltf, bool glb,
+                                      std::string_view directory, bool objDiffuseSpecified,
+                                      const auto& decodeEmbedded)
         {
             const auto reject = [index](std::string_view reason) {
                 throw Error::Exception(Error::Code::IO, fmt::format("Model material {}: {}", index, reason));
@@ -109,13 +111,14 @@ namespace Incubator::Resource
                 }
             }
 
-            const auto parseTextureSlot = [&](aiTextureType textureType,
-                                              std::string_view label) -> std::optional<std::string> {
+            const auto parseTextureSlot = [&](aiTextureType textureType, std::string_view label,
+                                              std::optional<std::string>& external,
+                                              std::optional<uint32_t>& embedded) {
                 const unsigned count = source.GetTextureCount(textureType);
                 if (count > 1)
                     reject(fmt::format("Multiple {} textures are unsupported", label));
                 if (count == 0)
-                    return std::nullopt;
+                    return;
                 aiString path;
                 aiTextureMapping mapping = aiTextureMapping_UV;
                 unsigned uv = 0;
@@ -129,20 +132,29 @@ namespace Incubator::Resource
                 {
                     reject(fmt::format("{} UV transform is unsupported", label));
                 }
+                if (glb)
+                {
+                    if (path.length < 2 || path.data[0] != '*')
+                        reject("GLB material requires an embedded image reference");
+                    embedded = decodeEmbedded(std::string_view(path.C_Str(), path.length).substr(1));
+                    return;
+                }
                 if (path.length == 0 || path.data[0] == '*')
                     reject("Embedded model image is unsupported");
                 std::string resolved = Detail::modelDependencyPath(directory, path.C_Str(), gltf);
                 if (!Detail::imageFormatFromPath(resolved))
                     reject("Only external PNG or JPEG images are supported");
-                return resolved;
+                external = std::move(resolved);
             };
 
-            result.texturePath = parseTextureSlot(gltf ? aiTextureType_BASE_COLOR : aiTextureType_DIFFUSE, "Base color");
+            parseTextureSlot(gltf ? aiTextureType_BASE_COLOR : aiTextureType_DIFFUSE, "Base color",
+                             result.texturePath, result.embeddedTextureIndex);
             if (gltf)
             {
-                result.normalTexturePath = parseTextureSlot(aiTextureType_NORMALS, "Normal");
-                result.metallicRoughnessTexturePath =
-                    parseTextureSlot(aiTextureType_GLTF_METALLIC_ROUGHNESS, "Metallic roughness");
+                parseTextureSlot(aiTextureType_NORMALS, "Normal", result.normalTexturePath,
+                                 result.embeddedNormalTextureIndex);
+                parseTextureSlot(aiTextureType_GLTF_METALLIC_ROUGHNESS, "Metallic roughness",
+                                 result.metallicRoughnessTexturePath, result.embeddedMetallicRoughnessTextureIndex);
 
                 result.normalScale = 1.0f;
                 source.Get(AI_MATKEY_GLTF_TEXTURE_SCALE(aiTextureType_NORMALS, 0), result.normalScale);
@@ -190,10 +202,11 @@ namespace Incubator::Resource
         {
             source_.resolve(virtualPath);
             const auto key = canonicalizeResourceKey(virtualPath);
-            const bool gltf = Path::hasExtension(key, "gltf");
+            const bool glb = Path::hasExtension(key, "glb");
+            const bool gltf = glb || Path::hasExtension(key, "gltf");
             if (key.empty() || (!gltf && !Path::hasExtension(key, "obj")))
             {
-                throw Error::Exception(Error::Code::IO, "Only static .gltf 2.0 and .obj models are supported");
+                throw Error::Exception(Error::Code::IO, "Only static .gltf 2.0, .glb and .obj models are supported");
             }
             const auto& path = key;
             ImportDiagnostics diagnostics;
@@ -210,10 +223,37 @@ namespace Incubator::Resource
                 throw Error::Exception(Error::Code::IO, diagnostics.failure);
             if (!scene)
                 throw Error::Exception(Error::Code::IO, importer.GetErrorString());
-            if (scene->mNumAnimations != 0 || scene->mNumTextures != 0)
+            if (scene->mNumAnimations != 0 || (!glb && scene->mNumTextures != 0))
             {
                 throw Error::Exception(Error::Code::IO, "Animation and embedded model images are unsupported");
             }
+
+            std::vector<EmbeddedTexture> embeddedTextures;
+            std::vector<std::optional<uint32_t>> embeddedIndices(scene->mNumTextures);
+            const auto decodeEmbedded = [&](std::string_view reference) -> uint32_t {
+                unsigned index = 0;
+                const auto end = reference.data() + reference.size();
+                const auto [parsed, error] = std::from_chars(reference.data(), end, index);
+                if (error != std::errc{} || parsed != end || index >= scene->mNumTextures || !scene->mTextures[index])
+                    throw Error::Exception(Error::Code::IO, "Invalid GLB embedded texture reference");
+                auto& mapped = embeddedIndices[index];
+                if (!mapped)
+                {
+                    const auto& texture = *scene->mTextures[index];
+                    if (texture.mHeight != 0 || !texture.pcData)
+                        throw Error::Exception(Error::Code::IO, "GLB requires encoded embedded texture bytes");
+                    const std::string_view hint(texture.achFormatHint, 3);
+                    if (hint != "png" && hint != "jpg")
+                        throw Error::Exception(Error::Code::IO, "Unsupported GLB embedded texture format");
+                    const auto* data = reinterpret_cast<const uint8_t*>(texture.pcData);
+                    auto image = Detail::decodeRgba8({data, texture.mWidth},
+                                                     hint == "png" ? Detail::ImageFormat::Png
+                                                                   : Detail::ImageFormat::Jpeg);
+                    mapped = static_cast<uint32_t>(embeddedTextures.size());
+                    embeddedTextures.push_back({image.width, image.height, std::move(image.pixels)});
+                }
+                return *mapped;
+            };
 
             std::vector<ModelMaterial> materials;
             materials.reserve(scene->mNumMaterials);
@@ -221,8 +261,8 @@ namespace Incubator::Resource
             {
                 aiString name;
                 scene->mMaterials[i]->Get(AI_MATKEY_NAME, name);
-                materials.push_back(convertMaterial(*scene->mMaterials[i], i, gltf, Path::getParentPath(key),
-                                                    io->hasObjDiffuseColor(name.C_Str())));
+                materials.push_back(convertMaterial(*scene->mMaterials[i], i, gltf, glb, Path::getParentPath(key),
+                                                    io->hasObjDiffuseColor(name.C_Str()), decodeEmbedded));
             }
             std::vector<MeshData> geometries;
             std::vector<ModelPart> parts;
@@ -240,8 +280,9 @@ namespace Incubator::Resource
                     throw Error::Exception(Error::Code::IO, fmt::format("Model geometry {} has invalid material", i));
                 }
                 const auto& material = materials[mesh.mMaterialIndex];
-                if ((material.texturePath || material.normalTexturePath || material.metallicRoughnessTexturePath) &&
-                    !mesh.HasTextureCoords(0))
+                if ((material.texturePath || material.normalTexturePath || material.metallicRoughnessTexturePath ||
+                     material.embeddedTextureIndex || material.embeddedNormalTextureIndex ||
+                     material.embeddedMetallicRoughnessTextureIndex) && !mesh.HasTextureCoords(0))
                 {
                     throw Error::Exception(Error::Code::IO, fmt::format("Model geometry {} material {} requires UV0", i,
                                                                         mesh.mMaterialIndex));
@@ -391,7 +432,8 @@ namespace Incubator::Resource
                 nodes.push_back(std::move(output));
             }
             auto result = std::make_unique<ModelResource>(id, std::move(geometries), std::move(materials),
-                                                          std::move(parts), std::move(nodes), 0);
+                                                          std::move(parts), std::move(nodes), 0,
+                                                          std::move(embeddedTextures));
             Log::Registry::get("resource")
                 .debug("Imported model '{}': {} geometries, {} materials, {} nodes", path, result->geometries().size(),
                        result->materials().size(), result->nodes().size());

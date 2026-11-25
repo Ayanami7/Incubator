@@ -64,8 +64,8 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | Name | 编辑选中实体名称，允许重名和空名；连续输入在确认/失焦后折叠为单步历史；名称不影响实体身份或模型缓存 |
 | Objects：New model / Create object | 选择 Avocado 或 Teapot，在画面中央按该模型的创建预设添加共享实体，并选中 |
 | Assets：面包屑导航 / Up / Refresh | 点击面包屑直接跳转，使用 `Up` 返回上级，使用 `Refresh` 重新列出当前目录；列表按 `[DIR]` / `[MODEL]` / `[TEX]` / `[DEP]` 展示 |
-| Assets：Import... | 从 Windows 文件选择框选取外部 OBJ 或 glTF，复制主文件与依赖并定位到导入项 |
-| Assets：Add | 对 OBJ/glTF 候选文件按需准备，成功后加入场景并选中；其他文件没有加入入口 |
+| Assets：Import... | 从 Windows 文件选择框选取外部 OBJ、glTF 或 GLB，复制主文件与所需依赖并定位到导入项 |
+| Assets：Add | 对 OBJ/glTF/GLB 候选文件按需准备，成功后加入场景并选中 |
 | Assets：Reload | 从磁盘重新读取指定模型及所需贴图，同步更新已缓存变体、场景实体和 Undo/Redo 快照 |
 | Assets：Clear unused models | 显式移出没有外部模型持有的缓存项；待 Undo/Redo 恢复的历史引用与在途 GPU 资源保持有效，覆盖/淘汰或打开场景清空历史栈后可回收 |
 | File：Save / Save As / Open | Save 写当前文件（无关联时转 Save As）；Open 和 Save As 弹窗内置可视化 `.json` 场景文件浏览器（自动扫描 `assets/scenes` 及当前关联目录，目录缺失静默返回空列表，单击填充路径、Open 下双击直接确认），同时支持手动输入路径；成功后清除脏标记并清空历史栈；取消和失败保留原关联与当前历史 |
@@ -104,9 +104,10 @@ Listed 只统计当前目录发现项，Cached 只统计 PreparedModel 缓存项
 场景及阴影 Shader 同样通过 ResourceManager::hold 取得只可移动的 CPU 持有，准备结束后自动释放，不直接配对 Registry 引用。
 调整姿态和可见性复用现有 GPU 引用。
 
-使用 **Assets → Import...** 选择外部 `.gltf` 或 `.obj`。导入将文件及受支持的依赖复制到当前浏览目录下的独立子目录，
+使用 **Assets → Import...** 选择外部 `.gltf`、`.glb` 或 `.obj`。导入将文件及受支持的依赖复制到当前浏览目录下的独立子目录，
 从资产根发起时使用 `models/`。同名目录自动添加数字后缀。导入完成后列表跳转并高亮新模型，点击 **Add** 即可加入场景。
 取消文件选择会回到原列表。点击 **Refresh** 可重新读取当前目录的文件列表。
+GLB 按单文件复制，模型及贴图从该文件内读取。
 
 导入资产写入当前会话的 `<cwd>/assets/`，本工作区为 **`build/assets/`**。保存的场景通过虚拟路径引用这些文件，
 **清理 `build/` 会一并删除导入资产**。需要长期保留时，应保留导入目录及其层级。

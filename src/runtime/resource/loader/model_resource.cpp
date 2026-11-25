@@ -6,6 +6,7 @@
 
 #include "runtime/core/error/error.h"
 #include "runtime/resource/loader/detail/image_decode.h"
+#include "runtime/resource/loader/texture_resource.h"
 
 namespace Incubator
 {
@@ -80,10 +81,12 @@ namespace Incubator
 
         ModelResource::ModelResource(ResourceId id, std::vector<MeshData> geometries,
                                      std::vector<ModelMaterial> materials, std::vector<ModelPart> parts,
-                                     std::vector<ModelNode> nodes, uint32_t rootNode)
+                                     std::vector<ModelNode> nodes, uint32_t rootNode,
+                                     std::vector<EmbeddedTexture> embeddedTextures)
             : ResourceObject(id, ResourceType::MODEL),
               geometries_(std::move(geometries)),
               materials_(std::move(materials)),
+              embeddedTextures_(std::move(embeddedTextures)),
               parts_(std::move(parts)),
               nodes_(std::move(nodes)),
               rootNode_(rootNode)
@@ -92,6 +95,15 @@ namespace Incubator
             for (size_t i = 0; i < geometries_.size(); ++i)
             {
                 geometryBounds_.push_back(validateGeometry(geometries_[i], i));
+            }
+            for (const auto& image : embeddedTextures_)
+            {
+                if (image.width == 0 || image.height == 0 || image.width > TextureResource::MAX_DIMENSION ||
+                    image.height > TextureResource::MAX_DIMENSION)
+                    throw Error::Exception(Error::Code::CONFIG, "Invalid embedded texture dimensions");
+                const auto bytes = uint64_t(image.width) * image.height * 4u;
+                if (bytes > TextureResource::MAX_PIXEL_BYTES || bytes != image.rgba8.size())
+                    throw Error::Exception(Error::Code::CONFIG, "Invalid embedded texture RGBA8 payload size");
             }
             for (size_t i = 0; i < materials_.size(); ++i)
             {
@@ -105,8 +117,13 @@ namespace Incubator
                             fmt::format("Model material {} requires finite linear RGB in [0, 1]", i));
                     }
                 }
-                const auto canonicalizeSlot = [i](std::optional<std::string>& slot, bool requireImageFormat,
-                                                  const char* label) {
+                const auto canonicalizeSlot = [&](std::optional<std::string>& slot, std::optional<uint32_t> embedded,
+                                                  bool requireImageFormat, const char* label) {
+                    if (embedded && (slot || *embedded >= embeddedTextures_.size()))
+                    {
+                        throw Error::Exception(Error::Code::CONFIG,
+                                               fmt::format("Model material {} has an invalid embedded {} index", i, label));
+                    }
                     if (!slot)
                         return;
                     auto key = canonicalizeResourceKey(*slot);
@@ -124,9 +141,10 @@ namespace Incubator
                     }
                     slot = std::move(key);
                 };
-                canonicalizeSlot(material.texturePath, false, "texture");
-                canonicalizeSlot(material.normalTexturePath, true, "normal texture");
-                canonicalizeSlot(material.metallicRoughnessTexturePath, true, "metallic-roughness texture");
+                canonicalizeSlot(material.texturePath, material.embeddedTextureIndex, false, "texture");
+                canonicalizeSlot(material.normalTexturePath, material.embeddedNormalTextureIndex, true, "normal texture");
+                canonicalizeSlot(material.metallicRoughnessTexturePath,
+                                 material.embeddedMetallicRoughnessTextureIndex, true, "metallic-roughness texture");
                 if (!std::isfinite(material.normalScale) || material.normalScale < 0.0f)
                 {
                     throw Error::Exception(

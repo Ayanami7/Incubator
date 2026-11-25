@@ -7,7 +7,7 @@ namespace Incubator
 {
     namespace Resource
     {
-        /// @brief 同步导入静态 glTF 2.0 或 OBJ 模型。
+        /// @brief 同步导入静态 glTF 2.0、GLB 或 OBJ 模型。
         /// @note AssetSource 的生命周期必须长于此 Loader。失败时抛出包含模型和依赖项信息的异常；ResourceManager
         /// 记录一次日志并返回 nullptr。
         class ModelLoader final : public LoaderBase

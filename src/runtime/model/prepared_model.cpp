@@ -4,6 +4,7 @@
 #include <limits>
 #include <map>
 #include <utility>
+#include <variant>
 
 #include "runtime/core/error/error.h"
 #include "runtime/core/log/logger.h"
@@ -76,6 +77,7 @@ namespace Incubator::Model
         struct TextureUploadRequest
         {
             const Resource::TextureResource* resource = nullptr;
+            const Resource::EmbeddedTexture* embedded = nullptr;
             Render::TextureColorSpace colorSpace = Render::TextureColorSpace::Srgb;
         };
         struct MaterialTextureSlots
@@ -86,7 +88,8 @@ namespace Incubator::Model
         };
         std::vector<Resource::CpuResource> textureHolds;
         std::vector<TextureUploadRequest> textureRequests;
-        std::map<std::pair<std::string, Render::TextureColorSpace>, uint32_t> textureMap;
+        using TextureSource = std::variant<std::string, uint32_t>;
+        std::map<std::pair<TextureSource, Render::TextureColorSpace>, uint32_t> textureMap;
         std::vector<MaterialTextureSlots> materialTextures;
         uint32_t whiteIndex = NO_INDEX;
 
@@ -111,17 +114,28 @@ namespace Incubator::Model
             }
         }
 
-        const auto acquireTexture = [&](const std::string& path, Render::TextureColorSpace colorSpace) -> uint32_t {
-            auto [entry, inserted] = textureMap.emplace(std::make_pair(path, colorSpace),
+        const auto acquireTexture = [&](const std::optional<std::string>& path, std::optional<uint32_t> embedded,
+                                        Render::TextureColorSpace colorSpace) -> uint32_t {
+            if (!path && !embedded)
+                return NO_INDEX;
+            TextureSource key = embedded ? TextureSource{*embedded} : TextureSource{*path};
+            auto [entry, inserted] = textureMap.emplace(std::make_pair(std::move(key), colorSpace),
                                                         static_cast<uint32_t>(textureRequests.size()));
-            if (inserted)
+            if (!inserted)
+                return entry->second;
+            if (embedded)
             {
-                textureHolds.push_back(resources.hold<Resource::TextureResource>(Resource::ResourceType::TEXTURE, path));
+                textureRequests.push_back({nullptr, &source->embeddedTextures()[*embedded], colorSpace});
+            }
+            else
+            {
+                textureHolds.push_back(
+                    resources.hold<Resource::TextureResource>(Resource::ResourceType::TEXTURE, *path));
                 const auto* texture = textureHolds.back().get<Resource::TextureResource>();
                 if (!texture)
-                    throw LoadError(fmt::format("Cannot prepare model '{}': texture '{}': {}", virtualPath, path,
+                    throw LoadError(fmt::format("Cannot prepare model '{}': texture '{}': {}", virtualPath, *path,
                                                 textureHolds.back().failure()->reason));
-                textureRequests.push_back({texture, colorSpace});
+                textureRequests.push_back({texture, nullptr, colorSpace});
             }
             return entry->second;
         };
@@ -130,26 +144,24 @@ namespace Incubator::Model
         {
             const auto& material = source->materials()[index];
             MaterialTextureSlots slots;
-            if (material.texturePath)
-            {
-                slots.baseColor = acquireTexture(*material.texturePath, Render::TextureColorSpace::Srgb);
-            }
-            else
+            slots.baseColor = acquireTexture(material.texturePath, material.embeddedTextureIndex,
+                                             Render::TextureColorSpace::Srgb);
+            if (slots.baseColor == NO_INDEX)
             {
                 if (whiteIndex == NO_INDEX)
                 {
                     whiteIndex = static_cast<uint32_t>(textureRequests.size());
-                    textureRequests.push_back({nullptr, Render::TextureColorSpace::Srgb});
+                    textureRequests.push_back({});
                 }
                 slots.baseColor = whiteIndex;
             }
             if (usesPbrTextures(material))
             {
-                if (material.normalTexturePath)
-                    slots.normal = acquireTexture(*material.normalTexturePath, Render::TextureColorSpace::Linear);
-                if (material.metallicRoughnessTexturePath)
-                    slots.metallicRoughness =
-                        acquireTexture(*material.metallicRoughnessTexturePath, Render::TextureColorSpace::Linear);
+                slots.normal = acquireTexture(material.normalTexturePath, material.embeddedNormalTextureIndex,
+                                              Render::TextureColorSpace::Linear);
+                slots.metallicRoughness = acquireTexture(material.metallicRoughnessTexturePath,
+                                                         material.embeddedMetallicRoughnessTextureIndex,
+                                                         Render::TextureColorSpace::Linear);
             }
             materialTextures.push_back(slots);
         }
@@ -160,6 +172,13 @@ namespace Incubator::Model
             if (request.resource)
                 result->textures_.push_back(
                     renderer.createTexture(result->resources_, *request.resource, options.mipMode, request.colorSpace));
+            else if (request.embedded)
+            {
+                const auto& embedded = *request.embedded;
+                const Resource::TextureResource texture({}, embedded.width, embedded.height, embedded.rgba8);
+                result->textures_.push_back(
+                    renderer.createTexture(result->resources_, texture, options.mipMode, request.colorSpace));
+            }
             else
             {
                 Resource::TextureResource white({}, 1, 1, {255, 255, 255, 255});

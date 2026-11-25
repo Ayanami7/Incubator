@@ -31,6 +31,13 @@
 Assimp 还会保留一份默认材质，准备层按使用情况选择材质。
 Leaf 点 `(1,1,0)` 经根→父→子组合后为 `(.25+.15/√2, 1.55/√2, 0)`。
 
+## GLB
+
+`embedded_textures.glb` 使用最小 glTF 的几何与节点，将 `geometry/mesh.bin`、`direction_rgba.png` 和
+`reference_rgb.jpg` 按 4 字节对齐打包到同一个 BIN chunk。基色与法线槽引用同一 PNG，金属粗糙度槽引用 JPEG，
+用于分别验证 CPU 解码去重与 GPU 颜色空间分离。SHA-256 为
+`0019aed7112b76ee97874527ccfd2248023bf42b251a858d8bee0926fb16df8d`。
+
 ## OBJ
 
 `minimal_obj/model.obj` 声明 `materials/model.mtl`，MTL 中的贴图相对其所在目录解析。

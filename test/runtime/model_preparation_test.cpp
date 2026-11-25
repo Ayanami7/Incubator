@@ -30,6 +30,7 @@
 #include "runtime/render/integration/imgui_renderer.h"
 #include "runtime/render/renderer.h"
 #include "runtime/render/vulkan/vulkan_shadow_target.h"
+#include "runtime/resource/asset_importer.h"
 #include "runtime/resource/loader/model_loader.h"
 #include "runtime/resource/loader/shader_loader.h"
 #include "runtime/resource/loader/shader_resource.h"
@@ -1149,6 +1150,72 @@ namespace
             scene.createEntity(model);
             EXPECT_TRUE(Scene::extractSceneFrame(scene, {400, 400})->draws.empty());
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded"), 0u);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(ModelPreparationTest, GlbImportsUploadsEmbeddedTexturesAndReloadsChangedDiskModel)
+    {
+        const auto external = sandbox_ / "external.glb";
+        fs::copy_file("assets/models/embedded_textures.glb", external);
+        const auto imported = importExternalModel(*source_, external);
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            auto& resources = ResourceManager::instance();
+            resources.reset();
+            resources.registerLoader(ResourceType::MODEL, std::make_unique<ModelLoader>(*source_));
+            Model::ModelManager cache(renderer);
+            const Model::ModelReference unlit(imported.virtualPath);
+            const Model::ModelReference pbr(imported.virtualPath, {TextureMipMode::FullChain, {}, ShadingMode::Pbr});
+            const auto oldUnlit = cache.resolve(unlit);
+            const auto oldPbr = cache.resolve(pbr);
+            ASSERT_EQ(oldUnlit->textures().size(), 2u);
+            ASSERT_EQ(oldPbr->textures().size(), 4u);
+            EXPECT_TRUE(oldPbr->materialSlots().front().sourceDesc.normalTexture.valid());
+            EXPECT_TRUE(oldPbr->materialSlots().front().sourceDesc.metallicRoughnessTexture.valid());
+            const auto log = messages_.str();
+            EXPECT_NE(log.find("3x4, format 43"), std::string::npos);
+            EXPECT_NE(log.find("3x4, format 37"), std::string::npos);
+            EXPECT_NE(log.find("3x2, format 37"), std::string::npos);
+            released(ResourceType::MODEL, imported.virtualPath);
+
+            const auto pixels = [&](const Model::PreparedModel& model) {
+                auto draw = model.draws().front();
+                draw.model = glm::translate(glm::mat4(1), glm::vec3(0.5f, 0, 0.2f));
+                const std::array draws{draw};
+                return TextureGpuReview::captureFrame(renderer, {{384, 256}, {glm::mat4(1), glm::mat4(1)}, draws});
+            };
+            const auto before = pixels(*oldUnlit);
+            ASSERT_EQ(before.size(), 384u * 256u * 4u);
+
+            const auto diskPath = source_->resolve(imported.virtualPath);
+            std::ifstream input(diskPath, std::ios::binary);
+            std::string bytes{std::istreambuf_iterator<char>(input), {}};
+            input.close();
+            for (const auto& [from, to] : {std::pair<std::string_view, std::string_view>{
+                                              R"("baseColorTexture":{"index":0})",
+                                              R"("baseColorTexture":{"index":1})"},
+                                          {"0.25,0,0,1", "0.75,0,0,1"}})
+            {
+                const auto offset = bytes.find(from);
+                ASSERT_NE(offset, std::string::npos);
+                bytes.replace(offset, from.size(), to);
+            }
+            std::ofstream(diskPath, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            const auto reloaded = cache.reloadByPath(imported.virtualPath);
+            ASSERT_EQ(reloaded.size(), 2u);
+            EXPECT_EQ(cache.size(), 2u);
+            const auto current = cache.resolve(unlit);
+            EXPECT_NE(current, oldUnlit);
+            EXPECT_NE(cache.resolve(pbr), oldPbr);
+            EXPECT_NE(current->draws().front().model, oldUnlit->draws().front().model);
+            const auto after = pixels(*current);
+            ASSERT_EQ(after.size(), before.size());
+            EXPECT_NE(after, before);
+            EXPECT_EQ(pixels(*oldUnlit), before);
+            released(ResourceType::MODEL, imported.virtualPath);
         }
         cleanValidation();
     }

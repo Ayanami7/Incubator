@@ -1,4 +1,4 @@
-# ModelLoader：静态 glTF 与 OBJ 导入
+# ModelLoader：静态 glTF、GLB 与 OBJ 导入
 
 ## 入口与持有期
 
@@ -46,6 +46,10 @@ IOStream 累积短读，保留完整元素计数、seek/tell/size 语义；提�
 - 必需 bin/mtl 缺失、读取失败或请求了不存在的命名材质均使模型导入失败；正常 Exists 探测不记为加载失败。
 - 外部 PNG/JPEG 只保留规范化虚拟路径。后续准备入口负责读取贴图并报告缺失或解码失败。
 
+GLB 使用单文件输入，上限为 256 MiB。加载和外部导入共用容器校验，依次检查 2.0 文件头、JSON chunk 和可选 BIN chunk。
+缓冲及图像通过文件内的 BIN 和 bufferView 引用，图像 MIME 类型限定为 `image/png` 和 `image/jpeg`。
+模型加载阶段将材质引用的内嵌图像解码为模型自有 RGBA8 像素，同一张图像只解码一次。
+
 ## 支持范围
 
 固定依赖为 [Assimp v6.0.3](https://github.com/assimp/assimp/releases/tag/v6.0.3)，版本、许可证、下载哈希、
@@ -55,13 +59,14 @@ IOStream 累积短读，保留完整元素计数、seek/tell/size 语义；提�
 | 输入 | 行为 |
 |---|---|
 | 静态 `.gltf` 2.0 | 外部 bin 及 PNG/JPEG，保留源根、节点局部矩阵、部分及共享 aiMesh 关系 |
+| 静态 `.glb` 2.0 | 单文件，支持 BIN 中的几何及 PNG/JPEG，沿用同样的静态模型与材质校验 |
 | `.obj` + 外部 `.mtl` 及 PNG/JPEG | 三角化，保留导入器提供的根/物体节点，读取 Kd/map_Kd |
 | 几何 | position、UV0、局部 normal、tangent[4]（xyz 切线方向 + w 手性 $\pm 1$）、三角形列表；源顶点数量须能由 Assimp 表示，源索引转换为内部 uint32，越界索引拒绝 |
 | 无贴图材质 | 默认白色或显式 0–1 线性 RGB；无 UV 时补固定 `(0,0)` |
-| 纹理槽（基色 / 法线 / 金属粗糙度） | 外部 PNG/JPEG、UV0；glTF 额外解析 `normalTexture`（含 `scale`）、`metallicRoughnessTexture`、`metallicFactor`（省略取 `1.0`）与 `roughnessFactor`（省略取 `1.0`），OBJ 默认 `normalScale = 1.0`、`metallic = 0.0`、`roughness = 0.45`；贴图材质缺少 UV0、非 UV0、显式 UV 变换（包括恒等）或同槽多重贴图均拒绝 |
+| 纹理槽（基色 / 法线 / 金属粗糙度） | 外部 PNG/JPEG 或 GLB 内嵌 PNG/JPEG，使用 UV0；glTF 解析 `normalTexture`（含 `scale`）、`metallicRoughnessTexture`、`metallicFactor`（省略取 `1.0`）与 `roughnessFactor`（省略取 `1.0`）。OBJ 默认 `normalScale = 1.0`、`metallic = 0.0`、`roughness = 0.45`。贴图材质缺少 UV0、非 UV0、显式 UV 变换（包括恒等）或同槽多重贴图均拒绝 |
 | glTF 透明字段 | 仅缺省/OPAQUE；忽略基色 alpha，不用通用 opacity 反向拒绝 OPAQUE；MASK/BLEND/未知模式失败 |
 | OBJ 透明字段 | 最终 opacity 必须有限且等于 1，拒绝 map_d；d 直接赋值，Tr 赋 `1-Tr`，固定版本按最后声明覆盖 |
-| 其他特征 | 拒绝动画、骨骼、Morph、GLB/嵌入图像或缓冲、压缩几何/图片及未支持的必需扩展；仅支持无需额外实现的 KHR_materials_unlit 必需扩展 |
+| 其他特征 | 拒绝动画、骨骼、Morph、`data:` URI、压缩几何及未支持的必需扩展。必需扩展仅支持 `KHR_materials_unlit` |
 
 若源网格自带 `TANGENT` 与副切线，按双精度对顶点法线执行 Gram-Schmidt 正交化并求解手性 $w = \pm 1$；若无原生切线但具有 `UV0` 与法线，基于最终 V 翻转后的 `UV0` 与三角形索引累加切线/副切线并正交化；无 `UV0` 或退化几何输出零切线 `{0, 0, 0, 0}`。
 源 sampler 和双面参数不导入，不承诺完整环境贴图 IBL 外观；opaque、无剔除的显示条件保持。

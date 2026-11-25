@@ -4,6 +4,7 @@
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <sstream>
@@ -12,6 +13,7 @@
 
 #include "runtime/core/error/error.h"
 #include "runtime/core/path/path.h"
+#include "runtime/platform/fileio/file_handle.h"
 #include "runtime/resource/resource_id.h"
 
 namespace Incubator::Resource::Detail
@@ -38,10 +40,58 @@ namespace Incubator::Resource::Detail
             return value;
         }
 
-        void checkGltf(std::string_view path, std::string_view text)
+        void checkEmbeddedDependencies(const rapidjson::Value& source, uint32_t binLength)
+        {
+            uint32_t bufferLength = 0;
+            if (const auto* buffers = arrayMember(source, "buffers"); buffers && !buffers->Empty())
+            {
+                if (buffers->Size() != 1 || member((*buffers)[0], "uri"))
+                    throw Error::Exception(Error::Code::IO, "GLB requires a single embedded buffer without URI");
+                const auto* length = member((*buffers)[0], "byteLength");
+                if (!length || !length->IsUint() || length->GetUint() == 0 || length->GetUint() > binLength)
+                    throw Error::Exception(Error::Code::IO, "GLB buffer byteLength exceeds or lacks the BIN chunk");
+                bufferLength = length->GetUint();
+            }
+
+            const auto* views = arrayMember(source, "bufferViews");
+            if (views)
+            {
+                for (const auto& view : views->GetArray())
+                {
+                    const auto* buffer = member(view, "buffer");
+                    const auto* offset = member(view, "byteOffset");
+                    const auto* length = member(view, "byteLength");
+                    if (!buffer || !buffer->IsUint() || buffer->GetUint() != 0 ||
+                        (offset && !offset->IsUint()) || !length || !length->IsUint() || length->GetUint() == 0)
+                        throw Error::Exception(Error::Code::IO, "Invalid GLB bufferView byte range or buffer index");
+                    const auto start = offset ? offset->GetUint() : 0;
+                    if (start > bufferLength || length->GetUint() > bufferLength - start)
+                        throw Error::Exception(Error::Code::IO, "GLB bufferView exceeds the BIN buffer");
+                }
+            }
+            if (const auto* images = arrayMember(source, "images"))
+            {
+                for (const auto& image : images->GetArray())
+                {
+                    if (member(image, "uri"))
+                        throw Error::Exception(Error::Code::IO, "GLB images must be embedded without URI");
+                    const auto* view = member(image, "bufferView");
+                    if (!view || !view->IsUint() || !views || view->GetUint() >= views->Size())
+                        throw Error::Exception(Error::Code::IO, "Invalid GLB image bufferView index");
+                    const auto* mime = member(image, "mimeType");
+                    const auto type = mime && mime->IsString()
+                                          ? std::string_view(mime->GetString(), mime->GetStringLength())
+                                          : std::string_view{};
+                    if (type != "image/png" && type != "image/jpeg")
+                        throw Error::Exception(Error::Code::IO, "GLB image mimeType must be image/png or image/jpeg");
+                }
+            }
+        }
+
+        void checkGltf(std::string_view path, std::string_view text, bool isGlb = false, uint32_t binLength = 0)
         {
             rapidjson::Document source;
-            source.Parse(text.data(), text.size());
+            source.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(), text.size());
             if (source.HasParseError())
             {
                 throw Error::Exception(
@@ -102,11 +152,18 @@ namespace Incubator::Resource::Detail
                 if (reached != nodes->Size())
                     throw Error::Exception(Error::Code::IO, "Invalid glTF hierarchy cycle");
             }
-            const auto directory = Path::getParentPath(path);
-            for (const char* name : {"buffers", "images"})
+            if (isGlb)
             {
-                if (const auto* items = arrayMember(source, name))
+                checkEmbeddedDependencies(source, binLength);
+            }
+            else
+            {
+                const auto directory = Path::getParentPath(path);
+                for (const char* name : {"buffers", "images"})
                 {
+                    const auto* items = arrayMember(source, name);
+                    if (!items)
+                        continue;
                     for (const auto& item : items->GetArray())
                     {
                         const auto* uri = member(item, "uri");
@@ -118,7 +175,8 @@ namespace Incubator::Resource::Detail
                             directory, std::string_view(uri->GetString(), uri->GetStringLength()), true);
                         if (std::string_view(name) == "images" && !imageFormatFromPath(key))
                         {
-                            throw Error::Exception(Error::Code::IO, "Only external PNG or JPEG model images are supported");
+                            throw Error::Exception(Error::Code::IO,
+                                                   "Only external PNG or JPEG model images are supported");
                         }
                     }
                 }
@@ -306,6 +364,60 @@ namespace Incubator::Resource::Detail
             }
         }
     }  // namespace
+
+    void checkGlb(FileIO::FileHandle& file)
+    {
+        constexpr uint64_t MAX_FILE_SIZE = 256u * 1024u * 1024u;
+        const auto size = file.size();
+        if (size < 20 || size > MAX_FILE_SIZE)
+            throw Error::Exception(Error::Code::IO, "Invalid GLB file size (limit 256 MiB)");
+
+        const auto read = [&](std::span<uint8_t> bytes) {
+            while (!bytes.empty())
+            {
+                const auto count = file.read(bytes);
+                if (!count)
+                    throw Error::Exception(Error::Code::IO, "Incomplete GLB header or JSON read");
+                bytes = bytes.subspan(count);
+            }
+        };
+        const auto word = [](const uint8_t* bytes) {
+            return uint32_t(bytes[0]) | (uint32_t(bytes[1]) << 8u) | (uint32_t(bytes[2]) << 16u) |
+                   (uint32_t(bytes[3]) << 24u);
+        };
+        std::array<uint8_t, 12> header{};
+        read(header);
+        if (word(header.data()) != 0x46546c67u)
+            throw Error::Exception(Error::Code::IO, "Invalid GLB magic");
+        if (word(header.data() + 4) != 2)
+            throw Error::Exception(Error::Code::IO, "Only GLB version 2 is supported");
+        if (word(header.data() + 8) != size)
+            throw Error::Exception(Error::Code::IO, "GLB declared length does not match file size");
+
+        std::array<uint8_t, 8> chunk{};
+        read(chunk);
+        const auto jsonLength = word(chunk.data());
+        if (word(chunk.data() + 4) != 0x4e4f534au || !jsonLength || jsonLength % 4 || jsonLength > size - 20)
+            throw Error::Exception(Error::Code::IO, "Invalid GLB JSON chunk type or length");
+        std::string json(jsonLength, '\0');
+        read({reinterpret_cast<uint8_t*>(json.data()), json.size()});
+        if (json.find('\0') != std::string::npos)
+            throw Error::Exception(Error::Code::IO, "Invalid NUL in GLB JSON chunk");
+
+        const auto remaining = size - 20 - jsonLength;
+        uint32_t binLength = 0;
+        if (remaining != 0)
+        {
+            if (remaining < chunk.size())
+                throw Error::Exception(Error::Code::IO, "Truncated GLB BIN chunk header");
+            read(chunk);
+            binLength = word(chunk.data());
+            if (word(chunk.data() + 4) != 0x004e4942u || binLength % 4 ||
+                binLength != remaining - chunk.size())
+                throw Error::Exception(Error::Code::IO, "Invalid GLB BIN chunk type or length");
+        }
+        checkGltf({}, json, true, binLength);
+    }
 
     std::string decodeModelUri(std::string_view path)
     {
