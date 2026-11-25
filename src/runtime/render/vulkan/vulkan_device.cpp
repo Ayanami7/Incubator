@@ -4,7 +4,9 @@
 #include <array>
 #include <limits>
 #include <set>
+#include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "runtime/core/error/error.h"
@@ -20,8 +22,10 @@ namespace Incubator
         {
             namespace
             {
-                constexpr std::array<const char*, 2> REQUIRED_DEVICE_EXTENSIONS = {
-                    VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME};
+                constexpr std::array<const char*, 1> REQUIRED_DEVICE_EXTENSIONS = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+                constexpr std::array<VkFormat, 2> CANDIDATE_DEPTH_FORMATS = {VK_FORMAT_D32_SFLOAT,
+                                                                             VK_FORMAT_D16_UNORM};
+                constexpr VkFormat HDR_SCENE_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 
                 void checkVk(VkResult result, const char* operation)
                 {
@@ -33,7 +37,43 @@ namespace Incubator
                     }
                 }
 
-                bool supportsRequiredExtensions(VkPhysicalDevice physicalDevice)
+                const char* deviceTypeName(VkPhysicalDeviceType type) noexcept
+                {
+                    switch (type)
+                    {
+                        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+                            return "Discrete GPU";
+                        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+                            return "Integrated GPU";
+                        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+                            return "Virtual GPU";
+                        case VK_PHYSICAL_DEVICE_TYPE_CPU:
+                            return "CPU";
+                        case VK_PHYSICAL_DEVICE_TYPE_OTHER:
+                        default:
+                            return "Other";
+                    }
+                }
+
+                int deviceTypePriority(VkPhysicalDeviceType type) noexcept
+                {
+                    switch (type)
+                    {
+                        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+                            return 4;
+                        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+                            return 3;
+                        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+                            return 2;
+                        case VK_PHYSICAL_DEVICE_TYPE_CPU:
+                            return 1;
+                        case VK_PHYSICAL_DEVICE_TYPE_OTHER:
+                        default:
+                            return 0;
+                    }
+                }
+
+                std::vector<VkExtensionProperties> enumerateDeviceExtensions(VkPhysicalDevice physicalDevice)
                 {
                     uint32_t count = 0;
                     checkVk(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr),
@@ -46,13 +86,21 @@ namespace Incubator
                                 "vkEnumerateDeviceExtensionProperties");
                         extensions.resize(count);
                     }
+                    return extensions;
+                }
 
+                bool hasDeviceExtension(const std::vector<VkExtensionProperties>& extensions, const char* name)
+                {
+                    return std::any_of(extensions.begin(), extensions.end(), [name](const auto& ext) {
+                        return std::string_view(ext.extensionName) == name;
+                    });
+                }
+
+                bool supportsRequiredExtensions(const std::vector<VkExtensionProperties>& extensions)
+                {
                     for (const char* required : REQUIRED_DEVICE_EXTENSIONS)
                     {
-                        const bool found = std::any_of(extensions.begin(), extensions.end(), [required](const auto& ext) {
-                            return std::string_view(ext.extensionName) == required;
-                        });
-                        if (!found)
+                        if (!hasDeviceExtension(extensions, required))
                         {
                             return false;
                         }
@@ -79,6 +127,28 @@ namespace Incubator
                                                                       nullptr),
                             "vkGetPhysicalDeviceSurfacePresentModesKHR");
                     return presentModeCount != 0;
+                }
+
+                bool supportsRequiredFormats(VkPhysicalDevice physicalDevice)
+                {
+                    const bool hasDepth = std::any_of(
+                        CANDIDATE_DEPTH_FORMATS.begin(), CANDIDATE_DEPTH_FORMATS.end(),
+                        [physicalDevice](VkFormat format) {
+                            VkFormatProperties properties{};
+                            vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
+                            return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) !=
+                                   0;
+                        });
+                    if (!hasDepth)
+                    {
+                        return false;
+                    }
+
+                    VkFormatProperties hdrProperties{};
+                    vkGetPhysicalDeviceFormatProperties(physicalDevice, HDR_SCENE_FORMAT, &hdrProperties);
+                    constexpr VkFormatFeatureFlags requiredHdrFeatures =
+                        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+                    return (hdrProperties.optimalTilingFeatures & requiredHdrFeatures) == requiredHdrFeatures;
                 }
 
                 bool findQueueFamilies(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface,
@@ -128,33 +198,109 @@ namespace Incubator
                     return firstGraphics != VK_QUEUE_FAMILY_IGNORED && firstPresent != VK_QUEUE_FAMILY_IGNORED;
                 }
 
-                bool supportsRequiredFeatures(VkPhysicalDevice physicalDevice)
+                struct EvaluatedDevice
                 {
+                    VkPhysicalDevice device = VK_NULL_HANDLE;
+                    QueueFamilyIndices queues;
+                    VkPhysicalDeviceProperties properties{};
+                    bool swapchainMaintenance1 = false;
+                    bool portabilitySubset = false;
+                    PhysicalDeviceCandidate summary{};
+                };
+
+                bool evaluatePhysicalDevice(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface,
+                                            bool instanceSurfaceMaintenance1, EvaluatedDevice& evaluated,
+                                            std::string& rejectReason)
+                {
+                    vkGetPhysicalDeviceProperties(physicalDevice, &evaluated.properties);
+                    if (evaluated.properties.apiVersion < VK_API_VERSION_1_3)
+                    {
+                        rejectReason = fmt::format("API {}.{} < 1.3",
+                                                   VK_API_VERSION_MAJOR(evaluated.properties.apiVersion),
+                                                   VK_API_VERSION_MINOR(evaluated.properties.apiVersion));
+                        return false;
+                    }
+
+                    const auto extensions = enumerateDeviceExtensions(physicalDevice);
+                    if (!supportsRequiredExtensions(extensions))
+                    {
+                        rejectReason = "missing VK_KHR_swapchain";
+                        return false;
+                    }
+                    if (!findQueueFamilies(physicalDevice, surface, evaluated.queues))
+                    {
+                        rejectReason = "missing graphics or present queue family";
+                        return false;
+                    }
+                    if (!supportsSurface(physicalDevice, surface))
+                    {
+                        rejectReason = "no supported surface formats or present modes";
+                        return false;
+                    }
+                    if (!supportsRequiredFormats(physicalDevice))
+                    {
+                        rejectReason = "missing required depth or R16G16B16A16_SFLOAT HDR format support";
+                        return false;
+                    }
+
+                    const bool hasMaintenance1Ext =
+                        instanceSurfaceMaintenance1 &&
+                        hasDeviceExtension(extensions, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
                     VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance1{};
                     maintenance1.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
                     VkPhysicalDeviceVulkan13Features features13{};
                     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-                    features13.pNext = &maintenance1;
+                    features13.pNext = hasMaintenance1Ext ? &maintenance1 : nullptr;
                     VkPhysicalDeviceFeatures2 features{};
                     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
                     features.pNext = &features13;
                     vkGetPhysicalDeviceFeatures2(physicalDevice, &features);
-                    return features13.dynamicRendering == VK_TRUE && features13.synchronization2 == VK_TRUE &&
-                           maintenance1.swapchainMaintenance1 == VK_TRUE;
-                }
 
-                bool isSuitable(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, QueueFamilyIndices& indices,
-                                VkPhysicalDeviceProperties& properties)
-                {
-                    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
-                    if (properties.apiVersion < VK_API_VERSION_1_3 || !supportsRequiredExtensions(physicalDevice) ||
-                        !findQueueFamilies(physicalDevice, surface, indices) || !supportsSurface(physicalDevice, surface))
+                    if (features13.dynamicRendering != VK_TRUE || features13.synchronization2 != VK_TRUE)
                     {
+                        rejectReason = "missing dynamicRendering or synchronization2 feature";
                         return false;
                     }
-                    return supportsRequiredFeatures(physicalDevice);
+
+                    evaluated.device = physicalDevice;
+                    evaluated.swapchainMaintenance1 = hasMaintenance1Ext && maintenance1.swapchainMaintenance1 == VK_TRUE;
+#ifdef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
+                    evaluated.portabilitySubset =
+                        hasDeviceExtension(extensions, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+#endif
+                    evaluated.summary = PhysicalDeviceCandidate{
+                        evaluated.properties.deviceType, evaluated.properties.apiVersion,
+                        evaluated.queues.graphics == evaluated.queues.present, evaluated.swapchainMaintenance1,
+                        evaluated.queues.graphicsTimestampValidBits > 0 &&
+                            evaluated.properties.limits.timestampPeriod > 0.0f};
+                    return true;
                 }
             }  // namespace
+
+            std::optional<size_t> selectBestPhysicalDevice(std::span<const PhysicalDeviceCandidate> candidates) noexcept
+            {
+                if (candidates.empty())
+                {
+                    return std::nullopt;
+                }
+                const auto rank = [](const PhysicalDeviceCandidate& candidate) {
+                    return std::make_tuple(deviceTypePriority(candidate.deviceType),
+                                           candidate.unifiedGraphicsPresentQueue, candidate.swapchainMaintenance1,
+                                           candidate.graphicsTimestamps, candidate.apiVersion);
+                };
+                size_t bestIndex = 0;
+                auto bestRank = rank(candidates[0]);
+                for (size_t index = 1; index < candidates.size(); ++index)
+                {
+                    const auto currentRank = rank(candidates[index]);
+                    if (currentRank > bestRank)
+                    {
+                        bestRank = currentRank;
+                        bestIndex = index;
+                    }
+                }
+                return bestIndex;
+            }
 
             VulkanDevice::VulkanDevice(const VulkanInstance& instance, const GlfwSurface& surface)
             {
@@ -169,27 +315,57 @@ namespace Incubator
                 std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
                 checkVk(vkEnumeratePhysicalDevices(instance.handle(), &physicalDeviceCount, physicalDevices.data()),
                         "vkEnumeratePhysicalDevices");
+
+                auto logger = Log::Registry::get("render.vulkan");
+                std::vector<EvaluatedDevice> suitableDevices;
+                std::vector<PhysicalDeviceCandidate> summaries;
+                std::vector<std::string> rejections;
                 for (VkPhysicalDevice candidate : physicalDevices)
                 {
-                    QueueFamilyIndices candidateQueues;
-                    VkPhysicalDeviceProperties candidateProperties{};
-                    if (isSuitable(candidate, surface.handle(), candidateQueues, candidateProperties))
+                    EvaluatedDevice evaluated{};
+                    std::string rejectReason;
+                    if (evaluatePhysicalDevice(candidate, surface.handle(), instance.surfaceMaintenance1Enabled(),
+                                               evaluated, rejectReason))
                     {
-                        physicalDevice_ = candidate;
-                        queueFamilies_ = candidateQueues;
-                        properties_ = candidateProperties;
-                        break;
+                        logger.debug("Candidate Vulkan device '{}' ({}, API {}.{}, swapchainMaintenance1: {})",
+                                     evaluated.properties.deviceName, deviceTypeName(evaluated.properties.deviceType),
+                                     VK_API_VERSION_MAJOR(evaluated.properties.apiVersion),
+                                     VK_API_VERSION_MINOR(evaluated.properties.apiVersion),
+                                     evaluated.swapchainMaintenance1 ? "supported" : "unsupported");
+                        summaries.push_back(evaluated.summary);
+                        suitableDevices.push_back(evaluated);
+                    }
+                    else
+                    {
+                        const std::string detail =
+                            fmt::format("'{}' ({}): {}", evaluated.properties.deviceName,
+                                        deviceTypeName(evaluated.properties.deviceType), rejectReason);
+                        logger.debug("Rejected Vulkan device {}", detail);
+                        rejections.push_back(detail);
                     }
                 }
 
-                if (physicalDevice_ == VK_NULL_HANDLE)
+                const auto bestIndex = selectBestPhysicalDevice(summaries);
+                if (!bestIndex.has_value())
                 {
+                    std::string summary;
+                    for (size_t index = 0; index < rejections.size(); ++index)
+                    {
+                        if (index != 0)
+                            summary += "; ";
+                        summary += rejections[index];
+                    }
                     throw Error::Exception(
                         Error::Code::RENDER,
-                        "No suitable Vulkan 1.3 device: requires graphics/present queues, VK_KHR_swapchain, "
-                        "VK_EXT_swapchain_maintenance1, dynamicRendering, synchronization2, "
-                        "swapchainMaintenance1 and supported surface formats/present modes");
+                        fmt::format("No suitable Vulkan 1.3 device (enumerated {}): {}", physicalDevices.size(),
+                                    summary));
                 }
+
+                const EvaluatedDevice& selected = suitableDevices[*bestIndex];
+                physicalDevice_ = selected.device;
+                queueFamilies_ = selected.queues;
+                properties_ = selected.properties;
+                swapchainMaintenance1Enabled_ = selected.swapchainMaintenance1;
 
                 const std::set<uint32_t> uniqueFamilies = {queueFamilies_.graphics, queueFamilies_.present};
                 constexpr float QUEUE_PRIORITY = 1.0f;
@@ -210,30 +386,23 @@ namespace Incubator
                 enabledFeatures.dynamicRendering = VK_TRUE;
                 enabledFeatures.synchronization2 = VK_TRUE;
                 VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT enabledMaintenance1{};
-                enabledMaintenance1.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
-                enabledMaintenance1.swapchainMaintenance1 = VK_TRUE;
-                enabledFeatures.pNext = &enabledMaintenance1;
+                if (swapchainMaintenance1Enabled_)
+                {
+                    enabledMaintenance1.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+                    enabledMaintenance1.swapchainMaintenance1 = VK_TRUE;
+                    enabledFeatures.pNext = &enabledMaintenance1;
+                }
 
                 std::vector<const char*> enabledExtensions(REQUIRED_DEVICE_EXTENSIONS.begin(),
                                                            REQUIRED_DEVICE_EXTENSIONS.end());
-#ifdef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
-                uint32_t extensionCount = 0;
-                checkVk(vkEnumerateDeviceExtensionProperties(physicalDevice_, nullptr, &extensionCount, nullptr),
-                        "vkEnumerateDeviceExtensionProperties");
-                std::vector<VkExtensionProperties> extensions(extensionCount);
-                if (extensionCount != 0)
+                if (swapchainMaintenance1Enabled_)
                 {
-                    checkVk(vkEnumerateDeviceExtensionProperties(physicalDevice_, nullptr, &extensionCount,
-                                                                 extensions.data()),
-                            "vkEnumerateDeviceExtensionProperties");
-                    const bool hasPortabilitySubset =
-                        std::any_of(extensions.begin(), extensions.end(), [](const auto& extension) {
-                            return std::string_view(extension.extensionName) == VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
-                        });
-                    if (hasPortabilitySubset)
-                    {
-                        enabledExtensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
-                    }
+                    enabledExtensions.push_back(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+                }
+#ifdef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
+                if (selected.portabilitySubset)
+                {
+                    enabledExtensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
                 }
 #endif
 
@@ -250,13 +419,14 @@ namespace Incubator
                 vkGetDeviceQueue(device_, queueFamilies_.present, 0, &presentQueue_);
                 vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &memoryProperties_);
 
-                Log::Registry::get("render.vulkan").info(
-                    "Selected Vulkan device '{}' (API {}.{}; Dynamic Rendering, Synchronization2 and "
-                    "swapchainMaintenance1 enabled; "
-                    "graphics queue family {}, present queue family {})",
-                    properties_.deviceName, VK_API_VERSION_MAJOR(properties_.apiVersion),
-                    VK_API_VERSION_MINOR(properties_.apiVersion), queueFamilies_.graphics, queueFamilies_.present);
-                Log::Registry::get("render.vulkan").debug(
+                logger.info(
+                    "Selected Vulkan device '{}' ({}, API {}.{}; Dynamic Rendering and Synchronization2 enabled; "
+                    "swapchainMaintenance1: {}; graphics queue family {}, present queue family {})",
+                    properties_.deviceName, deviceTypeName(properties_.deviceType),
+                    VK_API_VERSION_MAJOR(properties_.apiVersion), VK_API_VERSION_MINOR(properties_.apiVersion),
+                    swapchainMaintenance1Enabled_ ? "enabled" : "fallback(queueWaitIdle)", queueFamilies_.graphics,
+                    queueFamilies_.present);
+                logger.debug(
                     "Device limits: maxImageDimension2D={}, maxUniformBufferRange={}, nonCoherentAtomSize={}",
                     properties_.limits.maxImageDimension2D, properties_.limits.maxUniformBufferRange,
                     properties_.limits.nonCoherentAtomSize);
@@ -303,6 +473,11 @@ namespace Incubator
             bool VulkanDevice::supportsGraphicsTimestamps() const noexcept
             {
                 return queueFamilies_.graphicsTimestampValidBits > 0 && properties_.limits.timestampPeriod > 0.0f;
+            }
+
+            bool VulkanDevice::supportsSwapchainMaintenance1() const noexcept
+            {
+                return swapchainMaintenance1Enabled_;
             }
 
             uint32_t VulkanDevice::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags required,

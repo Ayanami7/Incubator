@@ -82,10 +82,7 @@ namespace
 
     std::vector<const char*> requiredExtensions()
     {
-        auto r = GlfwSurface::requiredInstanceExtensions();
-        r.push_back(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
-        r.push_back(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
-        return r;
+        return GlfwSurface::requiredInstanceExtensions();
     }
 
     size_t countOccurrences(std::string_view messages, std::string_view value)

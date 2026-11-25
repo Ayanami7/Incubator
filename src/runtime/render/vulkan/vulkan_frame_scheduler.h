@@ -97,6 +97,7 @@ namespace Incubator
                 void destroySwapchainSync() noexcept;
                 const VulkanDevice& device_;
                 bool supportsTimestamps_ = false;
+                bool supportsPresentFence_ = false;
                 std::optional<CompletedViewportSample> lastCompletedViewportSample_;
                 uint64_t completedViewportSampleCount_ = 0;
                 std::array<FrameSlot, FRAME_COUNT> frames_{};

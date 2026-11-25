@@ -70,17 +70,7 @@ namespace Incubator
 
             std::vector<const char*> requiredRendererInstanceExtensions()
             {
-                std::vector<const char*> extensions = Vulkan::GlfwSurface::requiredInstanceExtensions();
-                const auto addIfMissing = [&extensions](const char* extension) {
-                    const bool alreadyPresent = std::any_of(
-                        extensions.begin(), extensions.end(),
-                        [extension](const char* current) { return std::string_view(current) == extension; });
-                    if (!alreadyPresent)
-                        extensions.push_back(extension);
-                };
-                addIfMissing(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
-                addIfMissing(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
-                return extensions;
+                return Vulkan::GlfwSurface::requiredInstanceExtensions();
             }
 
             Vulkan::ValidationMode toVulkanValidationMode(RendererValidationMode mode)

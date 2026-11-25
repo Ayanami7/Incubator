@@ -148,9 +148,34 @@ namespace Incubator
 
                 const bool enableValidation = validationRequested && validationAvailable;
                 std::vector<const char*> enabledExtensions = requiredExtensions;
+                const auto appendExtensionIfMissing = [&enabledExtensions](const char* extension) {
+                    if (std::none_of(enabledExtensions.begin(), enabledExtensions.end(),
+                                     [extension](const char* current) { return std::string_view(current) == extension; }))
+                    {
+                        enabledExtensions.push_back(extension);
+                    }
+                };
                 if (enableValidation)
                 {
-                    enabledExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+                    appendExtensionIfMissing(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+                }
+
+                // 仅当 surface_maintenance1 与其依赖扩展同时可用时启用，否则在设备与帧调度层自动回退。
+                const bool hasSurfaceCaps2 =
+                    hasExtension(availableExtensions, VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+                const bool hasSurfaceMaintenance1 =
+                    hasExtension(availableExtensions, VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
+                surfaceMaintenance1Enabled_ = hasSurfaceCaps2 && hasSurfaceMaintenance1;
+                if (surfaceMaintenance1Enabled_)
+                {
+                    appendExtensionIfMissing(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+                    appendExtensionIfMissing(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
+                }
+                else
+                {
+                    Log::Registry::get("render.vulkan")
+                        .debug("Optional instance extension VK_EXT_surface_maintenance1 is unavailable; "
+                               "swapchain presentation will fall back without present fences");
                 }
 
                 std::vector<const char*> enabledLayers;
@@ -200,8 +225,9 @@ namespace Incubator
                     }
                 }
 
-                Log::Registry::get("render.vulkan").info("Created Vulkan 1.3 instance (validation: {})",
-                                                          enableValidation ? "enabled" : "disabled");
+                Log::Registry::get("render.vulkan").info(
+                    "Created Vulkan 1.3 instance (validation: {}, surfaceMaintenance1: {})",
+                    enableValidation ? "enabled" : "disabled", surfaceMaintenance1Enabled_ ? "enabled" : "disabled");
                 Log::Registry::get("render.vulkan").debug(
                     "Instance setup: loader {}.{}.{}, {} enabled extensions, {} enabled layers",
                     VK_API_VERSION_MAJOR(loaderVersion), VK_API_VERSION_MINOR(loaderVersion),
@@ -233,6 +259,11 @@ namespace Incubator
             bool VulkanInstance::validationEnabled() const noexcept
             {
                 return debugMessenger_ != VK_NULL_HANDLE;
+            }
+
+            bool VulkanInstance::surfaceMaintenance1Enabled() const noexcept
+            {
+                return surfaceMaintenance1Enabled_;
             }
         }  // namespace Vulkan
     }  // namespace Render

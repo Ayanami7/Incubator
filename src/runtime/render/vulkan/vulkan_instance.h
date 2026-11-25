@@ -28,10 +28,13 @@ namespace Incubator
 
                 VkInstance handle() const noexcept;
                 bool validationEnabled() const noexcept;
+                /// @brief 判断实例是否已启用 VK_KHR_get_surface_capabilities2 与 VK_EXT_surface_maintenance1。
+                bool surfaceMaintenance1Enabled() const noexcept;
 
             private:
                 VkInstance instance_ = VK_NULL_HANDLE;
                 VkDebugUtilsMessengerEXT debugMessenger_ = VK_NULL_HANDLE;
+                bool surfaceMaintenance1Enabled_ = false;
             };
         }  // namespace Vulkan
     }  // namespace Render

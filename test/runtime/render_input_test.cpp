@@ -8,6 +8,7 @@
 
 #include "runtime/core/error/error.h"
 #include "runtime/render/vulkan/vulkan_binding_set.h"
+#include "runtime/render/vulkan/vulkan_device.h"
 #include "runtime/render/vulkan/vulkan_image.h"
 #include "runtime/render/vulkan/vulkan_shadow_target.h"
 #include "runtime/render/vulkan/vulkan_swapchain.h"
@@ -218,6 +219,65 @@ namespace
         EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, unavailable, 3), Error::Exception);
         EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image, 0), Error::Exception);
         EXPECT_THROW(VulkanImage::validateRgba8Support({4, 4}, limits, format, image, 4), Error::Exception);
+    }
+
+    TEST(VulkanDeviceSelectionTest, PrefersDiscreteOverIntegratedVirtualCpuAndFallsBackToSingleIntegratedGpu)
+    {
+        EXPECT_EQ(selectBestPhysicalDevice({}), std::nullopt);
+
+        const std::array singleIntegrated = {
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_API_VERSION_1_3, true, false, true},
+        };
+        EXPECT_EQ(selectBestPhysicalDevice(singleIntegrated), 0u);
+
+        const std::array mixed = {
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_CPU, VK_MAKE_API_VERSION(0, 1, 4, 0), true, true, true},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_MAKE_API_VERSION(0, 1, 4, 0), true, true, true},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU, VK_MAKE_API_VERSION(0, 1, 4, 0), true, true, true},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, VK_API_VERSION_1_3, false, false, false},
+        };
+        EXPECT_EQ(selectBestPhysicalDevice(mixed), 3u);
+
+        const std::array noDiscrete = {
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_OTHER, VK_MAKE_API_VERSION(0, 1, 4, 0), true, true, true},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_CPU, VK_MAKE_API_VERSION(0, 1, 4, 0), true, true, true},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU, VK_MAKE_API_VERSION(0, 1, 4, 0), true, true, true},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_API_VERSION_1_3, false, false, false},
+        };
+        EXPECT_EQ(selectBestPhysicalDevice(noDiscrete), 3u);
+    }
+
+    TEST(VulkanDeviceSelectionTest, BreaksSameTypeTiesByUnifiedQueueMaintenance1TimestampsApiVersionAndOrder)
+    {
+        const std::array queueTie = {
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_MAKE_API_VERSION(0, 1, 4, 0), false, true, true},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_API_VERSION_1_3, true, false, false},
+        };
+        EXPECT_EQ(selectBestPhysicalDevice(queueTie), 1u);
+
+        const std::array maintenanceTie = {
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_MAKE_API_VERSION(0, 1, 4, 0), true, false, true},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_API_VERSION_1_3, true, true, false},
+        };
+        EXPECT_EQ(selectBestPhysicalDevice(maintenanceTie), 1u);
+
+        const std::array timestampTie = {
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_MAKE_API_VERSION(0, 1, 4, 0), true, false, false},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_API_VERSION_1_3, true, false, true},
+        };
+        EXPECT_EQ(selectBestPhysicalDevice(timestampTie), 1u);
+
+        const std::array apiTie = {
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_API_VERSION_1_3, true, false, true},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_MAKE_API_VERSION(0, 1, 4, 0), true, false, true},
+        };
+        EXPECT_EQ(selectBestPhysicalDevice(apiTie), 1u);
+
+        const std::array identical = {
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_API_VERSION_1_3, true, false, true},
+            PhysicalDeviceCandidate{VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_API_VERSION_1_3, true, false, true},
+        };
+        EXPECT_EQ(selectBestPhysicalDevice(identical), 0u);
     }
 
 }  // namespace

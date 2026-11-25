@@ -10,11 +10,11 @@ Render 是 IncubatorRuntime 中的 Function 层模块，负责把应用准备的
 - Windows、单窗口、主线程录制；上传和绘制使用同一图形队列。
 - GPU 内存采用 Vulkan 原生逐 Buffer/Image 分配；当前不引入 VMA 或自研显存池。
 
-设备最低要求包括 Vulkan loader/设备 API 1.3、GLFW 所需 Surface 实例扩展、`VK_KHR_get_surface_capabilities2`、`VK_EXT_surface_maintenance1`，设备扩展 `VK_KHR_swapchain`、`VK_EXT_swapchain_maintenance1`，以及 `dynamicRendering`、`synchronization2`、`swapchainMaintenance1` feature 和图形/呈现队列。设备是否可用由这些能力共同决定，不能只检查 API 版本。
+设备最低要求包括 Vulkan loader/设备 API 1.3、GLFW 所需 Surface 实例扩展、设备扩展 `VK_KHR_swapchain`、`dynamicRendering` 与 `synchronization2` feature、图形/呈现队列，以及深度附件格式（`D32_SFLOAT` / `D16_UNORM`）和 HDR 离屏目标格式（`R16G16B16A16_SFLOAT`）。设备是否可用由这些能力共同决定，不能只检查 API 版本。`VK_KHR_get_surface_capabilities2`、`VK_EXT_surface_maintenance1` 与 `VK_EXT_swapchain_maintenance1` / `swapchainMaintenance1` 为可选能力：驱动支持时自动启用以使用呈现 Fence，不支持（如部分核显驱动）时优雅回退。
 
 调用方在初始化时选择验证模式 `Disabled`、`Optional` 或 `Required`，公共 Renderer 默认采用 `Disabled`。`Optional` 在缺少 Khronos Validation Layer 或 `VK_EXT_debug_utils` 时记录告警并继续；`Required` 缺少任一组件时初始化失败。
 
-`VulkanInstance` 请求 Vulkan 1.3，并在创建前确认 GLFW 必需扩展及 maintenance1 所需的 `VK_KHR_get_surface_capabilities2`、`VK_EXT_surface_maintenance1`。`GlfwSurface` 借用 `Window` 创建 Surface。`VulkanDevice` 按枚举顺序选择首个满足 API 1.3、`VK_KHR_swapchain`、`VK_EXT_swapchain_maintenance1`、图形与呈现队列、非空 Surface 格式/呈现模式，以及 Dynamic Rendering 和 Synchronization2 的物理设备；图形与呈现队列族相同时优先采用该组合，否则分别保存两个队列族。逻辑设备启用并输出这些必需功能信息。maintenance1 用于为呈现操作附加 Fence，确保交换链重建和关闭时可以等待呈现完成再回收旧资源。
+`VulkanInstance` 请求 Vulkan 1.3，在创建前确认 GLFW 必需扩展，并在 `VK_KHR_get_surface_capabilities2` 与 `VK_EXT_surface_maintenance1` 同时可用时自动启用两者。`GlfwSurface` 借用 `Window` 创建 Surface。`VulkanDevice` 筛选满足 API 1.3、`VK_KHR_swapchain`、图形与呈现队列、非空 Surface 格式/呈现模式、关键深度/HDR 格式以及 Dynamic Rendering 和 Synchronization2 的全部候选物理设备，并按确定性优先级（独立显卡 > 集成显卡 > 虚拟 GPU > CPU > 其他、图形与呈现同队列族、支持 `swapchainMaintenance1`、支持图形时间戳、API 版本更高）择优选取；无可用设备时汇总各候选淘汰原因。逻辑设备按实例与物理设备共同能力可选启用 `VK_EXT_swapchain_maintenance1` 并输出选中设备类型与回退状态。
 
 ## 模块依赖
 
@@ -43,7 +43,7 @@ Renderer 不依赖 Scene；旧 extent 跳帧、提交内借用及过期/跨 Rend
 | `Material` | 应用可复制的非拥有材质引用；实际对象复制颜色和采样参数，拥有 Sampler 并保持 Texture 依赖，参数与 Descriptor 不可变，由资源组、在途帧或 Renderer 保留。 |
 | `VulkanInstance` | 创建并拥有 Vulkan Instance 和可选 debug messenger；查询并启用 GLFW 所需实例扩展；销毁晚于 Surface。 |
 | Surface | `GlfwSurface` 由 Render 通过 GLFW 从借用的 Window 创建和销毁；依赖 Instance，Window 必须活到 Surface 销毁之后。 |
-| `VulkanDevice` | 选择支持图形、呈现、Swapchain、Dynamic Rendering 和 Synchronization2 的首个物理设备；创建逻辑设备和队列，查询内存类型并执行有 Fence 的一次性上传提交；销毁前先清理设备子对象。 |
+| `VulkanDevice` | 筛选满足图形、呈现、Swapchain、关键格式、Dynamic Rendering 和 Synchronization2 的物理设备并按优先级择优（可选启用 `VK_EXT_swapchain_maintenance1`）；创建逻辑设备和队列，查询内存类型并执行有 Fence 的一次性上传提交；销毁前先清理设备子对象。 |
 | `VulkanSwapchain` | 拥有交换链及图像视图等呈现资源；依赖 Device 与 Surface。 |
 | `VulkanFrameScheduler` | 管理帧槽、提交同步，并协调 Swapchain 图像生命周期；录制交由 `VulkanCommandList`。 |
 | `VulkanPipeline` | 拥有图形 Pipeline 与 PipelineLayout；ShaderModule 仅在创建 Pipeline 期间存在。 |
@@ -74,7 +74,7 @@ UI 字体从 `<cwd>/assets/fonts/NotoSansSC-Regular.otf` 经平台 FileIO 读取
 
 `ShaderResource` 拥有 CPU 字载荷；应用将资源借给 `prepareSceneResources`，Renderer 复制载荷后应用即可释放 CPU Resource。Vulkan Pipeline 创建 ShaderModule 时借用 Renderer 的字数组，Pipeline 创建完成后临时 ShaderModule 即销毁；Renderer 保留自己的 CPU 副本以支持交换链格式变化后的 Pipeline 重建。CPU Resource 的 release 不决定 GPU Pipeline 的销毁时机。首次窗口零尺寸时延后创建 Pipeline，恢复后使用已复制的字数组。
 
-交换链按 Surface 能力选取格式和 extent，present mode 使用 FIFO；图形与呈现队列族不同则使用 concurrent sharing。帧缓冲尺寸或 Surface extent 为零时跳过绘制并保留重建请求，恢复有效尺寸后重新尝试。成功重建会记录尺寸、格式、图像数和原因；`OUT_OF_DATE` 与 `SUBOPTIMAL` 会记录状态并安排重建。重建前等待所有帧提交 Fence 及呈现 Fence，再创建新交换链并回收旧 image view、交换链图像同步对象。关闭时也等待呈现 Fence 后再销毁同步对象和交换链。Render 设备要求 `VK_EXT_swapchain_maintenance1`，以获得明确的呈现完成回收依据。
+交换链按 Surface 能力选取格式和 extent，present mode 使用 FIFO；图形与呈现队列族不同则使用 concurrent sharing。帧缓冲尺寸或 Surface extent 为零时跳过绘制并保留重建请求，恢复有效尺寸后重新尝试。成功重建会记录尺寸、格式、图像数和原因；`OUT_OF_DATE` 与 `SUBOPTIMAL` 会记录状态并安排重建。重建前等待所有帧提交 Fence 及呈现完成，再创建新交换链并回收旧 image view、交换链图像同步对象；关闭时也等待呈现完成后再销毁同步对象和交换链。驱动支持 `VK_EXT_swapchain_maintenance1` 时通过呈现 Fence 精确等待，不支持时自动回退为 `vkQueueWaitIdle(presentQueue)`。
 
 ## 外部纹理与颜色约定
 

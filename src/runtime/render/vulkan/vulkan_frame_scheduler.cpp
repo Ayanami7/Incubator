@@ -29,7 +29,9 @@ namespace Incubator
             }  // namespace
 
             VulkanFrameScheduler::VulkanFrameScheduler(const VulkanDevice& device)
-                : device_(device), supportsTimestamps_(device.supportsGraphicsTimestamps())
+                : device_(device),
+                  supportsTimestamps_(device.supportsGraphicsTimestamps()),
+                  supportsPresentFence_(device.supportsSwapchainMaintenance1())
             {
                 try
                 {
@@ -91,13 +93,20 @@ namespace Incubator
 
             VulkanFrameScheduler::~VulkanFrameScheduler()
             {
-                for (size_t index = 0; index < presentFences_.size(); ++index)
+                if (supportsPresentFence_)
                 {
-                    if (presentPending_[index])
+                    for (size_t index = 0; index < presentFences_.size(); ++index)
                     {
-                        vkWaitForFences(device_.handle(), 1, &presentFences_[index], VK_TRUE,
-                                        std::numeric_limits<uint64_t>::max());
+                        if (presentPending_[index])
+                        {
+                            vkWaitForFences(device_.handle(), 1, &presentFences_[index], VK_TRUE,
+                                            std::numeric_limits<uint64_t>::max());
+                        }
                     }
+                }
+                else
+                {
+                    vkQueueWaitIdle(device_.presentQueue());
                 }
                 vkDeviceWaitIdle(device_.handle());
                 destroySwapchainSync();
@@ -123,7 +132,8 @@ namespace Incubator
                 for (FrameSlot& frame : frames_)
                     frame.depthAttachment.reset();
                 presentReady_.resize(imageCount, VK_NULL_HANDLE);
-                presentFences_.resize(imageCount, VK_NULL_HANDLE);
+                if (supportsPresentFence_)
+                    presentFences_.resize(imageCount, VK_NULL_HANDLE);
                 presentPending_.assign(imageCount, false);
                 imageOwners_.assign(imageCount, VK_NULL_HANDLE);
                 VkSemaphoreCreateInfo semaphoreInfo{};
@@ -136,8 +146,11 @@ namespace Incubator
                     {
                         checkVk(vkCreateSemaphore(device_.handle(), &semaphoreInfo, nullptr, &presentReady_[index]),
                                 "vkCreateSemaphore");
-                        checkVk(vkCreateFence(device_.handle(), &fenceInfo, nullptr, &presentFences_[index]),
-                                "vkCreateFence");
+                        if (supportsPresentFence_)
+                        {
+                            checkVk(vkCreateFence(device_.handle(), &fenceInfo, nullptr, &presentFences_[index]),
+                                    "vkCreateFence");
+                        }
                     }
                     for (FrameSlot& frame : frames_)
                     {
@@ -237,6 +250,12 @@ namespace Incubator
 
             void VulkanFrameScheduler::waitForPresentation()
             {
+                if (!supportsPresentFence_)
+                {
+                    checkVk(vkQueueWaitIdle(device_.presentQueue()), "vkQueueWaitIdle(present)");
+                    std::fill(presentPending_.begin(), presentPending_.end(), false);
+                    return;
+                }
                 for (size_t index = 0; index < presentFences_.size(); ++index)
                 {
                     if (presentPending_[index])
@@ -286,7 +305,7 @@ namespace Incubator
                                             std::numeric_limits<uint64_t>::max()),
                             "vkWaitForFences(image owner)");
                 }
-                if (presentPending_[imageIndex])
+                if (supportsPresentFence_ && presentPending_[imageIndex])
                 {
                     checkVk(vkWaitForFences(device_.handle(), 1, &presentFences_[imageIndex], VK_TRUE,
                                             std::numeric_limits<uint64_t>::max()),
@@ -336,12 +355,15 @@ namespace Incubator
                 imageOwners_[imageIndex] = frame.completionFence;
 
                 VkSwapchainPresentFenceInfoEXT presentFenceInfo{};
-                presentFenceInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT;
-                presentFenceInfo.swapchainCount = 1;
-                presentFenceInfo.pFences = &presentFences_[imageIndex];
                 VkPresentInfoKHR presentInfo{};
                 presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-                presentInfo.pNext = &presentFenceInfo;
+                if (supportsPresentFence_)
+                {
+                    presentFenceInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT;
+                    presentFenceInfo.swapchainCount = 1;
+                    presentFenceInfo.pFences = &presentFences_[imageIndex];
+                    presentInfo.pNext = &presentFenceInfo;
+                }
                 presentInfo.waitSemaphoreCount = 1;
                 presentInfo.pWaitSemaphores = &presentReady_[imageIndex];
                 const VkSwapchainKHR swapchainHandle = swapchain.handle();
