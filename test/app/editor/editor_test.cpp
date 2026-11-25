@@ -235,7 +235,7 @@ namespace
             fs::copy(previous_ / "assets/ibl", sandbox_ / "assets/ibl",
                      fs::copy_options::recursive | fs::copy_options::overwrite_existing);
             fs::create_directories(sandbox_ / "assets/scenes");
-            for (const char* file : {"mixed.json", "shadows.json", "pbr-showcase.json"})
+            for (const char* file : {"mixed.json", "shadows.json", "pbr-showcase.json", "lighting-showcase.json"})
                 fs::copy_file(previous_ / "assets/scenes" / file, sandbox_ / "assets/scenes" / file,
                               fs::copy_options::overwrite_existing);
         }
@@ -4221,6 +4221,64 @@ namespace
                              break;
                          }
                      }
+                 },
+                 [&](auto& app) { editor.ui(app); },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            fs::remove(pngPath);
+            EXPECT_TRUE(done);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, LightingShowcaseOpensWithCsmLocalLightsSkyboxAcesBloomAndExportsPngUnderValidation)
+    {
+        copyShowcaseModels();
+        {
+            Editor::EditorApp session(options(false, 1280, 800));
+            Editor::EditorScene editor;
+            int step = 0;
+            bool done = false;
+            const fs::path pngPath = "lighting-showcase-capture.png";
+            fs::remove(pngPath);
+
+            session.run(
+                {[&](auto& app) {
+                     editor.initialize(app, "assets/scenes/lighting-showcase.json");
+                     app.shadowSettings().enabled = true;
+                     app.shadowSettings().cascadeCount = 3u;
+                     app.shadowSettings().resolution = 2048u;
+                     app.shadowSettings().fitToBounds = true;
+                     app.shadowSettings().normalBias = 0.02f;
+                     app.iblEnabled() = true;
+                     ASSERT_EQ(app.scene().entities().size(), 4u);
+                     EXPECT_EQ(app.scene().lighting().localLights.size(), 2u);
+                     EXPECT_EQ(app.scene().display().toneMapping, Render::ToneMappingMode::AcesFilmic);
+                     EXPECT_TRUE(app.scene().display().skyboxEnabled);
+                     EXPECT_TRUE(app.scene().display().bloomEnabled);
+                     editor.select(app.scene().entities()[1].id);
+                 },
+                 [&](auto& app, const auto&) {
+                     if (app.sceneExtent().width == 0u || app.sceneExtent().height == 0u)
+                         return;
+                     if (++step < 2)
+                         return;
+                     ASSERT_TRUE(editor.exportScreenshot(app, pngPath)) << editor.message();
+                     ASSERT_TRUE(fs::exists(pngPath));
+                     auto io = FileIO::createPlatformFileIO();
+                     Resource::AssetSource cwdSource(*io, fs::current_path());
+                     Resource::TextureLoader loader(cwdSource);
+                     const auto loaded = loader.load(
+                         Resource::ResourceId::fromPath(Resource::ResourceType::TEXTURE, pngPath.string()),
+                         pngPath.string());
+                     const auto* tex = dynamic_cast<const Resource::TextureResource*>(loaded.get());
+                     ASSERT_NE(tex, nullptr);
+                     EXPECT_EQ(tex->width(), app.sceneExtent().width);
+                     EXPECT_EQ(tex->height(), app.sceneExtent().height);
+                     done = true;
+                     app.requestExit();
                  },
                  [&](auto& app) { editor.ui(app); },
                  [&](auto& app) { editor.cancelInteraction(app); },

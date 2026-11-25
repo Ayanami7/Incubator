@@ -13,7 +13,7 @@ Set-Location 'E:/Project/VScode/Incubator/build'
 
 工作目录必须是对应构建目录。目标依赖 `incubator_shaders`、`incubator_models`、`incubator_scenes` 和 `incubator_config`，
 复用 `<build>/assets/` 中的 SPIR-V、Avocado glTF/bin/PNG、Utah Teapot OBJ 和自有地面 OBJ/MTL。
-默认展示场景为 `assets/scenes/shadows.json`，`assets/scenes/mixed.json` 与 `assets/scenes/pbr-showcase.json` 一并部署并可通过 `File → Open` 打开。
+默认展示场景为 `assets/scenes/shadows.json`，`assets/scenes/mixed.json`、`assets/scenes/pbr-showcase.json` 与 `assets/scenes/lighting-showcase.json` 一并部署并可通过 `File → Open` 打开。
 Visual Studio 的目标调试工作目录也设为 `${CMAKE_BINARY_DIR}`。
 VS Code 选择 `Debug` 调试项启动 Editor，cwd 为 build；`Demo` 调试项启动最小 Demo。
 
@@ -44,7 +44,8 @@ Teapot 位于 `(1.35,-0.259375,0)`、缩放 0.075，两者落在地面上。
 相机位于 `(4,2.5,5.5)` 并观察 `(0,-0.2,0)`，垂直 FOV 45°、近/远裁面 0.1/100。
 原 `mixed.json` 保留无地面的两个模型和 `(0,0,6)` 相机，兼容原文件编辑流程。
 `pbr-showcase.json` 使用 `minorVersion: 1` 并填写实体名称（`Avocado Cut`、`Avocado Peel` 与 `Ground`），全部采用 `PBR` 着色、`FullChain` mip 与线性采样，配合 `(0.2,0.62,3.45)` 机位、侧光、`Reinhard` / `+0.15 EV` 曝光及深灰背景展示果皮、切面与接触阴影。
-启动时通过既有场景文件读取和重建接口恢复实体、Camera、Lighting 和背景，不再固定创建两个 Avocado。
+`lighting-showcase.json` 使用 `minorVersion: 3` 综合展示 `Avocado Hero`、`Teapot Metallic`、`Avocado Rough` 与 `Ground` 四个实体，组合方向主光、1 盏暖色 `point` 光源、1 盏冷色 `spot` 光源以及 `ACES Filmic`、`Skybox` 和 `Bloom` 显示管线效果。
+启动时通过既有场景文件读取和重建接口恢复实体、Camera、Lighting、Display 和背景，不再固定创建两个 Avocado。
 启动场景缺失、内容无效或模型准备失败时关闭会话并返回 1。
 模型保留源节点层级、基色纹理和单位；面板创建对象时使用上述展示缩放。
 两种模型准备时均显式选择 `TextureMipMode::FullChain` 和线性 min/mag/mip 过滤，寻址保持 Repeat。
@@ -69,6 +70,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | Assets：Reload | 从磁盘重新读取指定模型及所需贴图，同步更新已缓存变体、场景实体和 Undo/Redo 快照 |
 | Assets：Clear unused models | 显式移出没有外部模型持有的缓存项；待 Undo/Redo 恢复的历史引用与在途 GPU 资源保持有效，覆盖/淘汰或打开场景清空历史栈后可回收 |
 | File：Save / Save As / Open | Save 写当前文件（无关联时转 Save As）；Open 和 Save As 弹窗内置可视化 `.json` 场景文件浏览器（自动扫描 `assets/scenes` 及当前关联目录，目录缺失静默返回空列表，单击填充路径、Open 下双击直接确认），同时支持手动输入路径；成功后清除脏标记并清空历史栈；取消和失败保留原关联与当前历史 |
+| File：Export Screenshot... | 弹出系统保存对话框并调用 `Renderer::captureLastSceneViewport` 将最近完成的离屏场景图像（含 HDR/阴影/后处理，不含 ImGui 界面）保存为 PNG |
 | 未保存修改确认 | 文档处于脏状态（状态栏显示 `*`）时触发 `Open`、`Clear scene`、`Exit` 或窗口关闭按钮将弹出确认弹窗，支持 `Save`（无关联时衔接 `Save As` 成功再继续，取消则中止原操作）、`Discard` 与 `Cancel` |
 | Edit：Undo / Redo / Duplicate / Delete | 撤销/重做最近编辑动作（上限 64 步，回退至已保存修订号自动清除脏标记）；支持窗口级 `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z`（无需视口聚焦，文本输入、弹窗及活动事务期间不误触发） |
 | Visible | 显示/隐藏当前实体，保留其变换 |
@@ -85,7 +87,8 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | View → Material 面板 | 可停靠材质检查器，跟随选中实体并按源模型材质槽选择；只读展示当前槽位源材质的 `Alpha`（`Opaque` / `Mask (cutoff)` / `Blend (baseAlpha)`）、`Double-sided` 与 `Emissive` 状态，支持编辑 PBR 材质的基色染色、粗糙度与金属度（各自独立支持 `Texture x Factor` 与 `Fixed value` 模式）及单槽/全部重置；连续拖动折叠为 1 步 Undo，源 Unlit 保持导入行为，更换模型自动清理覆盖，随场景 JSON 1.2 保存并在打开时重建 GPU 引用（覆盖完整继承源材质透明度、双面和自发光属性） |
 | View：性能统计 | 显示 `CPU frame`（主循环 `FrameTime::delta`，毫秒）、`GPU viewport`（最近完成视口帧 GPU 总耗时，毫秒）、`Scene draws`（主场景绘制项数）与 `Shadow draws`（阴影绘制项数，关闭时为 0）；首帧等待完成样本显示 `--`，队列不支持时间戳时 GPU 耗时显示 `Unavailable` |
 | Background | 修改背景颜色（调色盘或面板改动合并为单步 Undo） |
-| Shadows / Receiver depth bias | 开关阴影预览，调整接收偏移；仅本会话有效，不写入场景文件，不置脏也不进入 Undo 栈 |
+| Shadows / CSM / Depth & Normal bias | 开关阴影预览与 3 级 CSM，切换分辨率（`1024`/`2048`）、场景包围盒自适应与深度/法线偏移；仅本会话有效，不写入场景文件，不置脏也不进入 Undo 栈 |
+| Local Lights | 增删、开关与编辑最多 16 盏局部光源（`Point` / `Spot`）；滑块改动折叠为单步 Undo，增删与开关立即入栈，随 `1.3` 场景保存 |
 | Exit | 请求会话退出，也可直接关闭窗口（均受未保存修改拦截保护） |
 
 启动时仅准备场景实际引用的模型；创建实体时按需准备所选模型，默认名称取模型文件名去掉扩展名。
@@ -116,7 +119,7 @@ GLB 按单文件复制，模型及贴图从该文件内读取。
 普通变换仍可撤销和重做，文档脏状态沿用原修订号。连续编辑事务会阻止重载。
 若资源仍被 CPU 持有、文件读取失败或现有材质覆盖与新模型不兼容，Editor 会显示原因并保留当前模型与历史。
 
-保存包含所有实体（包括隐藏和无模型实体）、模型来源与准备配置、Camera、Lighting、Display（`toneMapping` 与 `exposureEv`）和背景。加载成功后替换场景、清除选择并同步相机控制器；失败时显示错误并保留原场景。保存覆盖文件，打开后的写入失败可能留下部分文件。
+保存包含所有实体（包括隐藏和无模型实体）、模型来源与准备配置、Camera、Lighting（方向主光与最多 16 盏 `localLights`）、Display（`toneMapping`、`exposureEv`、`skyboxEnabled`、`bloomEnabled`、`bloomThreshold`、`bloomIntensity`）和背景，并按实际用到的特性自动选择 `1.1`、`1.2` 或 `1.3` 格式写出。加载成功后替换场景、清除选择并同步相机控制器；失败时显示错误并保留原场景。保存覆盖文件，打开后的写入失败可能留下部分文件。
 
 保存成功后当前文件关联更新为目标文件；待操作路径单独保存，编辑它不改变当前文件，取消或失败也不改变关联。
 多个场景使用不同文件路径分别保存，一次只打开一个 Scene。相对保存路径按 cwd 解析；
@@ -126,8 +129,11 @@ GLB 按单文件复制，模型及贴图从该文件内读取。
 两种正式模型显式使用 Lambert 漫反射预览，继续采用 FullChain 和线性 min/mag/mip；
 源 Unlit 材质始终不受光。默认阴影场景的传播方向为 `(-0.6,-1,-0.4)`、
 线性颜色 `(1,0.95,0.9)`、强度 1、环境系数 0.15；GPU 帧参数会归一化方向。
-Scene settings 折叠区提供 Light yaw/pitch、Color (linear)、Intensity、Ambient，以及 Tone mapping（`##display-tone-mapping`：`Off` / `Reinhard`）和 Exposure (EV)（`##display-exposure-ev`：`[-8, +8]` EV）。
-模式切换立即记 1 步撤销历史；`Off` 模式下禁用曝光滑块并保留原 EV 值供重新开启 `Reinhard` 时恢复；曝光拖动实时更新画面并在结束时折叠为单步历史。
+Scene settings 折叠区提供以下几组设置：
+
+- 阴影预览：`Shadows`、`Depth bias`、`3-cascade CSM`（`##shadow-csm`）、`Shadow size`（`##shadow-res`：`1024` / `2048`）、`Fit scene bounds`（`##shadow-fit`）与 `Normal bias`（`##shadow-normal-bias`）；以上开关与参数仅本会话有效，不写入场景文件、不置脏也不进入 Undo 栈。
+- 方向主光与局部光源：提供方向光 Yaw/Pitch、Color (linear)、Intensity、Ambient，以及 `Local Lights (N / 16)` 面板（`Add Point`、`Add Spot`、单灯启用与移除、位置/颜色/强度/范围和聚光方向/内外锥角）；连续滑块通过 `Lighting` 面板事务折叠为单步 Undo，增删与启用切换立即入栈。
+- Display：提供 Tone mapping（`##display-tone-mapping`：`Off` / `Reinhard` / `ACES Filmic`）、Exposure (EV)（`##display-exposure-ev`：`[-8, +8]` EV）、Skybox（`##display-skybox`）与 Bloom（`##display-bloom`、`##display-bloom-threshold`、`##display-bloom-intensity`）；模式和开关切换立即记 1 步撤销历史，`Off` 模式下禁用曝光滑块并保留原 EV 值供重新开启色调映射时恢复，连续拖动实时更新画面并在结束时折叠为单步历史。
 角度产生非零方向，颜色控件显示 `[0,1]` 线性 RGB，强度范围为 `[0,4]`，环境系数为 `[0,1]`。
 强度 0 只关闭直接光，环境系数也为 0 时普通 Lambert 材质为黑色；清屏与 UI 不受灯光影响。
 清空实体保留当前灯光；打开场景文件读取其中的灯光。相机操作和聚焦不会改变灯光。
@@ -138,7 +144,7 @@ Scene settings 折叠区提供 Light yaw/pitch、Color (linear)、Intensity、Am
 ## 实现与持有期
 
 `main.cpp` 创建 FileIO、读取启动配置，将同一 FileIO 交给 `EditorApp`，并以启动场景路径创建主循环回调；
-`EditorApp::run()` 无参入口使用默认场景路径。`editor_controller.cpp` 统一承载文档工作流与未保存拦截、场景文件枚举、资产浏览、面板跨通道连续事务、视口 Gizmo/相机交互、快捷键判定与纯 C++ 视口叠加图元组装；`editor_scene.cpp` 与 `editor_theme.cpp` 仅负责暗灰工作室主题、ImGui 控件绘制、输入快照采集及向 `EditorController` 转发；`editor_operations.cpp` 实现编辑、脏状态跟踪、历史快照与保存加载；`gizmo.cpp` 实现视口三轴 Gizmo 投影、命中与射线求解。
+`EditorApp::run()` 无参入口使用默认场景路径。`editor_controller.cpp` 统一承载文档工作流与未保存拦截、场景文件枚举、资产浏览、面板跨通道连续事务、视口 Gizmo/相机交互、快捷键判定与纯 C++ 视口叠加图元组装；`editor_scene.cpp` 与 `editor_theme.cpp` 仅负责暗灰工作室主题、ImGui 控件绘制、输入快照采集及向 `EditorController` 转发；`editor_operations.cpp` 实现编辑、脏状态跟踪、历史快照与保存加载；`gizmo.cpp` 实现视口三轴 Gizmo 投影、命中与射线求解；`viewport_debug_lines.cpp` 按开关组装地面网格、选中包围盒与局部光源 3D 线框提交到 `FrameInput::debugLines`；`viewport_screenshot.cpp` 封装基于 `Renderer::captureLastSceneViewport` 的视口 RGBA8 PNG 编码与导出流程。
 `EditorController` 与 `EditorOperations`（组合 `EditorSelection`，连同 `gizmo.h` 与 `app/common/viewport_input.h` 头文件均不依赖 ImGui）维护会话模型复用表、唯一选中 `EntityId`、当前文件关联、基于操作/事务修订号的脏状态判定以及有界（64 步）轻量值快照栈（撤销通过 `Scene::restoreEntities` 还原既有 `EntityId` 与共享 `PreparedModel`，不触发重新读盘或 GPU 上传），不持有 Scene 或实体指针；`EditorScene` 仅作为薄 ImGui 视图与布局提交层，不复制第二份 Scene 或实体状态。实体唯一 Transform、可见性、Camera 及光照由 Scene 保存。角度、TRS 与灯光编辑值在本轮 UI 中临时取得，连续编辑在 `beginTransaction` / `commitTransaction` 内折叠为单步历史；未提交的面板事务在打开/清空/退出/关闭前会先结算进脏状态，以免绕过未保存拦截；拖拽/窗口失焦调用 `cancelTransaction` 回滚起点。
 创建/删除/清空时不跨结构变更保存实体指针；从文件加载成功后清除旧选择并清空历史栈。操作规则、历史淘汰、纯 CPU 裁剪/投影与 Gizmo 求解由单元测试覆盖，面板事务、快捷键、`W`/`E`/`R` 模式切换、叠加绘制与视口交互由真实 ImGui 输入批次集成测试覆盖，独立进程保存与恢复（含 Gizmo 编辑与撤销重做后持久化）由 `editor_scene_restart` 验证，互不替代。
 
@@ -209,9 +215,11 @@ Camera 与实体状态提取场景并合成 UI。视口关闭、折叠或没有�
 
 `Properties → View` 同时展示由 `AppSession::lastFrameTime()` 与 `Renderer::lastViewportStats()` 提供的四项会话诊断指标：`CPU frame` 取主循环最近一帧 `FrameTime::delta`（毫秒）；`GPU viewport`、`Scene draws` 与 `Shadow draws` 来自同一份最近已完成的离屏视口帧槽样本（从可选阴影深度 Pass 前到显示 Pass 或 FXAA 结束，止于 ImGui 合成之前）。首帧样本未完成前显示 `--`；图形队列不支持时间戳时 `GPU viewport` 显示 `Unavailable`，`CPU frame` 与绘制项数仍正常更新。
 
+`Properties → View` 还提供三项仅本会话有效的 3D 调试线开关：`Grid`（`##debug-grid`，地面参考网格，默认开启）、`Selection bounds`（`##debug-selection-bounds`，选中实体的世界空间包围盒线框，默认开启）与 `Light gizmos`（`##debug-light-gizmos`，局部光源线框指示，默认开启）。对应线段由 `viewport_debug_lines.cpp` 生成后经 `FrameInput::debugLines` 传入独立视口渲染（带深度测试、位于显示/FXAA 之后且先于 ImGui），切换不置脏也不写入场景文件。
+
 ## 停靠工作区与文件关联
 
-默认窗口及缺省配置为 1920×1080，显式窗口尺寸仍有效。顶部菜单同时提供 File（打开、保存、另存为、退出）、Edit（Undo / Redo / Duplicate / Delete）与 View（场景视口开关、Material 面板开关、Restore default layout）。顶部及状态栏在文档处于脏状态时显示 `*` 标记；触发打开、清空、退出或直接点击窗口关闭按钮会经 `AppSession` 的 `closeRequested` 拦截并确认保存或放弃，保证与输入窗口 `Enter` / `Escape` 及活动面板事务一致。Objects / Assets 作为左侧标签页共用高度，Scene 居中，Properties 与 Material 停靠在右侧；对象列表使用左侧剩余高度，属性面板依次提供选中对象、观察操作和场景设置，空间不足时纵向滚动。底部仅保留一行当前文件与操作结果，错误显示为红色，悬停可查看完整路径与消息。面板可以停靠与重排，恢复默认布局不改变场景。
+默认窗口及缺省配置为 1920×1080，显式窗口尺寸仍有效。顶部菜单同时提供 File（打开、保存、另存为、导出视口截图、退出）、Edit（Undo / Redo / Duplicate / Delete）与 View（场景视口开关、Material 面板开关、Restore default layout）。顶部及状态栏在文档处于脏状态时显示 `*` 标记；触发打开、清空、退出或直接点击窗口关闭按钮会经 `AppSession` 的 `closeRequested` 拦截并确认保存或放弃，保证与输入窗口 `Enter` / `Escape` 及活动面板事务一致。Objects / Assets 作为左侧标签页共用高度，Scene 居中，Properties 与 Material 停靠在右侧；对象列表使用左侧剩余高度，属性面板依次提供选中对象、观察操作和场景设置，空间不足时纵向滚动。底部仅保留一行当前文件与操作结果，错误显示为红色，悬停可查看完整路径与消息。面板可以停靠与重排，恢复默认布局不改变场景。
 布局使用 ImGui 自带的 `incubator-editor-layout.ini`，相对运行 cwd；该本地文件不属于场景 JSON 或 incubator.json。生产启动恢复上次布局，测试在隔离目录保存自己的布局。已有布局不会被新版默认布局覆盖；需要应用新布局时使用 View → Restore default layout。
 
 当前文件和待操作路径分别保存。Save 使用当前文件；没有关联时进入 Save As 确认流程。Open／Save As 成功才更新关联；取消、失败和单独编辑目标路径均不改变当前文件。清空仍然编辑当前文件对应的内容。Open／Save As 使用独立路径窗口，失败反馈留在窗口中；恢复文件内容时通过 Open 重新打开当前文件。默认启动目标是构建目录的部署副本，保存不会回写源资产；清理 build 会删除副本，重新部署资产也可能覆盖副本。相关说明可在 File → About saved files 和路径窗口查看。写入仍为同步直接覆盖，打开后的失败可能留下部分文件。

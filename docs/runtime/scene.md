@@ -44,11 +44,8 @@ Transform 是实体的局部 TRS 真源，实体的世界矩阵由 `worldMatrix(
 | camera() const / setCamera(Camera) | 只读访问或整体替换 Scene 自有 Camera；默认 Camera 有效，设置时复制其值 |
 | lighting() const / setLighting(Render::Lighting) | 只读借用或整体替换 Scene 自有光照；非法设置抛 CONFIG，保留原值 |
 
-`Render::Lighting` 是不含 Vulkan 类型的帧级值：`direction` 为世界空间光线传播方向，
-有限且非零，允许非单位输入；`color` 为有限的 `[0,1]` 线性 RGB，`intensity` 为有限非负数，
-`ambient` 为有限的 `[0,1]` 标量。默认分别为 `(0,0,-1)`、白色、1、0.1；强度 0 关闭直接光。
-Scene 保存输入方向原值，构造光源矩阵及 GPU 帧参数时只归一化计算副本。新 Scene 使用默认光照，替换场景时由调用方
-显式设置展示值；clear 不重置光照。不创建灯光实体，也不在材质中保存另一份光照。
+`Render::Lighting` 是不含 Vulkan 类型的帧级值：除共享方向光外（`direction` 有限非零、`color` 为有限 `[0,1]` 线性 RGB、`intensity >= 0`、`ambient` 在 `[0,1]`，默认 `(0,0,-1)`、白色、`1`、`0.1`），还包含可选的 `std::vector<Render::LocalLight> localLights`（上限 `MAX_LOCAL_LIGHTS = 16`，支持 `Point` / `Spot`、`enabled`、`position`、有限非零 `direction`、`[0,1]` `color`、非负 `intensity`、正 `range` 与弧度锥角 `0 <= innerConeAngle <= outerConeAngle < pi/2`）。
+Scene 保存输入方向原值，构造光源矩阵及 GPU 帧参数时只归一化计算副本；`Scene::setLighting` 整体验证方向光与所有局部光源，失败抛 CONFIG 且保留原值。新 Scene 使用默认光照，替换场景时由调用方显式设置展示值；`clear` 不重置光照。不创建灯光实体，也不在材质中保存另一份光照。
 
 模型 Demo 的灯光控件直接编辑当前 Scene，UI 返回后主循环才提取 SceneFrame；
 打开场景成功后使用文件中的光照，普通相机操作、聚焦与实体编辑保留当前光照；阴影预览设置由 EditorApp 独立持有，不写入 Scene。
@@ -80,17 +77,17 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
 
 `runtime/scene/scene_description.h` 提供 `SceneDescription` 和 `captureScene(scene, clearColor)`。
 捕获按创建顺序复制全部实体，包括隐藏、离屏、无模型及无绘制内容的实体，保存可空模型来源、真实 Transform 和可见性；
-同时复制 Camera、原始 Lighting、显示设置 `DisplaySettings`（默认 `Reinhard` / `0 EV`）和调用方传入的背景。快照不含 EntityId、派生矩阵、GPU 引用或交互状态，
+同时复制 Camera、原始 Lighting（含 `localLights`）、显示设置 `DisplaySettings`（默认 `Reinhard` / `0 EV`、`skyboxEnabled = false`、`bloomEnabled = false`、`bloomThreshold = 1.0f`、`bloomIntensity = 0.35f`）和调用方传入的背景。快照不含 EntityId、派生矩阵、GPU 引用或交互状态，
 之后修改或销毁 Scene 不会改变它。捕获不读取文件或准备 GPU 资源。
 
 背景 RGB 为 sRGB 编码、alpha 为线性值，各分量必须有限且位于 `[0,1]`；无效输入抛 CONFIG。
-默认描述使用默认 Camera、Lighting、显示设置（`Reinhard` / `0 EV`）和背景 `{0.12, 0.16, 0.22, 1}`。`SceneDescription::valid()`
-检查可直接修改的光照、显示设置（`Off` / `Reinhard` 且曝光位于 `[-8, +8]` EV）、背景和实体名称；Transform、Camera 和 ModelReference 继续由各自类型保证合法性。
+默认描述使用默认 Camera、Lighting、显示设置和背景 `{0.12, 0.16, 0.22, 1}`。`SceneDescription::valid()`
+检查可直接修改的光照（含局部光源校验）、显示设置（`Off` / `Reinhard` / `AcesFilmic`，曝光 `[-8, +8]` EV，`bloomThreshold >= 0`、`bloomIntensity` 在 `[0, 4]`）、背景和实体名称；Transform、Camera 和 ModelReference 继续由各自类型保证合法性。
 
 ## 场景 JSON 文件
 
 `runtime/scene/scene_file.h` 提供 `encodeScene`、`decodeScene` 以及显式接收 FileIO 的
-`readScene` / `writeScene`。文本为 UTF-8、无 BOM 的 JSON：无材质覆盖时写出格式为 **1.1**（`"version": 1, "minorVersion": 1`，每个实体含可空 `parent` 零基索引，允许父级位于子级之后），包含实体材质覆盖时写出 **1.2**（`"version": 1, "minorVersion": 2`，保留 1.1 全部层级字段并为含覆盖实体写出 `materialOverrides` 数组，记录 `materialSlot`、`color`、`roughnessMode` / `roughness` 与 `metallicMode` / `metallic`），同时兼容读取平铺 **1.0**（省略 `minorVersion` 或为 `0`，全部实体视为根且无覆盖）与 **1.1**（无覆盖）：
+`readScene` / `writeScene`。文本为 UTF-8、无 BOM 的 JSON，按实际使用特性自动选择写出版本号：仅包含层级字段时写出 **1.1**，含实体材质覆盖且未使用多光源或 1.3 显示项时写出 **1.2**，使用 `lighting.localLights` 或 `1.3` 显示特性（`ACES`、`skyboxEnabled`、`bloomEnabled`、非默认 `bloomThreshold`/`bloomIntensity`）时写出 **1.3**；同时兼容读取平铺 **1.0**（省略 `minorVersion` 或为 `0`，全部实体视为根且无覆盖）、**1.1**、**1.2** 与 **1.3**。
 
 ```json
 {
@@ -114,11 +111,11 @@ Scene 只暴露只读实体视图，状态修改通过其 ID 接口，输入 Tra
 }
 ```
 
-JSON v1 的 `name` 为可选字符串，旧文件缺省时为空；新文件保存所有实体的名称。非字符串、非法 UTF-8 或内嵌 NUL 会导致读取失败。
+`1.3` 版本在 `lighting` 下增加 `localLights` 数组（`type` 为 `"point"`/`"spot"`，含 `enabled`、`position`、`direction`、`color`、`intensity`、`range`、`innerConeAngle`、`outerConeAngle`），在 `display` 下支持 `toneMapping: "aces"` 以及 `skyboxEnabled`、`bloomEnabled`、`bloomThreshold`、`bloomIntensity`。JSON v1 的 `name` 为可选字符串，旧文件缺省时为空；新文件保存所有实体的名称。非字符串、非法 UTF-8 或内嵌 NUL 会导致读取失败。
 
-字段均必需，`model` 可为 `null`；四元数顺序为 xyzw，FOV 使用弧度。枚举区分大小写：
+字段在对应版本契约下校验，`model` 可为 `null`；四元数顺序为 xyzw，FOV 使用弧度。枚举区分大小写：
 `mipMode` 为 `baseLevel/fullChain`，min/mag 过滤为 `nearest/linear`，mip 过滤为
-`baseLevel/nearest/linear`，`shading` 为 `unlit/lambert/pbr`，`display.toneMapping` 为 `off/reinhard`（`display.exposureEv` 为位于 `[-8, 8]` 的有限数值）。未知字段忽略；错误格式、非法值及其他版本抛 IO，
+`baseLevel/nearest/linear`，`shading` 为 `unlit/lambert/pbr`，`display.toneMapping` 在 1.2 及以下为 `off/reinhard`、1.3 起新增 `aces`（`display.exposureEv` 为位于 `[-8, 8]` 的有限数值）。未知字段忽略；错误格式、非法值及其他版本抛 IO，
 错误含字段上下文。内存描述无效时编码抛 CONFIG。编解码不加载模型或创建 GPU 资源。
 
 文件接口接收 UTF-8 原生路径；模型路径仍相对资产根，与场景文件所在目录无关。

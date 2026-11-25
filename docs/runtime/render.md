@@ -215,11 +215,11 @@ Lambert 预览支持单方向光、可选阴影和双面材质的背面法线翻
 
 | 数据 | 绑定与更新 |
 |---|---|
-| 帧相机、光照与 IBL | set 0 / binding 0，272 字节 FrameData，对 vertex/fragment 可见；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
+| 帧相机、光照与 IBL | set 0 / binding 0，1536 字节 std140 `FrameData`（含级联矩阵、IBL 与最多 16 盏局部光源），对 vertex/fragment 可见；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
 | 材质纹理 | set 1 / binding 0，Combined Image Sampler；共享已有 Texture，不重复上传 |
 | 材质颜色与参数 | set 1 / binding 1，64 字节 fragment Uniform；仅创建时写入 |
 | 法线 / 金属粗糙 / 自发光贴图 | set 1 / binding 2–4，分别绑定法线、金属粗糙度（Linear）与自发光（sRGB）贴图；未指定时绑定内部安全占位纹理 |
-| 阴影深度图 | set 0 / binding 1，fragment Combined Image Sampler；内部 nearest/ClampToEdge、非比较采样，按帧槽更新 |
+| 阴影深度图 | set 0 / binding 1，Combined Image Sampler（`sampler2DArray`）；内部 nearest/ClampToEdge、非比较采样，按帧槽更新 |
 | IBL 环境贴图与 LUT | set 0 / binding 2–4，分别绑定漫反射辐照度 `samplerCube`、预过滤镜面 `samplerCube` 与 BRDF 查找表 `sampler2D`；未调用 `prepareIblResources` 前绑定 1×1 安全占位纹理 |
 | 物体 model 与法线变换 | 112 字节 vertex push constant；逐物体录制 |
 
@@ -247,17 +247,14 @@ Pipeline；材质不绑定某个帧槽，可以被多帧同时读取。交换链
 | `FrameExtent { width, height }` | 直接绘制使用 `beginUiFrame()` 的交换链像素尺寸；独立目标使用视口换算的场景像素尺寸，均不使用未换算的逻辑尺寸 |
 | `CameraMatrices { view, projection }` | 提供最终 GLM 列主序矩阵；右手坐标，深度 0–1，应用对投影 Y 方向适配一次 |
 | `DrawItem { mesh, material, model }` | 每项独立指定同一 Renderer 创建的网格、材质和最终模型矩阵，网格和材质均可共享 |
-| `Lighting { direction, color, intensity, ambient }` | 世界空间光线传播方向、线性 RGB、直接光强度及标量环境系数，按值保存 |
-| `FrameInput { extent, camera, draws, lighting }` | 相机与光照由同帧所有项共享，draws 是 `span<const DrawItem>`，允许为空；旧三字段初始化使用默认光照 |
+| `Lighting { direction, color, intensity, ambient, localLights }` | 世界空间方向光、线性 RGB、强度、环境系数及最多 16 盏点光/聚光列表，按值保存 |
+| `DebugLine { start, end, color, alpha }` | 离屏 HDR 视口世界空间 3D 调试线段 |
+| `FrameInput { extent, camera, draws, lighting, ..., debugLines }` | 相机、光照与设置按值传递，`draws`/`shadowDraws`/`debugLines` 为借用 `span` |
 
-提交签名为 `drawFrame(input, clearColor, recordUi)`，变换顺序为
-`projection * view * model * position`。输入和列表只在本次调用内借用：Frame Uniform 的
-view/projection 分别位于偏移 0、64，`lightDirectionIntensity`、`lightColorAmbient` 两个 vec4
-分别位于偏移 128、144；shadowViewProjection 位于 160，shadowParams 位于 224，cameraPosition 位于 240，iblParams 位于 256，总计 272 字节，
-符合场景顶点、片元和阴影深度 Shader 的 std140 FrameData 布局。
-光照两个 vec4 的前者 xyz 为单位传播方向、w 为强度，后者 xyz 为线性 RGB、w 为环境系数。
-shadowParams.x 为接收深度偏移，y 为阴影启用标记；关闭时光源矩阵为单位矩阵、参数为零。
-Buffer 分配及 Descriptor range 覆盖该帧块；生产 drawFrame 与内部 review 入口共用打包函数。
+提交签名为 `drawFrame(input, clearColor, recordUi)` 与 `drawSceneTarget(output, input, clearColor, recordUi)`，变换顺序为
+`projection * view * model * position`。输入和列表只在本次调用内借用：`VulkanFrameUniform` 共 1536 字节（`std140`）：`view`/`projection` 分别位于偏移 0、64，`lightDirectionIntensity`（128）、`lightColorAmbient`（144）、`cascadeViewProjections[4]`（160）、`cascadeSplits`（416）、`shadowParams`（432）、`shadowMeta`（448）、`cameraPosition`（464）、`iblParams`（480）、`localLightMeta`（496）与定长 `GpuLocalLight localLights[16]`（512，仅打包 `enabled && intensity > 0` 的局部光源），
+跨场景顶点/片元、阴影深度及天空盒/辅助线 Shader 严格一致。
+局部光源按 glTF `KHR_lights_punctual` 平滑窗口距离衰减与聚光灯内外锥角 `smoothstep` 衰减计算，在 PBR（`evalPbrDirect`）与 Lambert 上累加；Unlit 不受局部光源影响。
 生产提交在等待当前帧槽 Fence 后一次写入该槽 Buffer，不逐物体改写帧光照；每个 model
 及其法线变换用 112 字节 vertex-stage push constant 在命令录制时复制。model 占前 64 字节，
 法线矩阵为三个 16 字节对齐的列，偏移分别为 64、80、96；C++ 布局与 Shader 的 mat3 对应。
@@ -376,18 +373,19 @@ Model::prepareModel 为每次准备创建资源组，由 PreparedModel 保存；
 准备层负责释放本次 CPU 持有；Renderer 不读取模型路径、查询 ResourceManager 或解析文件。
 Scene 实体共享准备结果，`Scene::extractSceneFrame` 将实体整体变换左乘模型缓存的节点累计变换，直接展开为普通 DrawItem 列表。应用通过同一 FrameInput 提交，列表借用、在途持有和关闭后的引用校验沿用上述约定。
 
-当前支持共享相机与预编译管线变体、逐物体 Mesh/Material/model 列表（含 `Opaque`/`Mask`/`Blend`、`DoubleSided` 与 `Emissive`），以及帧级方向光、IBL、Unlit/Lambert/PBR 着色、LDR FXAA 与独立视口可选固定 2×2 PCF 阴影；应用控制模型与动画，可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供材质文件/Loader、模型文件解析、OIT 透明无关混合、级联阴影、多光源、异步资产加载、热重载、显存池、多后端或多视口。
+当前支持共享相机与预编译管线变体、逐物体 Mesh/Material/model 列表（含 `Opaque`/`Mask`/`Blend`、`DoubleSided` 与 `Emissive`）、帧级方向光及最多 16 盏点光源/聚光灯、IBL、Unlit/Lambert/PBR 着色、环境天空盒背景、`Off`/`Reinhard`/`ACES Filmic` 色调映射、5 级 HDR Bloom、3D 调试辅助线、`LDR FXAA`、按需离屏视口像素回读，以及 1–4 级联自适应/纹素对齐/法线偏移 3×3 Tent PCF 阴影；不提供点光源/聚光灯独立全向或聚光阴影贴图、Deferred/Tiled 光源裁剪、在线 HDRI 环境烘焙、OIT 透明无关混合、异步资产加载、VMA、RenderGraph、多后端或多视口。
 
 ## 独立场景目标
 
 `prepareDisplayResources(vertexShader, fragmentShader)` 准备全屏显示 Pass 所需 Shader，须在首次调用 `drawSceneTarget` 前调用。
 `prepareFxaaResources(fragmentShader)` 须在 `prepareDisplayResources` 之后按需调用，复用全屏顶点 Shader 并以 `LINEAR` / `ClampToEdge` 采样配置准备 LDR FXAA 管线，仅复制 SPIR-V 字码。
-`prepareSceneTarget(extent, fxaa = false)` 等待当前帧槽完成，按场景像素尺寸复用或替换该槽的线性 HDR 颜色（`VK_FORMAT_R16G16B16A16_SFLOAT`）、显示 LDR 颜色（`VK_FORMAT_R8G8B8A8_UNORM`）及深度附件，并在 `fxaa` 为 `true` 时按需准备同尺寸 `VK_FORMAT_R8G8B8A8_UNORM` FXAA 输出附件及将该开关记录于 `SceneOutput`。
+`prepareSkyboxResources(vertexShader, fragmentShader)` 与 `prepareDebugLineResources(vertexShader, fragmentShader)` 须在 `prepareSceneResources` 之后按需调用；`prepareBloomResources(prefilter, downsample, upsample)` 须在 `prepareDisplayResources` 之后按需调用，复用全屏顶点 Shader。
+`prepareSceneTarget(extent, fxaa = false)` 等待当前帧槽完成，按场景像素尺寸复用或替换该槽的线性 HDR 颜色（`VK_FORMAT_R16G16B16A16_SFLOAT`）、显示 LDR 颜色（`VK_FORMAT_R8G8B8A8_UNORM`）及深度附件（开启 Bloom 时同时按半分辨率逐级分配至多 5 级 `R16G16B16A16_SFLOAT` 链），并在 `fxaa` 为 `true` 时按需准备同尺寸 FXAA 输出附件及将该开关记录于 `SceneOutput`。
 `prepareSceneTarget`、`drawSceneTarget` 和 `sceneImage` 在 moved-from Renderer 上均抛 RENDER，移动后的目标继续可用。
 零尺寸返回无效 `SceneOutput`。输出为非拥有引用，尺寸由 `extent()` 查询、开关由 `fxaaEnabled()` 查询；尺寸重建或 Renderer 关闭后失效，
-只能交给所属 Renderer 的当前帧槽使用。图像在生产路径中不经过 CPU 回读。
+只能交给所属 Renderer 的当前帧槽使用。常规渲染帧不经过 CPU 回读；显式调用 `Renderer::captureLastSceneViewport()` 时才同步等待并回读最近一次成功提交的离屏视口最终 `RGBA8` 图像（无可用输出时返回空值）。
 
-`drawSceneTarget(output, input, clearColor, recordUi)` 先在独立线性 HDR 目标中绘制场景，再执行全屏显示 Pass 按 `input.display`（`ToneMappingMode::Off` 钳制或 `Reinhard` 配合 `[-8, +8]` EV 曝光；半透明 `0 < hdr.a < 1` 像素先还原非预乘线性色并经色调映射与 sRGB 编码后按 `hdr.a` 与 `clearColor` 合成，未覆盖背景直接输出 `clearColor`）编码一次 sRGB 写入 LDR 图像；若 `output.fxaaEnabled()` 为 `true`（未准备 FXAA 资源时抛 RENDER），接着在显示 Pass 写入与片元采样之间建立同步依赖并录制全屏 FXAA 写入独立 FXAA 输出图像（保持显示编码与中心像素 alpha）；最后在交换链中记录 UI。
+`drawSceneTarget(output, input, clearColor, recordUi)` 固定按以下顺序执行：可选阴影深度 CSM Pass → 线性 HDR 主场景（先 `Opaque`/`Mask`，再当 `skyboxEnabled && iblPrepared` 时以 `LESS_OR_EQUAL`、禁深度写绘制天空盒，再绘制 `Blend` 半透明，最后绘制非空 `debugLines` `LINE_LIST`）→ 可选 5 级 HDR Bloom（Karis 防闪烁与 soft-knee `bloomThreshold` 提取、13-tap 降采样、9-tap tent 加性升采样）→ 双输入显示 Pass（按 `bloomIntensity` 叠加 Bloom，再执行曝光 `[-8, +8]` EV、`Off` / `Reinhard` / `AcesFilmic` 色调映射、sRGB 编码及半透明混合）写入 LDR 图像 → 可选 LDR FXAA 输出到独立图像；无 IBL 时启用 `skyboxEnabled` 安全回退至 `clearColor`；最后在交换链中记录 UI。
 后续 UI 采样沿用对应的 `RGBA8 UNORM` 图像（原 LDR 图或 FXAA 输出图），避免再次编码。图像方向与当前直接绘制一致；`drawFrame` 不支持也不录制 FXAA。
 旧附件在槽 Fence 完成后替换，稳定帧不分配目标或等待整个设备空闲；原 `drawFrame` 直接绘制入口继续可用。
 
@@ -403,73 +401,6 @@ ImGui 纹理标识，生成图像命令。Integration 按帧槽分别为原 LDR 
 
 ## 阴影帧参数
 
-`runtime/render/shadow.h` 提供消费者设置 `ShadowSettings`、值快照 `ShadowFrame` 和
-`makeShadowFrame(settings, direction)`。当前支持 CPU 光源投影、独立投射物快照、GPU 深度绘制及主场景的 Lambert 阴影采样。
+`runtime/render/shadow.h` 提供消费者设置 `ShadowSettings`、值快照 `ShadowFrame`、自适应包围盒入口 `makeShadowFrameForBounds` 及多级联视锥入口 `makeCascadedShadowFrame(settings, direction, camera, nearPlane, farPlane, sceneBounds)`（上限 `MAX_SHADOW_CASCADES = 4`）。默认 `resolution = 1024`、`depthBias = 0.001`、`normalBias = 0.0f`、`cascadeCount = 1`、`fitToBounds = false` 以兼容既有基线；开启时支持 `[512, 4096]` 2 的幂次分辨率、纹素网格对齐防抖、1–4 级 PSSM 混合切分、`2D_ARRAY` 多层阴影渲染与 3×3 亚像素 Tent PCF 平滑过滤（结合 `worldNormal * normalBias` 采样与远距 90%–100% 淡出）。
 
-| 设置 | 默认值 | 约定 |
-|---|---|---|
-| enabled | false | 关闭时返回空快照，不校验未使用的范围或方向 |
-| center | (0,0,0) | 固定世界空间观察体中心 |
-| halfExtent | (6,6) | 光源观察平面横纵方向的有限正半尺寸 |
-| nearPlane / farPlane | 0.1 / 20.1 | 有限且满足 0 < near < far |
-| depthBias | 0.001 | 有限非负的接收深度偏移，单位为零到一光源深度 |
-
-计算时归一化世界空间光线传播方向 D，不修改 Scene 的原始 Lighting；方向必须有限非零。
-光源位置为 `center - D * (nearPlane + farPlane) / 2`，朝向 D，固定范围中心位于光源深度 0.5。
-光源使用右手观察矩阵及 `orthoRH_ZO` 正交投影；默认世界 Y 上轴，`abs(dot(D,Y)) > 0.99` 时改用世界 Z 上轴。
-计算与主 Camera、渲染尺寸和场景边界无关，不自动拟合。
-
-`ShadowFrame::viewProjection` 保存 projection × view，投影 Y 已翻转一次；深度绘制直接使用该矩阵。
-采样侧对光源裁剪位置执行透视除法，再使用 `uv = ndc.xy * 0.5 + 0.5`，不再翻转 Y，深度保持零到一。
-以 D=(0,0,-1) 为例，中心上方映射到较小的纹理 v；近面深度为 0，远面为 1。
-启用时无效参数或无法用有限 float 矩阵表示的结果抛 CONFIG。
-
-`FrameInput` 尾部增加默认空的 `shadow` 和 `shadowDraws`。前者按值复制光源矩阵与偏移，后者借用独立投射列表；
-旧聚合初始化仍默认无阴影，共同 GPU 帧参数为上述 240 字节布局。列表所有权及复制、移动约定见 [场景帧提取](scene.md#场景帧提取)。
-
-
-### 独立阴影深度绘制
-
-应用先调用 `prepareSceneResources`，再把实心深度顶点 Shader 及可选的镂空顶点和片元 Shader 借给
-`prepareShadowResources`。Renderer 复制 SPIR-V 后即可释放 CPU Resource。
-空 Shader、重复准备或尚未准备场景布局时抛 RENDER。Renderer 不隐式读取或编译 Shader。
-
-`drawSceneTarget` 收到非空 shadow 时，在本次主场景之前清除并绘制深度图；即使 shadowDraws 为空也清为 1。
-第一个有效提交即使用本帧光源矩阵与模型矩阵。投射列表解析同一 Renderer 的网格及可选材质。
-实心阴影沿用纯顶点深度路径。镂空阴影使用片元 Shader 采样基色 alpha，并采用主场景相同的裁剪阈值。
-两条路径均按材质双面标志选择剔除方式，Blend 材质跳过阴影投射。
-模型 push constant 为 64 字节，与主场景 112 字节的法线参数分开录制。
-
-阴影图固定为 1024×1024、单层、单 sample，每个帧槽独占一张。首次有效启用时按需分配，
-候选依次为 D32_SFLOAT、D16_UNORM，检查 optimal tiling 的深度附件、采样及回读能力，并查询实际 usage 的图像支持。
-无支持格式或分配/Pipeline 创建失败抛 RENDER，不使用全亮资源掩盖失败。
-稳定帧、启停及视口尺寸变化复用阴影图和深度 Pipeline，不逐帧等待整个设备；旧槽在 Fence 完成后才更新 UBO 与录制。
-
-Synchronization2 在深度早/晚测试写入与片元采样之间建立依赖，结束布局为 SHADER_READ_ONLY_OPTIMAL；
-再次写入从该布局转回深度附件。帧调度器持有网格、材质、目标及帧 Buffer 至 Fence 完成，关闭先等待在途资源。
-内部 Review 可以在等待后借用实际深度图，受控测试复用回读及片元采样支持；这不是产品截图或调试视图接口。
-
-`drawFrame` 及直接帧 Review 不执行阴影流程，收到非空 shadow 时在录制和提交前抛 RENDER；
-原有无阴影调用保持兼容。独立目标使用本次提交的深度图对 Lambert 直接光执行下述比较。
-
-
-### 阴影采样与关闭绑定
-
-场景顶点 Shader 输出真实世界位置；片元用同一帧的光源矩阵执行投影、透视除法及唯一的 UV 映射。
-投影位于 XY 的 [-1,1] 或深度 [0,1] 之外时直接受光，不能依赖 ClampToEdge 把边缘深度重复到范围外。
-内部采样器继续使用 nearest min/mag/mip、ClampToEdge 和非比较模式；片元 `shadowVisibility()` 基于 `textureSize(shadowDepth, 0)` 与纹素中心坐标计算四邻域索引及双线性权重，对钳制在图边界内的 2×2 邻域逐点以 `texelFetch(..., 0)` 读取基础层深度并执行：
-
-`V_ij = receiverDepth - depthBias <= storedDepth_ij ? 1 : 0`
-
-再按双线性权重加权四个比较结果，避免硬件线性深度比较的跨实现差异及范围分支中的隐式导数依赖（见 [GLSL 纹理函数约定](https://registry.khronos.org/OpenGL/specs/gl/GLSLangSpec.4.50.pdf)）。
-
-Lambert 与 PBR 的直接光共用该过滤可见度，Unlit、环境项、背景与 UI 保持原行为；Unlit 仍可出现在独立投射列表中。RGB 在线性空间计算并只编码一次 sRGB。
-
-Runtime 默认 depthBias=0.001；Demo 根据展示模型采用 0.003，控件范围为 [0,0.01]。范围约束属于 Demo 控件，Runtime 仍接受任意有限非负偏移。
-偏移单位为零到一光源深度；固定方向下对应的光线距离为 bias * (far-near)。精确夹具验证了 0.0005 深度差在
-bias=0、0.00025 时被遮挡，在 0.001 时受光，较大实际遮挡保持；生产展示场景使用 0.003 抑制明显自阴影斑点。
-
-每个帧绑定集持有内部 1×1 全亮白图和专用阴影采样器，所有阴影描述符创建时即有效；白图复用现有 RGBA8 上传入口初始化。
-关闭时使用白图，启用时在对应 Fence 完成后改绑当前槽的真实深度图，不延迟到下一帧；稳定绑定不重复更新。
-帧绑定集不拥有外部深度图，调用方须保证其存活至改绑或绑定集销毁；Renderer 在释放描述符之后才销毁阴影目标。
-资源准备失败继续报告 RENDER，白图仅用于明确关闭的路径，不替代启用时缺失的 Shader、格式或目标。
+内部阴影采样器继续使用 nearest / ClampToEdge / 非比较模式，阴影图按 `VK_IMAGE_VIEW_TYPE_2D_ARRAY`（每级联一个 array layer）按帧槽隔离创建并在分辨率或级联数变化时于对应 Fence 完成后安全重建；片元基于视图空间负深度选择级联层，再通过 `texelFetch(..., ivec3(coord, int(layer)), 0)` 执行 3×3 Tent PCF，Lambert 与 PBR 直接光共用该可见度结果；关闭时绑定 1×1 全亮白图（`2D_ARRAY`）。

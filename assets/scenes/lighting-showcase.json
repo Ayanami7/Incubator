@@ -1,0 +1,268 @@
+{
+  "version": 1,
+  "minorVersion": 3,
+  "entities": [
+    {
+      "name": "Avocado Hero",
+      "parent": null,
+      "model": {
+        "path": "models/avocado/gltf/avocado.gltf",
+        "prepare": {
+          "mipMode": "fullChain",
+          "sampler": {
+            "minFilter": "linear",
+            "magFilter": "linear",
+            "mipFilter": "linear"
+          },
+          "shading": "pbr"
+        }
+      },
+      "transform": {
+        "position": [
+          -1.0,
+          -0.8488543,
+          0.2
+        ],
+        "rotation": [
+          0,
+          -0.17364818,
+          0,
+          0.98480775
+        ],
+        "scale": [
+          24,
+          24,
+          24
+        ]
+      },
+      "visible": true
+    },
+    {
+      "name": "Teapot Metallic",
+      "parent": null,
+      "model": {
+        "path": "models/utah_teapot/utah_teapot.obj",
+        "prepare": {
+          "mipMode": "fullChain",
+          "sampler": {
+            "minFilter": "linear",
+            "magFilter": "linear",
+            "mipFilter": "linear"
+          },
+          "shading": "pbr"
+        }
+      },
+      "transform": {
+        "position": [
+          1.25,
+          -0.259375,
+          -0.1
+        ],
+        "rotation": [
+          0,
+          0.38268343,
+          0,
+          0.92387953
+        ],
+        "scale": [
+          0.075,
+          0.075,
+          0.075
+        ]
+      },
+      "visible": true,
+      "materialOverrides": [
+        {
+          "materialSlot": 0,
+          "color": [
+            0.95,
+            0.85,
+            0.65
+          ],
+          "roughnessMode": "fixed",
+          "roughness": 0.18,
+          "metallicMode": "fixed",
+          "metallic": 0.95
+        }
+      ]
+    },
+    {
+      "name": "Avocado Rough",
+      "parent": null,
+      "model": {
+        "path": "models/avocado/gltf/avocado.gltf",
+        "prepare": {
+          "mipMode": "fullChain",
+          "sampler": {
+            "minFilter": "linear",
+            "magFilter": "linear",
+            "mipFilter": "linear"
+          },
+          "shading": "pbr"
+        }
+      },
+      "transform": {
+        "position": [
+          0.0,
+          -0.8488543,
+          -1.35
+        ],
+        "rotation": [
+          0,
+          0.9961947,
+          0,
+          0.08715574
+        ],
+        "scale": [
+          22,
+          22,
+          22
+        ]
+      },
+      "visible": true,
+      "materialOverrides": [
+        {
+          "materialSlot": 0,
+          "color": [
+            0.9,
+            0.9,
+            0.92
+          ],
+          "roughnessMode": "fixed",
+          "roughness": 0.92,
+          "metallicMode": "fixed",
+          "metallic": 0.0
+        }
+      ]
+    },
+    {
+      "name": "Ground",
+      "parent": null,
+      "model": {
+        "path": "models/ground/ground.obj",
+        "prepare": {
+          "mipMode": "fullChain",
+          "sampler": {
+            "minFilter": "linear",
+            "magFilter": "linear",
+            "mipFilter": "linear"
+          },
+          "shading": "pbr"
+        }
+      },
+      "transform": {
+        "position": [
+          0,
+          -0.85,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "visible": true
+    }
+  ],
+  "camera": {
+    "position": [
+      0.15,
+      1.35,
+      4.4
+    ],
+    "rotation": [
+      -0.145,
+      0.015,
+      0.002,
+      0.989
+    ],
+    "perspective": {
+      "verticalFov": 0.7853982,
+      "nearPlane": 0.1,
+      "farPlane": 100
+    }
+  },
+  "lighting": {
+    "direction": [
+      0.55,
+      -0.75,
+      -0.35
+    ],
+    "color": [
+      1.0,
+      0.95,
+      0.88
+    ],
+    "intensity": 1.4,
+    "ambient": 0.08,
+    "localLights": [
+      {
+        "type": "point",
+        "enabled": true,
+        "position": [
+          -1.8,
+          1.1,
+          1.2
+        ],
+        "direction": [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        "color": [
+          1.0,
+          0.52,
+          0.18
+        ],
+        "intensity": 10.0,
+        "range": 6.5,
+        "innerConeAngle": 0.35,
+        "outerConeAngle": 0.6
+      },
+      {
+        "type": "spot",
+        "enabled": true,
+        "position": [
+          2.1,
+          2.3,
+          1.3
+        ],
+        "direction": [
+          -0.45,
+          -0.82,
+          -0.35
+        ],
+        "color": [
+          0.25,
+          0.68,
+          1.0
+        ],
+        "intensity": 16.0,
+        "range": 8.5,
+        "innerConeAngle": 0.28,
+        "outerConeAngle": 0.62
+      }
+    ]
+  },
+  "display": {
+    "toneMapping": "aces",
+    "exposureEv": 0.1,
+    "skyboxEnabled": true,
+    "bloomEnabled": true,
+    "bloomThreshold": 0.95,
+    "bloomIntensity": 0.4
+  },
+  "clearColor": [
+    0.08,
+    0.095,
+    0.125,
+    1
+  ]
+}
