@@ -23,7 +23,8 @@ namespace Incubator::Scene
             return std::nullopt;
 
         const auto camera = scene.camera().matrices(extent);
-        const auto shadow = Render::makeShadowFrame(shadows, scene.lighting().direction);
+        // 先校验启用的阴影配置与方向，有效时再按投射物边界或级联视锥更新具体矩阵。
+        auto shadow = Render::makeShadowFrame(shadows, scene.lighting().direction);
         const Frustum frustum(camera);
         const glm::dvec3 cameraPosition(scene.camera().position());
 
@@ -36,6 +37,7 @@ namespace Incubator::Scene
         std::vector<Render::DrawItem> maskDraws;
         std::vector<BlendDraw> blendDraws;
         std::vector<Render::DrawItem> shadowDraws;
+        std::optional<Math::Aabb> casterBounds;
 
         const auto drawAlphaMode = [](const Model::PreparedModel& model, size_t index) -> Render::AlphaMode {
             const auto& drawSlots = model.drawMaterialSlots();
@@ -93,11 +95,23 @@ namespace Incubator::Scene
             const size_t drawCount = model.draws().size();
             if (shadow)
             {
+                bool hasShadowCasterDraw = false;
                 for (size_t i = 0; i < drawCount; ++i)
                 {
                     if (drawAlphaMode(model, i) == Render::AlphaMode::Blend)
                         continue;
                     shadowDraws.push_back(makeEntityDraw(model, i, transform, {}));
+                    hasShadowCasterDraw = true;
+                }
+                if (hasShadowCasterDraw && model.bounds())
+                {
+                    if (const auto worldBounds = model.bounds()->transformed(transform))
+                    {
+                        if (casterBounds)
+                            casterBounds->merge(*worldBounds);
+                        else
+                            casterBounds = worldBounds;
+                    }
                 }
             }
             if (frustumCulling && model.bounds())
@@ -126,6 +140,20 @@ namespace Incubator::Scene
                         opaqueDraws.push_back(std::move(draw));
                         break;
                 }
+            }
+        }
+
+        if (shadow)
+        {
+            const auto& perspective = scene.camera().perspective();
+            if (shadows.cascadeCount > 1u)
+            {
+                shadow = Render::makeCascadedShadowFrame(shadows, scene.lighting().direction, camera,
+                                                         perspective.nearPlane, perspective.farPlane, casterBounds);
+            }
+            else if (shadows.fitToBounds && casterBounds)
+            {
+                shadow = Render::makeShadowFrameForBounds(shadows, scene.lighting().direction, *casterBounds);
             }
         }
 

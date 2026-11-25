@@ -104,7 +104,8 @@ namespace Incubator
 
             std::shared_ptr<VulkanImage> VulkanImage::uploadRgba8(const VulkanDevice& device, VkExtent2D extent,
                                                                   VkFormat format, std::span<const uint8_t> pixels,
-                                                                  VkImageUsageFlags usage, TextureMipMode mipMode)
+                                                                  VkImageUsageFlags usage, TextureMipMode mipMode,
+                                                                  VkImageViewType viewType)
             {
                 if (extent.width == 0 || extent.height == 0)
                     throw Error::Exception(Error::Code::RENDER, "Cannot upload an empty RGBA8 image");
@@ -137,8 +138,8 @@ namespace Incubator
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
                 staging.write(0, bytes);
-                auto image =
-                    std::make_shared<VulkanImage>(device, extent, format, usage, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+                auto image = std::make_shared<VulkanImage>(device, extent, format, usage, VK_IMAGE_ASPECT_COLOR_BIT,
+                                                           mipLevels, 1, 0, viewType);
                 device.executeImmediate([&](VkCommandBuffer commandBuffer) {
                     VkImageMemoryBarrier2 toTransfer{};
                     toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;

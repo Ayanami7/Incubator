@@ -116,7 +116,7 @@ namespace
     uint8_t sampleShadowDepth(const Vulkan::VulkanDevice& device, const Vulkan::VulkanImage& image,
                               const std::vector<uint32_t>& vertex, const std::vector<uint32_t>& fragment)
     {
-        // 复用正式纹理 Shader 的 Unlit 路径验证真实片元采样，只取深度的 R 分量。
+        // 复用正式纹理 Shader 的 Unlit 路径验证真实片元采样，只取深度的 R 分量（阴影图为 2D Array，为第 0 层创建临时 2D 视图）。
         const auto frame = Vulkan::makeFrameUniform({{384, 256}, {glm::mat4(1), glm::mat4(1)}, {}});
         const std::array uniforms{std::make_shared<Vulkan::VulkanBuffer>(
             device, sizeof(frame), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
@@ -124,31 +124,61 @@ namespace
         uniforms[0]->write(0, std::as_bytes(std::span(&frame, 1)));
         Vulkan::VulkanBindingSet bindings(device, uniforms);
         Vulkan::VulkanSampler sampler(device, {});
-        Vulkan::VulkanMaterialBinding material(device, bindings.materialLayout(), image, sampler,
+        Vulkan::VulkanMaterialBinding material(device, bindings.materialLayout(), bindings.normalFallback(), sampler,
                                                bindings.normalFallback(), sampler,
                                                bindings.metallicRoughnessFallback(), sampler,
                                                bindings.emissiveFallback(), sampler, {});
-        Vulkan::VulkanPipeline pipeline(device, VK_FORMAT_R8G8B8A8_UNORM, device.findDepthFormat(), bindings.layout(),
-                                        bindings.materialLayout(), vertex, fragment);
-        auto mesh = Demo::makePlaneMesh();
-        for (auto& v : mesh.vertices)
+        VkImageViewCreateInfo layerViewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        layerViewInfo.image = image.handle();
+        layerViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        layerViewInfo.format = image.format();
+        layerViewInfo.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        VkImageView layerView = VK_NULL_HANDLE;
+        if (vkCreateImageView(device.handle(), &layerViewInfo, nullptr, &layerView) != VK_SUCCESS)
+            throw Error::Exception(Error::Code::RENDER, "vkCreateImageView(sampleShadowDepth) failed");
+        try
         {
-            v.uv[0] = 0.5f;
-            v.uv[1] = 0.5f;
+            const VkDescriptorImageInfo imageInfo{sampler.handle(), layerView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            const VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                             nullptr,
+                                             material.descriptorSet(),
+                                             0,
+                                             0,
+                                             1,
+                                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                             &imageInfo,
+                                             nullptr,
+                                             nullptr};
+            vkUpdateDescriptorSets(device.handle(), 1, &write, 0, nullptr);
+
+            Vulkan::VulkanPipeline pipeline(device, VK_FORMAT_R8G8B8A8_UNORM, device.findDepthFormat(),
+                                            bindings.layout(), bindings.materialLayout(), vertex, fragment);
+            auto mesh = Demo::makePlaneMesh();
+            for (auto& v : mesh.vertices)
+            {
+                v.uv[0] = 0.5f;
+                v.uv[1] = 0.5f;
+            }
+            auto vertices = Vulkan::VulkanBuffer::uploadStatic(
+                device, std::as_bytes(std::span(mesh.vertices)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT);
+            auto indices = Vulkan::VulkanBuffer::uploadStatic(
+                device, std::as_bytes(std::span(mesh.indices)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT);
+            const std::array draws{Vulkan::VulkanDrawItem{vertices->handle(),
+                                                          indices->handle(),
+                                                          uint32_t(mesh.indices.size()),
+                                                          material.descriptorSet(),
+                                                          {glm::mat4(1), {}}}};
+            const auto pixels = TextureGpuReview::captureDraws(device, pipeline, bindings.descriptorSet(0), draws);
+            vkDestroyImageView(device.handle(), layerView, nullptr);
+            return pixels[(128 * 384 + 192) * 4];
         }
-        auto vertices = Vulkan::VulkanBuffer::uploadStatic(
-            device, std::as_bytes(std::span(mesh.vertices)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT);
-        auto indices = Vulkan::VulkanBuffer::uploadStatic(
-            device, std::as_bytes(std::span(mesh.indices)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-            VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT);
-        const std::array draws{Vulkan::VulkanDrawItem{vertices->handle(),
-                                                      indices->handle(),
-                                                      uint32_t(mesh.indices.size()),
-                                                      material.descriptorSet(),
-                                                      {glm::mat4(1), {}}}};
-        const auto pixels = TextureGpuReview::captureDraws(device, pipeline, bindings.descriptorSet(0), draws);
-        return pixels[(128 * 384 + 192) * 4];
+        catch (...)
+        {
+            vkDestroyImageView(device.handle(), layerView, nullptr);
+            throw;
+        }
     }
 
     Scene::Camera shadowReviewCamera(glm::vec3 eye = {0, -3, 3})

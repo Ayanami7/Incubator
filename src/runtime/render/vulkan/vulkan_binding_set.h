@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <array>
 #include <cstddef>
 #include <glm/vec4.hpp>
 #include <memory>
@@ -28,8 +29,10 @@ namespace Incubator
                 glm::mat4 projection;
                 glm::vec4 lightDirectionIntensity;  ///< xyz 为单位传播方向，w 为强度。
                 glm::vec4 lightColorAmbient;        ///< xyz 为线性 RGB，w 为环境系数。
-                glm::mat4 shadowViewProjection;     ///< 固定光源投影与观察矩阵的乘积。
-                glm::vec4 shadowParams;             ///< x 为接收深度偏移，y 为阴影启用标记，其余为零。
+                std::array<glm::mat4, MAX_SHADOW_CASCADES> cascadeViewProjections;  ///< 各级联光源矩阵。
+                glm::vec4 cascadeSplits;            ///< 各级联在相机视图空间中的正远深度阈值。
+                glm::vec4 shadowParams;             ///< x 为接收深度偏移，y 为阴影启用标记，z 为法线偏移，w 为级联数量。
+                glm::vec4 shadowMeta;               ///< x 为最大阴影距离，y 为阴影分辨率，其余保留为零。
                 glm::vec4 cameraPosition;           ///< 世界空间相机位置（xyz），由视图矩阵派生。
                 glm::vec4 iblParams;                ///< x 为 IBL 启用标记，y 为预过滤环境最大 mip 级，其余为零。
             };
@@ -39,11 +42,13 @@ namespace Incubator
             static_assert(offsetof(VulkanFrameUniform, lightDirectionIntensity) == 128);
             static_assert(offsetof(VulkanFrameUniform, lightColorAmbient) == 144);
             static_assert(alignof(VulkanFrameUniform) == 16);
-            static_assert(offsetof(VulkanFrameUniform, shadowViewProjection) == 160);
-            static_assert(offsetof(VulkanFrameUniform, shadowParams) == 224);
-            static_assert(offsetof(VulkanFrameUniform, cameraPosition) == 240);
-            static_assert(offsetof(VulkanFrameUniform, iblParams) == 256);
-            static_assert(sizeof(VulkanFrameUniform) == 272);
+            static_assert(offsetof(VulkanFrameUniform, cascadeViewProjections) == 160);
+            static_assert(offsetof(VulkanFrameUniform, cascadeSplits) == 416);
+            static_assert(offsetof(VulkanFrameUniform, shadowParams) == 432);
+            static_assert(offsetof(VulkanFrameUniform, shadowMeta) == 448);
+            static_assert(offsetof(VulkanFrameUniform, cameraPosition) == 464);
+            static_assert(offsetof(VulkanFrameUniform, iblParams) == 480);
+            static_assert(sizeof(VulkanFrameUniform) == 496);
 
             /// @brief 校验光照并打包本次提交的相机、光照与 IBL 参数，非单位方向在此归一化。
             /// @throws Error::Exception 光照输入无效时抛出 RENDER。

@@ -25,12 +25,13 @@ namespace
         const auto defaults = makeFrameUniform(input);
         EXPECT_EQ(defaults.lightDirectionIntensity, glm::vec4(0, 0, -1, 1));
         EXPECT_EQ(defaults.lightColorAmbient, glm::vec4(1, 1, 1, 0.1f));
-        EXPECT_EQ(defaults.shadowViewProjection, glm::mat4(1));
+        EXPECT_EQ(defaults.cascadeViewProjections[0], glm::mat4(1));
         EXPECT_EQ(defaults.shadowParams, glm::vec4(0));
         input.shadow = ShadowFrame{glm::mat4(2), 0.002f};
         const auto shadow = makeFrameUniform(input);
-        EXPECT_EQ(shadow.shadowViewProjection, glm::mat4(2));
-        EXPECT_EQ(shadow.shadowParams, glm::vec4(0.002f, 1, 0, 0));
+        EXPECT_EQ(shadow.cascadeViewProjections[0], glm::mat4(2));
+        EXPECT_EQ(shadow.shadowParams, glm::vec4(0.002f, 1, 0, 1));
+        EXPECT_EQ(shadow.shadowMeta, glm::vec4(60.0f, 1024.0f, 0.0f, 0.0f));
         input.shadow->viewProjection[0][0] = std::numeric_limits<float>::infinity();
         EXPECT_THROW(makeFrameUniform(input), Error::Exception);
         input.shadow->viewProjection = glm::mat4(1);
@@ -106,6 +107,13 @@ namespace
         image.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
         image.maxResourceSize = 1;
         EXPECT_THROW(VulkanShadowTarget::validateSupport(VK_FORMAT_D32_SFLOAT, format, image), Error::Exception);
+
+        // 验证多级联与自定义分辨率支持校验
+        VkImageFormatProperties csmImage{{2048, 2048, 1}, 1, 3, VK_SAMPLE_COUNT_1_BIT, 2048ull * 2048 * 3 * 4};
+        EXPECT_NO_THROW(VulkanShadowTarget::validateSupport(VK_FORMAT_D32_SFLOAT, format, csmImage, 2048u, 3u));
+        csmImage.maxArrayLayers = 2;
+        EXPECT_THROW(VulkanShadowTarget::validateSupport(VK_FORMAT_D32_SFLOAT, format, csmImage, 2048u, 3u),
+                     Error::Exception);
     }
 
     TEST(RenderColorTest, SurfaceSelectionHasStablePriorityAndExplicitFallback)

@@ -1,6 +1,7 @@
 #include "runtime/render/vulkan/vulkan_binding_set.h"
 
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <glm/matrix.hpp>
@@ -39,15 +40,62 @@ namespace Incubator
                     std::hypot(static_cast<double>(lighting.direction.x), static_cast<double>(lighting.direction.y),
                                static_cast<double>(lighting.direction.z));
                 const glm::vec3 direction(glm::dvec3(lighting.direction) / length);
+                std::array<glm::mat4, MAX_SHADOW_CASCADES> cascadeMatrices{
+                    glm::mat4(1), glm::mat4(1), glm::mat4(1), glm::mat4(1)};
+                glm::vec4 cascadeSplits(0.0f);
+                glm::vec4 shadowParams(0.0f);
+                glm::vec4 shadowMeta(0.0f);
                 if (input.shadow)
                 {
-                    for (int column = 0; column < 4; ++column)
-                        for (int row = 0; row < 4; ++row)
-                            if (!std::isfinite(input.shadow->viewProjection[column][row]))
-                                throw Error::Exception(Error::Code::RENDER, "Shadow view projection must be finite");
-                    if (!std::isfinite(input.shadow->depthBias) || input.shadow->depthBias < 0)
+                    const auto& shadow = *input.shadow;
+                    if (shadow.cascadeCount == 0u || shadow.cascadeCount > MAX_SHADOW_CASCADES)
+                        throw Error::Exception(Error::Code::RENDER,
+                                               "Shadow cascadeCount must be in [1, MAX_SHADOW_CASCADES]");
+                    if (!std::has_single_bit(shadow.resolution) || shadow.resolution < 512u ||
+                        shadow.resolution > 4096u)
+                        throw Error::Exception(Error::Code::RENDER,
+                                               "Shadow resolution must be a power of two in [512, 4096]");
+                    if (!std::isfinite(shadow.depthBias) || shadow.depthBias < 0)
                         throw Error::Exception(Error::Code::RENDER,
                                                "Shadow receiver depth bias must be finite and nonnegative");
+                    if (!std::isfinite(shadow.normalBias) || shadow.normalBias < 0)
+                        throw Error::Exception(Error::Code::RENDER,
+                                               "Shadow receiver normal bias must be finite and nonnegative");
+                    if (!std::isfinite(shadow.maxDistance) || shadow.maxDistance <= 0)
+                        throw Error::Exception(Error::Code::RENDER, "Shadow maxDistance must be finite and positive");
+                    const auto checkFiniteMat = [](const glm::mat4& m) {
+                        for (int column = 0; column < 4; ++column)
+                            for (int row = 0; row < 4; ++row)
+                                if (!std::isfinite(m[column][row]))
+                                    throw Error::Exception(Error::Code::RENDER,
+                                                           "Shadow view projection must be finite");
+                    };
+                    if (shadow.cascadeCount == 1u)
+                    {
+                        checkFiniteMat(shadow.viewProjection);
+                        cascadeMatrices[0] = shadow.viewProjection;
+                        cascadeSplits[0] = shadow.cascadeSplits[0] > 0.0f && std::isfinite(shadow.cascadeSplits[0])
+                                               ? shadow.cascadeSplits[0]
+                                               : shadow.maxDistance;
+                    }
+                    else
+                    {
+                        float prevSplit = 0.0f;
+                        for (uint32_t i = 0; i < shadow.cascadeCount; ++i)
+                        {
+                            checkFiniteMat(shadow.cascadeViewProjections[i]);
+                            cascadeMatrices[i] = shadow.cascadeViewProjections[i];
+                            const float split = shadow.cascadeSplits[i];
+                            if (!std::isfinite(split) || split <= prevSplit)
+                                throw Error::Exception(Error::Code::RENDER,
+                                                       "Shadow cascade splits must be finite and strictly increasing");
+                            cascadeSplits[i] = split;
+                            prevSplit = split;
+                        }
+                    }
+                    shadowParams =
+                        glm::vec4(shadow.depthBias, 1.0f, shadow.normalBias, static_cast<float>(shadow.cascadeCount));
+                    shadowMeta = glm::vec4(shadow.maxDistance, static_cast<float>(shadow.resolution), 0.0f, 0.0f);
                 }
                 glm::vec4 cameraPosition(0.0f);
                 const glm::dmat3 linear(input.camera.view);
@@ -72,8 +120,10 @@ namespace Incubator
                         input.camera.projection,
                         glm::vec4(direction, lighting.intensity),
                         glm::vec4(lighting.color, lighting.ambient),
-                        input.shadow ? input.shadow->viewProjection : glm::mat4(1),
-                        input.shadow ? glm::vec4(input.shadow->depthBias, 1, 0, 0) : glm::vec4(0),
+                        cascadeMatrices,
+                        cascadeSplits,
+                        shadowParams,
+                        shadowMeta,
                         cameraPosition,
                         input.iblEnabled ? glm::vec4(1.0f, maxPrefilteredLod, 0.0f, 0.0f) : glm::vec4(0.0f)};
             }
@@ -87,7 +137,8 @@ namespace Incubator
                     constexpr std::array<uint8_t, 4> white{255, 255, 255, 255};
                     constexpr std::array<uint8_t, 4> flatNormal{128, 128, 255, 255};
                     shadowFallback_ = VulkanImage::uploadRgba8(device_, {1, 1}, VK_FORMAT_R8G8B8A8_UNORM, white,
-                                                               VK_IMAGE_USAGE_SAMPLED_BIT);
+                                                               VK_IMAGE_USAGE_SAMPLED_BIT, TextureMipMode::BaseLevel,
+                                                               VK_IMAGE_VIEW_TYPE_2D_ARRAY);
                     normalFallback_ = VulkanImage::uploadRgba8(device_, {1, 1}, VK_FORMAT_R8G8B8A8_UNORM, flatNormal,
                                                                VK_IMAGE_USAGE_SAMPLED_BIT);
                     metallicRoughnessFallback_ = VulkanImage::uploadRgba8(

@@ -4,6 +4,8 @@
 
 #include <array>
 #include <cmath>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <limits>
 #include <utility>
 
@@ -266,5 +268,144 @@ namespace
         EXPECT_EQ(secondFrame->input().display, secondDisplay);
         EXPECT_EQ(firstFrame->display, firstDisplay);
         EXPECT_EQ(firstFrame->input().display, firstDisplay);
+    }
+
+    TEST(SceneFrameCpuTest, ExtendedShadowSettingsValidationBoundsFittingTexelSnappingAndCsmStability)
+    {
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        const auto reject = [](Render::ShadowSettings settings) {
+            settings.enabled = true;
+            try
+            {
+                (void)Render::makeShadowFrame(settings, {0.0f, -1.0f, -1.0f});
+                FAIL() << "Invalid extended shadow settings were accepted";
+            }
+            catch (const Error::Exception& error)
+            {
+                EXPECT_EQ(error.code(), Error::Code::CONFIG);
+            }
+        };
+
+        for (const uint32_t badRes : {0u, 256u, 1000u, 1536u, 8192u})
+        {
+            Render::ShadowSettings s;
+            s.resolution = badRes;
+            reject(s);
+        }
+        for (const float badBias : {-0.001f, nan, inf})
+        {
+            Render::ShadowSettings s;
+            s.normalBias = badBias;
+            reject(s);
+        }
+        for (const uint32_t badCascades : {0u, Render::MAX_SHADOW_CASCADES + 1u})
+        {
+            Render::ShadowSettings s;
+            s.cascadeCount = badCascades;
+            reject(s);
+        }
+        for (const float badLambda : {-0.1f, 1.1f, nan})
+        {
+            Render::ShadowSettings s;
+            s.cascadeSplitLambda = badLambda;
+            reject(s);
+        }
+        for (const float badDist : {0.0f, -5.0f, inf, nan})
+        {
+            Render::ShadowSettings s;
+            s.maxDistance = badDist;
+            reject(s);
+        }
+
+        // makeShadowFrameForBounds：任意偏移和尺寸生成有限矩阵，小于半个纹素平移下投影中心稳定，退化包围盒安全回退。
+        Render::ShadowSettings fitSettings;
+        fitSettings.enabled = true;
+        fitSettings.resolution = 512u;
+        fitSettings.normalBias = 0.02f;
+        fitSettings.fitToBounds = true;
+        const Math::Aabb farBox{{100.0f, -50.0f, 25.0f}, {116.0f, -34.0f, 41.0f}};
+        const glm::vec3 lightDir{0.0f, 0.0f, -1.0f};
+        const auto fittedBase = Render::makeShadowFrameForBounds(fitSettings, lightDir, farBox);
+        ASSERT_TRUE(fittedBase);
+        EXPECT_EQ(fittedBase->resolution, 512u);
+        EXPECT_FLOAT_EQ(fittedBase->normalBias, 0.02f);
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+                EXPECT_TRUE(std::isfinite(fittedBase->viewProjection[c][r]));
+
+        const auto projCenter = farBox.min * 0.5f + farBox.max * 0.5f;
+        const glm::vec4 baseCenterClip = fittedBase->viewProjection * glm::vec4(projCenter, 1.0f);
+        EXPECT_NEAR(baseCenterClip.x / baseCenterClip.w, 0.0f, 0.01f);
+        EXPECT_NEAR(baseCenterClip.y / baseCenterClip.w, 0.0f, 0.01f);
+
+        // 光源 XY 平面（对 direction={0,0,-1} 即世界 X/Y）内移动 0.1 个纹素，投影矩阵应完全保持对齐不变。
+        const double worldWidth = 16.0;
+        const float subHalfTexelShift = float(0.1 * (worldWidth / 512.0));
+        const Math::Aabb shiftedBox{farBox.min + glm::vec3(subHalfTexelShift, -subHalfTexelShift, 0.0f),
+                                    farBox.max + glm::vec3(subHalfTexelShift, -subHalfTexelShift, 0.0f)};
+        const auto fittedShifted = Render::makeShadowFrameForBounds(fitSettings, lightDir, shiftedBox);
+        ASSERT_TRUE(fittedShifted);
+        EXPECT_EQ(fittedShifted->viewProjection, fittedBase->viewProjection);
+
+        // 退化点包围盒应安全回退至固定范围。
+        const Math::Aabb pointBox{{5.0f, 5.0f, 5.0f}, {5.0f, 5.0f, 5.0f}};
+        const auto fallbackFixed = Render::makeShadowFrame(fitSettings, lightDir);
+        const auto fittedDegenerate = Render::makeShadowFrameForBounds(fitSettings, lightDir, pointBox);
+        ASSERT_TRUE(fallbackFixed && fittedDegenerate);
+        EXPECT_EQ(fittedDegenerate->viewProjection, fallbackFixed->viewProjection);
+
+        // makeCascadedShadowFrame：1 级与 3 级生成严格单调递增切分深度，且相机纯旋转下各级联正交跨度（包围球半径）保持不变。
+        Scene::Camera cam({2.0f, 3.0f, 8.0f}, glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+                          {glm::radians(45.0f), 0.1f, 100.0f});
+        const auto camMat0 = cam.matrices({1280, 720});
+        cam.setRotation(glm::angleAxis(glm::radians(37.0f), glm::normalize(glm::vec3(0.3f, 1.0f, -0.2f))));
+        const auto camMat1 = cam.matrices({1280, 720});
+
+        for (const uint32_t cascades : {1u, 3u})
+        {
+            Render::ShadowSettings csm;
+            csm.enabled = true;
+            csm.resolution = 2048u;
+            csm.cascadeCount = cascades;
+            csm.cascadeSplitLambda = 0.65f;
+            csm.maxDistance = 60.0f;
+
+            const auto frame0 =
+                Render::makeCascadedShadowFrame(csm, {-0.6f, -1.0f, -0.4f}, camMat0, 0.1f, 100.0f, farBox);
+            const auto frame1 =
+                Render::makeCascadedShadowFrame(csm, {-0.6f, -1.0f, -0.4f}, camMat1, 0.1f, 100.0f, farBox);
+            ASSERT_TRUE(frame0 && frame1);
+            EXPECT_EQ(frame0->cascadeCount, cascades);
+            float prevSplit = 0.1f;
+            for (uint32_t i = 0; i < cascades; ++i)
+            {
+                EXPECT_GT(frame0->cascadeSplits[i], prevSplit);
+                EXPECT_LE(frame0->cascadeSplits[i], 60.0f + 1e-4f);
+                prevSplit = frame0->cascadeSplits[i];
+                for (int c = 0; c < 4; ++c)
+                    for (int r = 0; r < 4; ++r)
+                        EXPECT_TRUE(std::isfinite(frame0->cascadeViewProjections[i][c][r]));
+
+                // 验证相机纯旋转前后各级正交半宽 1 / |column0.xyz| 保持相等（包围球半径稳定）。
+                const float scale0 = glm::length(glm::vec3(frame0->cascadeViewProjections[i][0][0],
+                                                           frame0->cascadeViewProjections[i][1][0],
+                                                           frame0->cascadeViewProjections[i][2][0]));
+                const float scale1 = glm::length(glm::vec3(frame1->cascadeViewProjections[i][0][0],
+                                                           frame1->cascadeViewProjections[i][1][0],
+                                                           frame1->cascadeViewProjections[i][2][0]));
+                EXPECT_NEAR(scale0, scale1, 1e-5f);
+            }
+        }
+
+        // extractSceneFrame 接入 cascadeCount = 3
+        Scene::Scene scene;
+        scene.setCamera(cam);
+        Render::ShadowSettings sceneCsm;
+        sceneCsm.enabled = true;
+        sceneCsm.cascadeCount = 3u;
+        const auto extractedCsm = Scene::extractSceneFrame(scene, {800, 600}, true, sceneCsm);
+        ASSERT_TRUE(extractedCsm && extractedCsm->shadow);
+        EXPECT_EQ(extractedCsm->shadow->cascadeCount, 3u);
     }
 }  // namespace

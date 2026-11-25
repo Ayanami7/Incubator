@@ -30,7 +30,8 @@ namespace Incubator
                 static std::shared_ptr<VulkanImage> uploadRgba8(const VulkanDevice& device, VkExtent2D extent,
                                                                 VkFormat format, std::span<const uint8_t> pixels,
                                                                 VkImageUsageFlags usage,
-                                                                TextureMipMode mipMode = TextureMipMode::BaseLevel);
+                                                                TextureMipMode mipMode = TextureMipMode::BaseLevel,
+                                                                VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
 
                 /// @brief 上传线性 RGBA16F（2D 或 6 面 Cubemap）多级 mip 纹理。
                 static std::shared_ptr<VulkanImage> uploadRgba16f(

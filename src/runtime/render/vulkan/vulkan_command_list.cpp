@@ -138,7 +138,7 @@ namespace Incubator
             }
 
             void VulkanCommandList::drawShadow(VkCommandBuffer commands, VkDescriptorSet frameSet,
-                                               std::span<const VulkanShadowDrawItem> draws)
+                                               std::span<const VulkanShadowDrawItem> draws, uint32_t cascadeIndex)
             {
                 const VulkanPipeline* bound = nullptr;
                 auto frontFace = VK_FRONT_FACE_MAX_ENUM;
@@ -160,8 +160,9 @@ namespace Incubator
                     if (draw.materialSet != VK_NULL_HANDLE)
                         vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, bound->layout(), 1, 1,
                                                 &draw.materialSet, 0, nullptr);
-                    vkCmdPushConstants(commands, bound->layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(draw.model),
-                                       &draw.model);
+                    const VulkanShadowObjectData objectData{draw.model, cascadeIndex, {}};
+                    vkCmdPushConstants(commands, bound->layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(objectData),
+                                       &objectData);
                     vkCmdBindVertexBuffers(commands, 0, 1, &draw.vertexBuffer, &offset);
                     vkCmdBindIndexBuffer(commands, draw.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
                     vkCmdDrawIndexed(commands, draw.indexCount, 1, 0, 0, 0);

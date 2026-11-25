@@ -8,13 +8,15 @@ layout(set = 0, binding = 0, std140) uniform FrameData
     mat4 projection;
     vec4 lightDirectionIntensity;
     vec4 lightColorAmbient;
-    mat4 shadowViewProjection;
+    mat4 cascadeViewProjections[4];
+    vec4 cascadeSplits;
     vec4 shadowParams;
+    vec4 shadowMeta;
     vec4 cameraPosition;
     vec4 iblParams;
 } frame;
 
-layout(set = 0, binding = 1) uniform sampler2D shadowDepth;
+layout(set = 0, binding = 1) uniform sampler2DArray shadowDepth;
 layout(set = 0, binding = 2) uniform samplerCube iblIrradiance;
 layout(set = 0, binding = 3) uniform samplerCube iblPrefiltered;
 layout(set = 0, binding = 4) uniform sampler2D iblBrdfLut;
@@ -35,30 +37,69 @@ layout(location = 2) in vec3 worldPosition;
 layout(location = 3) in vec4 worldTangent;
 layout(location = 0) out vec4 fragmentColor;
 
-float shadowVisibility()
+float shadowVisibility(vec3 geomNormal)
 {
     if (frame.shadowParams.y == 0.0)
         return 1.0;
-    vec4 clip = frame.shadowViewProjection * vec4(worldPosition, 1.0);
+
+    float viewDepth = -(frame.view * vec4(worldPosition, 1.0)).z;
+    float maxDist = frame.shadowMeta.x;
+    if (maxDist > 0.0 && viewDepth >= maxDist)
+        return 1.0;
+
+    uint cascadeCount = max(uint(frame.shadowParams.w + 0.5), 1u);
+    uint layer = cascadeCount - 1u;
+    for (uint i = 0u; i < cascadeCount; ++i)
+    {
+        if (viewDepth <= frame.cascadeSplits[i])
+        {
+            layer = i;
+            break;
+        }
+    }
+
+    vec3 samplePos = worldPosition + geomNormal * frame.shadowParams.z;
+    vec4 clip = frame.cascadeViewProjections[layer] * vec4(samplePos, 1.0);
     if (clip.w <= 0.0)
         return 1.0;
     vec3 ndc = clip.xyz / clip.w;
     if (any(lessThan(ndc, vec3(-1.0, -1.0, 0.0))) || any(greaterThan(ndc, vec3(1.0))))
         return 1.0;
     vec2 shadowUv = ndc.xy * 0.5 + 0.5;
-    // 阴影图仅有基础层；使用整数 texelFetch 执行固定 2×2 双线性加权 PCF，避免硬件线性比较差异与隐式导数依赖。
-    ivec2 shadowSize = textureSize(shadowDepth, 0);
+
+    // 阴影图仅含基础 mip；使用 3×3 整数 texelFetch 配合连续亚像素 Tent 权重，消除导数依赖与阶梯跳变。
+    ivec2 shadowSize = textureSize(shadowDepth, 0).xy;
     vec2 texelPos = shadowUv * vec2(shadowSize) - 0.5;
-    ivec2 baseTexel = ivec2(floor(texelPos));
-    vec2 weight = fract(texelPos);
+    ivec2 baseTexel = ivec2(round(texelPos));
+    vec2 delta = clamp(texelPos - vec2(baseTexel), vec2(-0.5), vec2(0.5));
+    float wx[3] = float[3](0.5 - delta.x, 1.0, 0.5 + delta.x);
+    float wy[3] = float[3](0.5 - delta.y, 1.0, 0.5 + delta.y);
     ivec2 maxTexel = shadowSize - 1;
     float receiverDepth = ndc.z - frame.shadowParams.x;
 
-    float v00 = receiverDepth <= texelFetch(shadowDepth, clamp(baseTexel + ivec2(0, 0), ivec2(0), maxTexel), 0).r ? 1.0 : 0.0;
-    float v10 = receiverDepth <= texelFetch(shadowDepth, clamp(baseTexel + ivec2(1, 0), ivec2(0), maxTexel), 0).r ? 1.0 : 0.0;
-    float v01 = receiverDepth <= texelFetch(shadowDepth, clamp(baseTexel + ivec2(0, 1), ivec2(0), maxTexel), 0).r ? 1.0 : 0.0;
-    float v11 = receiverDepth <= texelFetch(shadowDepth, clamp(baseTexel + ivec2(1, 1), ivec2(0), maxTexel), 0).r ? 1.0 : 0.0;
-    return mix(mix(v00, v10, weight.x), mix(v01, v11, weight.x), weight.y);
+    float visibility = 0.0;
+    for (int dy = -1; dy <= 1; ++dy)
+    {
+        float weightY = wy[dy + 1];
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            ivec2 coord = clamp(baseTexel + ivec2(dx, dy), ivec2(0), maxTexel);
+            float stored = texelFetch(shadowDepth, ivec3(coord, int(layer)), 0).r;
+            visibility += (receiverDepth <= stored ? 1.0 : 0.0) * (wx[dx + 1] * weightY);
+        }
+    }
+    visibility *= 0.25;
+
+    if (maxDist > 0.0)
+    {
+        float fadeStart = maxDist * 0.9;
+        if (viewDepth > fadeStart)
+        {
+            float fade = clamp((viewDepth - fadeStart) / max(maxDist - fadeStart, 1e-4), 0.0, 1.0);
+            visibility = mix(visibility, 1.0, fade);
+        }
+    }
+    return visibility;
 }
 
 void main()
@@ -72,11 +113,11 @@ void main()
     if (material.colorShading.w == 1.0)
     {
         float lengthSquared = dot(N0, N0);
-        float diffuse = 0.0;
-        if (lengthSquared > 0.0)
-            diffuse = max(dot(N0 * inversesqrt(lengthSquared), -frame.lightDirectionIntensity.xyz), 0.0);
+        vec3 geomNormal = lengthSquared > 0.0 ? (N0 * inversesqrt(lengthSquared)) : vec3(0.0);
+        float diffuse = lengthSquared > 0.0 ? max(dot(geomNormal, -frame.lightDirectionIntensity.xyz), 0.0) : 0.0;
         linearColor *= vec3(frame.lightColorAmbient.w) +
-                       frame.lightColorAmbient.rgb * frame.lightDirectionIntensity.w * diffuse * shadowVisibility();
+                       frame.lightColorAmbient.rgb * frame.lightDirectionIntensity.w * diffuse *
+                           shadowVisibility(geomNormal);
     }
     else if (material.colorShading.w == 2.0)
     {
@@ -172,7 +213,7 @@ void main()
                 vec3 spec = (D * G * F) / max(4.0 * NdotV * NdotL, 1e-4);
                 vec3 kD = (1.0 - F) * (1.0 - metallic);
                 direct = (kD * baseColor / PI + spec) * frame.lightColorAmbient.rgb *
-                         (PI * frame.lightDirectionIntensity.w) * NdotL * shadowVisibility();
+                         (PI * frame.lightDirectionIntensity.w) * NdotL * shadowVisibility(N0);
             }
             linearColor = ambient + direct;
         }

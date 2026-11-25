@@ -63,7 +63,7 @@ namespace Incubator
                     layoutInfo.pSetLayouts = layouts.data();
                     const VkPushConstantRange objectRange{
                         VK_SHADER_STAGE_VERTEX_BIT, 0,
-                        depthOnly ? uint32_t(sizeof(glm::mat4)) : uint32_t(sizeof(VulkanObjectData))};
+                        depthOnly ? uint32_t(sizeof(VulkanShadowObjectData)) : uint32_t(sizeof(VulkanObjectData))};
                     layoutInfo.pushConstantRangeCount = 1;
                     layoutInfo.pPushConstantRanges = &objectRange;
                     checkVk(vkCreatePipelineLayout(device_.handle(), &layoutInfo, nullptr, &layout_),

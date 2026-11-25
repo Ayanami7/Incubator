@@ -6,13 +6,18 @@ layout(set = 0, binding = 0, std140) uniform FrameData
     mat4 projection;
     vec4 lightDirectionIntensity;
     vec4 lightColorAmbient;
-    mat4 shadowViewProjection;
+    mat4 cascadeViewProjections[4];
+    vec4 cascadeSplits;
     vec4 shadowParams;
+    vec4 shadowMeta;
+    vec4 cameraPosition;
+    vec4 iblParams;
 } frame;
 
 layout(push_constant) uniform ObjectData
 {
     mat4 model;
+    uvec4 cascadeParams;
 } object;
 
 layout(location = 0) in vec3 inPosition;
@@ -21,6 +26,6 @@ layout(location = 0) out vec2 uv;
 
 void main()
 {
-    gl_Position = frame.shadowViewProjection * object.model * vec4(inPosition, 1.0);
+    gl_Position = frame.cascadeViewProjections[object.cascadeParams.x] * object.model * vec4(inPosition, 1.0);
     uv = inUv;
 }

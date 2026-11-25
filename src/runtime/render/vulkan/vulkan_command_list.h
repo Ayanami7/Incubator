@@ -34,6 +34,18 @@ namespace Incubator
             static_assert(sizeof(VulkanObjectData) == 128);
             static_assert(sizeof(VulkanObjectData) <= 128);
 
+            /// @brief 与深度阴影顶点 Shader 的 ObjectData 对齐的逐物体级联常量。
+            struct alignas(16) VulkanShadowObjectData
+            {
+                glm::mat4 model;
+                uint32_t cascadeIndex = 0u;
+                uint32_t padding[3]{};
+            };
+            static_assert(std::is_standard_layout_v<VulkanShadowObjectData>);
+            static_assert(offsetof(VulkanShadowObjectData, model) == 0);
+            static_assert(offsetof(VulkanShadowObjectData, cascadeIndex) == 64);
+            static_assert(sizeof(VulkanShadowObjectData) == 80);
+
             struct VulkanDrawItem
             {
                 VkBuffer vertexBuffer;
@@ -69,9 +81,9 @@ namespace Incubator
 
                 static void drawIndexed(VkCommandBuffer commandBuffer, const VulkanPipeline& pipeline,
                                         VkDescriptorSet frameSet, std::span<const VulkanDrawItem> draws);
-                /// @brief 绑定光源帧参数并录制实心或镂空深度绘制。
+                /// @brief 绑定光源帧参数并录制指定级联层的实心或镂空深度绘制。
                 static void drawShadow(VkCommandBuffer commandBuffer, VkDescriptorSet frameSet,
-                                       std::span<const VulkanShadowDrawItem> draws);
+                                       std::span<const VulkanShadowDrawItem> draws, uint32_t cascadeIndex = 0u);
             };
         }  // namespace Vulkan
     }  // namespace Render

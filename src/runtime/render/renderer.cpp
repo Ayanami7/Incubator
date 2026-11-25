@@ -771,7 +771,8 @@ namespace Incubator
                         throw Error::Exception(Error::Code::RENDER,
                                                "Prepare shadow vertex shader before enabling shadows");
                     shadowDraws = resolveShadowDraws(input, resources);
-                    shadowTarget = std::make_unique<Vulkan::VulkanShadowTarget>(device_);
+                    shadowTarget = std::make_unique<Vulkan::VulkanShadowTarget>(
+                        device_, input.shadow->resolution, input.shadow->cascadeCount);
                     selectShadowPipelines(shadowDraws, shadowTarget->image().format());
                 }
                 Vulkan::VulkanSceneTarget hdrTarget(device_, {input.extent.width, input.extent.height}, depthFormat_,
@@ -789,8 +790,9 @@ namespace Incubator
                 std::copy(clearColor.begin(), clearColor.end(), clear.float32);
                 device_.executeImmediate([&](VkCommandBuffer cmd) {
                     if (shadowTarget)
-                        shadowTarget->record(cmd, [&](VkCommandBuffer depth) {
-                            Vulkan::VulkanCommandList::drawShadow(depth, bindings.descriptorSet(0), shadowDraws);
+                        shadowTarget->record(cmd, [&](VkCommandBuffer depth, uint32_t cascadeIndex) {
+                            Vulkan::VulkanCommandList::drawShadow(depth, bindings.descriptorSet(0), shadowDraws,
+                                                                  cascadeIndex);
                         });
                     hdrTarget.record(cmd, clear, [&](VkCommandBuffer scene) {
                         if (!draws.empty())
@@ -966,8 +968,10 @@ namespace Incubator
                 if (input.shadow)
                 {
                     auto& slot = shadowTargets_[index];
-                    if (!slot)
-                        slot = std::make_shared<Vulkan::VulkanShadowTarget>(device_);
+                    if (!slot || slot->resolution() != input.shadow->resolution ||
+                        slot->layerCount() != input.shadow->cascadeCount)
+                        slot = std::make_shared<Vulkan::VulkanShadowTarget>(
+                            device_, input.shadow->resolution, input.shadow->cascadeCount);
                     shadow = slot;
                     selectShadowPipelines(shadowDraws, shadow->image().format());
                     resources.push_back(shadow);
@@ -984,7 +988,7 @@ namespace Incubator
                     std::exp2(input.display.exposureEv)};
                 const Vulkan::ViewportSampleInput sampleInput{
                     static_cast<uint32_t>(draws.size()),
-                    static_cast<uint32_t>(shadow ? shadowDraws.size() : 0)};
+                    static_cast<uint32_t>(shadow ? shadowDraws.size() * shadow->layerCount() : 0)};
                 if (!scheduler_->renderAndPresent(
                         *swapchain_, clear,
                         [&](VkCommandBuffer cmd) {
@@ -994,9 +998,9 @@ namespace Incubator
                         resources,
                         [&](VkCommandBuffer cmd) {
                             if (shadow)
-                                shadow->record(cmd, [&](VkCommandBuffer depth) {
+                                shadow->record(cmd, [&](VkCommandBuffer depth, uint32_t cascadeIndex) {
                                     Vulkan::VulkanCommandList::drawShadow(
-                                        depth, bindingSet_->descriptorSet(index), shadowDraws);
+                                        depth, bindingSet_->descriptorSet(index), shadowDraws, cascadeIndex);
                                 });
                             target->target->record(cmd, *displayPass_, displayParams,
                                                    [&](VkCommandBuffer scene) {
