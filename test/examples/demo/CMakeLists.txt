@@ -4,4 +4,4 @@ target_link_libraries(demo_test PRIVATE GTest::gtest_main IncubatorAppCommon vul
 target_include_directories(demo_test PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/test")
 add_dependencies(demo_test incubator_assets)
 set_target_properties(demo_test PROPERTIES FOLDER "UnitTest/examples/demo")
-gtest_discover_tests(demo_test WORKING_DIRECTORY "${CMAKE_BINARY_DIR}" PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
+gtest_discover_tests(demo_test WORKING_DIRECTORY "${CMAKE_BINARY_DIR}" PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 LABELS "gpu\\;demo")

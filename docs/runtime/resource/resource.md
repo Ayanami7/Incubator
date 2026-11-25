@@ -94,6 +94,10 @@ OBJ/glTF、PNG、bin/mtl 分别标为模型、纹理和依赖候选，其他项�
 
 会话先构造 FileIO 和 AssetSource，再 bindAssetSource(&source) 并注册 Loader。
 结束时释放全部 CPU 持有和载荷，reset 清除路由，再 bindAssetSource(nullptr)，最后销毁源及 FileIO。
+换绑或解绑时仍有路由、CPU 持有或挂载对象会抛 CONFIG，原状态保持；零持有、无载荷的身份登记可以保留。
+同一进程后续绑定其他根时，旧登记仍使用相同 ID，但载荷必须重新从新根读取。
+Registry::hasLiveResources 检查持有或挂载状态，不强制销毁外部对象；reset 仍只清路由。
+场景文件、启动配置、布局和字体的现有 FileIO/cwd 规则保持不变。
 
 ### 外部模型文件导入
 
@@ -110,10 +114,6 @@ glTF 收集外部缓冲和 PNG，按模型文件目录解析 URI。OBJ 收集声
 若应用从 `build/` 启动，清理 `build/` 会同时移除导入文件。
 Editor 的 Assets 面板使用当前会话的资产源导入，完成后列出新建目录并定位模型。
 保存的场景通过虚拟路径引用这些文件。操作和保存约定见 [Editor 说明](../../app/editor.md)。
-换绑或解绑时仍有路由、CPU 持有或挂载对象会抛 CONFIG，原状态保持；零持有、无载荷的身份登记可以保留。
-同一进程后续绑定其他根时，旧登记仍使用相同 ID，但载荷必须重新从新根读取。
-Registry::hasLiveResources 检查持有或挂载状态，不强制销毁外部对象；reset 仍只清路由。
-场景文件、启动配置、布局和字体的现有 FileIO/cwd 规则保持不变。
 
 ## 演进路线（未实现项触发条件）
 

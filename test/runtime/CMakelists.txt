@@ -117,7 +117,7 @@ target_compile_definitions(runtime_cpu_test PRIVATE
 )
 add_dependencies(runtime_cpu_test runtime_test_fixtures runtime_test_shaders incubator_models)
 set_target_properties(runtime_cpu_test PROPERTIES FOLDER "UnitTest/runtime")
-gtest_discover_tests(runtime_cpu_test)
+gtest_discover_tests(runtime_cpu_test PROPERTIES LABELS "cpu\\;runtime")
 
 # 需要窗口或 Vulkan GPU 的独立测试目标保持按工作目录与串行属性注册。
 foreach(TEST_SOURCE IN LISTS RUNTIME_GPU_WINDOW_TESTS)
@@ -129,9 +129,9 @@ foreach(TEST_SOURCE IN LISTS RUNTIME_GPU_WINDOW_TESTS)
 
     if(TEST_NAME STREQUAL "render_input_test")
         target_link_libraries(${TEST_NAME} PRIVATE vulkan)
-        gtest_discover_tests(${TEST_NAME})
+        gtest_discover_tests(${TEST_NAME} PROPERTIES LABELS "cpu\\;runtime")
     elseif(TEST_NAME STREQUAL "window_test")
-        gtest_discover_tests(${TEST_NAME})
+        gtest_discover_tests(${TEST_NAME} PROPERTIES LABELS "window\\;runtime")
     else()
         target_link_libraries(${TEST_NAME} PRIVATE vulkan imgui)
         add_dependencies(${TEST_NAME} runtime_test_fixtures runtime_test_shaders)
@@ -140,11 +140,11 @@ foreach(TEST_SOURCE IN LISTS RUNTIME_GPU_WINDOW_TESTS)
             add_dependencies(${TEST_NAME} incubator_models)
             gtest_discover_tests(${TEST_NAME}
                 WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-                PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
+                PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 LABELS "gpu\\;runtime")
         else()
             gtest_discover_tests(${TEST_NAME}
                 WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/test-fixtures"
-                PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
+                PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 LABELS "gpu\\;runtime")
         endif()
     endif()
 endforeach()
