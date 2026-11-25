@@ -244,7 +244,7 @@ Editor 接收偏移默认 0.003，控件范围 `[0,0.01]`，单位为零到一�
 设置不写入 SceneDescription、JSON v1 或 incubator.json；打开或重新加载场景保留当前预览开关与偏移，
 光线方向取新 Scene 的原始 Lighting，不另存第二份方向。
 
-首次存在有效独立视口且启用阴影时，EditorApp 经原有 ShaderResource 路由加载 `shaders/shadow.vert.spv`，
+首次存在有效独立视口且启用阴影时，会话经 ShaderResource 路由加载 `shadow.vert.spv` 及 `shadow_mask.vert.spv`、`shadow_mask.frag.spv`，
 准备成功即释放 CPU Resource；失败报告 RENDER 并关闭会话。关闭或最小化视口不准备额外深度资源；
 恢复、调整视口及场景文件切换复用已准备的 Shader、帧槽阴影图和模型缓存。
 无布局回调的原直接绘制消费者默认不启用阴影，显式启用仍按 Renderer 约定被拒绝。

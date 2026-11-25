@@ -32,10 +32,12 @@ namespace Incubator
             VulkanPipeline::VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
                                            VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout materialLayout,
                                            const std::vector<uint32_t>& vertexShader,
-                                           const std::vector<uint32_t>& fragmentShader, bool linearHdrOutput)
+                                           const std::vector<uint32_t>& fragmentShader, bool linearHdrOutput,
+                                           VkCullModeFlags cullMode)
                 : device_(device), colorFormat_(colorFormat), depthFormat_(depthFormat)
             {
                 const bool depthOnly = colorFormat == VK_FORMAT_UNDEFINED;
+                const bool hasFragment = !fragmentShader.empty();
                 VkShaderModule vertexModule = VK_NULL_HANDLE;
                 VkShaderModule fragmentModule = VK_NULL_HANDLE;
                 try
@@ -46,7 +48,7 @@ namespace Incubator
                     moduleInfo.pCode = vertexShader.data();
                     checkVk(vkCreateShaderModule(device_.handle(), &moduleInfo, nullptr, &vertexModule),
                             "vkCreateShaderModule(vertex)");
-                    if (!depthOnly)
+                    if (hasFragment)
                     {
                         moduleInfo.codeSize = fragmentShader.size() * sizeof(uint32_t);
                         moduleInfo.pCode = fragmentShader.data();
@@ -57,7 +59,7 @@ namespace Incubator
                     VkPipelineLayoutCreateInfo layoutInfo{};
                     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
                     const std::array layouts{frameLayout, materialLayout};
-                    layoutInfo.setLayoutCount = depthOnly ? 1u : static_cast<uint32_t>(layouts.size());
+                    layoutInfo.setLayoutCount = materialLayout == VK_NULL_HANDLE ? 1u : uint32_t(layouts.size());
                     layoutInfo.pSetLayouts = layouts.data();
                     const VkPushConstantRange objectRange{
                         VK_SHADER_STAGE_VERTEX_BIT, 0,
@@ -81,7 +83,7 @@ namespace Incubator
                         result[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
                         result[1].module = fragmentModule;
                         result[1].pName = "main";
-                        result[1].pSpecializationInfo = &specializationInfo;
+                        result[1].pSpecializationInfo = depthOnly ? nullptr : &specializationInfo;
                         return result;
                     }();
 
@@ -97,7 +99,7 @@ namespace Incubator
                     vertexInput.vertexBindingDescriptionCount = 1;
                     vertexInput.pVertexBindingDescriptions = &vertexBinding;
                     vertexInput.vertexAttributeDescriptionCount =
-                        depthOnly ? 1u : static_cast<uint32_t>(std::size(vertexAttributes));
+                        depthOnly ? (hasFragment ? 2u : 1u) : static_cast<uint32_t>(std::size(vertexAttributes));
                     vertexInput.pVertexAttributeDescriptions = vertexAttributes;
                     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
                     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -106,7 +108,8 @@ namespace Incubator
                     viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
                     viewport.viewportCount = 1;
                     viewport.scissorCount = 1;
-                    constexpr VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+                    constexpr VkDynamicState dynamicStates[] = {
+                        VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_FRONT_FACE};
                     VkPipelineDynamicStateCreateInfo dynamic{};
                     dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
                     dynamic.dynamicStateCount = static_cast<uint32_t>(std::size(dynamicStates));
@@ -114,7 +117,7 @@ namespace Incubator
                     VkPipelineRasterizationStateCreateInfo rasterization{};
                     rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
                     rasterization.polygonMode = VK_POLYGON_MODE_FILL;
-                    rasterization.cullMode = VK_CULL_MODE_NONE;
+                    rasterization.cullMode = cullMode;
                     rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
                     rasterization.lineWidth = 1.0f;
                     VkPipelineMultisampleStateCreateInfo multisample{};
@@ -141,7 +144,7 @@ namespace Incubator
                     VkGraphicsPipelineCreateInfo pipelineInfo{};
                     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
                     pipelineInfo.pNext = &rendering;
-                    pipelineInfo.stageCount = depthOnly ? 1u : static_cast<uint32_t>(stages.size());
+                    pipelineInfo.stageCount = hasFragment ? static_cast<uint32_t>(stages.size()) : 1u;
                     pipelineInfo.pStages = stages.data();
                     pipelineInfo.pVertexInputState = &vertexInput;
                     pipelineInfo.pInputAssemblyState = &inputAssembly;

@@ -369,7 +369,8 @@ namespace TextureGpuReview
         VulkanBindingSet bindings(device, uniforms);
         VulkanMaterialBinding material(device, bindings.materialLayout(), *texture, sampler,
                                        bindings.normalFallback(), sampler,
-                                       bindings.metallicRoughnessFallback(), sampler, tint);
+                                       bindings.metallicRoughnessFallback(), sampler,
+                                       bindings.emissiveFallback(), sampler, MaterialDesc{.color = tint});
         const auto depthFormat = device.findDepthFormat();
         const auto vertexWords = assets.vertex->words();
         const auto fragmentWords = assets.fragment->words();

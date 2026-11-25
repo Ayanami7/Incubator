@@ -121,6 +121,10 @@ namespace Incubator
             /// @param vertexShader 使用共同 FrameData 与模型矩阵的深度顶点 Shader。
             /// @note 未启用阴影的调用方不需要调用；不读取文件或保留 CPU Resource。
             void prepareShadowResources(const Resource::ShaderResource& vertexShader);
+            /// @brief 准备实心及镂空阴影深度 Shader，供独立视口按需创建管线。
+            void prepareShadowResources(const Resource::ShaderResource& vertexShader,
+                                        const Resource::ShaderResource& maskVertex,
+                                        const Resource::ShaderResource& maskFragment);
 
             /// @brief 准备离屏视口显示 Pass（色调映射与 sRGB 编码）所需全屏 Shader。
             /// @param vertexShader 全屏三角形顶点着色器资源。

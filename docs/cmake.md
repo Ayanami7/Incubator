@@ -139,7 +139,7 @@ Editor 布局仅使用 incubator-editor-layout.ini；Demo 不持久化布局，�
 - `runtime_ui_fonts` 在同一文件中部署 `assets/fonts/NotoSansSC-Regular.otf` 与 `OFL.txt` 到 `<build>/assets/fonts/`，两个应用及独立进程场景恢复程序显式依赖该目标。字体来源与许可见 `assets/fonts/SOURCE.md`，不使用开发机系统字体。
 - `runtime_test_fixtures` 将同一生产字体及许可复制到 `<build>/test-fixtures/assets/fonts/`，GPU 和 Demo 隔离工作目录继续使用该字体。`imgui_integration_test` 按 GPU 测试属性串行运行于 `<build>/test-fixtures/`，覆盖受控 DPI 更新、像素密度与原生窗口字体呈现；模拟缩放与实际显示证据分别保存。
 - `IncubatorAppCommon` 私有包含 Assimp 附带的 RapidJSON 头文件，应用和配置测试复用该库编译的启动配置实现。
-- `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确 PNG 样本部署到独立的 `<build>/test-fixtures/assets/`；`runtime_test_shaders` 复制相同的生产 SPIR-V 到该测试根。Vulkan review 使用精确纹理 fixture，真实模型集成测试按需读取选定模型；不向 `<build>/assets/` 部署测试输入。
+- `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确纹理样本部署到独立的 `<build>/test-fixtures/assets/`。`runtime_test_shaders` 复制生产 SPIR-V 到该测试根，包括实心阴影顶点和镂空阴影顶点、片元 Shader。Vulkan review 使用精确纹理样本，真实模型集成测试按需读取选定模型。
 
 ### Assimp 依赖
 

@@ -250,6 +250,24 @@ namespace
             return renderer.createMesh(d.vertices, d.indices);
         }
 
+        Mesh createLitPlane(Renderer& renderer)
+        {
+            auto plane = Demo::makePlaneMesh();
+            for (auto& vertex : plane.vertices)
+                vertex.normal[2] = 1.0f;
+            return renderer.createMesh(plane.vertices, plane.indices);
+        }
+
+        std::vector<std::array<float, 4>> captureHdr(Renderer& renderer, const FrameInput& input)
+        {
+            std::vector<std::array<float, 4>> pixels;
+            Detail::RendererReviewAccess::withHdrSceneTarget(
+                renderer, input, {0, 0, 0, 0}, [&](const auto& device, const auto& image) {
+                    pixels = TextureGpuReview::captureRgba16f(device, image, {input.extent.width, input.extent.height});
+                });
+            return pixels;
+        }
+
         int drawUiFrame(Window::Window& window, Renderer& renderer, const Mesh& mesh, const Material& material)
         {
             window.pollEvents();
@@ -322,6 +340,148 @@ namespace
         std::filesystem::path previousPath_;
         std::ostringstream messages_;
     };
+
+    TEST_F(VulkanReviewTest, AlphaMaskCutsMainAndShadowPixelsAtTheSameThreshold)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            auto& manager = Resource::ResourceManager::instance();
+            const auto vertex = manager.hold<Resource::ShaderResource>(
+                Resource::ResourceType::SHADER, "shaders/shadow.vert.spv");
+            const auto maskVertex = manager.hold<Resource::ShaderResource>(
+                Resource::ResourceType::SHADER, "shaders/shadow_mask.vert.spv");
+            const auto maskFragment = manager.hold<Resource::ShaderResource>(
+                Resource::ResourceType::SHADER, "shaders/shadow_mask.frag.spv");
+            ASSERT_TRUE(vertex && maskVertex && maskFragment);
+            renderer.prepareShadowResources(*vertex.get<Resource::ShaderResource>(),
+                                            *maskVertex.get<Resource::ShaderResource>(),
+                                            *maskFragment.get<Resource::ShaderResource>());
+            const auto plane = createLitPlane(renderer);
+            const Resource::TextureResource alphaTex({}, 2, 1, {255, 0, 0, 127, 255, 0, 0, 255});
+            MaterialDesc mask{renderer.createTexture(alphaTex)};
+            mask.alphaMode = AlphaMode::Mask;
+            mask.alphaCutoff = 0.5f;
+            mask.baseAlpha = 0.5f;
+            std::array caster{DrawItem{plane, renderer.createMaterial(mask), glm::translate(glm::mat4(1), {0, 0, 0.3f})}};
+            constexpr FrameExtent extent{128, 128};
+            const auto left = size_t(64) * extent.width + 48;
+            const auto right = size_t(64) * extent.width + 80;
+            const auto main = captureHdr(renderer, controlledFrame(extent, caster));
+            ASSERT_EQ(main.size(), size_t(extent.width) * extent.height);
+            EXPECT_EQ(main[left], (std::array<float, 4>{0, 0, 0, 0}));
+            EXPECT_EQ(main[right], (std::array<float, 4>{1, 0, 0, 1}));
+
+            const Resource::TextureResource whiteTex({}, 1, 1, {255, 255, 255, 255});
+            MaterialDesc white{renderer.createTexture(whiteTex)};
+            white.shading = ShadingMode::Lambert;
+            const std::array receiver{DrawItem{plane, renderer.createMaterial(white), glm::mat4(1)}};
+            auto frame = controlledFrame(extent, receiver);
+            frame.lighting = {{0, 0, -1}, {1, 1, 1}, 1.0f, 0.0f};
+            ShadowSettings settings;
+            settings.enabled = true;
+            frame.shadow = makeShadowFrame(settings, frame.lighting.direction);
+            frame.shadowDraws = caster;
+            const auto shadow = captureHdr(renderer, frame);
+            ASSERT_EQ(shadow.size(), main.size());
+            EXPECT_NEAR(shadow[left][0], 1.0f, 0.005f);
+            EXPECT_NEAR(shadow[right][0], 0.0f, 0.005f);
+            mask.alphaMode = AlphaMode::Blend;
+            caster[0].material = renderer.createMaterial(mask);
+            const auto withoutBlendShadow = captureHdr(renderer, frame);
+            ASSERT_EQ(withoutBlendShadow.size(), main.size());
+            EXPECT_NEAR(withoutBlendShadow[right][0], 1.0f, 0.005f);
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, DoubleSidedLightsBackFacesAndSingleSidedCullsThem)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            const auto plane = createLitPlane(renderer);
+            const Resource::TextureResource whiteTex({}, 1, 1, {255, 255, 255, 255});
+            const auto white = renderer.createTexture(whiteTex);
+            constexpr FrameExtent extent{64, 64};
+            constexpr size_t center = (extent.height / 2) * extent.width + extent.width / 2;
+            for (const auto shading : {ShadingMode::Lambert, ShadingMode::Pbr})
+            {
+                SCOPED_TRACE(static_cast<int>(shading));
+                MaterialDesc desc{white, {0.6f, 0.6f, 0.6f}};
+                desc.shading = shading;
+                desc.doubleSided = true;
+                std::array draws{DrawItem{plane, renderer.createMaterial(desc), glm::mat4(1)}};
+                auto frame = controlledFrame(extent, draws);
+                frame.lighting = {{0, 0, -1}, {1, 1, 1}, 1.0f, 0.0f};
+                const auto front = captureHdr(renderer, frame);
+                frame.camera.view = glm::lookAtRH(glm::vec3(0, 0, -3), glm::vec3(0), glm::vec3(0, 1, 0));
+                frame.lighting.direction = {0, 0, 1};
+                const auto back = captureHdr(renderer, frame);
+                ASSERT_GT(front.size(), center);
+                ASSERT_GT(back.size(), center);
+                EXPECT_GT(front[center][0], 0.2f);
+                EXPECT_NEAR(back[center][0], front[center][0], 0.005f);
+                EXPECT_EQ(back[center][3], 1.0f);
+                desc.doubleSided = false;
+                draws[0].material = renderer.createMaterial(desc);
+                const auto culled = captureHdr(renderer, frame);
+                ASSERT_GT(culled.size(), center);
+                EXPECT_EQ(culled[center], (std::array<float, 4>{0, 0, 0, 0}));
+            }
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, EmissiveTextureContributesInDarknessAndPassesThroughToneMapping)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
+            const Resource::TextureResource whiteTex({}, 1, 1, {255, 255, 255, 255});
+            const Resource::TextureResource glowTex({}, 1, 1, {255, 128, 64, 255});
+            const auto white = renderer.createTexture(whiteTex);
+            const auto glow = renderer.createTexture(glowTex);
+            const auto plane = createLitPlane(renderer);
+            constexpr FrameExtent extent{64, 64};
+            constexpr size_t center = (extent.height / 2) * extent.width + extent.width / 2;
+            const auto expected = linearFromSrgb(glm::vec3(255, 128, 64) / 255.0f) * glm::vec3(0.5f, 1.0f, 0.75f);
+            for (const auto shading : {ShadingMode::Lambert, ShadingMode::Pbr})
+            {
+                SCOPED_TRACE(static_cast<int>(shading));
+                MaterialDesc desc{white};
+                desc.shading = shading;
+                desc.emissiveTexture = glow;
+                desc.emissiveFactor = {0.5f, 1.0f, 0.75f};
+                const std::array draws{DrawItem{plane, renderer.createMaterial(desc), glm::mat4(1)}};
+                auto frame = controlledFrame(extent, draws);
+                frame.lighting = {{0, 0, -1}, {1, 1, 1}, 0.0f, 0.0f};
+                frame.display = {ToneMappingMode::Reinhard, 1.0f};
+                const auto hdr = captureHdr(renderer, frame);
+                ASSERT_GT(hdr.size(), center);
+                for (int channel = 0; channel < 3; ++channel)
+                    EXPECT_NEAR(hdr[center][channel], expected[channel], 0.003f);
+                EXPECT_EQ(hdr[center][3], 1.0f);
+                ASSERT_TRUE(renderer.beginUiFrame());
+                const auto output = renderer.prepareSceneTarget(extent);
+                renderer.imgui().endFrame();
+                renderer.drawSceneTarget(output, frame, {0, 0, 0, 1});
+                Detail::RendererReviewAccess::withSceneOutput(renderer, output, [&](const auto& device, const auto& image) {
+                    const auto ldr = TextureGpuReview::captureMip(device, image, 0, {extent.width, extent.height});
+                    const auto exposed = expected * 2.0f;
+                    expectLinearPixel(ldr, exposed / (glm::vec3(1) + exposed), 32, 32, extent.width);
+                });
+            }
+        }
+        expectCleanValidation();
+    }
 
     TEST_F(VulkanReviewTest, UInt32IndexDrawUsesVertexAboveUint16Range)
     {
@@ -403,7 +563,7 @@ namespace
             for (int c = 0; c < 3; ++c)
                 EXPECT_GT(image.rgba[offset + c], 220);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
-            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 2u);
             EXPECT_EQ(firstAudit.textureOpens, 1u);
             EXPECT_EQ(secondAudit.textureOpens, 1u);
         }
@@ -559,7 +719,7 @@ namespace
                 }
             }
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
-            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 2u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 8u);
         }
         for (const auto& t : texObs)
@@ -688,7 +848,7 @@ namespace
                 EXPECT_GT(px(0.65f + 0.21667f, -0.45f + 0.08125f, 0), 220);
                 EXPECT_LT(px(0.65f + 0.21667f, -0.45f + 0.08125f, 1), 30);
             }
-            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 2u);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 3u);
             EXPECT_TRUE(referenceAudit.cpuReleasedBeforeDestroy && directionAudit.cpuReleasedBeforeDestroy);
@@ -1100,14 +1260,15 @@ namespace
                 expectLinearPixel(TextureGpuReview::captureFrame(renderer, f), glm::vec3(1));
             }
 
-            // 分支 5：负缩放（det < 0）翻转法线朝向，+Z 光源被遮挡而 -Z 光源受光。
+            // 分支 5：从镜像后的正面观察，负 Z 缩放使 -Z 侧成为正面并使法线指向 -Z。
             const std::array negDraws{DrawItem{normMesh, whiteLit, glm::scale(glm::mat4(1), glm::vec3(1, 1, -1))}};
             auto negFrame = controlledFrame({384, 256}, negDraws);
+            negFrame.camera.view = glm::lookAtRH(glm::vec3(0, 0, -3), glm::vec3(0), glm::vec3(0, 1, 0));
             negFrame.lighting = {{0, 0, -1}, {1, 1, 1}, 0.7f, 0.2f};
             expectLinearPixel(TextureGpuReview::captureFrame(renderer, negFrame), glm::vec3(0.2f));
             negFrame.lighting.direction = {0, 0, 1};
             expectLinearPixel(TextureGpuReview::captureFrame(renderer, negFrame), glm::vec3(0.9f));
-            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 2u);
         }
         expectCleanValidation();
     }
@@ -2886,8 +3047,8 @@ namespace
                 {{2.0f, 0.0f, 2.0f}, {1, 1}, {0, 1, 0}, {1, 0, 0, 1}},
                 {{-2.0f, 0.0f, 2.0f}, {0, 1}, {0, 1, 0}, {1, 0, 0, 1}},
             }};
-            const std::array<uint32_t, 6> quadIndices{0, 1, 2, 0, 2, 3};
-            const auto xzQuadMesh = renderer.createMesh(receiverVerts, quadIndices);
+            const std::array<uint32_t, 6> receiverIndices{0, 2, 1, 0, 3, 2};
+            const auto xzQuadMesh = renderer.createMesh(receiverVerts, receiverIndices);
             MaterialDesc receiverDesc{white, {0.8f, 0.8f, 0.8f}};
             receiverDesc.shading = ShadingMode::Pbr;
             receiverDesc.metallic = 0.0f;

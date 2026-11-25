@@ -36,6 +36,20 @@ if(WIN32)
         COMMENT "编译阴影深度顶点 Shader"
         VERBATIM
     )
+    foreach(MASK_SHADER_STAGE IN ITEMS vert frag)
+        set(MASK_SHADER_SOURCE "${ASSETS_DIR}/shaders/shadow_mask.${MASK_SHADER_STAGE}")
+        set(MASK_SHADER_OUTPUT "${SHADER_OUTPUT_DIR}/shadow_mask.${MASK_SHADER_STAGE}.spv")
+        add_custom_command(
+            OUTPUT "${MASK_SHADER_OUTPUT}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
+            COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 --target-env spirv1.6 --glsl-version 450
+                    -S ${MASK_SHADER_STAGE} -o "${MASK_SHADER_OUTPUT}" "${MASK_SHADER_SOURCE}"
+            DEPENDS "${MASK_SHADER_SOURCE}"
+            COMMENT "编译阴影镂空 Shader"
+            VERBATIM
+        )
+        list(APPEND MASK_SHADER_OUTPUTS "${MASK_SHADER_OUTPUT}")
+    endforeach()
     set(DISPLAY_VERTEX_SPIRV "${SHADER_OUTPUT_DIR}/display.vert.spv")
     set(DISPLAY_FRAGMENT_SPIRV "${SHADER_OUTPUT_DIR}/display.frag.spv")
     set(FXAA_FRAGMENT_SPIRV "${SHADER_OUTPUT_DIR}/fxaa.frag.spv")
@@ -68,7 +82,7 @@ if(WIN32)
     )
     add_custom_target(incubator_shaders
         DEPENDS "${CUBE_VERTEX_SPIRV}" "${CUBE_FRAGMENT_SPIRV}" "${SHADOW_VERTEX_SPIRV}"
-                "${DISPLAY_VERTEX_SPIRV}" "${DISPLAY_FRAGMENT_SPIRV}" "${FXAA_FRAGMENT_SPIRV}")
+                ${MASK_SHADER_OUTPUTS} "${DISPLAY_VERTEX_SPIRV}" "${DISPLAY_FRAGMENT_SPIRV}" "${FXAA_FRAGMENT_SPIRV}")
 
 endif()
 

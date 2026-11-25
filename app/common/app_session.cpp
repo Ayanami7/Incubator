@@ -298,9 +298,14 @@ namespace Incubator::App
                     const auto depth = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
                         Resource::ResourceType::SHADER, "shaders/shadow.vert.spv");
                     const auto* shader = depth.get<Resource::ShaderResource>();
-                    if (!shader)
+                    const auto maskVertex = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
+                        Resource::ResourceType::SHADER, "shaders/shadow_mask.vert.spv");
+                    const auto maskFragment = Resource::ResourceManager::instance().hold<Resource::ShaderResource>(
+                        Resource::ResourceType::SHADER, "shaders/shadow_mask.frag.spv");
+                    if (!shader || !maskVertex || !maskFragment)
                         throw Error::Exception(Error::Code::RENDER, "Cannot load application shadow shader");
-                    renderer_->prepareShadowResources(*shader);
+                    renderer_->prepareShadowResources(*shader, *maskVertex.get<Resource::ShaderResource>(),
+                                                     *maskFragment.get<Resource::ShaderResource>());
                     shadowResourcesPrepared_ = true;
                 }
                 auto* data = renderer_->imgui().drawData();

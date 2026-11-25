@@ -191,7 +191,10 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 `createMaterial` 要求先准备共享 Shader，并在分配 GPU 资源前检查材质参数和 Texture 从属关系。
 `MaterialDesc` 还保存透明模式、非负的 `alphaCutoff`、[0, 1] 范围的 `baseAlpha`、双面标志以及三分量自发光因子。
 可选的 `emissiveTexture` 使用同一 Renderer 的 sRGB RGBA8 贴图，可按材质采样器进行线性过滤能力校验。
-这些字段随实际材质保留，当前主场景仍沿用原有不透明绘制路径。
+主场景按材质选择背面剔除或双面管线。Alpha Mask 使用基色贴图 alpha 与 `baseAlpha` 的乘积，并丢弃低于 `alphaCutoff` 的片元。
+双面 Lambert 与 PBR 在背面翻转几何法线，再计算光照及法线贴图。自发光贴图与因子在线性空间相乘并累加到 Lambert/PBR 光照，
+再进入 HDR 显示映射。无自发光贴图时使用白图，纯基色 Unlit 沿用原有着色。
+逐绘制项按模型镜像及投影约定设置正面绕序，使用 Vulkan 1.3 的动态正面状态。[Vulkan 文档](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdSetFrontFace.html)
 空、过期、跨 Renderer 纹理，NaN、无穷或越界颜色均明确失败，不替换白图或钳制非法输入。
 创建时将参数复制进 32 字节 std140 `MaterialData`（`vec4 colorShading` 与 `vec4 surfaceParams`），`colorShading.w` 精确编码模式（0 为 Unlit、1 为 Lambert、2 为 Pbr），`surfaceParams.w` 编码粗糙度/金属度独立模式位（bit 0 为固定粗糙度，bit 1 为固定金属度）；之后不改写该 Buffer
 或 Descriptor。无论 PNG alpha 或颜色参数如何，场景输出 alpha 始终为 1，不启用透明混合。
@@ -206,7 +209,7 @@ Unlit 输出 `B`；Lambert 输出 `B * (ambient + lightColor * intensity * max(d
 Pbr 在切线空间法线扰动后（`normalScale > 0` 且切线与法线均非退化时构造正交 TBN，否则安全回退至几何法线）结合金属粗糙度贴图（`G` 通道为粗糙度并钳制至 `[0.04, 1]`，`B` 通道为金属度）与相机世界坐标 `cameraPosition`，计算能量守恒漫反射 `kD * B / PI` 与 Cook-Torrance GGX 镜面高光及阴影衰减；当帧输入开启 `iblEnabled` 时，会话共享的漫反射辐照度 Cubemap、按粗糙度分级采样的预过滤镜面 Cubemap 与 BRDF 查找表（Split-Sum）替代 PBR 的常量环境项，方向光强度为零时仍正常输出环境漫反射与镜面反射，关闭时保持原常量环境项。
 计算在线性空间进行，最后 clamp 至 `[0,1]` 并使用原有精确 sRGB 编码一次，alpha 固定 1。
 零法线没有直接光贡献，仍保留环境项；直接光强度与环境系数同时为零时为黑色。
-这是最小漫反射预览，支持可选的单方向光硬阴影，不包含 PBR、源灯光或背面法线翻转。
+Lambert 预览支持单方向光、可选阴影和双面材质的背面法线翻转。
 
 模型 Demo 显式选择 Lambert 并提供方向、线性颜色、强度与环境控件；Render 的默认材质和旧调用仍为 Unlit。
 
@@ -287,7 +290,8 @@ ImGui 接入后，应用通过 UI 适配层开始 UI 帧、构建界面并结束
 
 `mesh.h` 的 `MeshVertex` 依次为 `float position[3]`、`float uv[2]`、默认零的 `float normal[3]` 与默认零的 `float tangent[4]`，
 紧密 48 字节，偏移分别为 0、12、20、32；旧两字段或三字段聚合初始化的法线/切线为零。
-Pipeline 按该类型的大小和字段偏移绑定位置、UV、法线和切线（location 0、1、2、3；阴影深度 Pipeline 仅读取 location 0 位置）。索引固定为 `uint32_t`，拓扑为不透明三角形列表。
+Pipeline 按字段偏移绑定位置、UV、法线和切线（location 0、1、2、3）。实心阴影只读位置，镂空阴影另读 UV。
+索引固定为 `uint32_t`，拓扑为三角形列表。
 公共输入不包含 Vulkan 类型。
 
 normal 位于几何局部空间，可以为非单位向量；上传时以双精度长度归一化非零法线，避免其幅值导致 GPU 变换溢出，不修改调用方数组。零向量表示无可用法线，上传时不补造方向。`tangent` 的 `xyz` 为局部切线方向、`w` 为副切线手性符号（$\pm 1$）；非有限分量抛 RENDER 拒绝，上传前以双精度长度归一化 `xyz` 并将 `w` 规范化为 $\pm 1$（切线长度为零或 `w == 0` 时四分量归零）。
@@ -425,13 +429,14 @@ ImGui 纹理标识，生成图像命令。Integration 按帧槽分别为原 LDR 
 
 ### 独立阴影深度绘制
 
-应用先调用 `prepareSceneResources`，再把经现有 ShaderResource 加载的深度顶点 Shader 借给
-`prepareShadowResources`。Renderer 复制 SPIR-V 后即可释放 CPU Resource；不启用阴影的消费者无需准备该 Shader。
+应用先调用 `prepareSceneResources`，再把实心深度顶点 Shader 及可选的镂空顶点和片元 Shader 借给
+`prepareShadowResources`。Renderer 复制 SPIR-V 后即可释放 CPU Resource。
 空 Shader、重复准备或尚未准备场景布局时抛 RENDER。Renderer 不隐式读取或编译 Shader。
 
 `drawSceneTarget` 收到非空 shadow 时，在本次主场景之前清除并绘制深度图；即使 shadowDraws 为空也清为 1。
-第一个有效提交即使用本帧光源矩阵与模型矩阵，不延迟一帧。投射列表只解析同一 Renderer 的有效网格和模型矩阵，
-不读取材质引用、不计算法线矩阵；使用原网格三角形列表和双面深度测试，最近表面获胜。
+第一个有效提交即使用本帧光源矩阵与模型矩阵。投射列表解析同一 Renderer 的网格及可选材质。
+实心阴影沿用纯顶点深度路径。镂空阴影使用片元 Shader 采样基色 alpha，并采用主场景相同的裁剪阈值。
+两条路径均按材质双面标志选择剔除方式，Blend 材质跳过阴影投射。
 模型 push constant 为 64 字节，与主场景 112 字节的法线参数分开录制。
 
 阴影图固定为 1024×1024、单层、单 sample，每个帧槽独占一张。首次有效启用时按需分配，
@@ -440,7 +445,7 @@ ImGui 纹理标识，生成图像命令。Integration 按帧槽分别为原 LDR 
 稳定帧、启停及视口尺寸变化复用阴影图和深度 Pipeline，不逐帧等待整个设备；旧槽在 Fence 完成后才更新 UBO 与录制。
 
 Synchronization2 在深度早/晚测试写入与片元采样之间建立依赖，结束布局为 SHADER_READ_ONLY_OPTIMAL；
-再次写入从该布局转回深度附件。帧调度器持有网格、目标及帧 Buffer 至 Fence 完成，关闭先等待在途资源。
+再次写入从该布局转回深度附件。帧调度器持有网格、材质、目标及帧 Buffer 至 Fence 完成，关闭先等待在途资源。
 内部 Review 可以在等待后借用实际深度图，受控测试复用回读及片元采样支持；这不是产品截图或调试视图接口。
 
 `drawFrame` 及直接帧 Review 不执行阴影流程，收到非空 shadow 时在录制和提交前抛 RENDER；

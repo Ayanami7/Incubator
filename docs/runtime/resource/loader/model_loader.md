@@ -70,7 +70,7 @@ GLB 使用单文件输入，上限为 256 MiB。加载和外部导入共用容�
 | 其他特征 | 拒绝动画、骨骼、Morph、`data:` URI、压缩几何及未支持的必需扩展。必需扩展仅支持 `KHR_materials_unlit` |
 
 若源网格自带 `TANGENT` 与副切线，按双精度对顶点法线执行 Gram-Schmidt 正交化并求解手性 $w = \pm 1$；若无原生切线但具有 `UV0` 与法线，基于最终 V 翻转后的 `UV0` 与三角形索引累加切线/副切线并正交化；无 `UV0` 或退化几何输出零切线 `{0, 0, 0, 0}`。
-采样配置由模型准备选项决定。透明、双面和自发光字段作为材质描述保留，当前场景仍使用不透明绘制路径。
+采样配置由模型准备选项决定。主场景消费 Alpha Mask、双面和自发光字段，Alpha Mask 同时作用于阴影投射。
 glTF 必需或可选的 `KHR_materials_unlit` 通过 Assimp 的 `AI_MATKEY_SHADING_MODEL` / `aiShadingMode_Unlit`
 保存到 `ModelMaterial::unlit`；普通 glTF 和 OBJ 默认 false，不扩展 MTL 光照模型映射。
 模型准备入口默认 nearest/repeat/LOD=0，消费者可通过 [PrepareOptions](../../model.md) 显式选择

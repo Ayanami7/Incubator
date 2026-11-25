@@ -23,9 +23,12 @@ layout(set = 1, binding = 1, std140) uniform MaterialData
 {
     vec4 colorShading;
     vec4 surfaceParams;
+    vec4 emissiveAlpha;
+    vec4 alphaParams;
 } material;
 layout(set = 1, binding = 2) uniform sampler2D normalTexture;
 layout(set = 1, binding = 3) uniform sampler2D metallicRoughnessTexture;
+layout(set = 1, binding = 4) uniform sampler2D emissiveTexture;
 layout(location = 0) in vec2 uv;
 layout(location = 1) in vec3 worldNormal;
 layout(location = 2) in vec3 worldPosition;
@@ -60,13 +63,18 @@ float shadowVisibility()
 
 void main()
 {
-    vec3 linearColor = texture(colorTexture, uv).rgb * material.colorShading.rgb;
+    vec4 baseSample = texture(colorTexture, uv);
+    float outAlpha = baseSample.a * material.emissiveAlpha.a;
+    if (material.alphaParams.y == 1.0 && outAlpha < material.alphaParams.x)
+        discard;
+    vec3 linearColor = baseSample.rgb * material.colorShading.rgb;
+    vec3 N0 = material.alphaParams.z != 0.0 && !gl_FrontFacing ? -worldNormal : worldNormal;
     if (material.colorShading.w == 1.0)
     {
-        float lengthSquared = dot(worldNormal, worldNormal);
+        float lengthSquared = dot(N0, N0);
         float diffuse = 0.0;
         if (lengthSquared > 0.0)
-            diffuse = max(dot(worldNormal * inversesqrt(lengthSquared), -frame.lightDirectionIntensity.xyz), 0.0);
+            diffuse = max(dot(N0 * inversesqrt(lengthSquared), -frame.lightDirectionIntensity.xyz), 0.0);
         linearColor *= vec3(frame.lightColorAmbient.w) +
                        frame.lightColorAmbient.rgb * frame.lightDirectionIntensity.w * diffuse * shadowVisibility();
     }
@@ -84,14 +92,14 @@ void main()
         float metallic = clamp(rawMetallic, 0.0, 1.0);
         vec3 ambient = baseColor * (1.0 - metallic) * frame.lightColorAmbient.w;
 
-        float normalLen2 = dot(worldNormal, worldNormal);
+        float normalLen2 = dot(N0, N0);
         if (normalLen2 <= 0.0)
         {
             linearColor = frame.iblParams.x > 0.0 ? vec3(0.0) : ambient;
         }
         else
         {
-            vec3 N0 = worldNormal * inversesqrt(normalLen2);
+            N0 *= inversesqrt(normalLen2);
             vec3 N = N0;
             if (material.surfaceParams.x > 0.0 && abs(worldTangent.w) > 0.0 &&
                 dot(worldTangent.xyz, worldTangent.xyz) > 0.0)
@@ -169,6 +177,8 @@ void main()
             linearColor = ambient + direct;
         }
     }
+    if (material.colorShading.w == 1.0 || material.colorShading.w == 2.0)
+        linearColor += texture(emissiveTexture, uv).rgb * material.emissiveAlpha.rgb;
     if (LINEAR_HDR_OUTPUT)
     {
         fragmentColor = vec4(max(linearColor, vec3(0.0)), 1.0);

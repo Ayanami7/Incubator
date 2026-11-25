@@ -137,16 +137,30 @@ namespace Incubator
                 checkVk(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
             }
 
-            void VulkanCommandList::drawShadow(VkCommandBuffer commands, const VulkanPipeline& pipeline,
-                                               VkDescriptorSet frameSet, std::span<const VulkanShadowDrawItem> draws)
+            void VulkanCommandList::drawShadow(VkCommandBuffer commands, VkDescriptorSet frameSet,
+                                               std::span<const VulkanShadowDrawItem> draws)
             {
-                vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-                vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, 1, &frameSet,
-                                        0, nullptr);
+                const VulkanPipeline* bound = nullptr;
+                auto frontFace = VK_FRONT_FACE_MAX_ENUM;
                 const VkDeviceSize offset = 0;
                 for (const auto& draw : draws)
                 {
-                    vkCmdPushConstants(commands, pipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(draw.model),
+                    if (bound != draw.pipeline)
+                    {
+                        bound = draw.pipeline;
+                        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, bound->handle());
+                        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, bound->layout(), 0, 1,
+                                                &frameSet, 0, nullptr);
+                    }
+                    if (frontFace != draw.frontFace)
+                    {
+                        frontFace = draw.frontFace;
+                        vkCmdSetFrontFace(commands, frontFace);
+                    }
+                    if (draw.materialSet != VK_NULL_HANDLE)
+                        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, bound->layout(), 1, 1,
+                                                &draw.materialSet, 0, nullptr);
+                    vkCmdPushConstants(commands, bound->layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(draw.model),
                                        &draw.model);
                     vkCmdBindVertexBuffers(commands, 0, 1, &draw.vertexBuffer, &offset);
                     vkCmdBindIndexBuffer(commands, draw.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
@@ -157,15 +171,27 @@ namespace Incubator
             void VulkanCommandList::drawIndexed(VkCommandBuffer commandBuffer, const VulkanPipeline& pipeline,
                                                 VkDescriptorSet frameSet, std::span<const VulkanDrawItem> draws)
             {
-                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, 1,
-                                        &frameSet, 0, nullptr);
+                const VulkanPipeline* bound = nullptr;
+                auto frontFace = VK_FRONT_FACE_MAX_ENUM;
                 const VkDeviceSize vertexOffset = 0;
                 for (const auto& draw : draws)
                 {
-                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 1, 1,
+                    const auto* selected = draw.pipeline ? draw.pipeline : &pipeline;
+                    if (bound != selected)
+                    {
+                        bound = selected;
+                        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, bound->handle());
+                        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, bound->layout(), 0, 1,
+                                                &frameSet, 0, nullptr);
+                    }
+                    if (frontFace != draw.frontFace)
+                    {
+                        frontFace = draw.frontFace;
+                        vkCmdSetFrontFace(commandBuffer, frontFace);
+                    }
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, bound->layout(), 1, 1,
                                             &draw.materialSet, 0, nullptr);
-                    vkCmdPushConstants(commandBuffer, pipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
+                    vkCmdPushConstants(commandBuffer, bound->layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
                                        sizeof(draw.object), &draw.object);
                     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &draw.vertexBuffer, &vertexOffset);
                     vkCmdBindIndexBuffer(commandBuffer, draw.indexBuffer, 0, VK_INDEX_TYPE_UINT32);

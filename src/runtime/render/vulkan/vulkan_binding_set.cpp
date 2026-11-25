@@ -137,11 +137,12 @@ namespace Incubator
                     checkVk(vkCreateDescriptorSetLayout(device_.handle(), &layoutInfo, nullptr, &layout_),
                             "vkCreateDescriptorSetLayout");
 
-                    constexpr std::array<VkDescriptorSetLayoutBinding, 4> materialBindings = {{
+                    constexpr std::array<VkDescriptorSetLayoutBinding, 5> materialBindings = {{
                         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
                         {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
                         {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
                         {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
                     }};
                     layoutInfo.bindingCount = static_cast<uint32_t>(materialBindings.size());
                     layoutInfo.pBindings = materialBindings.data();

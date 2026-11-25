@@ -16,11 +16,11 @@ namespace Incubator
             class VulkanPipeline
             {
             public:
-                /// @brief colorFormat 为 UNDEFINED 时仅绘制深度，忽略材质布局及片元 Shader；linearHdrOutput 为 true 时启用线性 HDR 片元输出特化。
+                /// @brief 支持纯顶点深度、镂空深度和颜色输出，按调用方指定光栅剔除方式。
                 VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
                                VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout materialLayout,
                                const std::vector<uint32_t>& vertexShader, const std::vector<uint32_t>& fragmentShader,
-                               bool linearHdrOutput = false);
+                               bool linearHdrOutput = false, VkCullModeFlags cullMode = VK_CULL_MODE_NONE);
                 ~VulkanPipeline();
 
                 VulkanPipeline(const VulkanPipeline&) = delete;

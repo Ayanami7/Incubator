@@ -73,6 +73,8 @@ namespace Incubator
                 const VulkanImage& normalFallback() const noexcept;
                 /// @brief 返回 1×1 线性金属粗糙度回退图像（{255, 255, 255, 255}）。
                 const VulkanImage& metallicRoughnessFallback() const noexcept;
+                /// @brief 返回自发光采样使用的 1×1 白图。
+                const VulkanImage& emissiveFallback() const noexcept { return metallicRoughnessFallback(); }
 
             private:
                 const VulkanDevice& device_;

@@ -126,7 +126,8 @@ namespace
         Vulkan::VulkanSampler sampler(device, {});
         Vulkan::VulkanMaterialBinding material(device, bindings.materialLayout(), image, sampler,
                                                bindings.normalFallback(), sampler,
-                                               bindings.metallicRoughnessFallback(), sampler, {1, 1, 1});
+                                               bindings.metallicRoughnessFallback(), sampler,
+                                               bindings.emissiveFallback(), sampler, {});
         Vulkan::VulkanPipeline pipeline(device, VK_FORMAT_R8G8B8A8_UNORM, device.findDepthFormat(), bindings.layout(),
                                         bindings.materialLayout(), vertex, fragment);
         auto mesh = Demo::makePlaneMesh();
@@ -746,7 +747,7 @@ namespace
             }
         }
         EXPECT_EQ(occurrences(messages_.str(), "Created shadow target:"), 2u);
-        EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline: color format 0,"), 1u);
+        EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline: color format 0,"), 2u);
         cleanValidation();
     }
 
@@ -907,7 +908,7 @@ namespace
             }
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 6u);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 3u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 2u);
         }
         cleanValidation();
     }
@@ -952,7 +953,7 @@ namespace
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), expectedMeshes);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), expectedTextures);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), expectedMaterials);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 1u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 2u);
         }
         for (const auto& model : models)
             EXPECT_FALSE(model->meshes()[0].valid());

@@ -31,25 +31,29 @@ namespace Incubator
                                                          const VulkanSampler& normalSampler,
                                                          const VulkanImage& metallicRoughnessImage,
                                                          const VulkanSampler& metallicRoughnessSampler,
-                                                         const std::array<float, 3>& color, ShadingMode shading,
-                                                         float normalScale, float roughness, float metallic,
-                                                         MaterialParameterMode roughnessMode,
-                                                         MaterialParameterMode metallicMode)
+                                                         const VulkanImage& emissiveImage,
+                                                         const VulkanSampler& emissiveSampler,
+                                                         const MaterialDesc& desc)
                 : device_(device)
             {
-                struct MaterialUniformData
+                struct alignas(16) MaterialUniformData
                 {
                     std::array<float, 4> colorShading;
                     std::array<float, 4> surfaceParams;
+                    std::array<float, 4> emissiveAlpha;
+                    std::array<float, 4> alphaParams;
                 };
-                static_assert(sizeof(MaterialUniformData) == 32);
+                static_assert(sizeof(MaterialUniformData) == 64);
                 // std140：colorShading.w 编码 ShadingMode，surfaceParams 依次为 normalScale、roughness、metallic、参数模式位。
                 const uint32_t modeBits =
-                    (roughnessMode == MaterialParameterMode::FixedValue ? 1u : 0u) |
-                    (metallicMode == MaterialParameterMode::FixedValue ? 2u : 0u);
+                    (desc.roughnessMode == MaterialParameterMode::FixedValue ? 1u : 0u) |
+                    (desc.metallicMode == MaterialParameterMode::FixedValue ? 2u : 0u);
                 const MaterialUniformData parameters{
-                    {color[0], color[1], color[2], static_cast<float>(shading)},
-                    {normalScale, roughness, metallic, static_cast<float>(modeBits)},
+                    {desc.color[0], desc.color[1], desc.color[2], static_cast<float>(desc.shading)},
+                    {desc.normalTexture.valid() ? desc.normalScale : 0.0f,
+                     desc.roughness, desc.metallic, static_cast<float>(modeBits)},
+                    {desc.emissiveFactor[0], desc.emissiveFactor[1], desc.emissiveFactor[2], desc.baseAlpha},
+                    {desc.alphaCutoff, static_cast<float>(desc.alphaMode), desc.doubleSided ? 1.0f : 0.0f, 0.0f},
                 };
                 uniform_ = std::make_unique<VulkanBuffer>(
                     device_, sizeof(parameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -58,7 +62,7 @@ namespace Incubator
                 try
                 {
                     constexpr std::array<VkDescriptorPoolSize, 2> poolSizes = {{
-                        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3},
+                        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4},
                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
                     }};
                     VkDescriptorPoolCreateInfo poolInfo{};
@@ -82,8 +86,10 @@ namespace Incubator
                     const VkDescriptorImageInfo mrInfo{metallicRoughnessSampler.handle(),
                                                        metallicRoughnessImage.view(),
                                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                    const VkDescriptorImageInfo emissiveInfo{emissiveSampler.handle(), emissiveImage.view(),
+                                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
                     const VkDescriptorBufferInfo bufferInfo{uniform_->handle(), 0, sizeof(parameters)};
-                    const std::array<VkWriteDescriptorSet, 4> writes = {{
+                    const std::array<VkWriteDescriptorSet, 5> writes = {{
                         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptorSet_, 0, 0, 1,
                          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &colorInfo, nullptr, nullptr},
                         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptorSet_, 1, 0, 1,
@@ -92,6 +98,8 @@ namespace Incubator
                          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo, nullptr, nullptr},
                         {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptorSet_, 3, 0, 1,
                          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &mrInfo, nullptr, nullptr},
+                        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descriptorSet_, 4, 0, 1,
+                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &emissiveInfo, nullptr, nullptr},
                     }};
                     vkUpdateDescriptorSets(device_.handle(), static_cast<uint32_t>(writes.size()), writes.data(), 0,
                                            nullptr);

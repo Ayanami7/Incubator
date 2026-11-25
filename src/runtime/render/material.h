@@ -78,6 +78,11 @@ namespace Incubator
             friend struct Detail::RendererReviewAccess;
             struct Impl;
             explicit Material(const std::shared_ptr<Impl>& impl) : impl_(impl) {}
+            bool isUnset() const noexcept
+            {
+                const std::weak_ptr<Impl> empty;
+                return !impl_.owner_before(empty) && !empty.owner_before(impl_);
+            }
             std::weak_ptr<Impl> impl_;
         };
     }  // namespace Render
