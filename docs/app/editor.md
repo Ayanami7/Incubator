@@ -209,13 +209,13 @@ Camera 与实体状态提取场景并合成 UI。视口关闭、折叠或没有�
 场景分配、Camera 投影与裁剪使用相同结果。Windows content scale 不再额外参与此换算。
 视口输入按当帧图像区域判断归属，工作区布局独立于场景内容。
 
-`Properties → View` 中的 `FXAA`（`##fxaa`）经 `EditorApp::fxaaEnabled()`（由 `AppSession` 持有）控制独立视口的固定质量 LDR FXAA，默认关闭。颜色处理顺序为线性 HDR 主场景 → 显示 Pass（曝光、色调映射与 sRGB 编码）→ 可选 FXAA → ImGui（界面、文字、选中框与 Gizmo）；开关在 UI 阶段切换，本帧布局、图像注册与提交继续共用 `SceneOutput` 内已记录的状态，改动从下一有效视口帧生效。首次在有效视口帧启用时，按需经 `ShaderResource` 路由加载并准备 `shaders/fxaa.frag.spv`（关闭状态及 Demo 不加载），随即释放 CPU 持有；切换不改变场景文件、脏状态或历史栈。
+`Properties → View` 中的 `FXAA`（`##fxaa`）经 `EditorApp::fxaaEnabled()`（由 `AppSession` 持有）控制独立视口的固定质量 LDR FXAA，默认关闭。颜色处理顺序为线性 HDR 主场景（含可选天空盒与 3D 调试辅助线）→ 可选 HDR Bloom → 显示 Pass（曝光、`Off` / `Reinhard` / `ACES Filmic` 色调映射与 sRGB 编码）→ 可选 FXAA → ImGui（界面、文字、选中框与 Gizmo）；开关在 UI 阶段切换，本帧布局、图像注册与提交继续共用 `SceneOutput` 内已记录的状态，改动从下一有效视口帧生效。首次在有效视口帧启用时，按需经 `ShaderResource` 路由加载并准备 `shaders/fxaa.frag.spv`（关闭状态及 Demo 不加载），随即释放 CPU 持有；切换不改变场景文件、脏状态或历史栈。
 
 `Properties → View` 同时提供 `Studio IBL`（`##ibl`）会话预览开关，经 `EditorApp::iblEnabled()`（由 `AppSession` 持有，默认关闭）控制 PBR 材质是否启用固定棚拍 IBL（见 `assets/ibl/SOURCE.md`）；首次启用时按需经 `TextureLoader` 加载 `FloatTextureResource` 并由 `Renderer::prepareIblResources` 安装为会话共享绑定，随即释放 CPU 持有，关闭时不加载相关资产且不改变场景文件、脏状态或历史栈。
 
 `Properties → View` 同时展示由 `AppSession::lastFrameTime()` 与 `Renderer::lastViewportStats()` 提供的四项会话诊断指标：`CPU frame` 取主循环最近一帧 `FrameTime::delta`（毫秒）；`GPU viewport`、`Scene draws` 与 `Shadow draws` 来自同一份最近已完成的离屏视口帧槽样本（从可选阴影深度 Pass 前到显示 Pass 或 FXAA 结束，止于 ImGui 合成之前）。首帧样本未完成前显示 `--`；图形队列不支持时间戳时 `GPU viewport` 显示 `Unavailable`，`CPU frame` 与绘制项数仍正常更新。
 
-`Properties → View` 还提供三项仅本会话有效的 3D 调试线开关：`Grid`（`##debug-grid`，地面参考网格，默认开启）、`Selection bounds`（`##debug-selection-bounds`，选中实体的世界空间包围盒线框，默认开启）与 `Light gizmos`（`##debug-light-gizmos`，局部光源线框指示，默认开启）。对应线段由 `viewport_debug_lines.cpp` 生成后经 `FrameInput::debugLines` 传入独立视口渲染（带深度测试、位于显示/FXAA 之后且先于 ImGui），切换不置脏也不写入场景文件。
+`Properties → View` 还提供三项仅本会话有效的 3D 调试线开关：`Grid`（`##debug-grid`，地面参考网格，默认开启）、`Selection bounds`（`##debug-selection-bounds`，选中实体的世界空间包围盒线框，默认开启）与 `Light gizmos`（`##debug-light-gizmos`，局部光源线框指示，默认开启）。对应线段由 `viewport_debug_lines.cpp` 生成后经 `FrameInput::debugLines` 传入独立视口渲染（带深度测试，在线性 HDR 主场景 Pass 末尾、Bloom/显示/FXAA 之前绘制，因此会随场景经过曝光、色调映射及可选 Bloom），切换不置脏也不写入场景文件。
 
 ## 停靠工作区与文件关联
 

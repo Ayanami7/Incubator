@@ -114,7 +114,7 @@ RGB 按 sRGB → 线性过滤 → sRGB 写回，alpha 按线性 straight 通道�
 不支持时抛出 RENDER 错误，同时保留 extent/像素长度检查；Resource 不包含设备限制。
 直接构造的深度附件、读回图像及后端默认上传仍为单 mip。
 
-场景 RGB 由 sRGB 纹理采样得到 linear 值，与材质线性 RGB 相乘后，直接呈现（`drawFrame`）路径沿用片元 Shader 钳制与 sRGB transfer function 编码后写入 UNORM（`Blend` 在输出空间执行直通混合）；独立视口（`drawSceneTarget`）则先将未钳制的线性 HDR 颜色（清屏背景为 `(0, 0, 0, 0)`，`Opaque`/`Mask` 写 `alpha = 1`，`Blend` 写入混合后的预乘颜色与覆盖 `alpha`）写入 `VK_FORMAT_R16G16B16A16_SFLOAT` 场景附件，再经全屏显示 Pass（对 `0 < hdr.a < 1` 先还原非预乘线性色并完成曝光、`Off` / `Reinhard` 色调映射与 sRGB 编码后再按 `hdr.a` 与 `clearColor` 合成，未覆盖处直接输出 `clearColor`）写入 `VK_FORMAT_R8G8B8A8_UNORM` 视口图像，开启 FXAA 时随后经固定质量 LDR FXAA 输出到同格式独立图像（`LINEAR` + `ClampToEdge` 采样并保留中心像素 alpha），供 ImGui 采样。clearColor 与 ImGui RGB 均为
+场景 RGB 由 sRGB 纹理采样得到 linear 值，与材质线性 RGB 相乘后，直接呈现（`drawFrame`）路径沿用片元 Shader 钳制与 sRGB transfer function 编码后写入 UNORM（`Blend` 在输出空间执行直通混合）；独立视口（`drawSceneTarget`）则先将未钳制的线性 HDR 颜色（主场景含可选天空盒与 3D 调试辅助线，清屏背景为 `(0, 0, 0, 0)`，`Opaque`/`Mask` 写 `alpha = 1`，`Blend` 写入混合后的预乘颜色与覆盖 `alpha`）写入 `VK_FORMAT_R16G16B16A16_SFLOAT` 场景附件，经可选 5 级 HDR Bloom 后，再由全屏显示 Pass（对 `0 < hdr.a < 1` 先还原非预乘线性色并叠加 Bloom、完成曝光、`Off` / `Reinhard` / `ACES Filmic` 色调映射与 sRGB 编码后再按 `hdr.a` 与 `clearColor` 合成，未覆盖处直接输出 `clearColor`）写入 `VK_FORMAT_R8G8B8A8_UNORM` 视口图像，开启 FXAA 时随后经固定质量 LDR FXAA 输出到同格式独立图像（`LINEAR` + `ClampToEdge` 采样并保留中心像素 alpha），供 ImGui 采样。clearColor 与 ImGui RGB 均为
 sRGB 编码值，直接写 UNORM；ImGui 沿用现有编码空间 alpha blending，不修改第三方 Shader。
 交换链仅支持 `SRGB_NONLINEAR` colorSpace，按 BGRA8_UNORM、RGBA8_UNORM 顺序选择，
 与设备返回的列表顺序无关。单个 UNDEFINED/SRGB_NONLINEAR 选择 BGRA8_UNORM，并检查
@@ -209,7 +209,7 @@ Unlit 输出 `B`；Lambert 输出 `B * (ambient + lightColor * intensity * max(d
 Pbr 在切线空间法线扰动后（`normalScale > 0` 且切线与法线均非退化时构造正交 TBN，否则安全回退至几何法线）结合金属粗糙度贴图（`G` 通道为粗糙度并钳制至 `[0.04, 1]`，`B` 通道为金属度）与相机世界坐标 `cameraPosition`，计算能量守恒漫反射 `kD * B / PI` 与 Cook-Torrance GGX 镜面高光及阴影衰减；当帧输入开启 `iblEnabled` 时，会话共享的漫反射辐照度 Cubemap、按粗糙度分级采样的预过滤镜面 Cubemap 与 BRDF 查找表（Split-Sum）替代 PBR 的常量环境项，方向光强度为零时仍正常输出环境漫反射与镜面反射，关闭时保持原常量环境项。
 计算在线性空间进行，最后 clamp 至 `[0,1]` 并使用原有精确 sRGB 编码一次，alpha 固定 1。
 零法线没有直接光贡献，仍保留环境项；直接光强度与环境系数同时为零时为黑色。
-Lambert 预览支持单方向光、可选阴影和双面材质的背面法线翻转。
+Lambert 预览支持单方向光、可选阴影和双面材质的背面法线翻转，并累加有效局部光源。
 
 模型 Demo 显式选择 Lambert 并提供方向、线性颜色、强度与环境控件；Render 的默认材质和旧调用仍为 Unlit。
 

@@ -113,7 +113,7 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 
 根 CMake 在 Runtime、共用 Shader/资产目标定义后添加 app，再添加测试和示例。
 `app/CMakeLists.txt` 先添加 common，再添加 editor。`Editor` 编译 main.cpp，并链接 `IncubatorEditorSupport`。
-该静态库编译 `editor_app.cpp`、`editor_controller.cpp`、`editor_scene.cpp`、`editor_operations.cpp`、`editor_theme.cpp`、`selection_overlay.cpp` 和 `gizmo.cpp`，同时被两个 Editor 测试程序链接。
+该静态库编译 `editor_app.cpp`、`editor_controller.cpp`、`editor_scene.cpp`、`editor_operations.cpp`、`editor_theme.cpp`、`selection_overlay.cpp`、`gizmo.cpp`、`viewport_debug_lines.cpp` 和 `viewport_screenshot.cpp`，同时被两个 Editor 测试程序链接。
 
 ```powershell
 # 按 WORKFLOW 进入 MSVC 环境并设置 UTF-8 代码页后执行。
@@ -134,12 +134,12 @@ Editor 布局仅使用 incubator-editor-layout.ini；Demo 不持久化布局，�
 - 源文件到构建目录使用 `add_custom_command(OUTPUT ... DEPENDS ...)` 与 `copy_if_different`。
 - 消费资源的可执行目标显式依赖部署目标；仅修改资产也会触发更新，无需重新链接可执行文件。
 - 需要编译的资源显式声明输入、生成命令和输出，编译产物与复制资产共同位于 `<build>/assets/`。
-- 共用资产目标 `incubator_models` 位于 `cmake/assets.cmake`，显式复制 Avocado glTF/bin/PNG、Utah Teapot OBJ 与正式展示地面 ground/ground.obj、ground.mtl。`incubator_scenes` 在同一文件中增量部署 `assets/scenes/shadows.json` 与兼容场景 `assets/scenes/mixed.json`；`incubator_shaders` 在 `cmake/shaders.cmake` 编译 `cube.vert`、`cube.frag` 和阴影深度顶点 `shadow.vert`，输出到构建资产目录；`runtime_test_shaders` 增量复制这三份 SPIR-V 到独立测试资产根。Editor 和 Demo 依赖上述部署目标，Demo 默认配置指向 shadows.json，深度 Shader 在首次有效阴影视口中按需准备；其他消费者继续显式决定是否启用。
+- 共用资产目标 `incubator_models` 位于 `cmake/assets.cmake`，显式复制 Avocado glTF/bin/PNG、Utah Teapot OBJ 与正式展示地面 ground/ground.obj、ground.mtl。`incubator_scenes` 在同一文件中增量部署 `assets/scenes/shadows.json`、`assets/scenes/mixed.json`、`assets/scenes/pbr-showcase.json` 与 `assets/scenes/lighting-showcase.json`；`incubator_ibl` 在同一文件中增量部署固定棚拍 IBL 资源（`assets/ibl/studio_{irradiance,prefiltered,brdf_lut}.ktx` 与 `SOURCE.md`）；`incubator_shaders` 在 `cmake/shaders.cmake` 编译主场景、实心/镂空阴影、显示/FXAA、天空盒、Bloom 及 3D 调试辅助线 Shader，输出到构建资产目录；`runtime_test_shaders` 增量复制这些生产 SPIR-V 到独立测试资产根。Editor 和 Demo 依赖上述部署目标，Demo 默认配置指向 shadows.json，深度 Shader 在首次有效阴影视口中按需准备；其他消费者继续显式决定是否启用。
 - `incubator_config` 在 `cmake/assets.cmake` 中将仓库根目录的 `incubator.json` 增量复制到 `<build>/incubator.json`，Editor 和 Demo 通过 incubator_assets 显式依赖该目标。配置部署与资产部署均为单向复制，运行时保存不回写源文件；新场景仍需显式加入部署规则。
 - `runtime_ui_fonts` 在同一文件中部署 `assets/fonts/NotoSansSC-Regular.otf` 与 `OFL.txt` 到 `<build>/assets/fonts/`，两个应用及独立进程场景恢复程序显式依赖该目标。字体来源与许可见 `assets/fonts/SOURCE.md`，不使用开发机系统字体。
 - `runtime_test_fixtures` 将同一生产字体及许可复制到 `<build>/test-fixtures/assets/fonts/`，GPU 和 Demo 隔离工作目录继续使用该字体。`imgui_integration_test` 按 GPU 测试属性串行运行于 `<build>/test-fixtures/`，覆盖受控 DPI 更新、像素密度与原生窗口字体呈现；模拟缩放与实际显示证据分别保存。
 - `IncubatorAppCommon` 私有包含 Assimp 附带的 RapidJSON 头文件，应用和配置测试复用该库编译的启动配置实现。
-- `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确纹理样本部署到独立的 `<build>/test-fixtures/assets/`。`runtime_test_shaders` 复制生产 SPIR-V 到该测试根，包括实心阴影顶点和镂空阴影顶点、片元 Shader。Vulkan review 使用精确纹理样本，真实模型集成测试按需读取选定模型。
+- `runtime_test_fixtures` 在 `test/runtime/CMakeLists.txt` 将最小模型和精确纹理样本部署到独立的 `<build>/test-fixtures/assets/`。`runtime_test_shaders` 复制生产 SPIR-V 到该测试根，包括主场景、阴影、显示/FXAA、天空盒、Bloom 及 3D 调试辅助线等全部生产 SPIR-V。Vulkan review 使用精确纹理样本，真实模型集成测试按需读取选定模型。
 
 ### Assimp 依赖
 
