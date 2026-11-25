@@ -98,6 +98,8 @@ namespace Incubator::App
         /// @note 首次启用时按需加载 IBL 浮点立方体贴图与 BRDF 查找表并按 Renderer 会话共享。
         bool& iblEnabled();
         bool iblEnabled() const;
+        /// @brief 注册离屏视口 3D 调试辅助线每帧生成器（在 UI 更新与帧提取后调用；为空时零开销）。
+        void setDebugLineBuilder(std::function<void(std::vector<Render::DebugLine>&)> builder);
         /// @brief 返回本轮布局准备的场景输出引用，供同一帧采样与提交共用。
         const Render::SceneOutput& sceneOutput() const;
         /// @brief 在调用方打开的 ImGui 窗口中提交场景图像。
@@ -172,6 +174,9 @@ namespace Incubator::App
         bool iblResourcesPrepared_ = false;
         bool skyboxResourcesPrepared_ = false;
         bool bloomResourcesPrepared_ = false;
+        bool debugLineResourcesPrepared_ = false;
+        std::function<void(std::vector<Render::DebugLine>&)> debugLineBuilder_;
+        std::vector<Render::DebugLine> debugLines_;
         Render::FrameExtent sceneExtent_{};
         Render::SceneOutput sceneOutput_;
         App::ViewportRegion viewportRegion_;

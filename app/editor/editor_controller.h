@@ -354,6 +354,15 @@ namespace Incubator::Editor
         /// @brief 先结算 Gizmo 与面板事务，再清除选中实体全部材质槽的覆盖。
         bool resetAllMaterialOverrides(Scene::Scene& scene, std::array<float, 4>& clearColor);
         bool resetAllMaterialOverrides(EditorApp& app);
+        /// @brief 先结算 Gizmo 与面板事务，再更新场景光照并记一步历史。
+        bool setLighting(Scene::Scene& scene, const std::array<float, 4>& clearColor, Render::Lighting lighting);
+        bool setLighting(EditorApp& app, Render::Lighting lighting);
+        /// @brief 向场景局部光源列表尾部追加一盏默认 Point/Spot 光源（最多 16 盏）并记一步历史。
+        bool addLocalLight(Scene::Scene& scene, std::array<float, 4>& clearColor, Render::LocalLightType type);
+        bool addLocalLight(EditorApp& app, Render::LocalLightType type);
+        /// @brief 从场景局部光源列表删除指定索引光源并记一步历史。
+        bool removeLocalLight(Scene::Scene& scene, std::array<float, 4>& clearColor, size_t index);
+        bool removeLocalLight(EditorApp& app, size_t index);
         /// @brief 先结算 Gizmo 与面板事务，再更新场景显示（色调映射与曝光）设置并记一步历史。
         bool setDisplay(Scene::Scene& scene, std::array<float, 4>& clearColor, Render::DisplaySettings display);
         bool setDisplay(EditorApp& app, Render::DisplaySettings display);

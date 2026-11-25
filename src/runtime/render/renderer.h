@@ -55,6 +55,13 @@ namespace Incubator
             uint32_t shadowDrawCount = 0;        ///< 与该完成样本同帧的阴影绘制项数（关闭阴影时为 0）。
         };
 
+        /// @brief 显式回读的最近一次成功提交的离屏视口 LDR 图像。
+        struct CapturedViewportImage
+        {
+            FrameExtent extent{};
+            std::vector<uint8_t> rgba8;  ///< 紧密排列的 RGBA8 像素（顶行至底行），大小为 width * height * 4。
+        };
+
         class Renderer
         {
         public:
@@ -149,6 +156,11 @@ namespace Incubator
                                        const Resource::ShaderResource& downsampleShader,
                                        const Resource::ShaderResource& upsampleShader);
 
+            /// @brief 准备离屏视口 3D 调试辅助线渲染着色器，首次使用 `FrameInput::debugLines` 时按需调用。
+            /// @note 须在 prepareSceneResources 之后调用；仅复制 SPIR-V 字码创建线段管线，不保留 CPU Resource。
+            void prepareDebugLineResources(const Resource::ShaderResource& vertexShader,
+                                           const Resource::ShaderResource& fragmentShader);
+
             /// @brief 安装本 Renderer 会话共享的固定 IBL 环境贴图（漫反射辐照度、预过滤镜面与 BRDF 查找表）。
             /// @param irradiance 6 面 Cubemap 漫反射辐照度纹理。
             /// @param prefiltered 6 面 Cubemap 按粗糙度预过滤镜面环境纹理。
@@ -190,6 +202,9 @@ namespace Incubator
             uint64_t sceneImage(const SceneOutput& output);
             /// @brief 返回最近一次已完成的离屏视口帧统计样本（非等待读取）。
             ViewportStats lastViewportStats() const noexcept;
+            /// @brief 显式同步等待并回读最近一次成功提交的离屏视口 LDR 图像（含色调映射与可选 FXAA 结果）。
+            /// @return 无可用离屏视口输出时返回空值。
+            std::optional<CapturedViewportImage> captureLastSceneViewport();
             Integration::ImGuiRenderer& imgui();
 
         private:

@@ -744,6 +744,8 @@ namespace
         session.run(
             {[&](auto& app) {
                  editor->initialize(app, "assets/scenes/shadows.json");
+                 // 本用例专测 ImGui 二维选中叠加层不改写离屏场景图，显式关闭 3D 选中包围盒线框。
+                 editor->debugOptions().showSelectionBounds = false;
                  app.shadowSettings().enabled = true;
                  ASSERT_GE(app.scene().entities().size(), 2u);
                  target = app.scene().entities()[0].id;
@@ -4108,6 +4110,124 @@ namespace
                  [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
                  [&](auto& app) { editor.layout(app); },
                  [&](auto& app) { editor.requestClose(app); }});
+            EXPECT_TRUE(done);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, LocalLightsViewControlsDebugLinesAndScreenshotPngUnderValidation)
+    {
+        copyShowcaseModels();
+        {
+            Editor::EditorApp session(options(false, 1280, 800));
+            Editor::EditorScene editor;
+            int step = 0;
+            bool done = false;
+            const fs::path pngPath = "editor-viewport-screenshot-test.png";
+            fs::remove(pngPath);
+
+            session.run(
+                {[&](auto& app) {
+                     editor.initialize(app, "assets/scenes/shadows.json");
+                     ASSERT_FALSE(app.scene().entities().empty());
+                     editor.select(app.scene().entities().front().id);
+                 },
+                 [&](auto& app, const auto&) {
+                     auto* propsWin = ImGui::FindWindowByName("Properties");
+                     if (!propsWin || app.sceneExtent().width == 0u || app.sceneExtent().height == 0u)
+                         return;
+                     switch (step)
+                     {
+                         case 0:
+                         {
+                             // 确认新面板控件 ID 存在，且切换本地阴影与辅助线开关不标脏文档。
+                             EXPECT_NE(propsWin->GetID("##shadow-csm"), 0u);
+                             EXPECT_NE(propsWin->GetID("##shadow-res"), 0u);
+                             EXPECT_NE(propsWin->GetID("##shadow-fit"), 0u);
+                             EXPECT_NE(propsWin->GetID("##shadow-normal-bias"), 0u);
+                             EXPECT_NE(propsWin->GetID("##display-skybox"), 0u);
+                             EXPECT_NE(propsWin->GetID("##display-bloom"), 0u);
+                             EXPECT_NE(propsWin->GetID("##display-bloom-threshold"), 0u);
+                             EXPECT_NE(propsWin->GetID("##display-bloom-intensity"), 0u);
+                             EXPECT_NE(propsWin->GetID("##debug-grid"), 0u);
+                             EXPECT_NE(propsWin->GetID("##debug-selection-bounds"), 0u);
+                             EXPECT_NE(propsWin->GetID("##debug-light-gizmos"), 0u);
+                             EXPECT_NE(propsWin->GetID("##local-light-add-point"), 0u);
+                             EXPECT_NE(propsWin->GetID("##local-light-add-spot"), 0u);
+
+                             EXPECT_FALSE(editor.isDirty());
+                             app.shadowSettings().enabled = true;
+                             app.shadowSettings().cascadeCount = 3u;
+                             app.shadowSettings().resolution = 2048u;
+                             app.shadowSettings().fitToBounds = true;
+                             app.shadowSettings().normalBias = 0.02f;
+                             editor.debugOptions().showGrid = true;
+                             editor.debugOptions().showSelectionBounds = true;
+                             editor.debugOptions().showLightGizmos = true;
+                             EXPECT_FALSE(editor.isDirty());
+
+                             const auto dbgLines =
+                                 Editor::buildViewportDebugLines(app.scene(), editor.selected(), editor.debugOptions());
+                             EXPECT_GE(dbgLines.size(), 42u + 12u + 3u);
+
+                             // 通过控制器添加点光/聚光并切换 ACES + Skybox + Bloom，等待下一帧完成渲染再截图。
+                             ASSERT_TRUE(editor.controller().addLocalLight(app, Render::LocalLightType::Point));
+                             ASSERT_TRUE(editor.controller().addLocalLight(app, Render::LocalLightType::Spot));
+                             ASSERT_TRUE(editor.controller().setDisplay(
+                                 app, {Render::ToneMappingMode::AcesFilmic, 0.2f, true, true, 1.0f, 0.4f}));
+                             EXPECT_TRUE(editor.isDirty());
+                             ++step;
+                             break;
+                         }
+                         case 1:
+                         {
+                             // 额外等待一帧让启用多光源、CSM 与后处理的视口图像完整提交。
+                             ++step;
+                             break;
+                         }
+                         case 2:
+                         {
+                             ASSERT_TRUE(editor.exportScreenshot(app, pngPath)) << editor.message();
+                             ASSERT_TRUE(fs::exists(pngPath));
+                             auto io = FileIO::createPlatformFileIO();
+                             Resource::AssetSource cwdSource(*io, fs::current_path());
+                             Resource::TextureLoader loader(cwdSource);
+                             const auto loaded = loader.load(
+                                 Resource::ResourceId::fromPath(Resource::ResourceType::TEXTURE, pngPath.string()),
+                                 pngPath.string());
+                             const auto* tex = dynamic_cast<const Resource::TextureResource*>(loaded.get());
+                             ASSERT_NE(tex, nullptr);
+                             EXPECT_EQ(tex->width(), app.sceneExtent().width);
+                             EXPECT_EQ(tex->height(), app.sceneExtent().height);
+                             const auto& px = tex->pixels();
+                             bool hasVariance = false;
+                             for (size_t i = 4; i + 3 < px.size(); i += 4)
+                             {
+                                 if (px[i] != px[0] || px[i + 1] != px[1] || px[i + 2] != px[2])
+                                 {
+                                     hasVariance = true;
+                                     break;
+                                 }
+                             }
+                             EXPECT_TRUE(hasVariance);
+
+                             // 验证 Undo 连续恢复 Display 与局部光源并保持工作区可保存。
+                             ASSERT_TRUE(editor.undo(app));
+                             EXPECT_EQ(app.scene().display().toneMapping, Render::ToneMappingMode::Reinhard);
+                             ASSERT_TRUE(editor.undo(app));
+                             EXPECT_EQ(app.scene().lighting().localLights.size(), 1u);
+                             done = true;
+                             app.requestExit();
+                             break;
+                         }
+                     }
+                 },
+                 [&](auto& app) { editor.ui(app); },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            fs::remove(pngPath);
             EXPECT_TRUE(done);
         }
         cleanValidation();

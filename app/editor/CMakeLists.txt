@@ -11,6 +11,8 @@ set(EDITOR_HEADERS
     editor_theme.h
     gizmo.h
     selection_overlay.h
+    viewport_debug_lines.h
+    viewport_screenshot.h
     workspace.h
 )
 set(EDITOR_SOURCES
@@ -21,6 +23,8 @@ set(EDITOR_SOURCES
     editor_theme.cpp
     gizmo.cpp
     selection_overlay.cpp
+    viewport_debug_lines.cpp
+    viewport_screenshot.cpp
 )
 
 # 让编辑器及其测试共用同一份编译后的应用实现。

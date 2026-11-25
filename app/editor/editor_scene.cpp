@@ -18,10 +18,12 @@
 #include "editor_theme.h"
 #include "runtime/core/error/error.h"
 #include "runtime/model/prepared_model.h"
+#include "viewport_screenshot.h"
 
 namespace Incubator::Editor
 {
-    EditorScene::EditorScene(ExternalModelPicker picker) : pickExternalModel_(std::move(picker))
+    EditorScene::EditorScene(ExternalModelPicker picker, ScreenshotPathPicker screenshotPicker)
+        : pickExternalModel_(std::move(picker)), pickScreenshotPath_(std::move(screenshotPicker))
     {}
 
     bool EditorScene::addModel(Editor::EditorApp& app, std::string_view path, const Scene::Transform& transform)
@@ -32,6 +34,48 @@ namespace Incubator::Editor
     void EditorScene::initialize(Editor::EditorApp& app, std::string_view path)
     {
         controller_.initialize(app, path);
+        app.setDebugLineBuilder([this, &app](std::vector<Render::DebugLine>& out) {
+            out = buildViewportDebugLines(app.scene(), controller_.selected(), debugOptions_);
+        });
+    }
+
+    bool EditorScene::exportScreenshot(Editor::EditorApp& app, const std::filesystem::path& path)
+    {
+        try
+        {
+            const auto captured = app.renderer().captureLastSceneViewport();
+            if (!captured)
+            {
+                controller_.operations().setStatus("No rendered viewport image available to export", true);
+                return false;
+            }
+            writeRgba8Png(app.fileIO(), path, captured->extent.width, captured->extent.height, captured->rgba8);
+            controller_.operations().setStatus(fmt::format("Exported viewport PNG to '{}'", path.filename().string()));
+            return true;
+        }
+        catch (const Error::Exception& e)
+        {
+            controller_.operations().setStatus(fmt::format("Screenshot export failed: {}", e.message()), true);
+            return false;
+        }
+    }
+
+    bool EditorScene::requestExportScreenshot(Editor::EditorApp& app)
+    {
+        if (!pickScreenshotPath_)
+            return false;
+        try
+        {
+            const auto path = pickScreenshotPath_(app);
+            if (!path)
+                return false;
+            return exportScreenshot(app, *path);
+        }
+        catch (const Error::Exception& e)
+        {
+            controller_.operations().setStatus(fmt::format("Screenshot export failed: {}", e.message()), true);
+            return false;
+        }
     }
 
     Scene::EntityId EditorScene::createEntity(Editor::EditorApp& app)
@@ -589,6 +633,8 @@ namespace Incubator::Editor
                 controller_.requestSave();
             if (ImGui::MenuItem("Save As..."))
                 beginSaveAs();
+            if (ImGui::MenuItem("Export Screenshot..."))
+                requestExportScreenshot(app);
             ImGui::Separator();
             if (ImGui::BeginMenu("About saved files"))
             {
@@ -1120,6 +1166,12 @@ namespace Incubator::Editor
             ImGui::Checkbox("##fxaa", &app.fxaaEnabled());
             rowLabel("Studio IBL");
             ImGui::Checkbox("##ibl", &app.iblEnabled());
+            rowLabel("Grid");
+            ImGui::Checkbox("##debug-grid", &debugOptions_.showGrid);
+            rowLabel("Selection bounds");
+            ImGui::Checkbox("##debug-selection-bounds", &debugOptions_.showSelectionBounds);
+            rowLabel("Light gizmos");
+            ImGui::Checkbox("##debug-light-gizmos", &debugOptions_.showLightGizmos);
             ImGui::Separator();
             const double cpuFrameMs = app.lastFrameTime().deltaSeconds() * 1000.0;
             const auto stats = app.viewportStats();
@@ -1162,34 +1214,142 @@ namespace Incubator::Editor
             rowLabel("Shadows");
             ImGui::Checkbox("##shadows", &shadows.enabled);
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(
-                    "Fixed light bounds: center (%g, %g, %g), half extents (%g, %g), depth %g..%g.\n"
-                    "1024x1024; the range follows light direction, not the camera.",
-                    shadows.center.x, shadows.center.y, shadows.center.z, shadows.halfExtent.x, shadows.halfExtent.y,
-                    shadows.nearPlane, shadows.farPlane);
+                ImGui::SetTooltip("Preview shadow settings (not saved in scene files).");
             rowLabel("Depth bias");
             ImGui::SetNextItemWidth(controlWidth);
             ImGui::SliderFloat("##shadowBias", &shadows.depthBias, 0, 0.01f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+            rowLabel("3-cascade CSM");
+            bool csmEnabled = shadows.cascadeCount > 1u;
+            if (ImGui::Checkbox("##shadow-csm", &csmEnabled))
+                shadows.cascadeCount = csmEnabled ? 3u : 1u;
+            rowLabel("Shadow size");
+            ImGui::SetNextItemWidth(controlWidth);
+            int resIdx = shadows.resolution >= 2048u ? 1 : 0;
+            if (ImGui::Combo("##shadow-res", &resIdx, "1024\0 2048\0"))
+                shadows.resolution = resIdx == 1 ? 2048u : 1024u;
+            rowLabel("Fit scene bounds");
+            ImGui::Checkbox("##shadow-fit", &shadows.fitToBounds);
+            rowLabel("Normal bias");
+            ImGui::SetNextItemWidth(controlWidth);
+            ImGui::SliderFloat("##shadow-normal-bias", &shadows.normalBias, 0.0f, 0.1f, "%.4f",
+                               ImGuiSliderFlags_AlwaysClamp);
             ImGui::TextDisabled("Shadow preview settings are not saved in scene files.");
             ImGui::Separator();
             auto lighting = app.scene().lighting();
             const auto lightingState = App::lightingWidget(lighting);
-            const bool lightingActive = lightingState.active && windowFocused;
-            if (lightingActive && controller_.activePanelTransaction() != PanelTransactionKind::Lighting)
+            bool localChanged = false;
+            bool localActive = false;
+            bool discreteLightEdit = false;
+            std::optional<size_t> removeLightIdx;
+
+            ImGui::Spacing();
+            ImGui::Text("Local Lights (%zu / %zu)", lighting.localLights.size(), Render::MAX_LOCAL_LIGHTS);
+            const bool canAddLight = lighting.localLights.size() < Render::MAX_LOCAL_LIGHTS;
+            ImGui::BeginDisabled(!canAddLight);
+            if (ImGui::Button("Add Point##local-light-add-point", {halfWidth, 0.0f}))
+            {
+                if (controller_.addLocalLight(app, Render::LocalLightType::Point))
+                    lighting = app.scene().lighting();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Add Spot##local-light-add-spot", {halfWidth, 0.0f}))
+            {
+                if (controller_.addLocalLight(app, Render::LocalLightType::Spot))
+                    lighting = app.scene().lighting();
+            }
+            ImGui::EndDisabled();
+
+            for (size_t i = 0; i < lighting.localLights.size(); ++i)
+            {
+                auto& light = lighting.localLights[i];
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::Separator();
+                const char* headerLabel = light.type == Render::LocalLightType::Spot ? "Spot" : "Point";
+                if (ImGui::Checkbox("##local-enabled", &light.enabled))
+                    discreteLightEdit = true;
+                ImGui::SameLine();
+                ImGui::Text("%s #%zu", headerLabel, i + 1u);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove##local-remove"))
+                    removeLightIdx = i;
+
+                rowLabel("Position");
+                ImGui::SetNextItemWidth(controlWidth);
+                localChanged |= ImGui::SliderFloat3("##local-pos", &light.position.x, -25.0f, 25.0f, "%.2f");
+                localActive |= ImGui::IsItemActive() && windowFocused;
+
+                rowLabel("Color");
+                localChanged |= ImGui::ColorEdit3("##local-color", &light.color.x,
+                                                  ImGuiColorEditFlags_Float | ImGuiColorEditFlags_NoInputs);
+                ImGui::PushID("##local-color");
+                const bool localPickerOpen = ImGui::IsPopupOpen("picker");
+                ImGui::PopID();
+                localActive |= (ImGui::IsItemActive() || localPickerOpen) && windowFocused;
+
+                rowLabel("Intensity");
+                ImGui::SetNextItemWidth(controlWidth);
+                localChanged |=
+                    ImGui::SliderFloat("##local-intensity", &light.intensity, 0.0f, 50.0f, "%.2f",
+                                       ImGuiSliderFlags_AlwaysClamp);
+                localActive |= ImGui::IsItemActive() && windowFocused;
+
+                rowLabel("Range");
+                ImGui::SetNextItemWidth(controlWidth);
+                localChanged |= ImGui::SliderFloat("##local-range", &light.range, 0.5f, 50.0f, "%.2f",
+                                                   ImGuiSliderFlags_AlwaysClamp);
+                localActive |= ImGui::IsItemActive() && windowFocused;
+
+                if (light.type == Render::LocalLightType::Spot)
+                {
+                    rowLabel("Direction");
+                    ImGui::SetNextItemWidth(controlWidth);
+                    if (ImGui::SliderFloat3("##local-dir", &light.direction.x, -1.0f, 1.0f, "%.2f"))
+                    {
+                        if (light.direction.x == 0.0f && light.direction.y == 0.0f && light.direction.z == 0.0f)
+                            light.direction = {0.0f, -1.0f, 0.0f};
+                        localChanged = true;
+                    }
+                    localActive |= ImGui::IsItemActive() && windowFocused;
+
+                    rowLabel("Inner angle");
+                    ImGui::SetNextItemWidth(controlWidth);
+                    localChanged |= ImGui::SliderFloat("##local-inner", &light.innerConeAngle, 0.0f,
+                                                       light.outerConeAngle, "%.2f rad", ImGuiSliderFlags_AlwaysClamp);
+                    localActive |= ImGui::IsItemActive() && windowFocused;
+
+                    rowLabel("Outer angle");
+                    ImGui::SetNextItemWidth(controlWidth);
+                    localChanged |= ImGui::SliderFloat("##local-outer", &light.outerConeAngle, light.innerConeAngle,
+                                                       1.50f, "%.2f rad", ImGuiSliderFlags_AlwaysClamp);
+                    localActive |= ImGui::IsItemActive() && windowFocused;
+                }
+                ImGui::PopID();
+            }
+
+            const bool anyLightingActive = (lightingState.active && windowFocused) || localActive;
+            if (anyLightingActive && controller_.activePanelTransaction() != PanelTransactionKind::Lighting)
                 controller_.beginPanelTransaction(app, PanelTransactionKind::Lighting);
-            if (lightingState.changed)
+            if (lightingState.changed || localChanged)
                 operations.setLighting(app.scene(), app.clearColor(), lighting);
-            if (!lightingActive && controller_.activePanelTransaction() == PanelTransactionKind::Lighting)
+            if (!anyLightingActive && controller_.activePanelTransaction() == PanelTransactionKind::Lighting)
                 controller_.commitPanelTransactions(app);
+            if (discreteLightEdit)
+                controller_.setLighting(app, lighting);
+            if (removeLightIdx.has_value())
+                controller_.removeLocalLight(app, *removeLightIdx);
 
             ImGui::Separator();
             auto display = app.scene().display();
             rowLabel("Tone mapping");
             ImGui::SetNextItemWidth(controlWidth);
-            int toneIndex = display.toneMapping == Render::ToneMappingMode::Off ? 0 : 1;
-            if (ImGui::Combo("##display-tone-mapping", &toneIndex, "Off\0Reinhard\0"))
+            int toneIndex = display.toneMapping == Render::ToneMappingMode::Off        ? 0
+                            : display.toneMapping == Render::ToneMappingMode::AcesFilmic ? 2
+                                                                                         : 1;
+            if (ImGui::Combo("##display-tone-mapping", &toneIndex, "Off\0Reinhard\0ACES Filmic\0"))
             {
-                display.toneMapping = toneIndex == 0 ? Render::ToneMappingMode::Off : Render::ToneMappingMode::Reinhard;
+                display.toneMapping = toneIndex == 0 ? Render::ToneMappingMode::Off
+                                      : toneIndex == 2 ? Render::ToneMappingMode::AcesFilmic
+                                                       : Render::ToneMappingMode::Reinhard;
                 controller_.setDisplay(app, display);
             }
             const bool exposureDisabled = display.toneMapping == Render::ToneMappingMode::Off;
@@ -1197,17 +1357,41 @@ namespace Incubator::Editor
             ImGui::SetNextItemWidth(controlWidth);
             if (exposureDisabled)
                 ImGui::BeginDisabled(true);
-            const bool exposureChanged = ImGui::SliderFloat(
+            bool displaySliderChanged = ImGui::SliderFloat(
                 "##display-exposure-ev", &display.exposureEv, Render::DisplaySettings::MIN_EXPOSURE_EV,
                 Render::DisplaySettings::MAX_EXPOSURE_EV, "%+.2f EV", ImGuiSliderFlags_AlwaysClamp);
-            const bool exposureActive = !exposureDisabled && ImGui::IsItemActive() && windowFocused;
+            bool displaySliderActive = !exposureDisabled && ImGui::IsItemActive() && windowFocused;
             if (exposureDisabled)
                 ImGui::EndDisabled();
-            if (exposureActive && controller_.activePanelTransaction() != PanelTransactionKind::Display)
+
+            rowLabel("Skybox");
+            if (ImGui::Checkbox("##display-skybox", &display.skyboxEnabled))
+                controller_.setDisplay(app, display);
+            rowLabel("Bloom");
+            if (ImGui::Checkbox("##display-bloom", &display.bloomEnabled))
+                controller_.setDisplay(app, display);
+            const bool bloomDisabled = !display.bloomEnabled;
+            if (bloomDisabled)
+                ImGui::BeginDisabled(true);
+            rowLabel("Bloom threshold");
+            ImGui::SetNextItemWidth(controlWidth);
+            displaySliderChanged |= ImGui::SliderFloat("##display-bloom-threshold", &display.bloomThreshold, 0.0f, 5.0f,
+                                                       "%.2f", ImGuiSliderFlags_AlwaysClamp);
+            displaySliderActive |= !bloomDisabled && ImGui::IsItemActive() && windowFocused;
+            rowLabel("Bloom intensity");
+            ImGui::SetNextItemWidth(controlWidth);
+            displaySliderChanged |=
+                ImGui::SliderFloat("##display-bloom-intensity", &display.bloomIntensity, 0.0f,
+                                   Render::DisplaySettings::MAX_BLOOM_INTENSITY, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+            displaySliderActive |= !bloomDisabled && ImGui::IsItemActive() && windowFocused;
+            if (bloomDisabled)
+                ImGui::EndDisabled();
+
+            if (displaySliderActive && controller_.activePanelTransaction() != PanelTransactionKind::Display)
                 controller_.beginPanelTransaction(app, PanelTransactionKind::Display);
-            if (exposureChanged)
+            if (displaySliderChanged)
                 operations.setDisplay(app.scene(), app.clearColor(), display);
-            if (!exposureActive && controller_.activePanelTransaction() == PanelTransactionKind::Display)
+            if (!displaySliderActive && controller_.activePanelTransaction() == PanelTransactionKind::Display)
                 controller_.commitPanelTransactions(app);
         }
         else if (controller_.activePanelTransaction() == PanelTransactionKind::Lighting ||

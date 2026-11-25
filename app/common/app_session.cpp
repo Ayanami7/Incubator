@@ -165,6 +165,25 @@ namespace Incubator::App
         return iblEnabled_;
     }
 
+    void AppSession::setDebugLineBuilder(std::function<void(std::vector<Render::DebugLine>&)> builder)
+    {
+        requireOpen();
+        debugLineBuilder_ = std::move(builder);
+        if (debugLineBuilder_ && !debugLineResourcesPrepared_)
+        {
+            auto& manager = Resource::ResourceManager::instance();
+            const auto debugVert = manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER,
+                                                                          "shaders/debug_line.vert.spv");
+            const auto debugFrag = manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER,
+                                                                          "shaders/debug_line.frag.spv");
+            if (!debugVert || !debugFrag)
+                throw Error::Exception(Error::Code::RENDER, "Cannot load application debug line shaders");
+            renderer_->prepareDebugLineResources(*debugVert.get<Resource::ShaderResource>(),
+                                                 *debugFrag.get<Resource::ShaderResource>());
+            debugLineResourcesPrepared_ = true;
+        }
+    }
+
     const Render::SceneOutput& AppSession::sceneOutput() const
     {
         requireOpen();
@@ -337,10 +356,30 @@ namespace Incubator::App
                                                      *maskFragment.get<Resource::ShaderResource>());
                     shadowResourcesPrepared_ = true;
                 }
+                debugLines_.clear();
+                if (callbacks.layout && frame && debugLineBuilder_)
+                    debugLineBuilder_(debugLines_);
+                if (callbacks.layout && !debugLines_.empty() && !debugLineResourcesPrepared_)
+                {
+                    auto& manager = Resource::ResourceManager::instance();
+                    const auto debugVert = manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER,
+                                                                                  "shaders/debug_line.vert.spv");
+                    const auto debugFrag = manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER,
+                                                                                  "shaders/debug_line.frag.spv");
+                    if (!debugVert || !debugFrag)
+                        throw Error::Exception(Error::Code::RENDER, "Cannot load application debug line shaders");
+                    renderer_->prepareDebugLineResources(*debugVert.get<Resource::ShaderResource>(),
+                                                         *debugFrag.get<Resource::ShaderResource>());
+                    debugLineResourcesPrepared_ = true;
+                }
                 auto* data = renderer_->imgui().drawData();
                 const auto record = [&](void* commands) { renderer_->imgui().recordDrawData(data, commands); };
                 if (callbacks.layout && frame)
-                    renderer_->drawSceneTarget(sceneOutput_, frame->input(), clearColor_, record);
+                {
+                    auto frameInput = frame->input();
+                    frameInput.debugLines = debugLines_;
+                    renderer_->drawSceneTarget(sceneOutput_, frameInput, clearColor_, record);
+                }
                 else if (callbacks.layout)
                     renderer_->drawFrame({*extent, {}, {}}, clearColor_, record);
                 else

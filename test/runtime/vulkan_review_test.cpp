@@ -4296,4 +4296,97 @@ namespace
         }
         expectCleanValidation();
     }
+
+    TEST_F(VulkanReviewTest, DebugLinesDepthOcclusionAndDynamicToggleUnderValidation)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
+
+            auto& manager = Resource::ResourceManager::instance();
+            const auto lineVert =
+                manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, "shaders/debug_line.vert.spv");
+            const auto lineFrag =
+                manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, "shaders/debug_line.frag.spv");
+            ASSERT_TRUE(lineVert && lineFrag);
+
+            const Resource::ShaderResource emptyShader({}, {});
+            EXPECT_THROW(renderer.prepareDebugLineResources(emptyShader, *lineFrag.get<Resource::ShaderResource>()),
+                         Error::Exception);
+            const auto white = renderer.createTexture(Resource::TextureResource({}, 1, 1, {255, 255, 255, 255}));
+            const auto plane = createLitPlane(renderer);
+            MaterialDesc opaqueRedDesc{white, {0.0f, 0.0f, 0.0f}};
+            opaqueRedDesc.shading = ShadingMode::Pbr;
+            opaqueRedDesc.emissiveTexture = white;
+            opaqueRedDesc.emissiveFactor = {0.8f, 0.05f, 0.05f};
+            const auto redMat = renderer.createMaterial(opaqueRedDesc);
+
+            const FrameExtent ext{64, 64};
+            glm::mat4 proj = glm::orthoRH_ZO(-2.0f, 2.0f, -2.0f, 2.0f, 0.1f, 10.0f);
+            proj[1][1] *= -1.0f;
+            const CameraMatrices cam{glm::lookAtRH(glm::vec3(0, 0, 0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0)), proj};
+            const std::array draws{
+                DrawItem{plane, redMat,
+                         glm::translate(glm::mat4(1.0f), {-1.0f, 0.0f, -2.0f}) *
+                             glm::scale(glm::mat4(1.0f), {2.0f, 2.0f, 1.0f})},
+            };
+            // 未准备 DebugLine 资源时提交非空 debugLines 应抛出 RENDER。
+            const std::array singleLine{DebugLine{{-1.8f, 0.0f, -1.0f}, {1.8f, 0.0f, -1.0f}, {0.1f, 0.9f, 0.1f}, 1.0f}};
+            FrameInput unreadyInput{ext, cam, draws};
+            unreadyInput.debugLines = singleLine;
+            EXPECT_THROW((void)captureHdr(renderer, unreadyInput), Error::Exception);
+
+            renderer.prepareDebugLineResources(*lineVert.get<Resource::ShaderResource>(),
+                                               *lineFrag.get<Resource::ShaderResource>());
+            EXPECT_THROW(renderer.prepareDebugLineResources(*lineVert.get<Resource::ShaderResource>(),
+                                                            *lineFrag.get<Resource::ShaderResource>()),
+                         Error::Exception);
+
+            // 前景绿线 (z=-1) 在红色方块 (z=-2) 前面绘制；后景蓝线 (z=-3) 左侧被红块遮挡，右侧无遮挡可见。
+            constexpr float yTop = 2.0f - 24.5f / 16.0f;
+            constexpr float yBot = 2.0f - 40.5f / 16.0f;
+            const std::array depthLines{
+                DebugLine{{-1.8f, yTop, -1.0f}, {1.8f, yTop, -1.0f}, {0.1f, 0.9f, 0.1f}, 1.0f},
+                DebugLine{{-1.8f, yBot, -3.0f}, {1.8f, yBot, -3.0f}, {0.1f, 0.2f, 0.95f}, 1.0f},
+            };
+            FrameInput lineInput{ext, cam, draws};
+            lineInput.debugLines = depthLines;
+            const auto hdr = captureHdr(renderer, lineInput);
+            const auto samplePixel = [&](uint32_t px, uint32_t py) {
+                return hdr[size_t(py) * ext.width + px];
+            };
+            // 第 24 行（yTop）绿线在红块前面 (x=16 左侧和 x=48 右侧均显绿)
+            EXPECT_GT(samplePixel(16u, 24u)[1], 0.7f);
+            EXPECT_GT(samplePixel(48u, 24u)[1], 0.7f);
+            // 第 40 行（yBot）蓝线左侧被 z=-2 红块遮挡（保持红），右侧穿过背景（显蓝）
+            const auto occludedPx = samplePixel(16u, 40u);
+            EXPECT_GT(occludedPx[0], 0.6f);
+            EXPECT_LT(occludedPx[2], 0.15f);
+            EXPECT_GT(samplePixel(48u, 40u)[2], 0.7f);
+
+            // 在 drawSceneTarget 中空线段 <-> 多线段切换与视口尺寸变化及截图回读保持零 Validation 错误。
+            for (const auto& [targetExt, lines] :
+                 {std::pair{FrameExtent{64, 64}, std::span<const DebugLine>{depthLines}},
+                  std::pair{FrameExtent{64, 64}, std::span<const DebugLine>{}},
+                  std::pair{FrameExtent{4, 4}, std::span<const DebugLine>{depthLines}},
+                  std::pair{FrameExtent{96, 64}, std::span<const DebugLine>{depthLines}}})
+            {
+                window->pollEvents();
+                ASSERT_TRUE(renderer.beginUiFrame());
+                const auto output = renderer.prepareSceneTarget(targetExt);
+                renderer.imgui().endFrame();
+                FrameInput targetInput{targetExt, cam, draws};
+                targetInput.debugLines = lines;
+                renderer.drawSceneTarget(output, targetInput, {0, 0, 0, 1});
+            }
+            const auto captured = renderer.captureLastSceneViewport();
+            ASSERT_TRUE(captured);
+            EXPECT_EQ(captured->extent, (FrameExtent{96u, 64u}));
+            EXPECT_EQ(captured->rgba8.size(), 96u * 64u * 4u);
+        }
+        expectCleanValidation();
+    }
 }  // namespace

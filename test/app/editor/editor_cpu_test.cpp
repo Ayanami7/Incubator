@@ -2,6 +2,8 @@
 #include "app/editor/editor_controller.h"
 #include "app/editor/editor_operations.h"
 #include "app/editor/gizmo.h"
+#include "app/editor/viewport_debug_lines.h"
+#include "app/editor/viewport_screenshot.h"
 #include "runtime/resource/asset_importer.h"
 
 #ifdef IMGUI_VERSION
@@ -1217,5 +1219,121 @@ namespace
         EXPECT_GT(glm::vec3((*scene.worldMatrix(child))[3]).x, initialWorld.x + 0.1f);
         ASSERT_TRUE(controller.undo(scene, clearColor));
         EXPECT_EQ(scene.find(child)->transform.position(), glm::vec3(1.0f, 0.0f, 0.0f));
+    }
+
+    TEST(ViewportDebugLinesCpuTest, GeneratesGridAndLightGizmoSegmentsWithoutImGui)
+    {
+        Scene::Scene scene;
+        Editor::ViewportDebugOptions opts{false, false, false};
+        EXPECT_TRUE(Editor::buildViewportDebugLines(scene, {}, opts).empty());
+
+        opts.showGrid = true;
+        const auto gridLines = Editor::buildViewportDebugLines(scene, {}, opts);
+        ASSERT_EQ(gridLines.size(), 42u);
+        EXPECT_NEAR(gridLines[20].start.z, 0.0f, 1e-5f);
+        EXPECT_GT(gridLines[20].color.r, gridLines[20].color.b);  // X 主轴为红色
+        EXPECT_GT(gridLines[21].color.b, gridLines[21].color.r);  // Z 主轴为蓝色
+
+        opts.showLightGizmos = true;
+        const auto withDirOnly = Editor::buildViewportDebugLines(scene, {}, opts);
+        EXPECT_EQ(withDirOnly.size(), 42u + 3u);
+
+        Render::Lighting custom;
+        Render::LocalLight point;
+        point.type = Render::LocalLightType::Point;
+        point.position = {2.0f, 3.0f, -1.0f};
+        point.color = {0.8f, 0.2f, 0.1f};
+        Render::LocalLight spot;
+        spot.type = Render::LocalLightType::Spot;
+        spot.position = {-2.0f, 4.0f, 1.0f};
+        spot.direction = {0.0f, -1.0f, 0.0f};
+        spot.range = 2.0f;
+        spot.outerConeAngle = 0.5f;
+        Render::LocalLight disabledPoint = point;
+        disabledPoint.enabled = false;
+        custom.localLights = {point, spot, disabledPoint};
+        scene.setLighting(custom);
+
+        const auto allLines = Editor::buildViewportDebugLines(scene, {}, opts);
+        // 42 网格 + 3 方向光 + 36 点光 + 21 聚光 + 36 禁用点光 = 138
+        EXPECT_EQ(allLines.size(), 138u);
+        // 第一个点光环顶点距离点光源中心应恰好等于 0.35f。
+        EXPECT_NEAR(glm::distance(allLines[45].start, point.position), 0.35f, 1e-4f);
+        // 禁用点光使用低亮度灰标记。
+        EXPECT_FLOAT_EQ(allLines.back().alpha, 0.45f);
+    }
+
+    TEST(EditorControllerTest, LocalLightsAddEditRemoveUndoRedoAndPngWriteValidation)
+    {
+        Scene::Scene scene;
+        std::array<float, 4> clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+        Editor::EditorController controller;
+        auto io = FileIO::createPlatformFileIO();
+        const std::string savedPath = "cpu-local-light-undo-test.json";
+        std::filesystem::remove(savedPath);
+        ASSERT_TRUE(controller.operations().save(*io, scene, clearColor, savedPath));
+        EXPECT_FALSE(controller.isDirty());
+
+        ASSERT_TRUE(controller.addLocalLight(scene, clearColor, Render::LocalLightType::Point));
+        ASSERT_TRUE(controller.addLocalLight(scene, clearColor, Render::LocalLightType::Spot));
+        EXPECT_EQ(scene.lighting().localLights.size(), 2u);
+        EXPECT_EQ(scene.lighting().localLights[0].type, Render::LocalLightType::Point);
+        EXPECT_EQ(scene.lighting().localLights[1].type, Render::LocalLightType::Spot);
+        EXPECT_TRUE(controller.isDirty());
+
+        // 连续面板滑块事务编辑折叠为 1 步撤销。
+        ASSERT_TRUE(controller.beginPanelTransaction(scene, clearColor, Editor::PanelTransactionKind::Lighting));
+        auto edited = scene.lighting();
+        edited.localLights[0].intensity = 14.0f;
+        ASSERT_TRUE(controller.operations().setLighting(scene, clearColor, edited));
+        edited.localLights[0].intensity = 22.0f;
+        ASSERT_TRUE(controller.operations().setLighting(scene, clearColor, edited));
+        controller.commitPanelTransactions(scene, clearColor);
+        EXPECT_FLOAT_EQ(scene.lighting().localLights[0].intensity, 22.0f);
+
+        ASSERT_TRUE(controller.removeLocalLight(scene, clearColor, 0u));
+        EXPECT_EQ(scene.lighting().localLights.size(), 1u);
+        EXPECT_EQ(scene.lighting().localLights[0].type, Render::LocalLightType::Spot);
+
+        ASSERT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_EQ(scene.lighting().localLights.size(), 2u);
+        EXPECT_FLOAT_EQ(scene.lighting().localLights[0].intensity, 22.0f);
+        ASSERT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_FLOAT_EQ(scene.lighting().localLights[0].intensity, 5.0f);
+        ASSERT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_EQ(scene.lighting().localLights.size(), 1u);
+        ASSERT_TRUE(controller.undo(scene, clearColor));
+        EXPECT_TRUE(scene.lighting().localLights.empty());
+        EXPECT_FALSE(controller.isDirty());
+
+        ASSERT_TRUE(controller.redo(scene, clearColor));
+        EXPECT_EQ(scene.lighting().localLights.size(), 1u);
+        EXPECT_TRUE(controller.isDirty());
+
+        // 达到 MAX_LOCAL_LIGHTS = 16 上限后继续添加返回 false。
+        for (size_t i = 1; i < Render::MAX_LOCAL_LIGHTS; ++i)
+            ASSERT_TRUE(controller.addLocalLight(scene, clearColor, Render::LocalLightType::Point));
+        EXPECT_EQ(scene.lighting().localLights.size(), Render::MAX_LOCAL_LIGHTS);
+        EXPECT_FALSE(controller.addLocalLight(scene, clearColor, Render::LocalLightType::Point));
+        std::filesystem::remove(savedPath);
+
+        // PNG 编码写出基础校验（签名、IHDR/IDAT/IEND 与非法尺寸拦截）。
+        const std::filesystem::path pngPath = std::filesystem::temp_directory_path() / "incubator-png-unit-test.png";
+        std::filesystem::remove(pngPath);
+        const std::array<uint8_t, 16> pixels{255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+        Editor::writeRgba8Png(*io, pngPath, 2u, 2u, pixels);
+        ASSERT_TRUE(std::filesystem::exists(pngPath));
+        std::ifstream pngFile(pngPath, std::ios::binary);
+        std::string bytes((std::istreambuf_iterator<char>(pngFile)), std::istreambuf_iterator<char>());
+        pngFile.close();
+        EXPECT_GT(bytes.size(), 40u);
+        EXPECT_EQ(static_cast<uint8_t>(bytes[0]), 137u);
+        EXPECT_EQ(bytes.substr(1, 3), "PNG");
+        EXPECT_NE(bytes.find("IHDR"), std::string::npos);
+        EXPECT_NE(bytes.find("IDAT"), std::string::npos);
+        EXPECT_NE(bytes.find("IEND"), std::string::npos);
+        EXPECT_THROW(Editor::writeRgba8Png(*io, pngPath, 0u, 2u, pixels), Error::Exception);
+        EXPECT_THROW(Editor::writeRgba8Png(*io, pngPath, 3u, 2u, pixels), Error::Exception);
+        std::filesystem::remove(pngPath);
     }
 }  // namespace

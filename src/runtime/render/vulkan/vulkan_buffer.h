@@ -32,6 +32,7 @@ namespace Incubator
                                                                   VkAccessFlags2 consumerAccess);
 
                 void write(VkDeviceSize offset, std::span<const std::byte> data);
+                void read(VkDeviceSize offset, std::span<std::byte> out) const;
                 VkBuffer handle() const noexcept;
                 VkDeviceSize size() const noexcept;
 

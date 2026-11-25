@@ -622,6 +622,55 @@ namespace Incubator::Editor
         return setDisplay(app.scene(), app.clearColor(), display);
     }
 
+    bool EditorController::setLighting(Scene::Scene& scene, const std::array<float, 4>& clearColor,
+                                       Render::Lighting lighting)
+    {
+        auto mutableColor = clearColor;
+        cancelGizmoDrag(scene, mutableColor);
+        commitPanelTransactions(scene, clearColor);
+        return operations_.setLighting(scene, clearColor, std::move(lighting));
+    }
+
+    bool EditorController::setLighting(EditorApp& app, Render::Lighting lighting)
+    {
+        return setLighting(app.scene(), app.clearColor(), std::move(lighting));
+    }
+
+    bool EditorController::addLocalLight(Scene::Scene& scene, std::array<float, 4>& clearColor,
+                                         Render::LocalLightType type)
+    {
+        cancelGizmoDrag(scene, clearColor);
+        commitPanelTransactions(scene, clearColor);
+        auto lighting = scene.lighting();
+        if (lighting.localLights.size() >= Render::MAX_LOCAL_LIGHTS)
+            return false;
+        Render::LocalLight light;
+        light.type = type;
+        lighting.localLights.push_back(light);
+        return operations_.setLighting(scene, clearColor, std::move(lighting));
+    }
+
+    bool EditorController::addLocalLight(EditorApp& app, Render::LocalLightType type)
+    {
+        return addLocalLight(app.scene(), app.clearColor(), type);
+    }
+
+    bool EditorController::removeLocalLight(Scene::Scene& scene, std::array<float, 4>& clearColor, size_t index)
+    {
+        cancelGizmoDrag(scene, clearColor);
+        commitPanelTransactions(scene, clearColor);
+        auto lighting = scene.lighting();
+        if (index >= lighting.localLights.size())
+            return false;
+        lighting.localLights.erase(lighting.localLights.begin() + static_cast<ptrdiff_t>(index));
+        return operations_.setLighting(scene, clearColor, std::move(lighting));
+    }
+
+    bool EditorController::removeLocalLight(EditorApp& app, size_t index)
+    {
+        return removeLocalLight(app.scene(), app.clearColor(), index);
+    }
+
     Scene::EntityId EditorController::duplicateSelected(Scene::Scene& scene, const std::array<float, 4>& clearColor)
     {
         auto mutableColor = clearColor;

@@ -36,8 +36,17 @@ namespace Incubator
             glm::mat4 model;
         };
 
+        /// @brief 离屏 HDR 视口提交的单条 3D 调试辅助线段（世界空间端点与线性 RGB/透明度）。
+        struct DebugLine
+        {
+            glm::vec3 start{0.0f};
+            glm::vec3 end{0.0f};
+            glm::vec3 color{1.0f};
+            float alpha = 1.0f;
+        };
+
         /// @brief 提交一帧渲染所需的应用输入。
-        /// @note 两份绘制列表仅在渲染提交调用期间借用，均可以为空。
+        /// @note 两份绘制列表及调试线段列表仅在渲染提交调用期间借用，均可以为空。
         struct FrameInput
         {
             FrameExtent extent;
@@ -48,6 +57,7 @@ namespace Incubator
             std::span<const DrawItem> shadowDraws{};  ///< 独立于主相机裁剪的投射物列表。
             DisplaySettings display{};
             bool iblEnabled = false;
+            std::span<const DebugLine> debugLines{};  ///< 可选的 3D 调试线段列表（为空时零绘制开销）。
         };
     }  // namespace Render
 }  // namespace Incubator

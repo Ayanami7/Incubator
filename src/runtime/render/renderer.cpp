@@ -543,6 +543,20 @@ namespace Incubator
                 bloomUpsamplePass_ = std::move(upsample);
             }
 
+            void prepareDebugLineResources(const Resource::ShaderResource& vertexShader,
+                                           const Resource::ShaderResource& fragmentShader)
+            {
+                if (!bindingSet_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare scene resources before debug line resources");
+                if (debugLinePipeline_)
+                    throw Error::Exception(Error::Code::RENDER, "Debug line resources are already prepared");
+                if (vertexShader.words().empty() || fragmentShader.words().empty())
+                    throw Error::Exception(Error::Code::RENDER, "Debug line shaders must contain SPIR-V words");
+                debugLinePipeline_ = std::make_unique<Vulkan::VulkanPipeline>(
+                    device_, VK_FORMAT_R16G16B16A16_SFLOAT, depthFormat_, bindingSet_->layout(),
+                    vertexShader.words(), fragmentShader.words());
+            }
+
             void prepareIblResources(const Texture& irradiance, const Texture& prefiltered, const Texture& brdfLut)
             {
                 if (!bindingSet_)
@@ -834,6 +848,59 @@ namespace Incubator
                     Vulkan::VulkanCommandList::drawIndexed(cmd, *hdrPipelines_.solid[0], frameSet, blendDraws);
             }
 
+            static std::vector<Vulkan::VulkanDebugLineVertex> buildDebugLineVertices(
+                std::span<const DebugLine> lines)
+            {
+                std::vector<Vulkan::VulkanDebugLineVertex> vertices;
+                vertices.reserve(lines.size() * 2u);
+                const auto finiteVec3 = [](const glm::vec3& v) {
+                    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+                };
+                for (const auto& line : lines)
+                {
+                    if (!finiteVec3(line.start) || !finiteVec3(line.end) || !finiteVec3(line.color) ||
+                        line.color.r < 0.0f || line.color.g < 0.0f || line.color.b < 0.0f ||
+                        !std::isfinite(line.alpha) || line.alpha < 0.0f || line.alpha > 1.0f)
+                        throw Error::Exception(Error::Code::RENDER,
+                                               "DebugLine endpoints must be finite, color nonnegative, and alpha in [0, 1]");
+                    const glm::vec4 rgba(line.color, line.alpha);
+                    vertices.push_back({line.start, rgba});
+                    vertices.push_back({line.end, rgba});
+                }
+                return vertices;
+            }
+
+            std::shared_ptr<Vulkan::VulkanBuffer> ensureDebugLineBuffer(
+                std::shared_ptr<Vulkan::VulkanBuffer>& slot, std::span<const Vulkan::VulkanDebugLineVertex> vertices)
+            {
+                if (vertices.empty())
+                    return {};
+                const VkDeviceSize requiredBytes = vertices.size() * sizeof(Vulkan::VulkanDebugLineVertex);
+                if (!slot || slot->size() < requiredBytes)
+                {
+                    const VkDeviceSize capacity = std::max<VkDeviceSize>(requiredBytes, 4096u);
+                    slot = std::make_shared<Vulkan::VulkanBuffer>(
+                        device_, capacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                }
+                slot->write(0, std::as_bytes(vertices));
+                return slot;
+            }
+
+            void recordDebugLines(VkCommandBuffer cmd, VkDescriptorSet frameSet, const Vulkan::VulkanBuffer& buffer,
+                                  uint32_t vertexCount)
+            {
+                if (!debugLinePipeline_ || vertexCount == 0u)
+                    return;
+                const VkBuffer vb = buffer.handle();
+                const VkDeviceSize offset = 0;
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, debugLinePipeline_->handle());
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, debugLinePipeline_->layout(), 0, 1,
+                                        &frameSet, 0, nullptr);
+                vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
+                vkCmdDraw(cmd, vertexCount, 1, 0, 0);
+            }
+
             void withHdrSceneTarget(
                 const FrameInput& input, const std::array<float, 4>& clearColor,
                 const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record)
@@ -842,10 +909,23 @@ namespace Incubator
                     throw Error::Exception(Error::Code::RENDER, "Prepare scene shaders before GPU review");
                 if (input.iblEnabled && !iblIrradiance_)
                     throw Error::Exception(Error::Code::RENDER, "Prepare IBL resources before enabling IBL");
+                if (!input.debugLines.empty() && !debugLinePipeline_)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "Prepare debug line resources before submitting debug lines");
                 const auto frame = Vulkan::makeFrameUniform(input, iblMaxPrefilteredLod_);
                 std::vector<std::shared_ptr<void>> resources;
                 ensureHdrPipelines();
                 auto draws = resolveDraws(input, resources, hdrPipelines_);
+                const auto debugVerts = buildDebugLineVertices(input.debugLines);
+                std::shared_ptr<Vulkan::VulkanBuffer> debugBuffer;
+                if (!debugVerts.empty())
+                {
+                    debugBuffer = std::make_shared<Vulkan::VulkanBuffer>(
+                        device_, debugVerts.size() * sizeof(Vulkan::VulkanDebugLineVertex),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                    debugBuffer->write(0, std::as_bytes(std::span(debugVerts)));
+                }
                 const bool drawSkybox =
                     input.display.skyboxEnabled && iblIrradiance_ != nullptr && skyboxPipeline_ != nullptr;
                 std::vector<Vulkan::VulkanShadowDrawItem> shadowDraws;
@@ -881,6 +961,9 @@ namespace Incubator
                         });
                     hdrTarget.record(cmd, clear, [&](VkCommandBuffer scene) {
                         recordHdrSceneDraws(scene, bindings.descriptorSet(0), draws, drawSkybox);
+                        if (debugBuffer)
+                            recordDebugLines(scene, bindings.descriptorSet(0), *debugBuffer,
+                                             static_cast<uint32_t>(debugVerts.size()));
                     });
                 });
                 record(device_, hdrTarget.color());
@@ -1028,13 +1111,18 @@ namespace Incubator
                     throw Error::Exception(Error::Code::RENDER, "Prepare IBL resources before enabling IBL");
                 const auto frame = Vulkan::makeFrameUniform(input, iblMaxPrefilteredLod_);
                 std::vector<std::shared_ptr<void>> resources;
-                if (!input.draws.empty())
+                if (!input.draws.empty() || !input.debugLines.empty())
                 {
                     if (!bindingSet_)
                         throw Error::Exception(Error::Code::RENDER, "Prepare scene shaders first");
-                    ensureHdrPipelines();
+                    if (!input.draws.empty())
+                        ensureHdrPipelines();
                 }
+                if (!input.debugLines.empty() && !debugLinePipeline_)
+                    throw Error::Exception(Error::Code::RENDER,
+                                           "Prepare debug line resources before submitting debug lines");
                 auto draws = resolveDraws(input, resources, hdrPipelines_);
+                const auto debugVertices = buildDebugLineVertices(input.debugLines);
                 const bool drawSkybox =
                     input.display.skyboxEnabled && iblIrradiance_ != nullptr && skyboxPipeline_ != nullptr;
                 const bool doBloom = input.display.bloomEnabled && input.display.bloomIntensity > 0.0f &&
@@ -1055,6 +1143,9 @@ namespace Incubator
                 scheduler_->waitForCurrentFrame();
                 if (bindingSet_)
                     uniformBuffers_[index]->write(0, std::as_bytes(std::span(&frame, 1)));
+                auto debugBuffer = ensureDebugLineBuffer(debugLineBuffers_[index], debugVertices);
+                if (debugBuffer)
+                    resources.push_back(debugBuffer);
                 std::shared_ptr<Vulkan::VulkanShadowTarget> shadow;
                 if (input.shadow)
                 {
@@ -1105,13 +1196,85 @@ namespace Incubator
                             target->target->record(cmd, *displayPass_, displayParams,
                                                    [&](VkCommandBuffer scene) {
                                                        if (bindingSet_)
+                                                       {
                                                            recordHdrSceneDraws(scene, bindingSet_->descriptorSet(index),
                                                                                draws, drawSkybox);
+                                                           if (debugBuffer)
+                                                               recordDebugLines(
+                                                                   scene, bindingSet_->descriptorSet(index),
+                                                                   *debugBuffer,
+                                                                   static_cast<uint32_t>(debugVertices.size()));
+                                                       }
                                                    },
                                                    output.fxaaEnabled() ? fxaaPass_.get() : nullptr, bloomParams);
                         },
                         sampleInput))
+                {
                     needsRebuild_ = true;
+                    return;
+                }
+                lastSubmittedOutput_ = target;
+                lastSubmittedFxaa_ = output.fxaaEnabled();
+            }
+
+            std::optional<CapturedViewportImage> captureLastSceneViewport()
+            {
+                if (!lastSubmittedOutput_ || !lastSubmittedOutput_->target)
+                    return std::nullopt;
+                scheduler_->waitForFrames();
+                const auto& image = lastSubmittedOutput_->target->color(lastSubmittedFxaa_);
+                const VkExtent2D ext = image.extent();
+                if (ext.width == 0u || ext.height == 0u)
+                    return std::nullopt;
+                const size_t byteSize = size_t(ext.width) * ext.height * 4u;
+                Vulkan::VulkanBuffer staging(device_, byteSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                device_.executeImmediate([&](VkCommandBuffer cmd) {
+                    VkImageMemoryBarrier2 toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+                    toTransfer.srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+                    toTransfer.srcAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+                    toTransfer.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+                    toTransfer.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+                    toTransfer.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                    toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                    toTransfer.srcQueueFamilyIndex = toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    toTransfer.image = image.handle();
+                    toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+                    dep.imageMemoryBarrierCount = 1;
+                    dep.pImageMemoryBarriers = &toTransfer;
+                    vkCmdPipelineBarrier2(cmd, &dep);
+
+                    VkBufferImageCopy copy{};
+                    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                    copy.imageExtent = {ext.width, ext.height, 1};
+                    vkCmdCopyImageToBuffer(cmd, image.handle(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging.handle(), 1,
+                                           &copy);
+
+                    VkImageMemoryBarrier2 toShader = toTransfer;
+                    toShader.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+                    toShader.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+                    toShader.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+                    toShader.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+                    toShader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                    toShader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                    VkBufferMemoryBarrier2 toHost{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
+                    toHost.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+                    toHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+                    toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+                    toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+                    toHost.srcQueueFamilyIndex = toHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    toHost.buffer = staging.handle();
+                    toHost.size = VK_WHOLE_SIZE;
+                    dep.pImageMemoryBarriers = &toShader;
+                    dep.bufferMemoryBarrierCount = 1;
+                    dep.pBufferMemoryBarriers = &toHost;
+                    vkCmdPipelineBarrier2(cmd, &dep);
+                });
+                CapturedViewportImage result{{ext.width, ext.height}, std::vector<uint8_t>(byteSize)};
+                staging.read(0, std::as_writable_bytes(std::span(result.rgba8)));
+                return result;
             }
 
             ViewportStats lastViewportStats() const noexcept
@@ -1218,6 +1381,11 @@ namespace Incubator
             std::unique_ptr<Vulkan::VulkanDisplayPass> bloomDownsamplePass_;
             std::unique_ptr<Vulkan::VulkanDisplayPass> bloomUpsamplePass_;
             std::unique_ptr<Vulkan::VulkanPipeline> skyboxPipeline_;
+            std::unique_ptr<Vulkan::VulkanPipeline> debugLinePipeline_;
+            std::array<std::shared_ptr<Vulkan::VulkanBuffer>, Vulkan::VulkanFrameScheduler::FRAME_COUNT>
+                debugLineBuffers_{};
+            std::shared_ptr<SceneOutput::Impl> lastSubmittedOutput_;
+            bool lastSubmittedFxaa_ = false;
             PipelinePair shadowPipelines_;
             PipelinePair shadowMaskPipelines_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
@@ -1371,6 +1539,14 @@ namespace Incubator
             impl_->prepareBloomResources(prefilterShader, downsampleShader, upsampleShader);
         }
 
+        void Renderer::prepareDebugLineResources(const Resource::ShaderResource& vertexShader,
+                                                 const Resource::ShaderResource& fragmentShader)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            impl_->prepareDebugLineResources(vertexShader, fragmentShader);
+        }
+
         void Renderer::prepareIblResources(const Texture& irradiance, const Texture& prefiltered,
                                            const Texture& brdfLut)
         {
@@ -1451,6 +1627,13 @@ Incubator::Render::ViewportStats Incubator::Render::Renderer::lastViewportStats(
     if (!impl_)
         return {};
     return impl_->lastViewportStats();
+}
+
+std::optional<Incubator::Render::CapturedViewportImage> Incubator::Render::Renderer::captureLastSceneViewport()
+{
+    if (!impl_)
+        throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+    return impl_->captureLastSceneViewport();
 }
 
 uint64_t Incubator::Render::Detail::RendererReviewAccess::completedViewportSampleCount(Renderer& renderer)

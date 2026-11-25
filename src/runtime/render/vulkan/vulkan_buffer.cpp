@@ -142,6 +142,33 @@ namespace Incubator
                 vkUnmapMemory(device_.handle(), memory_);
             }
 
+            void VulkanBuffer::read(VkDeviceSize offset, std::span<std::byte> out) const
+            {
+                if ((memoryProperties_ & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
+                    throw Error::Exception(Error::Code::RENDER, "Cannot read a non-host-visible Vulkan buffer");
+                if (out.empty() || offset > size_ || out.size() > size_ - offset)
+                    throw Error::Exception(Error::Code::RENDER, "Vulkan buffer read is outside the buffer bounds");
+
+                void* mapped = nullptr;
+                checkVk(vkMapMemory(device_.handle(), memory_, 0, allocationSize_, 0, &mapped), "vkMapMemory");
+                if ((memoryProperties_ & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0)
+                {
+                    VkMappedMemoryRange range{};
+                    range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+                    range.memory = memory_;
+                    range.offset = 0;
+                    range.size = VK_WHOLE_SIZE;
+                    const VkResult invalidateResult = vkInvalidateMappedMemoryRanges(device_.handle(), 1, &range);
+                    if (invalidateResult != VK_SUCCESS)
+                    {
+                        vkUnmapMemory(device_.handle(), memory_);
+                        checkVk(invalidateResult, "vkInvalidateMappedMemoryRanges");
+                    }
+                }
+                std::memcpy(out.data(), static_cast<const std::byte*>(mapped) + offset, out.size());
+                vkUnmapMemory(device_.handle(), memory_);
+            }
+
             VkBuffer VulkanBuffer::handle() const noexcept
             {
                 return buffer_;

@@ -116,11 +116,27 @@ if(WIN32)
             VERBATIM
         )
     endforeach()
+    set(DEBUG_LINE_VERTEX_SPIRV "${SHADER_OUTPUT_DIR}/debug_line.vert.spv")
+    set(DEBUG_LINE_FRAGMENT_SPIRV "${SHADER_OUTPUT_DIR}/debug_line.frag.spv")
+    foreach(DEBUG_STAGE IN ITEMS vert frag)
+        set(DEBUG_SOURCE "${ASSETS_DIR}/shaders/debug_line.${DEBUG_STAGE}")
+        set(DEBUG_OUTPUT "${SHADER_OUTPUT_DIR}/debug_line.${DEBUG_STAGE}.spv")
+        add_custom_command(
+            OUTPUT "${DEBUG_OUTPUT}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
+            COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 --target-env spirv1.6 --glsl-version 450
+                    -S ${DEBUG_STAGE} -o "${DEBUG_OUTPUT}" "${DEBUG_SOURCE}"
+            DEPENDS "${DEBUG_SOURCE}"
+            COMMENT "编译 3D 调试辅助线 ${DEBUG_STAGE} Shader"
+            VERBATIM
+        )
+    endforeach()
     add_custom_target(incubator_shaders
         DEPENDS "${CUBE_VERTEX_SPIRV}" "${CUBE_FRAGMENT_SPIRV}" "${SHADOW_VERTEX_SPIRV}"
                 ${MASK_SHADER_OUTPUTS} "${DISPLAY_VERTEX_SPIRV}" "${DISPLAY_FRAGMENT_SPIRV}" "${FXAA_FRAGMENT_SPIRV}"
                 "${SKYBOX_VERTEX_SPIRV}" "${SKYBOX_FRAGMENT_SPIRV}"
-                "${BLOOM_PREFILTER_SPIRV}" "${BLOOM_DOWNSAMPLE_SPIRV}" "${BLOOM_UPSAMPLE_SPIRV}")
+                "${BLOOM_PREFILTER_SPIRV}" "${BLOOM_DOWNSAMPLE_SPIRV}" "${BLOOM_UPSAMPLE_SPIRV}"
+                "${DEBUG_LINE_VERTEX_SPIRV}" "${DEBUG_LINE_FRAGMENT_SPIRV}")
 
 endif()
 

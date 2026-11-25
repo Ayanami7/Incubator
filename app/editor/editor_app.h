@@ -1,7 +1,9 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <optional>
+#include <vector>
 
 #include "app/common/app_session.h"
 
@@ -64,6 +66,9 @@ namespace Incubator::Editor
         /// @brief 打开外部模型文件选择框，取消时返回空值。
         /// @throws Error::Exception 系统对话框失败时抛出 IO。
         std::optional<std::filesystem::path> pickExternalModelFile();
+        /// @brief 打开视口 PNG 截图保存对话框，取消时返回空值。
+        /// @throws Error::Exception 系统对话框失败时抛出 IO。
+        std::optional<std::filesystem::path> pickScreenshotSavePath();
         /// @brief 获取当前 Scene 的借用引用。
         /// @note 仅在会话打开时有效；调用 setScene 后必须重新获取。
         Scene::Scene& scene()
@@ -104,6 +109,11 @@ namespace Incubator::Editor
         bool iblEnabled() const
         {
             return session_.iblEnabled();
+        }
+        /// @brief 注册离屏视口 3D 调试辅助线每帧生成器（在 UI 更新与帧提取后调用；为空时零开销）。
+        void setDebugLineBuilder(std::function<void(std::vector<Render::DebugLine>&)> builder)
+        {
+            session_.setDebugLineBuilder(std::move(builder));
         }
         /// @brief 返回本轮布局准备的场景输出引用，供同一帧采样与提交共用。
         const Render::SceneOutput& sceneOutput() const

@@ -42,6 +42,24 @@ namespace Incubator::Editor
         return std::nullopt;
     }
 
+    std::optional<std::filesystem::path> EditorApp::pickScreenshotSavePath()
+    {
+        std::array<wchar_t, 32768> path{};
+        OPENFILENAMEW dialog{};
+        dialog.lStructSize = sizeof(dialog);
+        dialog.hwndOwner = glfwGetWin32Window(static_cast<GLFWwindow*>(window().getNativeHandle()));
+        dialog.lpstrFilter = L"PNG image (*.png)\0*.png\0";
+        dialog.lpstrDefExt = L"png";
+        dialog.lpstrFile = path.data();
+        dialog.nMaxFile = static_cast<DWORD>(path.size());
+        dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+        if (GetSaveFileNameW(&dialog))
+            return std::filesystem::path(path.data());
+        if (const DWORD error = CommDlgExtendedError())
+            throw Error::Exception(Error::Code::IO, fmt::format("Cannot open screenshot save picker (error: {})", error));
+        return std::nullopt;
+    }
+
     void EditorApp::sceneViewport(const char* title, bool* open)
     {
         session_.requireOpen();

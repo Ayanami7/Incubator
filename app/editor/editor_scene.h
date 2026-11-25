@@ -9,6 +9,7 @@
 
 #include "editor_app.h"
 #include "editor_controller.h"
+#include "viewport_debug_lines.h"
 #include "workspace.h"
 
 namespace Incubator::Editor
@@ -19,8 +20,10 @@ namespace Incubator::Editor
     {
     public:
         using ExternalModelPicker = std::function<std::optional<std::filesystem::path>(EditorApp&)>;
+        using ScreenshotPathPicker = std::function<std::optional<std::filesystem::path>(EditorApp&)>;
         /// @brief 构造场景视图，默认使用 EditorApp 的系统文件选择框。
-        explicit EditorScene(ExternalModelPicker picker = &EditorApp::pickExternalModelFile);
+        explicit EditorScene(ExternalModelPicker picker = &EditorApp::pickExternalModelFile,
+                             ScreenshotPathPicker screenshotPicker = &EditorApp::pickScreenshotSavePath);
 
         EditorController& controller() noexcept
         {
@@ -129,6 +132,21 @@ namespace Incubator::Editor
 
         void resetCamera(Editor::EditorApp& app);
 
+        /// @brief 访问当前会话的 3D 调试辅助线显示开关（不进入场景持久化）。
+        ViewportDebugOptions& debugOptions() noexcept
+        {
+            return debugOptions_;
+        }
+        const ViewportDebugOptions& debugOptions() const noexcept
+        {
+            return debugOptions_;
+        }
+
+        /// @brief 同步回读最近一帧离屏视口图像并导出为 PNG 文件；无可用视口或写入失败返回 false。
+        bool exportScreenshot(Editor::EditorApp& app, const std::filesystem::path& path);
+        /// @brief 通过文件保存框选取路径并导出视口 PNG 截图。
+        bool requestExportScreenshot(Editor::EditorApp& app);
+
         void ui(Editor::EditorApp& app);
 
     private:
@@ -152,6 +170,8 @@ namespace Incubator::Editor
 
         EditorController controller_;
         ExternalModelPicker pickExternalModel_;
+        ScreenshotPathPicker pickScreenshotPath_;
+        ViewportDebugOptions debugOptions_{};
         Workspace workspace_;
         std::unordered_set<uint64_t> collapsedEntities_;
         bool viewportOpen_ = true;
