@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <glm/ext/matrix_transform.hpp>
+#include <glm/gtc/packing.hpp>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -3786,6 +3787,349 @@ namespace
                 renderer.drawSceneTarget(
                     output, FrameInput{targetExt, cam, angledNearDraws, angledLight, frameShadow, angledNearDraws},
                     {0, 0, 0, 1});
+            }
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, AcesFilmicAndSkyboxWithBlendAndFallbackUnderValidation)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
+
+            auto& manager = Resource::ResourceManager::instance();
+            const auto skyVert =
+                manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, "shaders/skybox.vert.spv");
+            const auto skyFrag =
+                manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, "shaders/skybox.frag.spv");
+            ASSERT_TRUE(skyVert && skyFrag);
+
+            const Resource::ShaderResource emptyShader({}, {});
+            EXPECT_THROW(renderer.prepareSkyboxResources(emptyShader, *skyFrag.get<Resource::ShaderResource>()),
+                         Error::Exception);
+            renderer.prepareSkyboxResources(*skyVert.get<Resource::ShaderResource>(),
+                                            *skyFrag.get<Resource::ShaderResource>());
+            EXPECT_THROW(renderer.prepareSkyboxResources(*skyVert.get<Resource::ShaderResource>(),
+                                                         *skyFrag.get<Resource::ShaderResource>()),
+                         Error::Exception);
+
+            const auto encodeSrgb8 = [](float linear) {
+                const float clamped = std::clamp(linear, 0.0f, 1.0f);
+                const float encoded =
+                    clamped <= 0.0031308f ? clamped * 12.92f : 1.055f * std::pow(clamped, 1.0f / 2.4f) - 0.055f;
+                return encoded * 255.0f;
+            };
+            const auto aces = [](float x) {
+                return std::clamp((x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f), 0.0f, 1.0f);
+            };
+            const auto perspectiveCamera = [](glm::vec3 target, FrameExtent ext) {
+                const glm::mat4 view = glm::lookAtRH(glm::vec3(0.0f), target, glm::vec3(0.0f, 1.0f, 0.0f));
+                glm::mat4 proj = glm::perspectiveRH_ZO(glm::radians(60.0f), float(ext.width) / ext.height, 0.1f, 50.0f);
+                proj[1][1] *= -1.0f;
+                return CameraMatrices{view, proj};
+            };
+            const auto renderLdr = [&](FrameExtent ext, const FrameInput& input, std::array<float, 4> clear) {
+                window->pollEvents();
+                EXPECT_TRUE(renderer.beginUiFrame());
+                const auto output = renderer.prepareSceneTarget(ext);
+                renderer.imgui().endFrame();
+                renderer.drawSceneTarget(output, input, clear);
+                std::vector<uint8_t> pixels;
+                Detail::RendererReviewAccess::withSceneOutput(
+                    renderer, output, [&](const auto& device, const auto& image) {
+                        pixels = TextureGpuReview::captureMip(device, image, 0, {ext.width, ext.height});
+                    });
+                return pixels;
+            };
+
+            const FrameExtent ext{64, 64};
+            const std::array<float, 4> clearColor{0.18f, 0.34f, 0.52f, 1.0f};
+            const CameraMatrices camNegZ = perspectiveCamera({0.0f, 0.0f, -1.0f}, ext);
+
+            // 1. IBL 未就绪时启用 skyboxEnabled 不应崩溃或报错，应退回到 clearColor 背景。
+            {
+                FrameInput fallbackInput{ext, camNegZ, {}};
+                fallbackInput.display.skyboxEnabled = true;
+                const auto px = renderLdr(ext, fallbackInput, clearColor);
+                const size_t center = (32u * ext.width + 32u) * 4u;
+                EXPECT_NEAR(px[center + 0], clearColor[0] * 255.0f, 1.5f);
+                EXPECT_NEAR(px[center + 1], clearColor[1] * 255.0f, 1.5f);
+                EXPECT_NEAR(px[center + 2], clearColor[2] * 255.0f, 1.5f);
+
+                const auto hdrFallback = captureHdr(renderer, fallbackInput);
+                EXPECT_FLOAT_EQ(hdrFallback[32u * ext.width + 32u][3], 0.0f);
+            }
+
+            // 2. 构造有明显方向颜色差异的合成立方体贴图 (+X红, -X绿, +Y蓝, -Y黄, +Z青, -Z橙)。
+            const auto makeSolidFace = [](std::vector<uint16_t>& dst, uint32_t pixelsPerFace,
+                                          std::array<float, 4> rgba) {
+                for (uint32_t i = 0; i < pixelsPerFace; ++i)
+                {
+                    dst.push_back(glm::packHalf1x16(rgba[0]));
+                    dst.push_back(glm::packHalf1x16(rgba[1]));
+                    dst.push_back(glm::packHalf1x16(rgba[2]));
+                    dst.push_back(glm::packHalf1x16(rgba[3]));
+                }
+            };
+            std::vector<uint16_t> prePixels;
+            const std::array<std::array<float, 4>, 6> faceColors{{
+                {1.2f, 0.06f, 0.06f, 1.0f},  // +X 红
+                {0.06f, 1.2f, 0.06f, 1.0f},  // -X 绿
+                {0.06f, 0.12f, 1.1f, 1.0f},  // +Y 蓝
+                {1.0f, 1.0f, 0.06f, 1.0f},   // -Y 黄
+                {0.06f, 1.0f, 1.0f, 1.0f},   // +Z 青
+                {1.4f, 0.55f, 0.08f, 1.0f},  // -Z 橙
+            }};
+            for (const auto& color : faceColors)
+                makeSolidFace(prePixels, 4u, color);
+            std::vector<uint16_t> irrPixels;
+            for (int f = 0; f < 6; ++f)
+                makeSolidFace(irrPixels, 1u, {0.1f, 0.1f, 0.1f, 1.0f});
+            const std::vector<uint16_t> lutPixels{glm::packHalf1x16(1.0f), glm::packHalf1x16(0.0f),
+                                                  glm::packHalf1x16(0.0f), glm::packHalf1x16(1.0f)};
+
+            const auto irrTex = renderer.createTexture(Resource::FloatTextureResource(
+                {}, Resource::FloatTextureDimension::CubeMap, {Resource::FloatTextureMip{1, 1, std::move(irrPixels)}}));
+            const auto preTex = renderer.createTexture(Resource::FloatTextureResource(
+                {}, Resource::FloatTextureDimension::CubeMap, {Resource::FloatTextureMip{2, 2, std::move(prePixels)}}));
+            const auto lutTex = renderer.createTexture(Resource::FloatTextureResource(
+                {}, Resource::FloatTextureDimension::Texture2D, {Resource::FloatTextureMip{1, 1, lutPixels}}));
+            renderer.prepareIblResources(irrTex, preTex, lutTex);
+
+            // 3. 验证相机旋转时天空盒方向颜色随之变化。
+            {
+                FrameInput skyNegZ{ext, camNegZ, {}};
+                skyNegZ.display.skyboxEnabled = true;
+                const auto hdrNegZ = captureHdr(renderer, skyNegZ);
+                const auto& cNegZ = hdrNegZ[32u * ext.width + 32u];
+                EXPECT_NEAR(cNegZ[0], 1.4f, 0.05f);
+                EXPECT_NEAR(cNegZ[1], 0.55f, 0.05f);
+                EXPECT_NEAR(cNegZ[2], 0.08f, 0.05f);
+                EXPECT_FLOAT_EQ(cNegZ[3], 1.0f);
+
+                FrameInput skyPosX{ext, perspectiveCamera({1.0f, 0.0f, 0.0f}, ext), {}};
+                skyPosX.display.skyboxEnabled = true;
+                const auto hdrPosX = captureHdr(renderer, skyPosX);
+                const auto& cPosX = hdrPosX[32u * ext.width + 32u];
+                EXPECT_GT(cPosX[0], 1.0f);
+                EXPECT_LT(cPosX[1], 0.15f);
+
+                FrameInput skyNegX{ext, perspectiveCamera({-1.0f, 0.0f, 0.0f}, ext), {}};
+                skyNegX.display.skyboxEnabled = true;
+                const auto hdrNegX = captureHdr(renderer, skyNegX);
+                const auto& cNegX = hdrNegX[32u * ext.width + 32u];
+                EXPECT_GT(cNegX[1], 1.0f);
+                EXPECT_LT(cNegX[0], 0.15f);
+            }
+
+            // 4. 验证近处 Opaque 不被天空盒覆盖，半透明 Blend 在天空盒之上混合。
+            const auto plane = createLitPlane(renderer);
+            const auto white = renderer.createTexture(Resource::TextureResource({}, 1, 1, {255, 255, 255, 255}));
+            MaterialDesc opaqueBlueDesc{white, {0.0f, 0.0f, 0.0f}};
+            opaqueBlueDesc.shading = ShadingMode::Pbr;
+            opaqueBlueDesc.emissiveTexture = white;
+            opaqueBlueDesc.emissiveFactor = {0.04f, 0.06f, 0.85f};
+            const auto opaqueBlueMat = renderer.createMaterial(opaqueBlueDesc);
+
+            MaterialDesc blendCyanDesc{white, {0.0f, 0.0f, 0.0f}};
+            blendCyanDesc.shading = ShadingMode::Pbr;
+            blendCyanDesc.alphaMode = AlphaMode::Blend;
+            blendCyanDesc.doubleSided = true;
+            blendCyanDesc.baseAlpha = 0.5f;
+            blendCyanDesc.emissiveTexture = white;
+            blendCyanDesc.emissiveFactor = {0.0f, 0.2f, 1.0f};
+            const auto blendBlueMat = renderer.createMaterial(blendCyanDesc);
+
+            {
+                const std::array draws{
+                    DrawItem{plane, opaqueBlueMat,
+                             glm::translate(glm::mat4(1.0f), {-0.6f, 0.0f, -2.5f}) *
+                                 glm::scale(glm::mat4(1.0f), {0.45f, 0.45f, 1.0f})},
+                    DrawItem{plane, blendBlueMat,
+                             glm::translate(glm::mat4(1.0f), {0.6f, 0.0f, -2.5f}) *
+                                 glm::scale(glm::mat4(1.0f), {0.45f, 0.45f, 1.0f})},
+                };
+                FrameInput sceneInput{ext, camNegZ, draws, Lighting{{0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, 0.0f, 0.0f}};
+                sceneInput.display.skyboxEnabled = true;
+                const auto hdr = captureHdr(renderer, sceneInput);
+                const auto& leftOpaque = hdr[32u * ext.width + 18u];
+                const auto& centerSky = hdr[32u * ext.width + 32u];
+                const auto& rightBlend = hdr[32u * ext.width + 46u];
+                // 左侧近距不透明蓝块遮挡橙色天空盒
+                EXPECT_LT(leftOpaque[0], 0.15f);
+                EXPECT_GT(leftOpaque[2], 0.7f);
+                // 中间暴露天空盒 (-Z 橙色)
+                EXPECT_NEAR(centerSky[0], 1.4f, 0.05f);
+                EXPECT_NEAR(centerSky[1], 0.55f, 0.05f);
+                // 右侧半透明蓝块在天空盒上方混合：保留天空盒约一半橙色并叠加蓝色
+                EXPECT_GT(rightBlend[0], 0.45f);
+                EXPECT_LT(rightBlend[0], 1.1f);
+                EXPECT_GT(rightBlend[2], 0.45f);
+            }
+
+            // 5. 验证 ACES Filmic 色调映射曲线数值、高光区分能力及曝光响应。
+            {
+                MaterialDesc leftHiDesc{white, {0.06f, 0.03f, 0.01f}};
+                leftHiDesc.shading = ShadingMode::Lambert;
+                const auto leftMat = renderer.createMaterial(leftHiDesc);
+
+                MaterialDesc rightHiDesc{white, {0.5f, 0.35f, 0.15f}};
+                rightHiDesc.shading = ShadingMode::Lambert;
+                const auto rightMat = renderer.createMaterial(rightHiDesc);
+
+                const std::array draws{
+                    DrawItem{plane, leftMat,
+                             glm::translate(glm::mat4(1.0f), {-0.6f, 0.0f, -2.5f}) *
+                                 glm::scale(glm::mat4(1.0f), {0.45f, 0.45f, 1.0f})},
+                    DrawItem{plane, rightMat,
+                             glm::translate(glm::mat4(1.0f), {0.6f, 0.0f, -2.5f}) *
+                                 glm::scale(glm::mat4(1.0f), {0.45f, 0.45f, 1.0f})},
+                };
+                const Lighting acesLight{{0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, 10.0f, 0.0f};
+                FrameInput acesInput{ext, camNegZ, draws, acesLight};
+                acesInput.display = {ToneMappingMode::AcesFilmic, 0.0f, false, false};
+                const auto aces0 = renderLdr(ext, acesInput, {0, 0, 0, 1});
+                const size_t lOff = (32u * ext.width + 18u) * 4u;
+                const size_t rOff = (32u * ext.width + 46u) * 4u;
+                EXPECT_NEAR(aces0[lOff + 0], encodeSrgb8(aces(0.6f)), 2.5f);
+                EXPECT_NEAR(aces0[lOff + 1], encodeSrgb8(aces(0.3f)), 2.5f);
+                EXPECT_NEAR(aces0[lOff + 2], encodeSrgb8(aces(0.1f)), 2.5f);
+                EXPECT_NEAR(aces0[rOff + 0], encodeSrgb8(aces(5.0f)), 2.5f);
+                EXPECT_GT(aces0[rOff + 0], aces0[lOff + 0] + 30);
+
+                acesInput.display.exposureEv = 1.0f;
+                const auto acesPlus = renderLdr(ext, acesInput, {0, 0, 0, 1});
+                EXPECT_NEAR(acesPlus[lOff + 0], encodeSrgb8(aces(1.2f)), 2.5f);
+
+                acesInput.display.exposureEv = -1.0f;
+                const auto acesMinus = renderLdr(ext, acesInput, {0, 0, 0, 1});
+                EXPECT_NEAR(acesMinus[lOff + 0], encodeSrgb8(aces(0.3f)), 2.5f);
+            }
+        }
+        expectCleanValidation();
+    }
+
+    TEST_F(VulkanReviewTest, HdrBloomHaloThresholdsToggleAndTinyResizeUnderValidation)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
+
+            auto& manager = Resource::ResourceManager::instance();
+            const auto bloomPre = manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER,
+                                                                         "shaders/bloom_prefilter.frag.spv");
+            const auto bloomDown = manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER,
+                                                                          "shaders/bloom_downsample.frag.spv");
+            const auto bloomUp = manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER,
+                                                                        "shaders/bloom_upsample.frag.spv");
+            const auto fxaaFrag =
+                manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, "shaders/fxaa.frag.spv");
+            ASSERT_TRUE(bloomPre && bloomDown && bloomUp && fxaaFrag);
+
+            renderer.prepareFxaaResources(*fxaaFrag.get<Resource::ShaderResource>());
+            const Resource::ShaderResource emptyShader({}, {});
+            EXPECT_THROW(renderer.prepareBloomResources(emptyShader, *bloomDown.get<Resource::ShaderResource>(),
+                                                        *bloomUp.get<Resource::ShaderResource>()),
+                         Error::Exception);
+            renderer.prepareBloomResources(*bloomPre.get<Resource::ShaderResource>(),
+                                           *bloomDown.get<Resource::ShaderResource>(),
+                                           *bloomUp.get<Resource::ShaderResource>());
+            EXPECT_THROW(renderer.prepareBloomResources(*bloomPre.get<Resource::ShaderResource>(),
+                                                        *bloomDown.get<Resource::ShaderResource>(),
+                                                        *bloomUp.get<Resource::ShaderResource>()),
+                         Error::Exception);
+
+            const auto white = renderer.createTexture(Resource::TextureResource({}, 1, 1, {255, 255, 255, 255}));
+            const auto plane = createLitPlane(renderer);
+            MaterialDesc hotDesc{white, {1.0f, 0.35f, 0.05f}};
+            hotDesc.shading = ShadingMode::Lambert;
+            const auto hotMat = renderer.createMaterial(hotDesc);
+            const std::array hotDraws{
+                DrawItem{plane, hotMat, glm::scale(glm::mat4(1.0f), {0.18f, 0.18f, 1.0f})},
+            };
+            const Lighting hotLight{{0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, 8.0f, 0.0f};
+
+            const auto orthoCam = [](FrameExtent ext) {
+                const float aspect = float(ext.width) / ext.height;
+                glm::mat4 proj = glm::orthoRH_ZO(-aspect, aspect, -1.0f, 1.0f, 0.1f, 10.0f);
+                proj[1][1] *= -1.0f;
+                return CameraMatrices{glm::lookAtRH(glm::vec3(0, 0, 3), glm::vec3(0), glm::vec3(0, 1, 0)), proj};
+            };
+            const auto renderLdr = [&](FrameExtent ext, const DisplaySettings& display, bool fxaa = false) {
+                window->pollEvents();
+                EXPECT_TRUE(renderer.beginUiFrame());
+                const auto output = renderer.prepareSceneTarget(ext, fxaa);
+                renderer.imgui().endFrame();
+                FrameInput input{ext, orthoCam(ext), hotDraws, hotLight};
+                input.display = display;
+                renderer.drawSceneTarget(output, input, {0.0f, 0.0f, 0.0f, 1.0f});
+                std::vector<uint8_t> pixels;
+                Detail::RendererReviewAccess::withSceneOutput(
+                    renderer, output, [&](const auto& device, const auto& image) {
+                        pixels = TextureGpuReview::captureMip(device, image, 0, {ext.width, ext.height});
+                    });
+                return pixels;
+            };
+
+            const FrameExtent ext{128, 128};
+            const auto pixelR = [&](const std::vector<uint8_t>& px, uint32_t x, uint32_t y) {
+                return px[(size_t(y) * ext.width + x) * 4u + 0u];
+            };
+            const auto pixelG = [&](const std::vector<uint8_t>& px, uint32_t x, uint32_t y) {
+                return px[(size_t(y) * ext.width + x) * 4u + 1u];
+            };
+
+            // 1. 关闭 Bloom 时，亮核四周黑背景应完全为 0，不受 bloomIntensity 影响。
+            const auto bloomOffA =
+                renderLdr(ext, {ToneMappingMode::AcesFilmic, 0.0f, false, false, 1.0f, 0.0f});
+            const auto bloomOffB =
+                renderLdr(ext, {ToneMappingMode::AcesFilmic, 0.0f, false, false, 1.0f, 2.0f});
+            EXPECT_EQ(bloomOffA, bloomOffB);
+            EXPECT_EQ(pixelR(bloomOffA, 64, 38), 0u);
+            EXPECT_EQ(pixelR(bloomOffA, 38, 64), 0u);
+
+            // 2. 开启 Bloom 且阈值 <= 高亮值时，四周黑背景产生近似对称并随距离衰减的光晕。
+            const auto bloomOn =
+                renderLdr(ext, {ToneMappingMode::AcesFilmic, 0.0f, false, true, 1.0f, 1.0f});
+            const uint8_t nearTopR = pixelR(bloomOn, 64, 42);
+            const uint8_t nearBottomR = pixelR(bloomOn, 64, 86);
+            const uint8_t nearLeftR = pixelR(bloomOn, 42, 64);
+            const uint8_t nearRightR = pixelR(bloomOn, 86, 64);
+            const uint8_t farTopR = pixelR(bloomOn, 64, 24);
+            EXPECT_GT(nearTopR, 25u);
+            EXPECT_GT(nearTopR, pixelG(bloomOn, 64, 42));
+            EXPECT_NEAR(float(nearTopR), float(nearBottomR), 6.0f);
+            EXPECT_NEAR(float(nearLeftR), float(nearRightR), 6.0f);
+            EXPECT_GT(nearTopR, farTopR + 8u);
+            EXPECT_GT(farTopR, 0u);
+
+            // 3. 阈值升高超过高亮辐射度时应抑制光晕；强度放大时同位置光晕单调递增。
+            const auto highThreshold =
+                renderLdr(ext, {ToneMappingMode::AcesFilmic, 0.0f, false, true, 20.0f, 1.0f});
+            EXPECT_EQ(pixelR(highThreshold, 64, 42), 0u);
+
+            const auto lowIntensity =
+                renderLdr(ext, {ToneMappingMode::AcesFilmic, 0.0f, false, true, 1.0f, 0.4f});
+            const auto highIntensity =
+                renderLdr(ext, {ToneMappingMode::AcesFilmic, 0.0f, false, true, 1.0f, 2.5f});
+            EXPECT_GT(pixelR(highIntensity, 64, 42), pixelR(lowIntensity, 64, 42));
+
+            // 4. FXAA 联用与开关切换 + 极小尺寸缩放 ({4,4}, {2,2}) 在同步验证下应无布局/屏障错误。
+            for (const auto& [targetExt, enableBloom, fxaa] :
+                 {std::tuple{FrameExtent{128, 128}, true, true}, std::tuple{FrameExtent{128, 128}, false, false},
+                  std::tuple{FrameExtent{128, 128}, true, false}, std::tuple{FrameExtent{4, 4}, true, false},
+                  std::tuple{FrameExtent{2, 2}, true, true}, std::tuple{FrameExtent{64, 48}, true, false}})
+            {
+                const auto px = renderLdr(
+                    targetExt, {ToneMappingMode::AcesFilmic, 0.0f, false, enableBloom, 1.0f, 0.8f}, fxaa);
+                EXPECT_EQ(px.size(), size_t(targetExt.width) * targetExt.height * 4u);
             }
         }
         expectCleanValidation();

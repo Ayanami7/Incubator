@@ -55,6 +55,7 @@ namespace Incubator
                 VulkanObjectData object;
                 const VulkanPipeline* pipeline = nullptr;  ///< 指定该绘制项所用的管线变体。
                 VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+                bool alphaBlend = false;
             };
 
             /// @brief 深度绘制借用网格、管线和模型矩阵，镂空变体还借用材质描述符集。

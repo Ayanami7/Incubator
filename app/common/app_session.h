@@ -170,6 +170,8 @@ namespace Incubator::App
         bool fxaaResourcesPrepared_ = false;
         bool iblEnabled_ = false;
         bool iblResourcesPrepared_ = false;
+        bool skyboxResourcesPrepared_ = false;
+        bool bloomResourcesPrepared_ = false;
         Render::FrameExtent sceneExtent_{};
         Render::SceneOutput sceneOutput_;
         App::ViewportRegion viewportRegion_;

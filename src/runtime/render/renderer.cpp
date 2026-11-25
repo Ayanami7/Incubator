@@ -484,7 +484,9 @@ namespace Incubator
                     throw Error::Exception(Error::Code::RENDER, "Display shaders must contain SPIR-V words");
                 auto vertexWords = vertexShader.words();
                 displayPass_ = std::make_unique<Vulkan::VulkanDisplayPass>(
-                    device_, VK_FORMAT_R8G8B8A8_UNORM, vertexWords, fragmentShader.words());
+                    device_, VK_FORMAT_R8G8B8A8_UNORM, vertexWords, fragmentShader.words(),
+                    SamplerDesc{TextureFilter::Linear, TextureFilter::Linear, MipFilter::BaseLevel},
+                    VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, uint32_t(sizeof(Vulkan::VulkanDisplayParams)), 2u);
                 displayVertexShader_ = std::move(vertexWords);
             }
 
@@ -500,6 +502,45 @@ namespace Incubator
                     device_, VK_FORMAT_R8G8B8A8_UNORM, displayVertexShader_, fragmentShader.words(),
                     SamplerDesc{TextureFilter::Linear, TextureFilter::Linear, MipFilter::BaseLevel},
                     VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0);
+            }
+
+            void prepareSkyboxResources(const Resource::ShaderResource& vertexShader,
+                                        const Resource::ShaderResource& fragmentShader)
+            {
+                if (!bindingSet_)
+                    throw Error::Exception(Error::Code::RENDER, "Prepare scene resources before skybox resources");
+                if (skyboxPipeline_)
+                    throw Error::Exception(Error::Code::RENDER, "Skybox resources are already prepared");
+                if (vertexShader.words().empty() || fragmentShader.words().empty())
+                    throw Error::Exception(Error::Code::RENDER, "Skybox shaders must contain SPIR-V words");
+                skyboxPipeline_ = std::make_unique<Vulkan::VulkanPipeline>(
+                    device_, VK_FORMAT_R16G16B16A16_SFLOAT, depthFormat_, bindingSet_->layout(), vertexShader.words(),
+                    fragmentShader.words(), VK_COMPARE_OP_LESS_OR_EQUAL, false, VK_CULL_MODE_NONE);
+            }
+
+            void prepareBloomResources(const Resource::ShaderResource& prefilterShader,
+                                       const Resource::ShaderResource& downsampleShader,
+                                       const Resource::ShaderResource& upsampleShader)
+            {
+                if (!displayPass_ || displayVertexShader_.empty())
+                    throw Error::Exception(Error::Code::RENDER, "Prepare display resources before bloom resources");
+                if (bloomPrefilterPass_)
+                    throw Error::Exception(Error::Code::RENDER, "Bloom resources are already prepared");
+                if (prefilterShader.words().empty() || downsampleShader.words().empty() || upsampleShader.words().empty())
+                    throw Error::Exception(Error::Code::RENDER, "Bloom shaders must contain SPIR-V words");
+                const SamplerDesc linearSampler{TextureFilter::Linear, TextureFilter::Linear, MipFilter::BaseLevel};
+                auto prefilter = std::make_unique<Vulkan::VulkanDisplayPass>(
+                    device_, VK_FORMAT_R16G16B16A16_SFLOAT, displayVertexShader_, prefilterShader.words(),
+                    linearSampler, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 16u, 1u, false);
+                auto downsample = std::make_unique<Vulkan::VulkanDisplayPass>(
+                    device_, VK_FORMAT_R16G16B16A16_SFLOAT, displayVertexShader_, downsampleShader.words(),
+                    linearSampler, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 16u, 1u, false);
+                auto upsample = std::make_unique<Vulkan::VulkanDisplayPass>(
+                    device_, VK_FORMAT_R16G16B16A16_SFLOAT, displayVertexShader_, upsampleShader.words(),
+                    linearSampler, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 16u, 1u, true);
+                bloomPrefilterPass_ = std::move(prefilter);
+                bloomDownsamplePass_ = std::move(downsample);
+                bloomUpsamplePass_ = std::move(upsample);
             }
 
             void prepareIblResources(const Texture& irradiance, const Texture& prefiltered, const Texture& brdfLut)
@@ -666,11 +707,11 @@ namespace Incubator
                     const auto object = objectData(draw.model);
                     const auto frontFace = invertProjectionWinding != (object.tangentParams.x < 0.0f)
                                                ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
-                    const auto& pair = gpuMaterial->description.alphaMode == AlphaMode::Blend ? pipelines.blend
-                                                                                              : pipelines.solid;
+                    const bool isBlend = gpuMaterial->description.alphaMode == AlphaMode::Blend;
+                    const auto& pair = isBlend ? pipelines.blend : pipelines.solid;
                     draws.push_back({gpuMesh->vertexBuffer->handle(), gpuMesh->indexBuffer->handle(),
                                      gpuMesh->indexCount, gpuMaterial->binding.descriptorSet(),
-                                     object, pair[gpuMaterial->description.doubleSided].get(), frontFace});
+                                     object, pair[gpuMaterial->description.doubleSided].get(), frontFace, isBlend});
                     inFlightResources.push_back(std::move(gpuMesh));
                     inFlightResources.push_back(std::move(gpuMaterial));
                 }
@@ -751,6 +792,48 @@ namespace Incubator
                 record(device_, *scenePipelines_.solid[0], bindings.descriptorSet(0), draws);
             }
 
+            void recordHdrSceneDraws(VkCommandBuffer cmd, VkDescriptorSet frameSet,
+                                     const std::vector<Vulkan::VulkanDrawItem>& draws, bool drawSkybox)
+            {
+                if (!drawSkybox)
+                {
+                    if (!draws.empty())
+                        Vulkan::VulkanCommandList::drawIndexed(cmd, *hdrPipelines_.solid[0], frameSet, draws);
+                    return;
+                }
+                const auto recordSkybox = [&]() {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipeline_->handle());
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipeline_->layout(), 0, 1,
+                                            &frameSet, 0, nullptr);
+                    vkCmdDraw(cmd, 3, 1, 0, 0);
+                };
+                const bool hasBlend =
+                    std::any_of(draws.begin(), draws.end(), [](const auto& item) { return item.alphaBlend; });
+                if (!hasBlend)
+                {
+                    if (!draws.empty())
+                        Vulkan::VulkanCommandList::drawIndexed(cmd, *hdrPipelines_.solid[0], frameSet, draws);
+                    recordSkybox();
+                    return;
+                }
+                std::vector<Vulkan::VulkanDrawItem> solidDraws;
+                std::vector<Vulkan::VulkanDrawItem> blendDraws;
+                solidDraws.reserve(draws.size());
+                blendDraws.reserve(draws.size());
+                for (const auto& item : draws)
+                {
+                    if (item.alphaBlend)
+                        blendDraws.push_back(item);
+                    else
+                        solidDraws.push_back(item);
+                }
+                if (!solidDraws.empty())
+                    Vulkan::VulkanCommandList::drawIndexed(cmd, *hdrPipelines_.solid[0], frameSet, solidDraws);
+                recordSkybox();
+                if (!blendDraws.empty())
+                    Vulkan::VulkanCommandList::drawIndexed(cmd, *hdrPipelines_.solid[0], frameSet, blendDraws);
+            }
+
             void withHdrSceneTarget(
                 const FrameInput& input, const std::array<float, 4>& clearColor,
                 const std::function<void(const Vulkan::VulkanDevice&, const Vulkan::VulkanImage&)>& record)
@@ -762,7 +845,9 @@ namespace Incubator
                 const auto frame = Vulkan::makeFrameUniform(input, iblMaxPrefilteredLod_);
                 std::vector<std::shared_ptr<void>> resources;
                 ensureHdrPipelines();
-                const auto draws = resolveDraws(input, resources, hdrPipelines_);
+                auto draws = resolveDraws(input, resources, hdrPipelines_);
+                const bool drawSkybox =
+                    input.display.skyboxEnabled && iblIrradiance_ != nullptr && skyboxPipeline_ != nullptr;
                 std::vector<Vulkan::VulkanShadowDrawItem> shadowDraws;
                 std::unique_ptr<Vulkan::VulkanShadowTarget> shadowTarget;
                 if (input.shadow)
@@ -795,9 +880,7 @@ namespace Incubator
                                                                   cascadeIndex);
                         });
                     hdrTarget.record(cmd, clear, [&](VkCommandBuffer scene) {
-                        if (!draws.empty())
-                            Vulkan::VulkanCommandList::drawIndexed(scene, *hdrPipelines_.solid[0],
-                                                                   bindings.descriptorSet(0), draws);
+                        recordHdrSceneDraws(scene, bindings.descriptorSet(0), draws, drawSkybox);
                     });
                 });
                 record(device_, hdrTarget.color());
@@ -932,12 +1015,15 @@ namespace Incubator
                 if (output.fxaaEnabled() && !fxaaPass_)
                     throw Error::Exception(Error::Code::RENDER, "Prepare FXAA resources before drawSceneTarget with FXAA");
                 if (input.display.toneMapping != ToneMappingMode::Off &&
-                    input.display.toneMapping != ToneMappingMode::Reinhard)
+                    input.display.toneMapping != ToneMappingMode::Reinhard &&
+                    input.display.toneMapping != ToneMappingMode::AcesFilmic)
                     throw Error::Exception(Error::Code::RENDER, "Invalid tone mapping mode");
                 if (!std::isfinite(input.display.exposureEv) ||
                     input.display.exposureEv < DisplaySettings::MIN_EXPOSURE_EV ||
                     input.display.exposureEv > DisplaySettings::MAX_EXPOSURE_EV)
                     throw Error::Exception(Error::Code::RENDER, "Exposure EV is out of range");
+                if (!input.display.valid())
+                    throw Error::Exception(Error::Code::RENDER, "Bloom display settings are out of range");
                 if (input.iblEnabled && !iblIrradiance_)
                     throw Error::Exception(Error::Code::RENDER, "Prepare IBL resources before enabling IBL");
                 const auto frame = Vulkan::makeFrameUniform(input, iblMaxPrefilteredLod_);
@@ -948,7 +1034,12 @@ namespace Incubator
                         throw Error::Exception(Error::Code::RENDER, "Prepare scene shaders first");
                     ensureHdrPipelines();
                 }
-                const auto draws = resolveDraws(input, resources, hdrPipelines_);
+                auto draws = resolveDraws(input, resources, hdrPipelines_);
+                const bool drawSkybox =
+                    input.display.skyboxEnabled && iblIrradiance_ != nullptr && skyboxPipeline_ != nullptr;
+                const bool doBloom = input.display.bloomEnabled && input.display.bloomIntensity > 0.0f &&
+                                     bloomPrefilterPass_ != nullptr && bloomDownsamplePass_ != nullptr &&
+                                     bloomUpsamplePass_ != nullptr;
                 std::vector<Vulkan::VulkanShadowDrawItem> shadowDraws;
                 if (input.shadow)
                 {
@@ -984,8 +1075,17 @@ namespace Incubator
                 std::copy(clearColor.begin(), clearColor.end(), clear.float32);
                 const Vulkan::VulkanDisplayParams displayParams{
                     clearColor,
-                    input.display.toneMapping == ToneMappingMode::Off ? 0u : 1u,
-                    std::exp2(input.display.exposureEv)};
+                    static_cast<uint32_t>(input.display.toneMapping),
+                    std::exp2(input.display.exposureEv),
+                    doBloom ? input.display.bloomIntensity : 0.0f,
+                    0.0f};
+                const Vulkan::VulkanBloomParams bloomParams{
+                    doBloom,
+                    input.display.bloomThreshold,
+                    input.display.bloomIntensity,
+                    bloomPrefilterPass_.get(),
+                    bloomDownsamplePass_.get(),
+                    bloomUpsamplePass_.get()};
                 const Vulkan::ViewportSampleInput sampleInput{
                     static_cast<uint32_t>(draws.size()),
                     static_cast<uint32_t>(shadow ? shadowDraws.size() * shadow->layerCount() : 0)};
@@ -1004,12 +1104,11 @@ namespace Incubator
                                 });
                             target->target->record(cmd, *displayPass_, displayParams,
                                                    [&](VkCommandBuffer scene) {
-                                                       if (!draws.empty())
-                                                           Vulkan::VulkanCommandList::drawIndexed(
-                                                               scene, *hdrPipelines_.solid[0],
-                                                               bindingSet_->descriptorSet(index), draws);
+                                                       if (bindingSet_)
+                                                           recordHdrSceneDraws(scene, bindingSet_->descriptorSet(index),
+                                                                               draws, drawSkybox);
                                                    },
-                                                   output.fxaaEnabled() ? fxaaPass_.get() : nullptr);
+                                                   output.fxaaEnabled() ? fxaaPass_.get() : nullptr, bloomParams);
                         },
                         sampleInput))
                     needsRebuild_ = true;
@@ -1115,6 +1214,10 @@ namespace Incubator
             ScenePipelines hdrPipelines_;
             std::unique_ptr<Vulkan::VulkanDisplayPass> displayPass_;
             std::unique_ptr<Vulkan::VulkanDisplayPass> fxaaPass_;
+            std::unique_ptr<Vulkan::VulkanDisplayPass> bloomPrefilterPass_;
+            std::unique_ptr<Vulkan::VulkanDisplayPass> bloomDownsamplePass_;
+            std::unique_ptr<Vulkan::VulkanDisplayPass> bloomUpsamplePass_;
+            std::unique_ptr<Vulkan::VulkanPipeline> skyboxPipeline_;
             PipelinePair shadowPipelines_;
             PipelinePair shadowMaskPipelines_;
             std::unique_ptr<Vulkan::VulkanFrameScheduler> scheduler_;
@@ -1249,6 +1352,23 @@ namespace Incubator
             if (!impl_)
                 throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
             impl_->prepareFxaaResources(fragmentShader);
+        }
+
+        void Renderer::prepareSkyboxResources(const Resource::ShaderResource& vertexShader,
+                                              const Resource::ShaderResource& fragmentShader)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            impl_->prepareSkyboxResources(vertexShader, fragmentShader);
+        }
+
+        void Renderer::prepareBloomResources(const Resource::ShaderResource& prefilterShader,
+                                             const Resource::ShaderResource& downsampleShader,
+                                             const Resource::ShaderResource& upsampleShader)
+        {
+            if (!impl_)
+                throw Error::Exception(Error::Code::RENDER, "Renderer has been moved from");
+            impl_->prepareBloomResources(prefilterShader, downsampleShader, upsampleShader);
         }
 
         void Renderer::prepareIblResources(const Texture& irradiance, const Texture& prefiltered,

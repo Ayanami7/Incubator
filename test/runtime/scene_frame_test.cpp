@@ -268,6 +268,33 @@ namespace
         EXPECT_EQ(secondFrame->input().display, secondDisplay);
         EXPECT_EQ(firstFrame->display, firstDisplay);
         EXPECT_EQ(firstFrame->input().display, firstDisplay);
+
+        EXPECT_FALSE(scene.display().skyboxEnabled);
+        EXPECT_FALSE(scene.display().bloomEnabled);
+        EXPECT_FLOAT_EQ(scene.display().bloomThreshold, 1.0f);
+        EXPECT_FLOAT_EQ(scene.display().bloomIntensity, 0.35f);
+
+        for (const auto bad : std::array<Render::DisplaySettings, 8>{{
+                 {static_cast<Render::ToneMappingMode>(3), 0.0f},
+                 {Render::ToneMappingMode::AcesFilmic, 0.0f, false, true, -0.01f, 0.35f},
+                 {Render::ToneMappingMode::AcesFilmic, 0.0f, false, true, nan, 0.35f},
+                 {Render::ToneMappingMode::AcesFilmic, 0.0f, false, true, inf, 0.35f},
+                 {Render::ToneMappingMode::AcesFilmic, 0.0f, false, true, 1.0f, -0.01f},
+                 {Render::ToneMappingMode::AcesFilmic, 0.0f, false, true, 1.0f, 4.01f},
+                 {Render::ToneMappingMode::AcesFilmic, 0.0f, false, true, 1.0f, nan},
+                 {Render::ToneMappingMode::AcesFilmic, 0.0f, false, true, 1.0f, inf},
+             }})
+        {
+            EXPECT_THROW(scene.setDisplay(bad), Error::Exception);
+        }
+
+        const Render::DisplaySettings thirdDisplay{Render::ToneMappingMode::AcesFilmic, 0.75f, true, true, 1.25f, 0.8f};
+        scene.setDisplay(thirdDisplay);
+        auto thirdFrame = Scene::extractSceneFrame(scene, {320, 240});
+        ASSERT_TRUE(thirdFrame);
+        EXPECT_EQ(thirdFrame->display, thirdDisplay);
+        EXPECT_EQ(thirdFrame->input().display, thirdDisplay);
+        EXPECT_EQ(secondFrame->display, secondDisplay);
     }
 
     TEST(SceneFrameCpuTest, ExtendedShadowSettingsValidationBoundsFittingTexelSnappingAndCsmStability)

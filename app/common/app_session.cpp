@@ -273,7 +273,7 @@ namespace Incubator::App
                 }
                 const auto frame = Scene::extractSceneFrame(*scene_, renderExtent, true, shadowSettings_, iblEnabled_);
                 renderer_->imgui().endFrame();
-                if (frame && frame->iblEnabled && !iblResourcesPrepared_)
+                if (frame && (frame->iblEnabled || frame->display.skyboxEnabled) && !iblResourcesPrepared_)
                 {
                     auto& manager = Resource::ResourceManager::instance();
                     const auto irrHold =
@@ -292,6 +292,35 @@ namespace Incubator::App
                     const auto lut = renderer_->createTexture(*lutData);
                     renderer_->prepareIblResources(irr, pre, lut);
                     iblResourcesPrepared_ = true;
+                }
+                if (callbacks.layout && frame && frame->display.skyboxEnabled && !skyboxResourcesPrepared_)
+                {
+                    auto& manager = Resource::ResourceManager::instance();
+                    const auto skyVert =
+                        manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, "shaders/skybox.vert.spv");
+                    const auto skyFrag =
+                        manager.hold<Resource::ShaderResource>(Resource::ResourceType::SHADER, "shaders/skybox.frag.spv");
+                    if (!skyVert || !skyFrag)
+                        throw Error::Exception(Error::Code::RENDER, "Cannot load application skybox shaders");
+                    renderer_->prepareSkyboxResources(*skyVert.get<Resource::ShaderResource>(),
+                                                      *skyFrag.get<Resource::ShaderResource>());
+                    skyboxResourcesPrepared_ = true;
+                }
+                if (callbacks.layout && frame && frame->display.bloomEnabled && !bloomResourcesPrepared_)
+                {
+                    auto& manager = Resource::ResourceManager::instance();
+                    const auto prefilter = manager.hold<Resource::ShaderResource>(
+                        Resource::ResourceType::SHADER, "shaders/bloom_prefilter.frag.spv");
+                    const auto downsample = manager.hold<Resource::ShaderResource>(
+                        Resource::ResourceType::SHADER, "shaders/bloom_downsample.frag.spv");
+                    const auto upsample = manager.hold<Resource::ShaderResource>(
+                        Resource::ResourceType::SHADER, "shaders/bloom_upsample.frag.spv");
+                    if (!prefilter || !downsample || !upsample)
+                        throw Error::Exception(Error::Code::RENDER, "Cannot load application bloom shaders");
+                    renderer_->prepareBloomResources(*prefilter.get<Resource::ShaderResource>(),
+                                                     *downsample.get<Resource::ShaderResource>(),
+                                                     *upsample.get<Resource::ShaderResource>());
+                    bloomResourcesPrepared_ = true;
                 }
                 if (callbacks.layout && frame && frame->shadow && !shadowResourcesPrepared_)
                 {

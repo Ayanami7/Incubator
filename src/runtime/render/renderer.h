@@ -138,6 +138,17 @@ namespace Incubator
             /// @note 须在 prepareDisplayResources 之后调用，复用全屏顶点着色器；仅复制 SPIR-V 字码，不保留 CPU Resource。
             void prepareFxaaResources(const Resource::ShaderResource& fragmentShader);
 
+            /// @brief 准备环境天空盒背景渲染着色器，首次启用时按需调用。
+            /// @note 须在 prepareSceneResources 之后调用；仅复制 SPIR-V 字码创建无顶点天空盒管线，不保留 CPU Resource。
+            void prepareSkyboxResources(const Resource::ShaderResource& vertexShader,
+                                        const Resource::ShaderResource& fragmentShader);
+
+            /// @brief 准备离屏视口 HDR Bloom 降/升采样所需片元着色器，首次启用时按需调用。
+            /// @note 须在 prepareDisplayResources 之后调用，复用全屏顶点着色器；仅复制 SPIR-V 字码。
+            void prepareBloomResources(const Resource::ShaderResource& prefilterShader,
+                                       const Resource::ShaderResource& downsampleShader,
+                                       const Resource::ShaderResource& upsampleShader);
+
             /// @brief 安装本 Renderer 会话共享的固定 IBL 环境贴图（漫反射辐照度、预过滤镜面与 BRDF 查找表）。
             /// @param irradiance 6 面 Cubemap 漫反射辐照度纹理。
             /// @param prefiltered 6 面 Cubemap 按粗糙度预过滤镜面环境纹理。

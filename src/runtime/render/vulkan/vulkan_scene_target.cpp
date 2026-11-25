@@ -1,5 +1,6 @@
 #include "runtime/render/vulkan/vulkan_scene_target.h"
 
+#include <algorithm>
 #include <array>
 
 #include "runtime/core/error/error.h"
@@ -38,16 +39,26 @@ namespace Incubator::Render::Vulkan
         }
     }  // namespace
 
-    VulkanDisplayPass::VulkanDisplayPass(const VulkanDevice& device, VkFormat ldrFormat,
+    VulkanDisplayPass::VulkanDisplayPass(const VulkanDevice& device, VkFormat outputFormat,
                                          const std::vector<uint32_t>& vertexShader,
                                          const std::vector<uint32_t>& fragmentShader, SamplerDesc samplerDesc,
-                                         VkSamplerAddressMode addressMode, uint32_t pushConstantSize)
+                                         VkSamplerAddressMode addressMode, uint32_t pushConstantSize,
+                                         uint32_t samplerCount, bool additiveBlend)
         : device_(device), sampler_(device, samplerDesc, 1, addressMode)
     {
         VkShaderModule vertexModule = VK_NULL_HANDLE;
         VkShaderModule fragmentModule = VK_NULL_HANDLE;
         try
         {
+            if (samplerCount == 0u || samplerCount > 2u)
+                throw Error::Exception(Error::Code::RENDER, "VulkanDisplayPass supports 1 or 2 samplers");
+            if (samplerCount > 1u)
+            {
+                constexpr std::array<uint8_t, 4> black{0, 0, 0, 0};
+                fallbackBloom_ = VulkanImage::uploadRgba8(device_, {1, 1}, VK_FORMAT_R8G8B8A8_UNORM, black,
+                                                          VK_IMAGE_USAGE_SAMPLED_BIT);
+            }
+
             VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
             moduleInfo.codeSize = vertexShader.size() * sizeof(uint32_t);
             moduleInfo.pCode = vertexShader.data();
@@ -58,11 +69,13 @@ namespace Incubator::Render::Vulkan
             checkVk(vkCreateShaderModule(device_.handle(), &moduleInfo, nullptr, &fragmentModule),
                     "vkCreateShaderModule(fullscreen.frag)");
 
-            const VkDescriptorSetLayoutBinding binding{
-                0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+            const std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
+                {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            }};
             VkDescriptorSetLayoutCreateInfo setLayoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            setLayoutInfo.bindingCount = 1;
-            setLayoutInfo.pBindings = &binding;
+            setLayoutInfo.bindingCount = samplerCount;
+            setLayoutInfo.pBindings = bindings.data();
             checkVk(vkCreateDescriptorSetLayout(device_.handle(), &setLayoutInfo, nullptr, &setLayout_),
                     "vkCreateDescriptorSetLayout(fullscreen)");
 
@@ -114,12 +127,22 @@ namespace Incubator::Render::Vulkan
             VkPipelineColorBlendAttachmentState blendAttachment{};
             blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                              VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            if (additiveBlend)
+            {
+                blendAttachment.blendEnable = VK_TRUE;
+                blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+                blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+            }
             VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
             blend.attachmentCount = 1;
             blend.pAttachments = &blendAttachment;
             VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
             rendering.colorAttachmentCount = 1;
-            rendering.pColorAttachmentFormats = &ldrFormat;
+            rendering.pColorAttachmentFormats = &outputFormat;
 
             VkGraphicsPipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
             pipelineInfo.pNext = &rendering;
@@ -215,18 +238,18 @@ namespace Incubator::Render::Vulkan
     {
         if (descriptorPool_ != VK_NULL_HANDLE)
             return;
-        // 每个场景目标最多同时需要 HDR->Display 与 LDR->FXAA 两组组合图像采样器描述符。
-        const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+        // 分配足够容纳 Display（2 采样器）、FXAA 与最多 5 级 Bloom（Prefilter + 4 Down + 4 Up）的描述符。
+        const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 20};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        poolInfo.maxSets = 2;
+        poolInfo.maxSets = 16;
         poolInfo.poolSizeCount = 1;
         poolInfo.pPoolSizes = &poolSize;
         checkVk(vkCreateDescriptorPool(device_.handle(), &poolInfo, nullptr, &descriptorPool_),
                 "vkCreateDescriptorPool(sceneTarget)");
     }
 
-    void VulkanSceneTarget::ensureDescriptorSet(const VulkanDisplayPass& pass, VkDescriptorSet& set,
-                                                const VulkanImage& image)
+    void VulkanSceneTarget::ensureSingleSamplerSet(const VulkanDisplayPass& pass, VkDescriptorSet& set,
+                                                   const VulkanImage& image)
     {
         if (set != VK_NULL_HANDLE)
             return;
@@ -246,6 +269,79 @@ namespace Incubator::Render::Vulkan
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.pImageInfo = &imageInfo;
         vkUpdateDescriptorSets(device_.handle(), 1, &write, 0, nullptr);
+    }
+
+    void VulkanSceneTarget::ensureDisplaySet(const VulkanDisplayPass& pass, const VulkanImage& hdrImage,
+                                             const VulkanImage& bloomImage)
+    {
+        if (hdrDescriptorSet_ == VK_NULL_HANDLE)
+        {
+            ensureDescriptorPool();
+            const VkDescriptorSetLayout layout = pass.descriptorSetLayout();
+            VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            allocInfo.descriptorPool = descriptorPool_;
+            allocInfo.descriptorSetCount = 1;
+            allocInfo.pSetLayouts = &layout;
+            checkVk(vkAllocateDescriptorSets(device_.handle(), &allocInfo, &hdrDescriptorSet_),
+                    "vkAllocateDescriptorSets(display)");
+            const std::array<VkDescriptorImageInfo, 2> infos{{
+                {pass.sampler(), hdrImage.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {pass.sampler(), bloomImage.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            }};
+            const std::array<VkWriteDescriptorSet, 2> writes{{
+                {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, hdrDescriptorSet_, 0, 0, 1,
+                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &infos[0], nullptr, nullptr},
+                {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, hdrDescriptorSet_, 1, 0, 1,
+                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &infos[1], nullptr, nullptr},
+            }};
+            vkUpdateDescriptorSets(device_.handle(), uint32_t(writes.size()), writes.data(), 0, nullptr);
+            boundBloomView_ = bloomImage.view();
+            return;
+        }
+        if (boundBloomView_ != bloomImage.view())
+        {
+            const VkDescriptorImageInfo bloomInfo{
+                pass.sampler(), bloomImage.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            const VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                             nullptr,
+                                             hdrDescriptorSet_,
+                                             1,
+                                             0,
+                                             1,
+                                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                             &bloomInfo,
+                                             nullptr,
+                                             nullptr};
+            vkUpdateDescriptorSets(device_.handle(), 1, &write, 0, nullptr);
+            boundBloomView_ = bloomImage.view();
+        }
+    }
+
+    void VulkanSceneTarget::ensureBloomMips(const VulkanBloomParams& bloom)
+    {
+        if (!bloomMips_.empty())
+            return;
+        uint32_t w = hdrColor_->extent().width / 2u;
+        uint32_t h = hdrColor_->extent().height / 2u;
+        constexpr VkImageUsageFlags mipUsage =
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        while (w >= 2u && h >= 2u && bloomMips_.size() < MAX_BLOOM_MIPS)
+        {
+            bloomMips_.push_back(std::make_shared<VulkanImage>(
+                device_, VkExtent2D{w, h}, VK_FORMAT_R16G16B16A16_SFLOAT, mipUsage, VK_IMAGE_ASPECT_COLOR_BIT));
+            w /= 2u;
+            h /= 2u;
+        }
+        if (bloomMips_.empty())
+            return;
+        ensureSingleSamplerSet(*bloom.prefilterPass, bloomPrefilterSet_, *hdrColor_);
+        bloomDownSets_.resize(bloomMips_.size() - 1u, VK_NULL_HANDLE);
+        bloomUpSets_.resize(bloomMips_.size() - 1u, VK_NULL_HANDLE);
+        for (size_t i = 0; i + 1u < bloomMips_.size(); ++i)
+        {
+            ensureSingleSamplerSet(*bloom.downsamplePass, bloomDownSets_[i], *bloomMips_[i]);
+            ensureSingleSamplerSet(*bloom.upsamplePass, bloomUpSets_[i], *bloomMips_[i + 1u]);
+        }
     }
 
     void VulkanSceneTarget::record(VkCommandBuffer cmd, const VkClearColorValue& clear,
@@ -312,15 +408,20 @@ namespace Incubator::Render::Vulkan
     void VulkanSceneTarget::record(VkCommandBuffer cmd, const VulkanDisplayPass& displayPass,
                                    const VulkanDisplayParams& displayParams,
                                    const std::function<void(VkCommandBuffer)>& drawScene,
-                                   const VulkanDisplayPass* fxaaPass)
+                                   const VulkanDisplayPass* fxaaPass, const VulkanBloomParams& bloom)
     {
         if (!ldrColor_)
             throw Error::Exception(Error::Code::RENDER, "Display pass requires dual HDR/LDR scene target");
-        ensureDescriptorSet(displayPass, hdrDescriptorSet_, *hdrColor_);
+        const bool tryBloom = bloom.enabled && bloom.intensity > 0.0f && bloom.prefilterPass && bloom.downsamplePass &&
+                              bloom.upsamplePass;
+        if (tryBloom)
+            ensureBloomMips(bloom);
+        const bool doBloom = tryBloom && !bloomMips_.empty();
+        ensureDisplaySet(displayPass, *hdrColor_, doBloom ? *bloomMips_[0] : displayPass.fallbackBloom());
         if (fxaaPass)
         {
             ensureFxaaTarget();
-            ensureDescriptorSet(*fxaaPass, ldrDescriptorSet_, *ldrColor_);
+            ensureSingleSamplerSet(*fxaaPass, ldrDescriptorSet_, *ldrColor_);
         }
 
         // 1. 线性 HDR 主场景 Pass：alpha 清零用于标记未覆盖背景。
@@ -371,21 +472,137 @@ namespace Incubator::Render::Vulkan
         drawScene(cmd);
         vkCmdEndRendering(cmd);
 
-        // 2. HDR 写入 -> 显示 Pass 采样；同时将 LDR 目标转换为色彩附件。
-        const std::array displayBarriers = {
-            makeImageBarrier(hdrColor_->handle(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
-            makeImageBarrier(ldrColor_->handle(), VK_IMAGE_ASPECT_COLOR_BIT,
-                             initialized_ ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                             initialized_ ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_NONE,
-                             initialized_ ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
-                             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)};
-        dep.imageMemoryBarrierCount = static_cast<uint32_t>(displayBarriers.size());
-        dep.pImageMemoryBarriers = displayBarriers.data();
-        vkCmdPipelineBarrier2(cmd, &dep);
+        // 2. HDR 主场景写入 -> 片元采样；若启用 Bloom 则先转第 0 级目标并执行降/升采样链。
+        const auto hdrToShader = makeImageBarrier(
+            hdrColor_->handle(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+
+        if (doBloom)
+        {
+            const std::array prefilterBarriers = {
+                hdrToShader,
+                makeImageBarrier(bloomMips_[0]->handle(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)};
+            dep.imageMemoryBarrierCount = static_cast<uint32_t>(prefilterBarriers.size());
+            dep.pImageMemoryBarriers = prefilterBarriers.data();
+            vkCmdPipelineBarrier2(cmd, &dep);
+
+            const auto recordFullscreen = [&](const VulkanImage& dst, const VulkanDisplayPass& pass, VkDescriptorSet set,
+                                              VkAttachmentLoadOp loadOp, const std::array<float, 4>& pushParams) {
+                VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+                att.imageView = dst.view();
+                att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                att.loadOp = loadOp;
+                att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};
+                info.renderArea.extent = dst.extent();
+                info.layerCount = 1;
+                info.colorAttachmentCount = 1;
+                info.pColorAttachments = &att;
+                vkCmdBeginRendering(cmd, &info);
+                const VkViewport vp{0.0f, 0.0f, float(dst.extent().width), float(dst.extent().height), 0.0f, 1.0f};
+                const VkRect2D sc{{0, 0}, dst.extent()};
+                vkCmdSetViewport(cmd, 0, 1, &vp);
+                vkCmdSetScissor(cmd, 0, 1, &sc);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline());
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipelineLayout(), 0, 1, &set, 0,
+                                        nullptr);
+                vkCmdPushConstants(cmd, pass.pipelineLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   uint32_t(sizeof(pushParams)), pushParams.data());
+                vkCmdDraw(cmd, 3, 1, 0, 0);
+                vkCmdEndRendering(cmd);
+            };
+
+            const std::array prefilterParams{
+                bloom.threshold, bloom.threshold * 0.5f + 1e-5f,
+                1.0f / float(hdrColor_->extent().width), 1.0f / float(hdrColor_->extent().height)};
+            recordFullscreen(*bloomMips_[0], *bloom.prefilterPass, bloomPrefilterSet_,
+                             VK_ATTACHMENT_LOAD_OP_DONT_CARE, prefilterParams);
+
+            for (size_t i = 1; i < bloomMips_.size(); ++i)
+            {
+                const auto& prev = *bloomMips_[i - 1u];
+                const auto& cur = *bloomMips_[i];
+                const std::array downBarriers = {
+                    makeImageBarrier(prev.handle(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+                    makeImageBarrier(cur.handle(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)};
+                dep.imageMemoryBarrierCount = static_cast<uint32_t>(downBarriers.size());
+                dep.pImageMemoryBarriers = downBarriers.data();
+                vkCmdPipelineBarrier2(cmd, &dep);
+
+                const std::array downParams{1.0f / float(prev.extent().width), 1.0f / float(prev.extent().height),
+                                            float(cur.extent().width), float(cur.extent().height)};
+                recordFullscreen(cur, *bloom.downsamplePass, bloomDownSets_[i - 1u], VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                                 downParams);
+            }
+
+            for (size_t i = bloomMips_.size() - 1u; i >= 1u; --i)
+            {
+                const auto& src = *bloomMips_[i];
+                const auto& dst = *bloomMips_[i - 1u];
+                const std::array upBarriers = {
+                    makeImageBarrier(src.handle(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+                    makeImageBarrier(dst.handle(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                     VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)};
+                dep.imageMemoryBarrierCount = static_cast<uint32_t>(upBarriers.size());
+                dep.pImageMemoryBarriers = upBarriers.data();
+                vkCmdPipelineBarrier2(cmd, &dep);
+
+                const std::array upParams{1.0f / float(src.extent().width), 1.0f / float(src.extent().height),
+                                          float(dst.extent().width), float(dst.extent().height)};
+                recordFullscreen(dst, *bloom.upsamplePass, bloomUpSets_[i - 1u], VK_ATTACHMENT_LOAD_OP_LOAD, upParams);
+            }
+
+            const std::array displayBarriers = {
+                makeImageBarrier(bloomMips_[0]->handle(), VK_IMAGE_ASPECT_COLOR_BIT,
+                                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+                makeImageBarrier(ldrColor_->handle(), VK_IMAGE_ASPECT_COLOR_BIT,
+                                 initialized_ ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                 initialized_ ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_NONE,
+                                 initialized_ ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)};
+            dep.imageMemoryBarrierCount = static_cast<uint32_t>(displayBarriers.size());
+            dep.pImageMemoryBarriers = displayBarriers.data();
+            vkCmdPipelineBarrier2(cmd, &dep);
+        }
+        else
+        {
+            const std::array displayBarriers = {
+                hdrToShader,
+                makeImageBarrier(ldrColor_->handle(), VK_IMAGE_ASPECT_COLOR_BIT,
+                                 initialized_ ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                 initialized_ ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_NONE,
+                                 initialized_ ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)};
+            dep.imageMemoryBarrierCount = static_cast<uint32_t>(displayBarriers.size());
+            dep.pImageMemoryBarriers = displayBarriers.data();
+            vkCmdPipelineBarrier2(cmd, &dep);
+        }
 
         VkRenderingAttachmentInfo ldrAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         ldrAttachment.imageView = ldrColor_->view();

@@ -53,6 +53,11 @@ if(WIN32)
     set(DISPLAY_VERTEX_SPIRV "${SHADER_OUTPUT_DIR}/display.vert.spv")
     set(DISPLAY_FRAGMENT_SPIRV "${SHADER_OUTPUT_DIR}/display.frag.spv")
     set(FXAA_FRAGMENT_SPIRV "${SHADER_OUTPUT_DIR}/fxaa.frag.spv")
+    set(SKYBOX_VERTEX_SPIRV "${SHADER_OUTPUT_DIR}/skybox.vert.spv")
+    set(SKYBOX_FRAGMENT_SPIRV "${SHADER_OUTPUT_DIR}/skybox.frag.spv")
+    set(BLOOM_PREFILTER_SPIRV "${SHADER_OUTPUT_DIR}/bloom_prefilter.frag.spv")
+    set(BLOOM_DOWNSAMPLE_SPIRV "${SHADER_OUTPUT_DIR}/bloom_downsample.frag.spv")
+    set(BLOOM_UPSAMPLE_SPIRV "${SHADER_OUTPUT_DIR}/bloom_upsample.frag.spv")
     add_custom_command(
         OUTPUT "${DISPLAY_VERTEX_SPIRV}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
@@ -80,9 +85,42 @@ if(WIN32)
         COMMENT "编译 FXAA 片元 Shader"
         VERBATIM
     )
+    add_custom_command(
+        OUTPUT "${SKYBOX_VERTEX_SPIRV}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
+        COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 --target-env spirv1.6 --glsl-version 450
+                -S vert -o "${SKYBOX_VERTEX_SPIRV}" "${ASSETS_DIR}/shaders/skybox.vert"
+        DEPENDS "${ASSETS_DIR}/shaders/skybox.vert"
+        COMMENT "编译天空盒顶点 Shader"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${SKYBOX_FRAGMENT_SPIRV}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
+        COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 --target-env spirv1.6 --glsl-version 450
+                -S frag -o "${SKYBOX_FRAGMENT_SPIRV}" "${ASSETS_DIR}/shaders/skybox.frag"
+        DEPENDS "${ASSETS_DIR}/shaders/skybox.frag"
+        COMMENT "编译天空盒片元 Shader"
+        VERBATIM
+    )
+    foreach(BLOOM_STAGE IN ITEMS prefilter downsample upsample)
+        set(BLOOM_SOURCE "${ASSETS_DIR}/shaders/bloom_${BLOOM_STAGE}.frag")
+        set(BLOOM_OUTPUT "${SHADER_OUTPUT_DIR}/bloom_${BLOOM_STAGE}.frag.spv")
+        add_custom_command(
+            OUTPUT "${BLOOM_OUTPUT}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
+            COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.3 --target-env spirv1.6 --glsl-version 450
+                    -S frag -o "${BLOOM_OUTPUT}" "${BLOOM_SOURCE}"
+            DEPENDS "${BLOOM_SOURCE}"
+            COMMENT "编译 Bloom ${BLOOM_STAGE} 片元 Shader"
+            VERBATIM
+        )
+    endforeach()
     add_custom_target(incubator_shaders
         DEPENDS "${CUBE_VERTEX_SPIRV}" "${CUBE_FRAGMENT_SPIRV}" "${SHADOW_VERTEX_SPIRV}"
-                ${MASK_SHADER_OUTPUTS} "${DISPLAY_VERTEX_SPIRV}" "${DISPLAY_FRAGMENT_SPIRV}" "${FXAA_FRAGMENT_SPIRV}")
+                ${MASK_SHADER_OUTPUTS} "${DISPLAY_VERTEX_SPIRV}" "${DISPLAY_FRAGMENT_SPIRV}" "${FXAA_FRAGMENT_SPIRV}"
+                "${SKYBOX_VERTEX_SPIRV}" "${SKYBOX_FRAGMENT_SPIRV}"
+                "${BLOOM_PREFILTER_SPIRV}" "${BLOOM_DOWNSAMPLE_SPIRV}" "${BLOOM_UPSAMPLE_SPIRV}")
 
 endif()
 
