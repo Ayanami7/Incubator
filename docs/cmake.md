@@ -118,7 +118,7 @@ Agent 常规验证不操作 Test 面板，检查发现配置并按相同 cwd 直
 
 根 CMake 在 Runtime、共用 Shader/资产目标定义后添加 app，再添加测试和示例。
 `app/CMakeLists.txt` 先添加 common，再添加 editor。`Editor` 编译 main.cpp，并链接 `IncubatorEditorSupport`。
-该静态库编译 `editor_app.cpp`、`editor_controller.cpp`、`editor_scene.cpp`、`editor_operations.cpp`、`editor_theme.cpp`、`selection_overlay.cpp`、`gizmo.cpp`、`viewport_debug_lines.cpp` 和 `viewport_screenshot.cpp`，同时被两个 Editor 测试程序链接。
+该静态库编译 `editor_app.cpp`、`editor_controller.cpp`（含 `editor_controller_{assets,viewport}.cpp`）、`editor_scene.cpp`（含 `editor_scene_{panels,properties}.cpp`）、`editor_operations.cpp`、`editor_theme.cpp`、`selection_overlay.cpp`、`gizmo.cpp`、`viewport_debug_lines.cpp` 和 `viewport_screenshot.cpp`，同时被三个 Editor 测试程序链接。
 
 ```powershell
 # 按 WORKFLOW 进入 MSVC 环境并设置 UTF-8 代码页后执行。
