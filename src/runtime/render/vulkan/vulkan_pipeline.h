@@ -16,11 +16,12 @@ namespace Incubator
             class VulkanPipeline
             {
             public:
-                /// @brief 支持纯顶点深度、镂空深度和颜色输出，按调用方指定光栅剔除方式。
+                /// @brief 支持纯顶点深度、镂空深度和颜色输出，按调用方指定光栅剔除与透明混合方式。
                 VulkanPipeline(const VulkanDevice& device, VkFormat colorFormat, VkFormat depthFormat,
                                VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout materialLayout,
                                const std::vector<uint32_t>& vertexShader, const std::vector<uint32_t>& fragmentShader,
-                               bool linearHdrOutput = false, VkCullModeFlags cullMode = VK_CULL_MODE_NONE);
+                               bool linearHdrOutput = false, VkCullModeFlags cullMode = VK_CULL_MODE_NONE,
+                               bool alphaBlend = false);
                 ~VulkanPipeline();
 
                 VulkanPipeline(const VulkanPipeline&) = delete;

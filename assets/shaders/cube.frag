@@ -179,13 +179,14 @@ void main()
     }
     if (material.colorShading.w == 1.0 || material.colorShading.w == 2.0)
         linearColor += texture(emissiveTexture, uv).rgb * material.emissiveAlpha.rgb;
+    float finalAlpha = material.alphaParams.y == 2.0 ? clamp(outAlpha, 0.0, 1.0) : 1.0;
     if (LINEAR_HDR_OUTPUT)
     {
-        fragmentColor = vec4(max(linearColor, vec3(0.0)), 1.0);
+        fragmentColor = vec4(max(linearColor, vec3(0.0)), finalAlpha);
         return;
     }
     linearColor = clamp(linearColor, 0.0, 1.0);
     vec3 encoded = mix(1.055 * pow(linearColor, vec3(1.0 / 2.4)) - 0.055,
                        12.92 * linearColor, lessThanEqual(linearColor, vec3(0.0031308)));
-    fragmentColor = vec4(encoded, 1.0);
+    fragmentColor = vec4(encoded, finalAlpha);
 }

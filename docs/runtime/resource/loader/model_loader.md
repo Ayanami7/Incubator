@@ -64,13 +64,13 @@ GLB 使用单文件输入，上限为 256 MiB。加载和外部导入共用容�
 | 几何 | position、UV0、局部 normal、tangent[4]（xyz 切线方向 + w 手性 $\pm 1$）、三角形列表；源顶点数量须能由 Assimp 表示，源索引转换为内部 uint32，越界索引拒绝 |
 | 无贴图材质 | 默认白色或显式 0–1 线性 RGB；无 UV 时补固定 `(0,0)` |
 | 纹理槽（基色 / 法线 / 金属粗糙度） | 外部 PNG/JPEG 或 GLB 内嵌 PNG/JPEG，使用 UV0；glTF 解析 `normalTexture`（含 `scale`）、`metallicRoughnessTexture`、`metallicFactor`（省略取 `1.0`）与 `roughnessFactor`（省略取 `1.0`）。OBJ 默认 `normalScale = 1.0`、`metallic = 0.0`、`roughness = 0.45`。贴图材质缺少 UV0、非 UV0、显式 UV 变换（包括恒等）或同槽多重贴图均拒绝 |
-| glTF 透明与双面字段 | 接收 OPAQUE（默认）、MASK、BLEND。保存基色 alpha（默认 1）、有限非负的 alphaCutoff（默认 0.5）及 doubleSided（默认 false） |
+| glTF 透明与双面字段 | 接收 OPAQUE（默认）、MASK、BLEND。保存基色 alpha（默认 1）、有限非负的 alphaCutoff（默认 0.5）及 doubleSided（默认 false）；Blend 不参与阴影投射 |
 | glTF 自发光字段 | emissiveFactor 为三分量线性 RGB，位于 [0, 1]，默认全零。emissiveTexture 支持外部或 GLB 内嵌 PNG/JPEG，使用 UV0 |
 | OBJ 透明字段 | 最终 opacity 必须有限且等于 1，拒绝 map_d；d 直接赋值，Tr 赋 `1-Tr`，固定版本按最后声明覆盖 |
 | 其他特征 | 拒绝动画、骨骼、Morph、`data:` URI、压缩几何及未支持的必需扩展。必需扩展仅支持 `KHR_materials_unlit` |
 
 若源网格自带 `TANGENT` 与副切线，按双精度对顶点法线执行 Gram-Schmidt 正交化并求解手性 $w = \pm 1$；若无原生切线但具有 `UV0` 与法线，基于最终 V 翻转后的 `UV0` 与三角形索引累加切线/副切线并正交化；无 `UV0` 或退化几何输出零切线 `{0, 0, 0, 0}`。
-采样配置由模型准备选项决定。主场景消费 Alpha Mask、双面和自发光字段，Alpha Mask 同时作用于阴影投射。
+采样配置由模型准备选项决定。主场景消费 Alpha Mask、Alpha Blend（远到近排序混合）、双面和自发光字段；Opaque 与 Alpha Mask 作用于阴影投射，Blend 不投射阴影。
 glTF 必需或可选的 `KHR_materials_unlit` 通过 Assimp 的 `AI_MATKEY_SHADING_MODEL` / `aiShadingMode_Unlit`
 保存到 `ModelMaterial::unlit`；普通 glTF 和 OBJ 默认 false，不扩展 MTL 光照模型映射。
 模型准备入口默认 nearest/repeat/LOD=0，消费者可通过 [PrepareOptions](../../model.md) 显式选择

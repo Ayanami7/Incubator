@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
+#include <fmt/format.h>
 #include <fstream>
 #include <glm/ext/matrix_transform.hpp>
 #include <iostream>
@@ -3905,6 +3907,200 @@ namespace
                              done = true;
                              app.requestExit();
                              break;
+                     }
+                 },
+                 [&](auto& app) { editor.ui(app); },
+                 [&](auto& app) { editor.cancelInteraction(app); },
+                 [&](auto& app, auto extent, const auto& input) { editor.input(app, extent, input); },
+                 [&](auto& app) { editor.layout(app); },
+                 [&](auto& app) { editor.requestClose(app); }});
+            EXPECT_TRUE(done);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(EditorAppTest, GlbImportMaterialOverridesPreservedAcrossSaveReopenAndReloadUnderValidation)
+    {
+        const auto writeTestGlb = [](const fs::path& path, float maskCutoff) {
+            std::vector<uint8_t> bin(104, 0);
+            const std::array<float, 9> positions{-0.5f, -0.5f, 0.0f, 0.5f, -0.5f, 0.0f, 0.0f, 0.5f, 0.0f};
+            const std::array<float, 6> uvs{0.0f, 0.0f, 1.0f, 0.0f, 0.5f, 1.0f};
+            const std::array<float, 9> normals{0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+            const std::array<uint16_t, 3> indices{0, 1, 2};
+            std::memcpy(bin.data() + 0, positions.data(), sizeof(positions));
+            std::memcpy(bin.data() + 36, uvs.data(), sizeof(uvs));
+            std::memcpy(bin.data() + 60, normals.data(), sizeof(normals));
+            std::memcpy(bin.data() + 96, indices.data(), sizeof(indices));
+
+            std::string json = fmt::format(
+                R"({{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],)"
+                R"("buffers":[{{"byteLength":104}}],)"
+                R"("bufferViews":[)"
+                R"({{"buffer":0,"byteOffset":0,"byteLength":36,"target":34962}},)"
+                R"({{"buffer":0,"byteOffset":36,"byteLength":24,"target":34962}},)"
+                R"({{"buffer":0,"byteOffset":60,"byteLength":36,"target":34962}},)"
+                R"({{"buffer":0,"byteOffset":96,"byteLength":6,"target":34963}}],)"
+                R"("accessors":[)"
+                R"({{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[-0.5,-0.5,0],"max":[0.5,0.5,0]}},)"
+                R"({{"bufferView":1,"componentType":5126,"count":3,"type":"VEC2"}},)"
+                R"({{"bufferView":2,"componentType":5126,"count":3,"type":"VEC3"}},)"
+                R"({{"bufferView":3,"componentType":5123,"count":3,"type":"SCALAR"}}],)"
+                R"("materials":[)"
+                R"({{"name":"MaskMat","alphaMode":"MASK","alphaCutoff":{:.2f},"doubleSided":true,"emissiveFactor":[0.25,0.5,0.75],"pbrMetallicRoughness":{{"baseColorFactor":[1,1,1,0.9],"metallicFactor":0.2,"roughnessFactor":0.8}}}},)"
+                R"({{"name":"BlendMat","alphaMode":"BLEND","doubleSided":true,"pbrMetallicRoughness":{{"baseColorFactor":[0.8,0.9,1.0,0.4],"metallicFactor":0.1,"roughnessFactor":0.6}}}}],)"
+                R"("meshes":[{{"primitives":[)"
+                R"({{"attributes":{{"POSITION":0,"TEXCOORD_0":1,"NORMAL":2}},"indices":3,"material":0}},)"
+                R"({{"attributes":{{"POSITION":0,"TEXCOORD_0":1,"NORMAL":2}},"indices":3,"material":1}}]}}]}})",
+                maskCutoff);
+            while (json.size() % 4 != 0)
+                json.push_back(' ');
+
+            const uint32_t jsonLen = static_cast<uint32_t>(json.size());
+            const uint32_t binLen = static_cast<uint32_t>(bin.size());
+            const uint32_t totalLen = 12u + 8u + jsonLen + 8u + binLen;
+            std::vector<uint8_t> glb;
+            glb.reserve(totalLen);
+            const auto appendU32 = [&](uint32_t v) {
+                const uint8_t bytes[4]{uint8_t(v & 0xFFu), uint8_t((v >> 8) & 0xFFu), uint8_t((v >> 16) & 0xFFu),
+                                       uint8_t((v >> 24) & 0xFFu)};
+                glb.insert(glb.end(), bytes, bytes + 4);
+            };
+            appendU32(0x46546C67u);
+            appendU32(2u);
+            appendU32(totalLen);
+            appendU32(jsonLen);
+            appendU32(0x4E4F534Au);
+            glb.insert(glb.end(), json.begin(), json.end());
+            appendU32(binLen);
+            appendU32(0x004E4942u);
+            glb.insert(glb.end(), bin.begin(), bin.end());
+
+            fs::create_directories(path.parent_path());
+            std::ofstream out(path, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(glb.data()), std::streamsize(glb.size()));
+            ASSERT_TRUE(out.good());
+        };
+
+        const fs::path externalGlb = sandbox_ / "external" / "extended_pbr.glb";
+        writeTestGlb(externalGlb, 0.50f);
+        constexpr const char* importedPath = "models/extended_pbr/extended_pbr.glb";
+
+        {
+            Editor::EditorApp session(options(true, 1280, 800));
+            Editor::EditorScene editor([&](Editor::EditorApp&) -> std::optional<fs::path> { return externalGlb; });
+            int frame = 0, step = 0;
+            bool done = false;
+            auto* handle = static_cast<GLFWwindow*>(session.window().getNativeHandle());
+            enableGlfwCallbacks(handle, false);
+
+            const auto checkMaterialExtensions = [&](const Scene::Entity& entity, float expectedCutoff) {
+                ASSERT_TRUE(entity.model);
+                ASSERT_EQ(entity.model->materialSlots().size(), 2u);
+                const auto& slot0 = entity.model->materialSlots()[0].sourceDesc;
+                EXPECT_EQ(slot0.alphaMode, Render::AlphaMode::Mask);
+                EXPECT_NEAR(slot0.alphaCutoff, expectedCutoff, 1e-4f);
+                EXPECT_NEAR(slot0.baseAlpha, 0.9f, 1e-4f);
+                EXPECT_TRUE(slot0.doubleSided);
+                EXPECT_EQ(slot0.emissiveFactor, (std::array{0.25f, 0.5f, 0.75f}));
+
+                const auto& slot1 = entity.model->materialSlots()[1].sourceDesc;
+                EXPECT_EQ(slot1.alphaMode, Render::AlphaMode::Blend);
+                EXPECT_NEAR(slot1.baseAlpha, 0.4f, 1e-4f);
+                EXPECT_TRUE(slot1.doubleSided);
+
+                ASSERT_EQ(entity.materialOverrides.size(), 2u);
+                const auto& compiled0 = Render::Detail::RendererReviewAccess::materialDescription(
+                    entity.materialOverrides[0].compiled->material);
+                EXPECT_EQ(compiled0.alphaMode, Render::AlphaMode::Mask);
+                EXPECT_NEAR(compiled0.alphaCutoff, expectedCutoff, 1e-4f);
+                EXPECT_NEAR(compiled0.baseAlpha, 0.9f, 1e-4f);
+                EXPECT_TRUE(compiled0.doubleSided);
+                EXPECT_EQ(compiled0.emissiveFactor, (std::array{0.25f, 0.5f, 0.75f}));
+                EXPECT_EQ(compiled0.color, (std::array{0.4f, 0.6f, 0.8f}));
+
+                const auto& compiled1 = Render::Detail::RendererReviewAccess::materialDescription(
+                    entity.materialOverrides[1].compiled->material);
+                EXPECT_EQ(compiled1.alphaMode, Render::AlphaMode::Blend);
+                EXPECT_NEAR(compiled1.baseAlpha, 0.4f, 1e-4f);
+                EXPECT_TRUE(compiled1.doubleSided);
+                EXPECT_EQ(compiled1.color, (std::array{0.9f, 0.5f, 0.3f}));
+            };
+
+            session.run(
+                {[&](auto& app) { editor.initialize(app, ""); },
+                 [&](auto& app, const auto&) {
+                     if (++frame > 180)
+                     {
+                         ADD_FAILURE() << "GLB extension editor test timeout at step=" << step;
+                         app.requestExit();
+                         return;
+                     }
+                     auto* assetsWin = ImGui::FindWindowByName("Assets");
+                     auto* matWin = ImGui::FindWindowByName("Material");
+                     if (frame < 5 || !assetsWin || !matWin || !app.sceneOutput().valid())
+                         return;
+
+                     switch (step)
+                     {
+                         case 0:
+                             ImGui::SetWindowFocus("Assets");
+                             if (assetsWin->Hidden)
+                                 return;
+                             ImGui::ActivateItemByID(assetsWin->GetID("Import..."));
+                             ++step;
+                             break;
+                         case 1:
+                             EXPECT_EQ(editor.controller().focusedAssetPath(), importedPath);
+                             EXPECT_EQ(editor.message(), std::string("Imported: ") + importedPath);
+                             ASSERT_EQ(editor.assetEntries().size(), 1u);
+                             EXPECT_EQ(editor.assetEntries()[0].kind, Resource::AssetKind::Model);
+                             ImGui::ActivateItemByID(assetRowAction(*assetsWin, importedPath, "Add"));
+                             ++step;
+                             break;
+                         case 2:
+                         {
+                             ASSERT_EQ(app.scene().entities().size(), 1u) << editor.message();
+                             const auto id = app.scene().entities()[0].id;
+                             editor.select(app, id);
+                             ASSERT_TRUE(editor.setEntityShading(app, Render::ShadingMode::Pbr));
+                             EXPECT_TRUE(editor.controller().setMaterialOverride(
+                                 app, {0u, {0.4f, 0.6f, 0.8f}, Render::MaterialParameterMode::FixedValue, 0.25f,
+                                       Render::MaterialParameterMode::FixedValue, 0.9f}));
+                             EXPECT_TRUE(editor.controller().setMaterialOverride(
+                                 app, {1u, {0.9f, 0.5f, 0.3f}, Render::MaterialParameterMode::FixedValue, 0.3f,
+                                       Render::MaterialParameterMode::FixedValue, 0.1f}));
+                             checkMaterialExtensions(*app.scene().find(id), 0.50f);
+
+                             // 打开 Material 面板展示源扩展摘要，不破坏槽位切换与控件 ID。
+                             ImGui::SetWindowFocus("Material");
+                             ++step;
+                             break;
+                         }
+                         case 3:
+                         {
+                             if (matWin->Hidden)
+                                 return;
+                             EXPECT_NE(matWin->GetID("##mat-slot"), 0u);
+                             EXPECT_NE(matWin->GetID("##mat-color"), 0u);
+
+                             const std::string scenePath = "glb-extended-v12.json";
+                             ASSERT_TRUE(editor.save(app, scenePath));
+                             editor.clear(app);
+                             ASSERT_TRUE(app.scene().entities().empty());
+                             ASSERT_TRUE(editor.load(app, scenePath, true));
+                             ASSERT_EQ(app.scene().entities().size(), 1u);
+                             const auto reopenedId = app.scene().entities()[0].id;
+                             editor.select(app, reopenedId);
+                             checkMaterialExtensions(*app.scene().find(reopenedId), 0.50f);
+
+                             // 磁盘改写 GLB（更新 alphaCutoff 为 0.35）后执行显式热重载，验证覆盖与新源属性一并保留。
+                             writeTestGlb(fs::path("assets") / importedPath, 0.35f);
+                             ASSERT_TRUE(editor.controller().reloadAsset(app, importedPath)) << editor.message();
+                             checkMaterialExtensions(*app.scene().find(reopenedId), 0.35f);
+                             done = true;
+                             app.requestExit();
+                             break;
+                         }
                      }
                  },
                  [&](auto& app) { editor.ui(app); },

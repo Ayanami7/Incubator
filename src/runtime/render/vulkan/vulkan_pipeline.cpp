@@ -33,7 +33,7 @@ namespace Incubator
                                            VkDescriptorSetLayout frameLayout, VkDescriptorSetLayout materialLayout,
                                            const std::vector<uint32_t>& vertexShader,
                                            const std::vector<uint32_t>& fragmentShader, bool linearHdrOutput,
-                                           VkCullModeFlags cullMode)
+                                           VkCullModeFlags cullMode, bool alphaBlend)
                 : device_(device), colorFormat_(colorFormat), depthFormat_(depthFormat)
             {
                 const bool depthOnly = colorFormat == VK_FORMAT_UNDEFINED;
@@ -126,11 +126,21 @@ namespace Incubator
                     VkPipelineDepthStencilStateCreateInfo depthStencil{};
                     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
                     depthStencil.depthTestEnable = VK_TRUE;
-                    depthStencil.depthWriteEnable = VK_TRUE;
+                    depthStencil.depthWriteEnable = (!depthOnly && alphaBlend) ? VK_FALSE : VK_TRUE;
                     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
                     VkPipelineColorBlendAttachmentState blendAttachment{};
                     blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                                      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+                    if (!depthOnly && alphaBlend)
+                    {
+                        blendAttachment.blendEnable = VK_TRUE;
+                        blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+                        blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                        blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+                        blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                        blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                        blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+                    }
                     VkPipelineColorBlendStateCreateInfo blend{};
                     blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
                     blend.attachmentCount = depthOnly ? 0u : 1u;

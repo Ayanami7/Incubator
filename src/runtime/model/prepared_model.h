@@ -129,6 +129,12 @@ namespace Incubator
                 return drawMaterialSlots_;
             }
 
+            /// @brief 返回各绘制项在模型空间（已含源节点变换）中的包围盒（与 draws() 一一对应）。
+            const std::vector<std::optional<Math::Aabb>>& drawBounds() const noexcept
+            {
+                return drawBounds_;
+            }
+
             /// @brief 返回包含源节点变换的模型整体边界。
             /// @note 不包含实例变换。绘制内容为空或无法计算边界时返回空值；调用方必须保留对应绘制项。
             const std::optional<Math::Aabb>& bounds() const noexcept
@@ -152,6 +158,7 @@ namespace Incubator
             uint32_t rootNode_ = 0;
             std::vector<Render::DrawItem> draws_;
             std::vector<uint32_t> drawMaterialSlots_;
+            std::vector<std::optional<Math::Aabb>> drawBounds_;
             std::optional<Math::Aabb> bounds_;
         };
     }  // namespace Model

@@ -260,15 +260,16 @@ namespace Incubator::Model
                 const auto& part = result->parts_[index];
                 result->draws_.push_back({result->meshes_[part.geometry], result->materials_[part.material], world});
                 result->drawMaterialSlots_.push_back(part.material);
+                const auto drawBounds = source->geometryBounds()[geometries[part.geometry]].transformed(world);
+                result->drawBounds_.push_back(drawBounds);
                 if (boundsAvailable)
                 {
-                    const auto bounds = source->geometryBounds()[geometries[part.geometry]].transformed(world);
-                    if (!bounds)
+                    if (!drawBounds)
                         boundsAvailable = false;
                     else if (result->bounds_)
-                        result->bounds_->merge(*bounds);
+                        result->bounds_->merge(*drawBounds);
                     else
-                        result->bounds_ = bounds;
+                        result->bounds_ = drawBounds;
                 }
             }
             for (auto child = node.children.rbegin(); child != node.children.rend(); ++child)

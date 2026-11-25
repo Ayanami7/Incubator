@@ -483,6 +483,126 @@ namespace
         expectCleanValidation();
     }
 
+    TEST_F(VulkanReviewTest, AlphaBlendCompositesOverBackgroundAndOpaqueWithoutDepthWrite)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+            renderer.prepareDisplayResources(*assets.displayVertex, *assets.displayFragment);
+            const Resource::TextureResource whiteTex({}, 1, 1, {255, 255, 255, 255});
+            const auto white = renderer.createTexture(whiteTex);
+            const auto plane = createLitPlane(renderer);
+
+            auto makeUnlit = [&](std::array<float, 3> color, AlphaMode mode, float alpha = 1.0f) {
+                MaterialDesc desc{white, color};
+                desc.shading = ShadingMode::Unlit;
+                desc.alphaMode = mode;
+                desc.baseAlpha = alpha;
+                desc.doubleSided = true;
+                return renderer.createMaterial(desc);
+            };
+
+            const auto blendRed = makeUnlit({1.0f, 0.0f, 0.0f}, AlphaMode::Blend, 0.5f);
+            const auto blendBlue = makeUnlit({0.0f, 0.0f, 1.0f}, AlphaMode::Blend, 0.5f);
+            const auto opaqueGreen = makeUnlit({0.0f, 1.0f, 0.0f}, AlphaMode::Opaque);
+
+            // 1. 纯背景上的半透明混合：验证离屏 HDR 路径（避免双重乘 Alpha/压暗）与直接呈现路径一致。
+            {
+                const std::array draws{DrawItem{plane, blendRed, glm::mat4(1.0f)}};
+                const auto direct = TextureGpuReview::captureFrame(renderer, controlledFrame({384, 256}, draws));
+                const size_t directCenter = (128u * 384u + 192u) * 4u;
+                ASSERT_GT(direct.size(), directCenter + 3u);
+                EXPECT_NEAR(direct[directCenter + 0], 192, 2);
+                EXPECT_NEAR(direct[directCenter + 1], 64, 2);
+                EXPECT_NEAR(direct[directCenter + 2], 64, 2);
+                EXPECT_EQ(direct[directCenter + 3], 255);
+
+                constexpr FrameExtent offscreenExtent{64, 64};
+                auto offscreen = controlledFrame(offscreenExtent, draws);
+                offscreen.display = {ToneMappingMode::Off, 0.0f};
+                const auto hdr = captureHdr(renderer, offscreen);
+                constexpr size_t hdrCenter = 32u * 64u + 32u;
+                ASSERT_GT(hdr.size(), hdrCenter);
+                EXPECT_NEAR(hdr[hdrCenter][0], 0.5f, 0.005f);
+                EXPECT_NEAR(hdr[hdrCenter][1], 0.0f, 0.005f);
+                EXPECT_NEAR(hdr[hdrCenter][2], 0.0f, 0.005f);
+                EXPECT_NEAR(hdr[hdrCenter][3], 0.5f, 0.005f);
+
+                ASSERT_TRUE(renderer.beginUiFrame());
+                const auto output = renderer.prepareSceneTarget(offscreenExtent);
+                renderer.imgui().endFrame();
+                const float midGray = 128.0f / 255.0f;
+                renderer.drawSceneTarget(output, offscreen, {midGray, midGray, midGray, 1.0f});
+                Detail::RendererReviewAccess::withSceneOutput(renderer, output, [&](const auto& device, const auto& image) {
+                    const auto ldr = TextureGpuReview::captureMip(device, image, 0, {64, 64});
+                    const size_t offCenter = hdrCenter * 4u;
+                    ASSERT_GT(ldr.size(), offCenter + 3u);
+                    EXPECT_NEAR(ldr[offCenter + 0], 192, 2);
+                    EXPECT_NEAR(ldr[offCenter + 1], 64, 2);
+                    EXPECT_NEAR(ldr[offCenter + 2], 64, 2);
+                    EXPECT_EQ(ldr[offCenter + 3], 255);
+                });
+            }
+
+            // 2. 不透明背景之上的半透明混合（HDR 颜色与 LDR sRGB 输出）。
+            {
+                constexpr FrameExtent extent{64, 64};
+                const std::array draws{
+                    DrawItem{plane, opaqueGreen, glm::mat4(1.0f)},
+                    DrawItem{plane, blendBlue, glm::translate(glm::mat4(1.0f), {0.0f, 0.0f, 0.2f})},
+                };
+                auto frame = controlledFrame(extent, draws);
+                frame.display = {ToneMappingMode::Off, 0.0f};
+                const auto hdr = captureHdr(renderer, frame);
+                constexpr size_t center = 32u * 64u + 32u;
+                ASSERT_GT(hdr.size(), center);
+                EXPECT_NEAR(hdr[center][0], 0.0f, 0.005f);
+                EXPECT_NEAR(hdr[center][1], 0.5f, 0.005f);
+                EXPECT_NEAR(hdr[center][2], 0.5f, 0.005f);
+                EXPECT_EQ(hdr[center][3], 1.0f);
+
+                ASSERT_TRUE(renderer.beginUiFrame());
+                const auto output = renderer.prepareSceneTarget(extent);
+                renderer.imgui().endFrame();
+                renderer.drawSceneTarget(output, frame, {0.0f, 0.0f, 0.0f, 1.0f});
+                Detail::RendererReviewAccess::withSceneOutput(renderer, output, [&](const auto& device, const auto& image) {
+                    const auto ldr = TextureGpuReview::captureMip(device, image, 0, {64, 64});
+                    expectLinearPixel(ldr, glm::vec3(0.0f, 0.5f, 0.5f), 32, 32, extent.width);
+                });
+            }
+
+            // 3. 验证半透明不写入深度：先画近处 Blend，再画较远 Opaque 仍可写入；先画近处 Opaque 则遮挡较远 Blend。
+            {
+                constexpr FrameExtent extent{64, 64};
+                constexpr size_t center = 32u * 64u + 32u;
+                const std::array blendFirst{
+                    DrawItem{plane, blendRed, glm::translate(glm::mat4(1.0f), {0.0f, 0.0f, 0.5f})},
+                    DrawItem{plane, opaqueGreen, glm::mat4(1.0f)},
+                };
+                const auto hdrAfterOpaque = captureHdr(renderer, controlledFrame(extent, blendFirst));
+                ASSERT_GT(hdrAfterOpaque.size(), center);
+                EXPECT_NEAR(hdrAfterOpaque[center][0], 0.0f, 0.005f);
+                EXPECT_NEAR(hdrAfterOpaque[center][1], 1.0f, 0.005f);
+                EXPECT_NEAR(hdrAfterOpaque[center][2], 0.0f, 0.005f);
+                EXPECT_EQ(hdrAfterOpaque[center][3], 1.0f);
+
+                const std::array opaqueFront{
+                    DrawItem{plane, opaqueGreen, glm::translate(glm::mat4(1.0f), {0.0f, 0.0f, 0.5f})},
+                    DrawItem{plane, blendRed, glm::mat4(1.0f)},
+                };
+                const auto hdrOccluded = captureHdr(renderer, controlledFrame(extent, opaqueFront));
+                ASSERT_GT(hdrOccluded.size(), center);
+                EXPECT_NEAR(hdrOccluded[center][0], 0.0f, 0.005f);
+                EXPECT_NEAR(hdrOccluded[center][1], 1.0f, 0.005f);
+                EXPECT_NEAR(hdrOccluded[center][2], 0.0f, 0.005f);
+                EXPECT_EQ(hdrOccluded[center][3], 1.0f);
+            }
+        }
+        expectCleanValidation();
+    }
+
     TEST_F(VulkanReviewTest, UInt32IndexDrawUsesVertexAboveUint16Range)
     {
         auto window = createWindow(true, 640, 480);
@@ -563,7 +683,7 @@ namespace
             for (int c = 0; c < 3; ++c)
                 EXPECT_GT(image.rgba[offset + c], 220);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
-            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 2u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 4u);
             EXPECT_EQ(firstAudit.textureOpens, 1u);
             EXPECT_EQ(secondAudit.textureOpens, 1u);
         }
@@ -719,7 +839,7 @@ namespace
                 }
             }
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
-            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 2u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 4u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 8u);
         }
         for (const auto& t : texObs)
@@ -848,7 +968,7 @@ namespace
                 EXPECT_GT(px(0.65f + 0.21667f, -0.45f + 0.08125f, 0), 220);
                 EXPECT_LT(px(0.65f + 0.21667f, -0.45f + 0.08125f, 1), 30);
             }
-            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 2u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline"), 4u);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 2u);
             EXPECT_EQ(countOccurrences(messages_.str(), "Created material:"), 3u);
             EXPECT_TRUE(referenceAudit.cpuReleasedBeforeDestroy && directionAudit.cpuReleasedBeforeDestroy);
@@ -1268,7 +1388,7 @@ namespace
             expectLinearPixel(TextureGpuReview::captureFrame(renderer, negFrame), glm::vec3(0.2f));
             negFrame.lighting.direction = {0, 0, 1};
             expectLinearPixel(TextureGpuReview::captureFrame(renderer, negFrame), glm::vec3(0.9f));
-            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 2u);
+            EXPECT_EQ(countOccurrences(messages_.str(), "Created graphics pipeline:"), 4u);
         }
         expectCleanValidation();
     }

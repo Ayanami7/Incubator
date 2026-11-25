@@ -82,7 +82,7 @@ Avocado 的基色 PNG 在 GPU 上生成完整 mip 链；Teapot 的共享 1×1 �
 | Reset view | 恢复位置 `(0,0,6)`、默认朝向和投影的相机，不重建实体或改变选择 |
 | View：FXAA | 控制独立视口 LDR FXAA 预览开关（控件 `##fxaa`，默认关闭）；仅本会话有效，切换在下一个有效视口帧生效，不产生脏状态或 Undo 记录 |
 | View：Studio IBL | 控制固定棚拍 PBR IBL 预览开关（控件 `##ibl`，默认关闭）；首次开启按需经 `FloatTextureResource` 加载 `ibl/studio_{irradiance,prefiltered,brdf_lut}.ktx` 并按 Renderer 会话共享，不产生脏状态或 Undo 记录 |
-| View → Material 面板 | 可停靠材质检查器，跟随选中实体并按源模型材质槽选择；支持编辑 PBR 材质的基色染色、粗糙度与金属度（各自独立支持 `Texture x Factor` 与 `Fixed value` 模式）及单槽/全部重置；连续拖动折叠为 1 步 Undo，源 Unlit 保持导入行为，更换模型自动清理覆盖，随场景 JSON 1.2 保存并在打开时重建 GPU 引用 |
+| View → Material 面板 | 可停靠材质检查器，跟随选中实体并按源模型材质槽选择；只读展示当前槽位源材质的 `Alpha`（`Opaque` / `Mask (cutoff)` / `Blend (baseAlpha)`）、`Double-sided` 与 `Emissive` 状态，支持编辑 PBR 材质的基色染色、粗糙度与金属度（各自独立支持 `Texture x Factor` 与 `Fixed value` 模式）及单槽/全部重置；连续拖动折叠为 1 步 Undo，源 Unlit 保持导入行为，更换模型自动清理覆盖，随场景 JSON 1.2 保存并在打开时重建 GPU 引用（覆盖完整继承源材质透明度、双面和自发光属性） |
 | View：性能统计 | 显示 `CPU frame`（主循环 `FrameTime::delta`，毫秒）、`GPU viewport`（最近完成视口帧 GPU 总耗时，毫秒）、`Scene draws`（主场景绘制项数）与 `Shadow draws`（阴影绘制项数，关闭时为 0）；首帧等待完成样本显示 `--`，队列不支持时间戳时 GPU 耗时显示 `Unavailable` |
 | Background | 修改背景颜色（调色盘或面板改动合并为单步 Undo） |
 | Shadows / Receiver depth bias | 开关阴影预览，调整接收偏移；仅本会话有效，不写入场景文件，不置脏也不进入 Undo 栈 |

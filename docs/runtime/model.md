@@ -105,6 +105,7 @@ Renderer 在提交时由最终 DrawItem::model 计算法线逆转置，包含实
 | `rootNode()` | 源根在 nodes 中的索引；保留源根及非单位局部矩阵 |
 | `draws()` | 缓存的只读 DrawItem 数组；每项 model 是从源根到所属节点的局部矩阵乘积，尚未包含实例整体变换 |
 | `drawMaterialSlots()` | 与 `draws()` 一一对应的 `materialSlots()` 下标映射，用于逐实体按槽应用覆盖材质 |
+| `drawBounds()` | 与 `draws()` 一一对应的模型空间（已含源节点变换）包围盒数组，供透明排序等场景消费使用 |
 | `bounds()` | `const std::optional<Math::Aabb>&`；实际绘制内容的模型局部整体边界，已含源根和内部节点矩阵，尚未包含实例整体变换 |
 
 此外，`prepareMaterialOverride(renderer, model, sourceMaterialIndex, ...)` 可按源材质槽复用原模型纹理与采样器，在独立 `GpuResources` 资源组中构建不可变的 `PreparedMaterialOverride`，用于实体级 PBR 参数覆盖而不影响共享同模型的其他实体。
@@ -150,9 +151,9 @@ Scene 帧提取在实体展开前使用此边界进行视锥裁剪；Renderer �
 
 最终 FrameInput、相机和 DrawItem 列表仍由应用提交；模型消费层不引入另一套帧同步。
 
-启用阴影时，`Scene::extractSceneFrame` 在主相机视锥裁剪前按同一展开规则另行生成投射物列表 `shadowDraws`，保持实体矩阵与模型内部累计矩阵的组合顺序。
+启用阴影时，`Scene::extractSceneFrame` 在主相机视锥裁剪前按同一展开规则另行生成投射物列表 `shadowDraws`，保持实体矩阵与模型内部累计矩阵的组合顺序；其中仅收录 `Opaque` 与 `Mask` 绘制项，排除 `Blend`。
 PreparedModel 不保存阴影开关、光源范围或另一份几何；主相机外及 Unlit 模型也可投影。
-阴影深度绘制仅消费网格和模型矩阵，接收阴影只影响 Lambert 直接光，具体提交约定见 [Render](./render.md#阴影帧参数)。
+阴影深度绘制仅消费网格和模型矩阵（Mask 变体额外读取基色贴图与参数执行片元裁剪），接收阴影只影响 Lambert 与 PBR 直接光，具体提交约定见 [Render](./render.md#阴影帧参数)。
 
 ## 持有期及失败
 
@@ -168,9 +169,9 @@ PreparedModel 不保存阴影开关、光源范围或另一份几何；主相机
 - 最后 PreparedModel 持有结束时撤销其 GPU 资源组；对应在途对象在 Fence 完成并清除帧槽持有后回收，未提交的快照不保留它们。
   Mesh、Texture、Material 和 PreparedModel 不延长设备寿命；Renderer 关闭后引用失效，提交旧引用由既有边界拒绝。
 
-RGB 使用源材质的线性 0–1 参数，白纹理采样后保持该颜色。PNG/JPEG 基色贴图使用 sRGB 采样，再乘线性 RGB，输出 alpha=1。
+RGB 使用源材质的线性 0–1 参数，白纹理采样后保持该颜色。PNG/JPEG 基色贴图使用 sRGB 采样，再乘线性 RGB；`Opaque` 与 `Mask` 输出不透明 alpha，显式 `Blend` 材质乘以 `baseAlpha` 输出透明通道并按直通混合合成。
 默认最近邻、repeat、LOD=0；显式 PrepareOptions 可改变过滤及 mip 策略。
-UV 方向、opaque 与其他显示约定见 [ModelLoader](./resource/loader/model_loader.md)
+UV 方向、`alphaMode`/`doubleSided`/`emissive` 与其他显示约定见 [ModelLoader](./resource/loader/model_loader.md)
 和 [Render 材质](./render.md)。
 
 完整编辑应用用法见 [Editor](../app/editor.md)：EditorApp 在 FileIO 生命周期内注册 Model/Texture Loader，准备 Shader 并将模型用于 Scene 实体。prepareModel 本身不清除全局路由。

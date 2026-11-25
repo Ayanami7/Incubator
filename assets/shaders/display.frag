@@ -27,6 +27,19 @@ void main()
         return;
     }
 
+    // 半透明预乘像素（0 < alpha < 1）需先还原非预乘线性色再执行色调映射与 sRGB 编码，避免双重乘 Alpha 或压暗。
+    if (hdr.a < 1.0)
+    {
+        vec3 linear = max(hdr.rgb / hdr.a, vec3(0.0));
+        if (display.toneMapping == 1u)
+        {
+            vec3 exposed = linear * display.exposureScale;
+            linear = exposed / (vec3(1.0) + exposed);
+        }
+        fragmentColor = vec4(mix(display.clearColor.rgb, encodeSrgb(linear), hdr.a), 1.0);
+        return;
+    }
+
     vec3 linear = max(hdr.rgb, vec3(0.0));
     if (display.toneMapping == 1u)
     {

@@ -398,21 +398,38 @@ namespace Incubator
 
             using PipelinePair = std::array<std::unique_ptr<Vulkan::VulkanPipeline>, 2>;
 
+            struct ScenePipelines
+            {
+                PipelinePair solid;
+                PipelinePair blend;
+            };
+
             PipelinePair makePipelines(VkFormat color, VkFormat depth, VkDescriptorSetLayout frameLayout,
                                        VkDescriptorSetLayout materialLayout, const std::vector<uint32_t>& vertex,
-                                       const std::vector<uint32_t>& fragment, bool hdr = false)
+                                       const std::vector<uint32_t>& fragment, bool hdr = false, bool alphaBlend = false)
             {
                 return {std::make_unique<Vulkan::VulkanPipeline>(
-                            device_, color, depth, frameLayout, materialLayout, vertex, fragment, hdr, VK_CULL_MODE_BACK_BIT),
+                            device_, color, depth, frameLayout, materialLayout, vertex, fragment, hdr,
+                            VK_CULL_MODE_BACK_BIT, alphaBlend),
                         std::make_unique<Vulkan::VulkanPipeline>(
-                            device_, color, depth, frameLayout, materialLayout, vertex, fragment, hdr, VK_CULL_MODE_NONE)};
+                            device_, color, depth, frameLayout, materialLayout, vertex, fragment, hdr,
+                            VK_CULL_MODE_NONE, alphaBlend)};
+            }
+
+            ScenePipelines makeScenePipelines(VkFormat color, VkFormat depth, VkDescriptorSetLayout frameLayout,
+                                              VkDescriptorSetLayout materialLayout, const std::vector<uint32_t>& vertex,
+                                              const std::vector<uint32_t>& fragment, bool hdr = false)
+            {
+                return {makePipelines(color, depth, frameLayout, materialLayout, vertex, fragment, hdr, false),
+                        makePipelines(color, depth, frameLayout, materialLayout, vertex, fragment, hdr, true)};
             }
 
             void ensureHdrPipelines()
             {
-                if (!hdrPipelines_[0])
-                    hdrPipelines_ = makePipelines(VK_FORMAT_R16G16B16A16_SFLOAT, depthFormat_, bindingSet_->layout(),
-                                                  bindingSet_->materialLayout(), vertexShader_, fragmentShader_, true);
+                if (!hdrPipelines_.solid[0])
+                    hdrPipelines_ = makeScenePipelines(VK_FORMAT_R16G16B16A16_SFLOAT, depthFormat_, bindingSet_->layout(),
+                                                       bindingSet_->materialLayout(), vertexShader_, fragmentShader_,
+                                                       true);
             }
 
             void prepareSceneResources(const Resource::ShaderResource& vertexShader,
@@ -426,9 +443,9 @@ namespace Incubator
                 auto vertexWords = vertexShader.words();
                 auto fragmentWords = fragmentShader.words();
                 auto bindingSet = std::make_unique<Vulkan::VulkanBindingSet>(device_, uniformBuffers_);
-                PipelinePair pipelines;
+                ScenePipelines pipelines;
                 if (swapchain_ && swapchain_->handle() != VK_NULL_HANDLE)
-                    pipelines = makePipelines(
+                    pipelines = makeScenePipelines(
                         swapchain_->format(), depthFormat_, bindingSet->layout(), bindingSet->materialLayout(),
                         vertexWords, fragmentWords);
 
@@ -630,7 +647,7 @@ namespace Incubator
 
             std::vector<Vulkan::VulkanDrawItem> resolveDraws(const FrameInput& input,
                                                              std::vector<std::shared_ptr<void>>& inFlightResources,
-                                                             const PipelinePair& pipelines)
+                                                             const ScenePipelines& pipelines)
             {
                 std::vector<Vulkan::VulkanDrawItem> draws;
                 draws.reserve(input.draws.size());
@@ -649,9 +666,11 @@ namespace Incubator
                     const auto object = objectData(draw.model);
                     const auto frontFace = invertProjectionWinding != (object.tangentParams.x < 0.0f)
                                                ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
+                    const auto& pair = gpuMaterial->description.alphaMode == AlphaMode::Blend ? pipelines.blend
+                                                                                              : pipelines.solid;
                     draws.push_back({gpuMesh->vertexBuffer->handle(), gpuMesh->indexBuffer->handle(),
                                      gpuMesh->indexCount, gpuMaterial->binding.descriptorSet(),
-                                     object, pipelines[gpuMaterial->description.doubleSided].get(), frontFace});
+                                     object, pair[gpuMaterial->description.doubleSided].get(), frontFace});
                     inFlightResources.push_back(std::move(gpuMesh));
                     inFlightResources.push_back(std::move(gpuMaterial));
                 }
@@ -718,7 +737,7 @@ namespace Incubator
                     throw Error::Exception(Error::Code::RENDER, "Prepare IBL resources before enabling IBL");
                 const auto frame = Vulkan::makeFrameUniform(input, iblMaxPrefilteredLod_);
                 std::vector<std::shared_ptr<void>> resources;
-                if (!scenePipelines_[0])
+                if (!scenePipelines_.solid[0])
                     throw Error::Exception(Error::Code::RENDER, "Prepare scene shaders before GPU review");
                 const auto draws = resolveDraws(input, resources, scenePipelines_);
                 const std::array uniforms = {std::make_shared<Vulkan::VulkanBuffer>(
@@ -729,7 +748,7 @@ namespace Incubator
                 if (iblIrradiance_)
                     bindings.setIblImages(iblIrradiance_->image.get(), iblPrefiltered_->image.get(),
                                           iblBrdfLut_->image.get());
-                record(device_, *scenePipelines_[0], bindings.descriptorSet(0), draws);
+                record(device_, *scenePipelines_.solid[0], bindings.descriptorSet(0), draws);
             }
 
             void withHdrSceneTarget(
@@ -775,8 +794,8 @@ namespace Incubator
                         });
                     hdrTarget.record(cmd, clear, [&](VkCommandBuffer scene) {
                         if (!draws.empty())
-                            Vulkan::VulkanCommandList::drawIndexed(scene, *hdrPipelines_[0], bindings.descriptorSet(0),
-                                                                   draws);
+                            Vulkan::VulkanCommandList::drawIndexed(scene, *hdrPipelines_.solid[0],
+                                                                   bindings.descriptorSet(0), draws);
                     });
                 });
                 record(device_, hdrTarget.color());
@@ -823,7 +842,7 @@ namespace Incubator
                         *swapchain_, color,
                         [&](VkCommandBuffer commandBuffer) {
                             if (!draws.empty())
-                                Vulkan::VulkanCommandList::drawIndexed(commandBuffer, *scenePipelines_[0],
+                                Vulkan::VulkanCommandList::drawIndexed(commandBuffer, *scenePipelines_.solid[0],
                                                                        bindingSet_->descriptorSet(frameIndex), draws);
                             if (recordUi)
                                 recordUi(static_cast<void*>(commandBuffer));
@@ -983,7 +1002,7 @@ namespace Incubator
                                                    [&](VkCommandBuffer scene) {
                                                        if (!draws.empty())
                                                            Vulkan::VulkanCommandList::drawIndexed(
-                                                               scene, *hdrPipelines_[0],
+                                                               scene, *hdrPipelines_.solid[0],
                                                                bindingSet_->descriptorSet(index), draws);
                                                    },
                                                    output.fxaaEnabled() ? fxaaPass_.get() : nullptr);
@@ -1041,9 +1060,9 @@ namespace Incubator
                 if (swapchain_->handle() != VK_NULL_HANDLE)
                 {
                     scheduler_->initializeSwapchainImages(swapchain_->imageCount(), swapchain_->extent(), depthFormat_);
-                    if (bindingSet_ && (!scenePipelines_[0] || previousFormat != swapchain_->format()))
+                    if (bindingSet_ && (!scenePipelines_.solid[0] || previousFormat != swapchain_->format()))
                     {
-                        scenePipelines_ = makePipelines(
+                        scenePipelines_ = makeScenePipelines(
                             swapchain_->format(), depthFormat_, bindingSet_->layout(),
                             bindingSet_->materialLayout(), vertexShader_, fragmentShader_);
                     }
@@ -1087,9 +1106,9 @@ namespace Incubator
             std::vector<ResourceEntry<Material::Impl>> materials_;
             std::vector<std::weak_ptr<GpuResources::Impl>> resourceGroups_;
             std::unique_ptr<Vulkan::VulkanSwapchain> swapchain_;
-            PipelinePair scenePipelines_;
+            ScenePipelines scenePipelines_;
             std::array<std::shared_ptr<SceneOutput::Impl>, Vulkan::VulkanFrameScheduler::FRAME_COUNT> sceneTargets_{};
-            PipelinePair hdrPipelines_;
+            ScenePipelines hdrPipelines_;
             std::unique_ptr<Vulkan::VulkanDisplayPass> displayPass_;
             std::unique_ptr<Vulkan::VulkanDisplayPass> fxaaPass_;
             PipelinePair shadowPipelines_;

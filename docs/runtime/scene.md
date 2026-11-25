@@ -158,11 +158,12 @@ SceneFrame 是自有值，保存 `extent`、`Render::CameraMatrices camera`、`v
 - 按存活实体创建顺序遍历，跳过隐藏及无模型实体；默认以当前实体 Transform 变换模型整体边界，
   只排除世界 AABB 完全位于视锥外的实体，再按 `PreparedModel::draws()` 与 `drawMaterialSlots()` 展开绘制项并应用该实体对应材质槽的覆盖材质（未覆盖或非 PBR 槽位继续复用模型源材质）。
   每个模型沿用其缓存的节点/部分顺序；最终矩阵为 `entity.transform.matrix() * cachedDraw.model`，源根只包含一次。
+  输出的主绘制列表严格按 `Opaque → Mask → Blend` 分组，其中 `Blend` 段按各绘制项变换后的世界空间包围盒中心（不可用时退化为绘制项世界平移位置）到相机位置的距离**从远到近**执行 `std::stable_sort`。
 - 每次返回新列表；空 Scene、全部隐藏、全部被裁剪、无模型或无可绘制部分时返回有效的空 draws，仍可清屏和显示 UI。
 - 两个结果可并存，默认复制/移动同时处理各自的值和 vector。Scene 更新、clear、下一次提取及 Scene 销毁
   不回写旧结果；快照不持有 Scene、Entity 或 PreparedModel 指针，绘制项只保存 GPU 引用和矩阵值。
 
-第四个参数默认关闭阴影，保持原有调用；启用时在主相机剔除之前从全部 visible 且有模型的实体收集投射物，
+第四个参数默认关闭阴影，保持原有调用；启用时在主相机剔除之前从全部 visible 且有模型的实体收集 `Opaque` 与 `Mask` 投射物（排除 `Blend` 半透明材质），
 按相同的 `PreparedModel::draws()` 顺序与矩阵乘法直接展开。主相机外、光源范围外及 Unlit 几何仍进入投射列表，
 隐藏和无模型实体不进入；不在 CPU 上另做光源裁剪。关闭时 shadow 为空，不展开第二份绘制列表。
 有效尺寸下，无效阴影参数抛 CONFIG；零尺寸仍优先跳过。固定范围与坐标规则见 [阴影帧参数](render.md#阴影帧参数)。

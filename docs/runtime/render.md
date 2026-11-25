@@ -114,7 +114,7 @@ RGB 按 sRGB → 线性过滤 → sRGB 写回，alpha 按线性 straight 通道�
 不支持时抛出 RENDER 错误，同时保留 extent/像素长度检查；Resource 不包含设备限制。
 直接构造的深度附件、读回图像及后端默认上传仍为单 mip。
 
-场景 RGB 由 sRGB 纹理采样得到 linear 值，与材质线性 RGB 相乘后，直接呈现（`drawFrame`）路径沿用片元 Shader 钳制与 sRGB transfer function 编码后写入 UNORM；独立视口（`drawSceneTarget`）则先将未钳制的线性 HDR 颜色（几何覆盖写 `alpha = 1`，清屏背景写 `alpha = 0`）写入 `VK_FORMAT_R16G16B16A16_SFLOAT` 场景附件，再经全屏显示 Pass（按 `DisplaySettings` 执行曝光与 `Off` / `Reinhard` 色调映射，未覆盖处直接输出 `clearColor`）编码一次 sRGB 写入 `VK_FORMAT_R8G8B8A8_UNORM` 视口图像，开启 FXAA 时随后经固定质量 LDR FXAA 输出到同格式独立图像（`LINEAR` + `ClampToEdge` 采样并保留中心像素 alpha），供 ImGui 采样。clearColor 与 ImGui RGB 均为
+场景 RGB 由 sRGB 纹理采样得到 linear 值，与材质线性 RGB 相乘后，直接呈现（`drawFrame`）路径沿用片元 Shader 钳制与 sRGB transfer function 编码后写入 UNORM（`Blend` 在输出空间执行直通混合）；独立视口（`drawSceneTarget`）则先将未钳制的线性 HDR 颜色（清屏背景为 `(0, 0, 0, 0)`，`Opaque`/`Mask` 写 `alpha = 1`，`Blend` 写入混合后的预乘颜色与覆盖 `alpha`）写入 `VK_FORMAT_R16G16B16A16_SFLOAT` 场景附件，再经全屏显示 Pass（对 `0 < hdr.a < 1` 先还原非预乘线性色并完成曝光、`Off` / `Reinhard` 色调映射与 sRGB 编码后再按 `hdr.a` 与 `clearColor` 合成，未覆盖处直接输出 `clearColor`）写入 `VK_FORMAT_R8G8B8A8_UNORM` 视口图像，开启 FXAA 时随后经固定质量 LDR FXAA 输出到同格式独立图像（`LINEAR` + `ClampToEdge` 采样并保留中心像素 alpha），供 ImGui 采样。clearColor 与 ImGui RGB 均为
 sRGB 编码值，直接写 UNORM；ImGui 沿用现有编码空间 alpha blending，不修改第三方 Shader。
 交换链仅支持 `SRGB_NONLINEAR` colorSpace，按 BGRA8_UNORM、RGBA8_UNORM 顺序选择，
 与设备返回的列表顺序无关。单个 UNDEFINED/SRGB_NONLINEAR 选择 BGRA8_UNORM，并检查
@@ -154,7 +154,7 @@ RGBA16F 纹理与 Cubemap 用于环境采样与查找表，不能绑定到材质
 
 ## 最小材质与绑定
 
-`material.h` 定义 `MaterialDesc { Texture texture; std::array<float, 3> color; SamplerDesc sampler; ShadingMode shading; Texture normalTexture; Texture metallicRoughnessTexture; float normalScale; float metallic; float roughness; MaterialParameterMode roughnessMode; MaterialParameterMode metallicMode; }` 与 `Material` 引用。
+`material.h` 定义 `MaterialDesc`（包含 `texture`、`color`、`sampler`、`shading`、`normalTexture`、`metallicRoughnessTexture`、`normalScale`、`metallic`、`roughness`、`roughnessMode`、`metallicMode`、`alphaMode`、`alphaCutoff`、`baseAlpha`、`doubleSided`、`emissiveFactor` 与 `emissiveTexture`）与 `Material` 引用。
 基色纹理 `texture` 是必需输入且必须为 `TextureColorSpace::Srgb`，color 是有限的 0–1 线性 RGB，默认 `{1, 1, 1}`。可选的 `normalTexture` 与 `metallicRoughnessTexture` 若非空则必须属于同一 Renderer 且为 `TextureColorSpace::Linear`（未指定时自动绑定共享 1×1 线性回退纹理，分别对应平坦法线 `{128,128,255,255}` 与白色 `{255,255,255,255}`）。`normalScale` 须有限且 `>= 0`（默认 `1.0f`），`metallic`（默认 `0.0f`）与 `roughness`（默认 `1.0f`）须有限且位于 `[0, 1]`；`roughnessMode` 与 `metallicMode` 默认均为 `MaterialParameterMode::TextureFactor`（贴图通道乘以因子），设为 `MaterialParameterMode::FixedValue` 时在 Shader 中按独立模式位忽略对应贴图通道并直接采用固定覆盖值（即金属度贴图为 0 时也可调成金属）。例如：
 
 ```cpp
@@ -191,18 +191,18 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 `createMaterial` 要求先准备共享 Shader，并在分配 GPU 资源前检查材质参数和 Texture 从属关系。
 `MaterialDesc` 还保存透明模式、非负的 `alphaCutoff`、[0, 1] 范围的 `baseAlpha`、双面标志以及三分量自发光因子。
 可选的 `emissiveTexture` 使用同一 Renderer 的 sRGB RGBA8 贴图，可按材质采样器进行线性过滤能力校验。
-主场景按材质选择背面剔除或双面管线。Alpha Mask 使用基色贴图 alpha 与 `baseAlpha` 的乘积，并丢弃低于 `alphaCutoff` 的片元。
+主场景按材质的 `alphaMode` 与 `doubleSided` 选取预编译管线变体：`Opaque` 与 `Mask` 启用深度测试与深度写入、`CullBack`/`CullNone`；`Blend` 启用深度测试但关闭深度写入，并按直通混合（颜色 `SRC_ALPHA / ONE_MINUS_SRC_ALPHA`、Alpha `ONE / ONE_MINUS_SRC_ALPHA`）配合 `CullBack`/`CullNone` 绘制。Alpha Mask 使用基色贴图 alpha 与 `baseAlpha` 的乘积，并丢弃低于 `alphaCutoff` 的片元。
 双面 Lambert 与 PBR 在背面翻转几何法线，再计算光照及法线贴图。自发光贴图与因子在线性空间相乘并累加到 Lambert/PBR 光照，
 再进入 HDR 显示映射。无自发光贴图时使用白图，纯基色 Unlit 沿用原有着色。
 逐绘制项按模型镜像及投影约定设置正面绕序，使用 Vulkan 1.3 的动态正面状态。[Vulkan 文档](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdSetFrontFace.html)
 空、过期、跨 Renderer 纹理，NaN、无穷或越界颜色均明确失败，不替换白图或钳制非法输入。
-创建时将参数复制进 32 字节 std140 `MaterialData`（`vec4 colorShading` 与 `vec4 surfaceParams`），`colorShading.w` 精确编码模式（0 为 Unlit、1 为 Lambert、2 为 Pbr），`surfaceParams.w` 编码粗糙度/金属度独立模式位（bit 0 为固定粗糙度，bit 1 为固定金属度）；之后不改写该 Buffer
-或 Descriptor。无论 PNG alpha 或颜色参数如何，场景输出 alpha 始终为 1，不启用透明混合。
+创建时将参数复制进 64 字节 std140 `MaterialData`（`colorShading`、`surfaceParams`、`emissiveAlpha` 与 `alphaParams`），`colorShading.w` 精确编码模式（0 为 Unlit、1 为 Lambert、2 为 Pbr），`surfaceParams.w` 编码粗糙度/金属度独立模式位（bit 0 为固定粗糙度，bit 1 为固定金属度）；之后不改写该 Buffer
+或 Descriptor。`Opaque` 与 `Mask` 场景输出 alpha 固定为 1；`Blend` 输出 `clamp(baseSample.a * baseAlpha, 0, 1)`，在直接呈现路径上于输出空间与背景混合，在离屏 HDR 路径上先写入预乘线性颜色并在显示 Pass 针对 `0 < hdr.a < 1` 还原非预乘线性色、完成曝光色调映射与 sRGB 编码后再按 `mix(clearColor.rgb, encodedSrgb, hdr.a)` 与背景合成。
 
 `ShadingMode` 包含默认 `Unlit`、显式 `Lambert` 与 `Pbr`；旧 `{texture}`、`{texture,color}`、
 `{texture,color,sampler}` 初始化保持 Unlit，非法模式在分配材质前按 RENDER 拒绝。
 例如 `MaterialDesc{texture, {1,1,1}, {}, ShadingMode::Pbr}`，创建后修改描述不会改变材质。
-三种模式共用同一参数块和固定 Pipeline，不引入 Shader 变体。
+三种着色模式共用同一着色器与参数块，按 `AlphaMode` 与 `doubleSided` 选取对应的光栅/混合管线变体。
 
 设 `B = textureLinearRGB * materialColor`，`D` 为单位光线传播方向，`N` 为单位世界法线：
 Unlit 输出 `B`；Lambert 输出 `B * (ambient + lightColor * intensity * max(dot(N,-D),0) * shadowVisibility)`；
@@ -217,7 +217,8 @@ Lambert 预览支持单方向光、可选阴影和双面材质的背面法线翻
 |---|---|
 | 帧相机、光照与 IBL | set 0 / binding 0，272 字节 FrameData，对 vertex/fragment 可见；每个帧槽独立 Buffer/Descriptor，等待 Fence 后更新 |
 | 材质纹理 | set 1 / binding 0，Combined Image Sampler；共享已有 Texture，不重复上传 |
-| 材质颜色与模式 | set 1 / binding 1，16 字节 fragment Uniform；仅创建时写入 |
+| 材质颜色与参数 | set 1 / binding 1，64 字节 fragment Uniform；仅创建时写入 |
+| 法线 / 金属粗糙 / 自发光贴图 | set 1 / binding 2–4，分别绑定法线、金属粗糙度（Linear）与自发光（sRGB）贴图；未指定时绑定内部安全占位纹理 |
 | 阴影深度图 | set 0 / binding 1，fragment Combined Image Sampler；内部 nearest/ClampToEdge、非比较采样，按帧槽更新 |
 | IBL 环境贴图与 LUT | set 0 / binding 2–4，分别绑定漫反射辐照度 `samplerCube`、预过滤镜面 `samplerCube` 与 BRDF 查找表 `sampler2D`；未调用 `prepareIblResources` 前绑定 1×1 安全占位纹理 |
 | 物体 model 与法线变换 | 112 字节 vertex push constant；逐物体录制 |
@@ -375,7 +376,7 @@ Model::prepareModel 为每次准备创建资源组，由 PreparedModel 保存；
 准备层负责释放本次 CPU 持有；Renderer 不读取模型路径、查询 ResourceManager 或解析文件。
 Scene 实体共享准备结果，`Scene::extractSceneFrame` 将实体整体变换左乘模型缓存的节点累计变换，直接展开为普通 DrawItem 列表。应用通过同一 FrameInput 提交，列表借用、在途持有和关闭后的引用校验沿用上述约定。
 
-当前支持共享相机与固定 Pipeline、逐物体 Mesh/Material/model 的不透明列表，以及帧级方向光和环境项驱动的 Unlit/Lambert 着色与独立视口的可选硬阴影；应用控制模型与动画，可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供材质文件/Loader、模型文件解析、PBR、PCF/软阴影、级联阴影、多光源、异步资产加载、热重载、显存池、多后端或多视口。
+当前支持共享相机与预编译管线变体、逐物体 Mesh/Material/model 列表（含 `Opaque`/`Mask`/`Blend`、`DoubleSided` 与 `Emissive`），以及帧级方向光、IBL、Unlit/Lambert/PBR 着色、LDR FXAA 与独立视口可选固定 2×2 PCF 阴影；应用控制模型与动画，可选择另一份已创建材质，不原地修改参数或纹理。渲染保持单窗口、主线程、同一图形队列上传和绘制；不提供材质文件/Loader、模型文件解析、OIT 透明无关混合、级联阴影、多光源、异步资产加载、热重载、显存池、多后端或多视口。
 
 ## 独立场景目标
 
@@ -386,7 +387,7 @@ Scene 实体共享准备结果，`Scene::extractSceneFrame` 将实体整体变�
 零尺寸返回无效 `SceneOutput`。输出为非拥有引用，尺寸由 `extent()` 查询、开关由 `fxaaEnabled()` 查询；尺寸重建或 Renderer 关闭后失效，
 只能交给所属 Renderer 的当前帧槽使用。图像在生产路径中不经过 CPU 回读。
 
-`drawSceneTarget(output, input, clearColor, recordUi)` 先在独立线性 HDR 目标中绘制场景，再执行全屏显示 Pass 按 `input.display`（`ToneMappingMode::Off` 钳制或 `Reinhard` 配合 `[-8, +8]` EV 曝光，未覆盖背景输出 `clearColor`）编码一次 sRGB 写入 LDR 图像；若 `output.fxaaEnabled()` 为 `true`（未准备 FXAA 资源时抛 RENDER），接着在显示 Pass 写入与片元采样之间建立同步依赖并录制全屏 FXAA 写入独立 FXAA 输出图像（保持显示编码与中心像素 alpha）；最后在交换链中记录 UI。
+`drawSceneTarget(output, input, clearColor, recordUi)` 先在独立线性 HDR 目标中绘制场景，再执行全屏显示 Pass 按 `input.display`（`ToneMappingMode::Off` 钳制或 `Reinhard` 配合 `[-8, +8]` EV 曝光；半透明 `0 < hdr.a < 1` 像素先还原非预乘线性色并经色调映射与 sRGB 编码后按 `hdr.a` 与 `clearColor` 合成，未覆盖背景直接输出 `clearColor`）编码一次 sRGB 写入 LDR 图像；若 `output.fxaaEnabled()` 为 `true`（未准备 FXAA 资源时抛 RENDER），接着在显示 Pass 写入与片元采样之间建立同步依赖并录制全屏 FXAA 写入独立 FXAA 输出图像（保持显示编码与中心像素 alpha）；最后在交换链中记录 UI。
 后续 UI 采样沿用对应的 `RGBA8 UNORM` 图像（原 LDR 图或 FXAA 输出图），避免再次编码。图像方向与当前直接绘制一致；`drawFrame` 不支持也不录制 FXAA。
 旧附件在槽 Fence 完成后替换，稳定帧不分配目标或等待整个设备空闲；原 `drawFrame` 直接绘制入口继续可用。
 

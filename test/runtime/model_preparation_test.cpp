@@ -908,7 +908,7 @@ namespace
             }
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), 6u);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), 3u);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 2u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 4u);
         }
         cleanValidation();
     }
@@ -953,7 +953,7 @@ namespace
             EXPECT_EQ(occurrences(messages_.str(), "Uploaded mesh:"), expectedMeshes);
             EXPECT_EQ(TextureGpuReview::countSceneTextureUploads(messages_.str()), expectedTextures);
             EXPECT_EQ(occurrences(messages_.str(), "Created material:"), expectedMaterials);
-            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 2u);
+            EXPECT_EQ(occurrences(messages_.str(), "Created graphics pipeline:"), 4u);
         }
         for (const auto& model : models)
             EXPECT_FALSE(model->meshes()[0].valid());
@@ -1870,6 +1870,165 @@ namespace
                 scene.pick(Math::LineSegment{worldCenter + glm::vec3(0, 0, 2), worldCenter - glm::vec3(0, 0, 2)});
             ASSERT_TRUE(hitWhenParentHidden.has_value());
             EXPECT_EQ(hitWhenParentHidden->id, child);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(ModelPreparationTest, ExtractSceneFrameOrdersOpaqueMaskBlendSortedAndExcludesBlendShadows)
+    {
+        class AlphaLayoutModelLoader final : public LoaderBase
+        {
+        public:
+            std::unique_ptr<ResourceObject> load(const ResourceId& id, std::string_view path) override
+            {
+                MeshData quad;
+                quad.vertices = {
+                    {{-1.0f, -1.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+                    {{1.0f, -1.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+                    {{1.0f, 1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}},
+                    {{-1.0f, 1.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}},
+                };
+                quad.indices = {0, 1, 2, 0, 2, 3};
+
+                auto makeColorMaterial = [](std::array<float, 3> color, Resource::AlphaMode mode, float baseAlpha) {
+                    ModelMaterial mat;
+                    mat.color = color;
+                    mat.alphaMode = mode;
+                    mat.baseAlpha = baseAlpha;
+                    mat.doubleSided = true;
+                    return mat;
+                };
+
+                if (path == "models/alpha_mix.gltf")
+                {
+                    // 特意让 Mask 先于 Opaque，Blend 居中，验证帧提取严格按 Opaque -> Mask -> Blend 输出。
+                    std::vector<ModelMaterial> materials{
+                        makeColorMaterial({0.2f, 0.8f, 0.2f}, Resource::AlphaMode::Mask, 1.0f),
+                        makeColorMaterial({0.8f, 0.8f, 0.8f}, Resource::AlphaMode::Opaque, 1.0f),
+                        makeColorMaterial({0.1f, 0.9f, 0.1f}, Resource::AlphaMode::Blend, 0.5f),
+                    };
+                    std::vector<ModelPart> parts{{0, 0}, {0, 1}, {0, 2}};
+                    std::vector<ModelNode> nodes{
+                        {"Root", glm::mat4(1.0f), {1, 2, 3}, {}},
+                        {"MaskChild", glm::mat4(1.0f), {}, {0}},
+                        {"OpaqueChild", glm::mat4(1.0f), {}, {1}},
+                        {"BlendChild", glm::mat4(1.0f), {}, {2}},
+                    };
+                    return std::make_unique<ModelResource>(id, std::vector<MeshData>{quad}, std::move(materials),
+                                                           std::move(parts), std::move(nodes), 0);
+                }
+
+                const auto color = path == "models/blend_red.gltf" ? std::array{1.0f, 0.0f, 0.0f}
+                                                                   : std::array{0.0f, 0.0f, 1.0f};
+                std::vector<ModelMaterial> materials{makeColorMaterial(color, Resource::AlphaMode::Blend, 0.5f)};
+                std::vector<ModelPart> parts{{0, 0}};
+                std::vector<ModelNode> nodes{{"Root", glm::mat4(1.0f), {}, {0}}};
+                return std::make_unique<ModelResource>(id, std::vector<MeshData>{quad}, std::move(materials),
+                                                       std::move(parts), std::move(nodes), 0);
+            }
+        };
+
+        auto& manager = ResourceManager::instance();
+        manager.registerLoader(ResourceType::MODEL, std::make_unique<AlphaLayoutModelLoader>());
+
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            shadowShader(renderer);
+
+            const Model::PrepareOptions unlit{{}, {}, ShadingMode::Unlit};
+            const auto mixed = Model::prepareModel(renderer, "models/alpha_mix.gltf", unlit);
+            const auto blendRed = Model::prepareModel(renderer, "models/blend_red.gltf", unlit);
+            const auto blendBlue = Model::prepareModel(renderer, "models/blend_blue.gltf", unlit);
+            ASSERT_EQ(mixed->draws().size(), 3u);
+            ASSERT_EQ(mixed->drawBounds().size(), 3u);
+
+            Scene::Scene scene;
+            scene.setCamera(Scene::Camera({0.0f, 0.0f, 5.0f}));
+            scene.createEntity(blendRed, Scene::Transform({0.0f, 0.0f, 2.0f}), true, "Near");
+            scene.createEntity(mixed, Scene::Transform({0.0f, 0.0f, 0.0f}), true, "Mixed");
+            scene.createEntity(blendBlue, Scene::Transform({0.0f, 0.0f, -2.0f}), true, "Far");
+            // 相机位于 (0,0,5)，以下两个实体距相机平方距离完全相同，应保持稳定插入顺序：TieRed 在 TieBlue 之前。
+            scene.createEntity(blendRed, Scene::Transform({1.0f, 0.0f, 2.0f}), true, "TieRed");
+            scene.createEntity(blendBlue, Scene::Transform({-1.0f, 0.0f, 2.0f}), true, "TieBlue");
+
+            Render::ShadowSettings shadows;
+            shadows.enabled = true;
+            const auto frame = Scene::extractSceneFrame(scene, {320, 240}, false, shadows);
+            ASSERT_TRUE(frame.has_value());
+            ASSERT_EQ(frame->draws.size(), 7u);
+            // 阴影投射列表仅包含 Mixed 的 Opaque 与 Mask，不包含任何 Blend 绘制项。
+            ASSERT_EQ(frame->shadowDraws.size(), 2u);
+
+            const auto matAlpha = [](const DrawItem& draw) {
+                return Detail::RendererReviewAccess::materialDescription(draw.material).alphaMode;
+            };
+            const auto matColor = [](const DrawItem& draw) {
+                return Detail::RendererReviewAccess::materialDescription(draw.material).color;
+            };
+
+            EXPECT_EQ(matAlpha(frame->draws[0]), Render::AlphaMode::Opaque);
+            EXPECT_EQ(matAlpha(frame->draws[1]), Render::AlphaMode::Mask);
+            // Blend 段从远到近：Far(-2, d^2=49) -> MixedBlend(0, d^2=25) -> TieRed(±1,2, d^2=10) -> TieBlue -> Near(2, d^2=9)
+            EXPECT_EQ(matAlpha(frame->draws[2]), Render::AlphaMode::Blend);
+            EXPECT_EQ(matColor(frame->draws[2]), (std::array{0.0f, 0.0f, 1.0f}));
+            EXPECT_EQ(frame->draws[2].model[3][2], -2.0f);
+            EXPECT_EQ(matAlpha(frame->draws[3]), Render::AlphaMode::Blend);
+            EXPECT_EQ(matColor(frame->draws[3]), (std::array{0.1f, 0.9f, 0.1f}));
+            EXPECT_EQ(matColor(frame->draws[4]), (std::array{1.0f, 0.0f, 0.0f}));
+            EXPECT_EQ(frame->draws[4].model[3][0], 1.0f);
+            EXPECT_EQ(matColor(frame->draws[5]), (std::array{0.0f, 0.0f, 1.0f}));
+            EXPECT_EQ(frame->draws[5].model[3][0], -1.0f);
+            EXPECT_EQ(matColor(frame->draws[6]), (std::array{1.0f, 0.0f, 0.0f}));
+            EXPECT_EQ(frame->draws[6].model[3][2], 2.0f);
+            EXPECT_EQ(matAlpha(frame->shadowDraws[0]), Render::AlphaMode::Mask);
+            EXPECT_EQ(matAlpha(frame->shadowDraws[1]), Render::AlphaMode::Opaque);
+
+            // 双层重叠半透明物体：验证相机翻转前后按远到近排序与 HDR 混合像素同步反转。
+            Scene::Scene layered;
+            layered.createEntity(blendRed, Scene::Transform({0.0f, 0.0f, -1.0f}), true, "RedBack");
+            layered.createEntity(blendBlue, Scene::Transform({0.0f, 0.0f, 1.0f}), true, "BlueFront");
+
+            constexpr FrameExtent extent{64, 64};
+            constexpr size_t center = (extent.height / 2) * extent.width + extent.width / 2;
+            const auto readCenterHdr = [&](const FrameInput& input) {
+                std::array<float, 4> pixel{};
+                Detail::RendererReviewAccess::withHdrSceneTarget(
+                    renderer, input, {0, 0, 0, 0}, [&](const auto& device, const auto& image) {
+                        const auto pixels = TextureGpuReview::captureRgba16f(device, image, {extent.width, extent.height});
+                        ASSERT_GT(pixels.size(), center);
+                        pixel = pixels[center];
+                    });
+                return pixel;
+            };
+
+            layered.setCamera(Scene::Camera({0.0f, 0.0f, 4.0f}));
+            const auto frontView = Scene::extractSceneFrame(layered, extent);
+            ASSERT_TRUE(frontView.has_value());
+            ASSERT_EQ(frontView->draws.size(), 2u);
+            EXPECT_EQ(matColor(frontView->draws[0]), (std::array{1.0f, 0.0f, 0.0f}));
+            EXPECT_EQ(matColor(frontView->draws[1]), (std::array{0.0f, 0.0f, 1.0f}));
+            const auto frontPixel = readCenterHdr(frontView->input());
+            // 远红(0.5)+近蓝(0.5) 预乘输出：R = 0.25, B = 0.5, A = 0.75
+            EXPECT_NEAR(frontPixel[0], 0.25f, 0.005f);
+            EXPECT_NEAR(frontPixel[1], 0.0f, 0.005f);
+            EXPECT_NEAR(frontPixel[2], 0.5f, 0.005f);
+            EXPECT_NEAR(frontPixel[3], 0.75f, 0.005f);
+
+            // 相机移到 -Z 并绕 Y 轴旋转 180 度朝 +Z 看，RedBack 变为更近、BlueFront 变为更远。
+            layered.setCamera(Scene::Camera({0.0f, 0.0f, -4.0f}, glm::quat(0.0f, 0.0f, 1.0f, 0.0f)));
+            const auto backView = Scene::extractSceneFrame(layered, extent);
+            ASSERT_TRUE(backView.has_value());
+            ASSERT_EQ(backView->draws.size(), 2u);
+            EXPECT_EQ(matColor(backView->draws[0]), (std::array{0.0f, 0.0f, 1.0f}));
+            EXPECT_EQ(matColor(backView->draws[1]), (std::array{1.0f, 0.0f, 0.0f}));
+            const auto backPixel = readCenterHdr(backView->input());
+            // 远蓝(0.5)+近红(0.5) 预乘输出：R = 0.5, B = 0.25, A = 0.75
+            EXPECT_NEAR(backPixel[0], 0.5f, 0.005f);
+            EXPECT_NEAR(backPixel[1], 0.0f, 0.005f);
+            EXPECT_NEAR(backPixel[2], 0.25f, 0.005f);
+            EXPECT_NEAR(backPixel[3], 0.75f, 0.005f);
         }
         cleanValidation();
     }

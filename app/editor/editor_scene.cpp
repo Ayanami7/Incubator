@@ -1326,6 +1326,29 @@ namespace Incubator::Editor
         }
 
         const auto& slot = slots[selectedMaterialSlot_];
+        auto alphaSummary = [&]() -> std::string {
+            switch (slot.sourceDesc.alphaMode)
+            {
+                case Render::AlphaMode::Mask:
+                    return fmt::format("Mask ({:.2f})", slot.sourceDesc.alphaCutoff);
+                case Render::AlphaMode::Blend:
+                    return fmt::format("Blend ({:.2f})", slot.sourceDesc.baseAlpha);
+                case Render::AlphaMode::Opaque:
+                default:
+                    return "Opaque";
+            }
+        };
+        const bool hasEmissive = slot.sourceDesc.emissiveTexture.valid() ||
+                                 slot.sourceDesc.emissiveFactor[0] > 0.0f ||
+                                 slot.sourceDesc.emissiveFactor[1] > 0.0f ||
+                                 slot.sourceDesc.emissiveFactor[2] > 0.0f;
+        rowLabel("Alpha");
+        ImGui::TextUnformatted(alphaSummary().c_str());
+        rowLabel("Double-sided");
+        ImGui::TextUnformatted(slot.sourceDesc.doubleSided ? "Yes" : "No");
+        rowLabel("Emissive");
+        ImGui::TextUnformatted(hasEmissive ? "Yes" : "No");
+
         if (slot.sourceDesc.shading != Render::ShadingMode::Pbr)
         {
             if (controller_.activePanelTransaction() == PanelTransactionKind::Material)
