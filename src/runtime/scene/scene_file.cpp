@@ -70,6 +70,12 @@ namespace Incubator::Scene
                 fail(where, "expected string");
             return {v.GetString(), v.GetStringLength()};
         }
+        bool boolean(const Value& v, const std::string& where)
+        {
+            if (!v.IsBool())
+                fail(where, "expected boolean");
+            return v.GetBool();
+        }
         template <typename T>
         T choice(const Value& v, const std::string& where,
                  std::initializer_list<std::pair<std::string_view, T>> choices)
@@ -172,13 +178,21 @@ namespace Incubator::Scene
         }
         const bool hasMaterialOverrides =
             std::ranges::any_of(d.entities, [](const auto& e) { return !e.materialOverrides.empty(); });
+        const Render::DisplaySettings defaultDisplay{};
+        const bool hasV13Features =
+            !d.lighting.localLights.empty() || d.display.toneMapping == Render::ToneMappingMode::AcesFilmic ||
+            d.display.skyboxEnabled != defaultDisplay.skyboxEnabled ||
+            d.display.bloomEnabled != defaultDisplay.bloomEnabled ||
+            d.display.bloomThreshold != defaultDisplay.bloomThreshold ||
+            d.display.bloomIntensity != defaultDisplay.bloomIntensity;
+        const int minorVersion = hasV13Features ? 3 : (hasMaterialOverrides ? 2 : 1);
         rapidjson::StringBuffer buffer;
         Writer w(buffer);
         w.StartObject();
         key(w, "version");
         w.Int(1);
         key(w, "minorVersion");
-        w.Int(hasMaterialOverrides ? 2 : 1);
+        w.Int(minorVersion);
         key(w, "entities");
         w.StartArray();
         for (const auto& e : d.entities)
@@ -290,13 +304,55 @@ namespace Incubator::Scene
         w.Double(d.lighting.intensity);
         key(w, "ambient");
         w.Double(d.lighting.ambient);
+        if (minorVersion >= 3)
+        {
+            key(w, "localLights");
+            w.StartArray();
+            for (const auto& light : d.lighting.localLights)
+            {
+                w.StartObject();
+                key(w, "type");
+                text(w, light.type == Render::LocalLightType::Spot ? "spot" : "point");
+                key(w, "enabled");
+                w.Bool(light.enabled);
+                key(w, "position");
+                vec(w, light.position);
+                key(w, "direction");
+                vec(w, light.direction);
+                key(w, "color");
+                vec(w, light.color);
+                key(w, "intensity");
+                w.Double(light.intensity);
+                key(w, "range");
+                w.Double(light.range);
+                key(w, "innerConeAngle");
+                w.Double(light.innerConeAngle);
+                key(w, "outerConeAngle");
+                w.Double(light.outerConeAngle);
+                w.EndObject();
+            }
+            w.EndArray();
+        }
         w.EndObject();
         key(w, "display");
         w.StartObject();
         key(w, "toneMapping");
-        w.String(d.display.toneMapping == Render::ToneMappingMode::Off ? "off" : "reinhard");
+        text(w, d.display.toneMapping == Render::ToneMappingMode::Off        ? "off"
+                : d.display.toneMapping == Render::ToneMappingMode::AcesFilmic ? "aces"
+                                                                               : "reinhard");
         key(w, "exposureEv");
         w.Double(d.display.exposureEv);
+        if (minorVersion >= 3)
+        {
+            key(w, "skyboxEnabled");
+            w.Bool(d.display.skyboxEnabled);
+            key(w, "bloomEnabled");
+            w.Bool(d.display.bloomEnabled);
+            key(w, "bloomThreshold");
+            w.Double(d.display.bloomThreshold);
+            key(w, "bloomIntensity");
+            w.Double(d.display.bloomIntensity);
+        }
         w.EndObject();
         key(w, "clearColor");
         w.StartArray();
@@ -324,9 +380,8 @@ namespace Incubator::Scene
         int minorVersion = 0;
         if (const auto minorIt = doc.FindMember("minorVersion"); minorIt != doc.MemberEnd())
         {
-            if (!minorIt->value.IsInt() ||
-                (minorIt->value.GetInt() != 0 && minorIt->value.GetInt() != 1 && minorIt->value.GetInt() != 2))
-                fail("minorVersion", "expected integer 0, 1 or 2");
+            if (!minorIt->value.IsInt() || minorIt->value.GetInt() < 0 || minorIt->value.GetInt() > 3)
+                fail("minorVersion", "expected integer 0, 1, 2 or 3");
             minorVersion = minorIt->value.GetInt();
         }
         const auto& entities = member(doc, "entities", "root");
@@ -435,16 +490,70 @@ namespace Incubator::Scene
                            vec3(member(l, "color", "lighting"), "lighting.color"),
                            number(member(l, "intensity", "lighting"), "lighting.intensity"),
                            number(member(l, "ambient", "lighting"), "lighting.ambient")};
+        if (minorVersion >= 3)
+        {
+            if (const auto lightsIt = l.FindMember("localLights"); lightsIt != l.MemberEnd())
+            {
+                if (!lightsIt->value.IsArray())
+                    fail("lighting.localLights", "expected array");
+                if (lightsIt->value.Size() > Render::MAX_LOCAL_LIGHTS)
+                    fail("lighting.localLights", "local light count exceeds maximum");
+                result.lighting.localLights.reserve(lightsIt->value.Size());
+                for (rapidjson::SizeType k = 0; k < lightsIt->value.Size(); ++k)
+                {
+                    const auto lp = "lighting.localLights[" + std::to_string(k) + "]";
+                    const auto& li = lightsIt->value[k];
+                    Render::LocalLight light;
+                    light.type = choice<Render::LocalLightType>(
+                        member(li, "type", lp), lp + ".type",
+                        {{"point", Render::LocalLightType::Point}, {"spot", Render::LocalLightType::Spot}});
+                    light.enabled = boolean(member(li, "enabled", lp), lp + ".enabled");
+                    light.position = vec3(member(li, "position", lp), lp + ".position");
+                    light.direction = vec3(member(li, "direction", lp), lp + ".direction");
+                    light.color = vec3(member(li, "color", lp), lp + ".color");
+                    light.intensity = number(member(li, "intensity", lp), lp + ".intensity");
+                    light.range = number(member(li, "range", lp), lp + ".range");
+                    light.innerConeAngle = number(member(li, "innerConeAngle", lp), lp + ".innerConeAngle");
+                    light.outerConeAngle = number(member(li, "outerConeAngle", lp), lp + ".outerConeAngle");
+                    if (!light.valid())
+                        fail(lp, "invalid local light parameters");
+                    result.lighting.localLights.push_back(light);
+                }
+            }
+        }
         if (!result.lighting.valid())
             fail("lighting", "invalid value");
         const auto& disp = member(doc, "display", "root");
-        result.display.toneMapping =
-            choice<Render::ToneMappingMode>(member(disp, "toneMapping", "display"), "display.toneMapping",
-                                            {{"off", Render::ToneMappingMode::Off},
-                                             {"reinhard", Render::ToneMappingMode::Reinhard}});
+        if (minorVersion >= 3)
+        {
+            result.display.toneMapping =
+                choice<Render::ToneMappingMode>(member(disp, "toneMapping", "display"), "display.toneMapping",
+                                                {{"off", Render::ToneMappingMode::Off},
+                                                 {"reinhard", Render::ToneMappingMode::Reinhard},
+                                                 {"aces", Render::ToneMappingMode::AcesFilmic}});
+            if (const auto skyIt = disp.FindMember("skyboxEnabled"); skyIt != disp.MemberEnd())
+                result.display.skyboxEnabled = boolean(skyIt->value, "display.skyboxEnabled");
+            if (const auto bloomIt = disp.FindMember("bloomEnabled"); bloomIt != disp.MemberEnd())
+                result.display.bloomEnabled = boolean(bloomIt->value, "display.bloomEnabled");
+            if (const auto thrIt = disp.FindMember("bloomThreshold"); thrIt != disp.MemberEnd())
+                result.display.bloomThreshold = number(thrIt->value, "display.bloomThreshold");
+            if (const auto intIt = disp.FindMember("bloomIntensity"); intIt != disp.MemberEnd())
+                result.display.bloomIntensity = number(intIt->value, "display.bloomIntensity");
+        }
+        else
+        {
+            result.display.toneMapping =
+                choice<Render::ToneMappingMode>(member(disp, "toneMapping", "display"), "display.toneMapping",
+                                                {{"off", Render::ToneMappingMode::Off},
+                                                 {"reinhard", Render::ToneMappingMode::Reinhard}});
+        }
         result.display.exposureEv = number(member(disp, "exposureEv", "display"), "display.exposureEv");
-        if (!result.display.valid())
+        if (!std::isfinite(result.display.exposureEv) ||
+            result.display.exposureEv < -Render::DisplaySettings::MAX_EXPOSURE_EV ||
+            result.display.exposureEv > Render::DisplaySettings::MAX_EXPOSURE_EV)
             fail("display.exposureEv", "must be in [-8, 8]");
+        if (!result.display.valid())
+            fail("display", "invalid bloom or display settings");
         result.clearColor = array<4>(member(doc, "clearColor", "root"), "clearColor");
         if (!result.valid())
             fail("clearColor", "values must be in [0, 1]");

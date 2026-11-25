@@ -1,5 +1,13 @@
 #version 450
 
+struct GpuLocalLight
+{
+    vec4 positionRange;
+    vec4 colorIntensity;
+    vec4 directionType;
+    vec4 coneParams;
+};
+
 layout(set = 0, binding = 0, std140) uniform FrameData
 {
     mat4 view;
@@ -12,6 +20,8 @@ layout(set = 0, binding = 0, std140) uniform FrameData
     vec4 shadowMeta;
     vec4 cameraPosition;
     vec4 iblParams;
+    uvec4 localLightMeta;
+    GpuLocalLight localLights[16];
 } frame;
 
 layout(push_constant) uniform ObjectData

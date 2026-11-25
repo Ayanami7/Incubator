@@ -116,6 +116,22 @@ namespace Incubator
                             cameraPosition = glm::vec4(glm::vec3(position), 0.0f);
                     }
                 }
+                std::array<GpuLocalLight, MAX_LOCAL_LIGHTS> packedLocalLights{};
+                uint32_t activeLocalCount = 0;
+                for (const auto& local : lighting.localLights)
+                {
+                    if (!local.enabled || local.intensity <= 0.0f)
+                        continue;
+                    const double dirLen =
+                        std::hypot(static_cast<double>(local.direction.x), static_cast<double>(local.direction.y),
+                                   static_cast<double>(local.direction.z));
+                    const glm::vec3 localDir(glm::dvec3(local.direction) / dirLen);
+                    packedLocalLights[activeLocalCount++] = {
+                        glm::vec4(local.position, local.range),
+                        glm::vec4(local.color, local.intensity),
+                        glm::vec4(localDir, static_cast<float>(local.type)),
+                        glm::vec4(std::cos(local.innerConeAngle), std::cos(local.outerConeAngle), 0.0f, 0.0f)};
+                }
                 return {input.camera.view,
                         input.camera.projection,
                         glm::vec4(direction, lighting.intensity),
@@ -125,7 +141,9 @@ namespace Incubator
                         shadowParams,
                         shadowMeta,
                         cameraPosition,
-                        input.iblEnabled ? glm::vec4(1.0f, maxPrefilteredLod, 0.0f, 0.0f) : glm::vec4(0.0f)};
+                        input.iblEnabled ? glm::vec4(1.0f, maxPrefilteredLod, 0.0f, 0.0f) : glm::vec4(0.0f),
+                        glm::uvec4(activeLocalCount, 0u, 0u, 0u),
+                        packedLocalLights};
             }
 
             VulkanBindingSet::VulkanBindingSet(const VulkanDevice& device,

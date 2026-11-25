@@ -62,6 +62,53 @@ namespace
         EXPECT_THROW(makeFrameUniform(input), Error::Exception);
     }
 
+    TEST(RenderFrameInputTest, FrameUniformPacksActiveLocalLightsAndSkipsDisabledOrZeroIntensity)
+    {
+        FrameInput input{{800, 600}, {glm::mat4(1), glm::mat4(1)}, {}};
+        LocalLight activePoint;
+        activePoint.type = LocalLightType::Point;
+        activePoint.position = {1.0f, 2.0f, 3.0f};
+        activePoint.color = {0.8f, 0.4f, 0.2f};
+        activePoint.intensity = 6.0f;
+        activePoint.range = 14.0f;
+
+        LocalLight disabledSpot = activePoint;
+        disabledSpot.type = LocalLightType::Spot;
+        disabledSpot.enabled = false;
+
+        LocalLight zeroIntensityPoint = activePoint;
+        zeroIntensityPoint.intensity = 0.0f;
+
+        LocalLight activeSpot;
+        activeSpot.type = LocalLightType::Spot;
+        activeSpot.position = {-4.0f, 5.0f, 0.0f};
+        activeSpot.direction = {0.0f, -3.0f, -4.0f};
+        activeSpot.color = {0.2f, 0.6f, 1.0f};
+        activeSpot.intensity = 10.0f;
+        activeSpot.range = 20.0f;
+        activeSpot.innerConeAngle = 0.2f;
+        activeSpot.outerConeAngle = 0.7f;
+
+        input.lighting.localLights = {activePoint, disabledSpot, zeroIntensityPoint, activeSpot};
+        const auto ubo = makeFrameUniform(input);
+        EXPECT_EQ(ubo.localLightMeta.x, 2u);
+        EXPECT_EQ(ubo.localLights[0].positionRange, glm::vec4(1.0f, 2.0f, 3.0f, 14.0f));
+        EXPECT_EQ(ubo.localLights[0].colorIntensity, glm::vec4(0.8f, 0.4f, 0.2f, 6.0f));
+        EXPECT_FLOAT_EQ(ubo.localLights[0].directionType.w, 0.0f);
+
+        EXPECT_EQ(ubo.localLights[1].positionRange, glm::vec4(-4.0f, 5.0f, 0.0f, 20.0f));
+        EXPECT_EQ(ubo.localLights[1].colorIntensity, glm::vec4(0.2f, 0.6f, 1.0f, 10.0f));
+        EXPECT_NEAR(ubo.localLights[1].directionType.x, 0.0f, 1e-5f);
+        EXPECT_NEAR(ubo.localLights[1].directionType.y, -0.6f, 1e-5f);
+        EXPECT_NEAR(ubo.localLights[1].directionType.z, -0.8f, 1e-5f);
+        EXPECT_FLOAT_EQ(ubo.localLights[1].directionType.w, 1.0f);
+        EXPECT_NEAR(ubo.localLights[1].coneParams.x, std::cos(0.2f), 1e-5f);
+        EXPECT_NEAR(ubo.localLights[1].coneParams.y, std::cos(0.7f), 1e-5f);
+
+        input.lighting.localLights.assign(MAX_LOCAL_LIGHTS + 1u, activePoint);
+        EXPECT_THROW(makeFrameUniform(input), Error::Exception);
+    }
+
     TEST(RenderFrameInputTest, FrameUniformDerivesCameraWorldPositionAndFallsBackOnSingularView)
     {
         const glm::vec3 eye(3.0f, -2.0f, 5.0f);

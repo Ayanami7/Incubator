@@ -435,4 +435,96 @@ namespace
         ASSERT_TRUE(extractedCsm && extractedCsm->shadow);
         EXPECT_EQ(extractedCsm->shadow->cascadeCount, 3u);
     }
+
+    TEST(SceneFrameCpuTest, LocalLightAndSceneLightingValidation)
+    {
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        constexpr float HALF_PI = 1.5707963267948966f;
+
+        Render::LocalLight validPoint;
+        validPoint.type = Render::LocalLightType::Point;
+        validPoint.position = {1.5f, 3.0f, -2.0f};
+        validPoint.color = {1.0f, 0.8f, 0.4f};
+        validPoint.intensity = 12.0f;
+        validPoint.range = 8.0f;
+        EXPECT_TRUE(validPoint.valid());
+
+        Render::LocalLight validSpot = validPoint;
+        validSpot.type = Render::LocalLightType::Spot;
+        validSpot.direction = {0.0f, -2.0f, -1.0f};
+        validSpot.innerConeAngle = 0.25f;
+        validSpot.outerConeAngle = 0.65f;
+        EXPECT_TRUE(validSpot.valid());
+
+        Scene::Scene scene;
+        Render::Lighting customLighting;
+        customLighting.localLights = {validPoint, validSpot};
+        scene.setLighting(customLighting);
+        EXPECT_EQ(scene.lighting(), customLighting);
+
+        const auto frame = Scene::extractSceneFrame(scene, {320, 240});
+        ASSERT_TRUE(frame);
+        EXPECT_EQ(frame->lighting, customLighting);
+
+        const auto expectRejected = [&](Render::LocalLight badLight) {
+            EXPECT_FALSE(badLight.valid());
+            Render::Lighting invalid;
+            invalid.localLights = {badLight};
+            EXPECT_FALSE(invalid.valid());
+            EXPECT_THROW(scene.setLighting(invalid), Error::Exception);
+            EXPECT_EQ(scene.lighting(), customLighting);
+        };
+
+        auto bad = validSpot;
+        bad.type = static_cast<Render::LocalLightType>(7);
+        expectRejected(bad);
+
+        bad = validSpot;
+        bad.direction = {0.0f, 0.0f, 0.0f};
+        expectRejected(bad);
+
+        bad = validSpot;
+        bad.position.x = nan;
+        expectRejected(bad);
+
+        bad = validSpot;
+        bad.color.r = 1.1f;
+        expectRejected(bad);
+
+        bad = validSpot;
+        bad.intensity = -0.1f;
+        expectRejected(bad);
+
+        bad = validSpot;
+        bad.range = 0.0f;
+        expectRejected(bad);
+
+        bad = validSpot;
+        bad.range = -2.0f;
+        expectRejected(bad);
+
+        bad = validSpot;
+        bad.innerConeAngle = -0.01f;
+        expectRejected(bad);
+
+        bad = validSpot;
+        bad.innerConeAngle = 0.7f;
+        bad.outerConeAngle = 0.6f;
+        expectRejected(bad);
+
+        bad = validSpot;
+        bad.outerConeAngle = HALF_PI;
+        expectRejected(bad);
+
+        bad = validSpot;
+        bad.intensity = inf;
+        expectRejected(bad);
+
+        Render::Lighting tooMany;
+        tooMany.localLights.assign(Render::MAX_LOCAL_LIGHTS + 1u, validPoint);
+        EXPECT_FALSE(tooMany.valid());
+        EXPECT_THROW(scene.setLighting(tooMany), Error::Exception);
+        EXPECT_EQ(scene.lighting(), customLighting);
+    }
 }  // namespace

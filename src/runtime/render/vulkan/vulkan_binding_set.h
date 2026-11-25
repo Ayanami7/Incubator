@@ -22,6 +22,17 @@ namespace Incubator
             class VulkanDevice;
             class VulkanImage;
 
+            /// @brief 与 Shader std140 GpuLocalLight 对齐的局部光源 GPU 数据。
+            struct alignas(16) GpuLocalLight
+            {
+                glm::vec4 positionRange{};   ///< xyz 为世界空间位置，w 为衰减半径。
+                glm::vec4 colorIntensity{};  ///< rgb 为线性颜色，a 为强度。
+                glm::vec4 directionType{};   ///< xyz 为归一化传播方向，w 为类型（0=Point，1=Spot）。
+                glm::vec4 coneParams{};      ///< x 为 cos(innerConeAngle)，y 为 cos(outerConeAngle)。
+            };
+            static_assert(std::is_standard_layout_v<GpuLocalLight>);
+            static_assert(sizeof(GpuLocalLight) == 64);
+
             /// @brief 与场景和深度 Shader 的 std140 FrameData 对齐的帧参数。
             struct alignas(16) VulkanFrameUniform
             {
@@ -35,6 +46,8 @@ namespace Incubator
                 glm::vec4 shadowMeta;               ///< x 为最大阴影距离，y 为阴影分辨率，其余保留为零。
                 glm::vec4 cameraPosition;           ///< 世界空间相机位置（xyz），由视图矩阵派生。
                 glm::vec4 iblParams;                ///< x 为 IBL 启用标记，y 为预过滤环境最大 mip 级，其余为零。
+                glm::uvec4 localLightMeta;          ///< x 为激活局部光源数量，其余保留为零。
+                std::array<GpuLocalLight, MAX_LOCAL_LIGHTS> localLights;  ///< 激活局部光源列表（前 localLightMeta.x 项有效）。
             };
             static_assert(std::is_standard_layout_v<VulkanFrameUniform>);
             static_assert(offsetof(VulkanFrameUniform, view) == 0);
@@ -48,7 +61,9 @@ namespace Incubator
             static_assert(offsetof(VulkanFrameUniform, shadowMeta) == 448);
             static_assert(offsetof(VulkanFrameUniform, cameraPosition) == 464);
             static_assert(offsetof(VulkanFrameUniform, iblParams) == 480);
-            static_assert(sizeof(VulkanFrameUniform) == 496);
+            static_assert(offsetof(VulkanFrameUniform, localLightMeta) == 496);
+            static_assert(offsetof(VulkanFrameUniform, localLights) == 512);
+            static_assert(sizeof(VulkanFrameUniform) == 1536);
 
             /// @brief 校验光照并打包本次提交的相机、光照与 IBL 参数，非单位方向在此归一化。
             /// @throws Error::Exception 光照输入无效时抛出 RENDER。

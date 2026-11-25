@@ -4134,4 +4134,166 @@ namespace
         }
         expectCleanValidation();
     }
+
+    TEST_F(VulkanReviewTest, LocalPointAndSpotLightsPbrAndLambertAttenuationUnderValidation)
+    {
+        auto window = createWindow();
+        SceneAssets assets;
+        {
+            Renderer renderer(*window, RendererValidationMode::Required);
+            renderer.prepareSceneResources(*assets.vertex, *assets.fragment);
+
+            const auto white = renderer.createTexture(Resource::TextureResource({}, 1, 1, {255, 255, 255, 255}));
+            const auto plane = createLitPlane(renderer);
+            const auto largePlane = DrawItem{plane, Material{}, glm::scale(glm::mat4(1.0f), {8.0f, 6.0f, 1.0f})};
+
+            MaterialDesc lambertDesc{white, {1.0f, 1.0f, 1.0f}};
+            lambertDesc.shading = ShadingMode::Lambert;
+            const auto lambertMat = renderer.createMaterial(lambertDesc);
+
+            MaterialDesc pbrDesc{white, {0.8f, 0.8f, 0.8f}};
+            pbrDesc.shading = ShadingMode::Pbr;
+            pbrDesc.roughnessMode = MaterialParameterMode::FixedValue;
+            pbrDesc.roughness = 0.55f;
+            pbrDesc.metallicMode = MaterialParameterMode::FixedValue;
+            pbrDesc.metallic = 0.1f;
+            const auto pbrMat = renderer.createMaterial(pbrDesc);
+
+            MaterialDesc unlitDesc{white, {0.2f, 0.3f, 0.4f}};
+            unlitDesc.shading = ShadingMode::Unlit;
+            const auto unlitMat = renderer.createMaterial(unlitDesc);
+
+            const FrameExtent ext{160, 120};
+            // 世界范围 [-4, 4] x [-3, 3] 精确一一映射至 160x120（每单位 20 像素，中心 x=80, y=60）。
+            const glm::mat4 view = glm::lookAtRH(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            glm::mat4 proj = glm::orthoRH_ZO(-4.0f, 4.0f, -3.0f, 3.0f, 0.1f, 20.0f);
+            proj[1][1] *= -1.0f;
+            const CameraMatrices cam{view, proj};
+
+            const auto sampleWorld = [&](const std::vector<std::array<float, 4>>& hdr, float wx, float wy) {
+                const uint32_t px = std::min(ext.width - 1u, static_cast<uint32_t>(std::lround((wx + 4.0f) * 20.0f)));
+                const uint32_t py = std::min(ext.height - 1u, static_cast<uint32_t>(std::lround((3.0f - wy) * 20.0f)));
+                return hdr[size_t(py) * ext.width + px];
+            };
+            const auto renderMatHdr = [&](const Material& mat, const Lighting& lighting) {
+                const std::array draws{DrawItem{largePlane.mesh, mat, largePlane.model}};
+                return captureHdr(renderer, FrameInput{ext, cam, draws, lighting});
+            };
+
+            Lighting baseLight;
+            baseLight.intensity = 0.0f;
+            baseLight.ambient = 0.0f;
+
+            // 1. 基线：关闭方向光、环境光与局部光源时，Lambert 与 PBR 均为纯黑。
+            EXPECT_FLOAT_EQ(sampleWorld(renderMatHdr(lambertMat, baseLight), 0.0f, 0.0f)[0], 0.0f);
+            EXPECT_FLOAT_EQ(sampleWorld(renderMatHdr(pbrMat, baseLight), 0.0f, 0.0f)[0], 0.0f);
+
+            // 2. 点光源距离衰减：中心 (dist=1.5) 符合 KHR_lights_punctual 解析解，近亮远暗，超 range(3.0) 为零。
+            LocalLight point;
+            point.type = LocalLightType::Point;
+            point.position = {0.0f, 0.0f, 1.5f};
+            point.color = {1.0f, 0.5f, 0.25f};
+            point.intensity = 8.0f;
+            point.range = 3.0f;
+            Lighting pointLighting = baseLight;
+            pointLighting.localLights = {point};
+
+            const float ratioCenter = 1.5f / 3.0f;
+            const float winCenter = 1.0f - std::pow(ratioCenter, 4.0f);
+            const float expectedCenterAtten = (winCenter * winCenter) / (1.5f * 1.5f);
+            const float expectedCenterRed = point.color.r * point.intensity * expectedCenterAtten;
+
+            for (const auto& [mat, isLambert] : {std::pair{lambertMat, true}, std::pair{pbrMat, false}})
+            {
+                const auto hdr = renderMatHdr(mat, pointLighting);
+                const auto cCenter = sampleWorld(hdr, 0.0f, 0.0f);
+                const auto cMid = sampleWorld(hdr, 1.5f, 0.0f);
+                const auto cOut = sampleWorld(hdr, 3.2f, 0.0f);
+                EXPECT_GT(cCenter[0], cMid[0] * 3.0f);
+                EXPECT_GT(cMid[0], 0.01f);
+                EXPECT_FLOAT_EQ(cOut[0], 0.0f);
+                EXPECT_FLOAT_EQ(cOut[1], 0.0f);
+                EXPECT_FLOAT_EQ(cOut[2], 0.0f);
+                EXPECT_NEAR(cCenter[1] / cCenter[0], 0.5f, 0.02f);
+                if (isLambert)
+                    EXPECT_NEAR(cCenter[0], expectedCenterRed, 0.05f);
+            }
+
+            // 3. 聚光灯内外锥角平滑过渡：内锥满照度，过渡带平滑衰减，外锥之外严格归零。
+            LocalLight spot;
+            spot.type = LocalLightType::Spot;
+            spot.position = {0.0f, 0.0f, 2.0f};
+            spot.direction = {0.0f, 0.0f, -1.0f};
+            spot.color = {0.3f, 0.9f, 1.0f};
+            spot.intensity = 10.0f;
+            spot.range = 10.0f;
+            spot.innerConeAngle = 0.25f;  // r ~= 0.51
+            spot.outerConeAngle = 0.65f;  // r ~= 1.52
+            Lighting spotLighting = baseLight;
+            spotLighting.localLights = {spot};
+
+            // 对比同位置同参数的 Point 光源，验证内锥以内与过渡带的 spot 因子。
+            LocalLight spotAsPoint = spot;
+            spotAsPoint.type = LocalLightType::Point;
+            Lighting spotAsPointLighting = baseLight;
+            spotAsPointLighting.localLights = {spotAsPoint};
+
+            for (const auto& mat : {lambertMat, pbrMat})
+            {
+                const auto hdrSpot = renderMatHdr(mat, spotLighting);
+                const auto hdrRefPoint = renderMatHdr(mat, spotAsPointLighting);
+                const auto cInnerSpot = sampleWorld(hdrSpot, 0.0f, 0.0f);
+                const auto cInnerRef = sampleWorld(hdrRefPoint, 0.0f, 0.0f);
+                EXPECT_NEAR(cInnerSpot[1], cInnerRef[1], 1e-3f);
+
+                const auto cMidSpot = sampleWorld(hdrSpot, 0.9f, 0.0f);
+                const auto cMidRef = sampleWorld(hdrRefPoint, 0.9f, 0.0f);
+                EXPECT_GT(cMidSpot[1], 0.05f);
+                EXPECT_LT(cMidSpot[1], cMidRef[1] * 0.85f);
+
+                const auto cOutsideSpot = sampleWorld(hdrSpot, 2.0f, 0.0f);
+                const auto cOutsideRef = sampleWorld(hdrRefPoint, 2.0f, 0.0f);
+                EXPECT_GT(cOutsideRef[1], 0.05f);
+                EXPECT_FLOAT_EQ(cOutsideSpot[1], 0.0f);
+            }
+
+            // 4. 多光源线性累加 + disabled 光源跳过 + Unlit 不受局部光源影响。
+            LocalLight disabledGreen = point;
+            disabledGreen.enabled = false;
+            disabledGreen.color = {0.0f, 1.0f, 0.0f};
+            disabledGreen.intensity = 50.0f;
+
+            LocalLight redPoint = point;
+            redPoint.color = {1.0f, 0.0f, 0.0f};
+            LocalLight blueSpot = spot;
+            blueSpot.color = {0.0f, 0.0f, 1.0f};
+
+            Lighting combinedLighting = baseLight;
+            combinedLighting.localLights = {redPoint, disabledGreen, blueSpot};
+            Lighting redOnly = baseLight;
+            redOnly.localLights = {redPoint};
+            Lighting blueOnly = baseLight;
+            blueOnly.localLights = {blueSpot};
+
+            for (const auto& mat : {lambertMat, pbrMat})
+            {
+                const auto hdrComb = renderMatHdr(mat, combinedLighting);
+                const auto hdrRed = renderMatHdr(mat, redOnly);
+                const auto hdrBlue = renderMatHdr(mat, blueOnly);
+                const auto cComb = sampleWorld(hdrComb, 0.0f, 0.0f);
+                const auto cRed = sampleWorld(hdrRed, 0.0f, 0.0f);
+                const auto cBlue = sampleWorld(hdrBlue, 0.0f, 0.0f);
+                EXPECT_NEAR(cComb[0], cRed[0] + cBlue[0], 0.02f);
+                EXPECT_FLOAT_EQ(cComb[1], 0.0f);  // disabled 绿灯未生效
+                EXPECT_NEAR(cComb[2], cRed[2] + cBlue[2], 0.02f);
+            }
+
+            const auto hdrUnlit = renderMatHdr(unlitMat, combinedLighting);
+            const auto cUnlit = sampleWorld(hdrUnlit, 0.0f, 0.0f);
+            EXPECT_NEAR(cUnlit[0], 0.2f, 0.01f);
+            EXPECT_NEAR(cUnlit[1], 0.3f, 0.01f);
+            EXPECT_NEAR(cUnlit[2], 0.4f, 0.01f);
+        }
+        expectCleanValidation();
+    }
 }  // namespace

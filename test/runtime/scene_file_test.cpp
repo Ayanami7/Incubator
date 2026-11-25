@@ -103,7 +103,7 @@ namespace
         };
         check(replace("\"version\": 1", "\"version\": 2"), "version");
         check(replace("\"version\": 1", "\"version\": 1.0"), "version");
-        check(replace("\"minorVersion\": 1", "\"minorVersion\": 3"), "minorVersion");
+        check(replace("\"minorVersion\": 1", "\"minorVersion\": 4"), "minorVersion");
         check(replace("\"minorVersion\": 1", "\"minorVersion\": -1"), "minorVersion");
         check(replace("\"minorVersion\": 1", "\"minorVersion\": 1.0"), "minorVersion");
         check(replace("\"visible\": false", "\"visible\": 0"), "visible");
@@ -564,5 +564,83 @@ namespace
         invalidDesc.entities[1].materialOverrides.push_back({0u});
         EXPECT_FALSE(invalidDesc.valid());
         EXPECT_THROW((void)Scene::encodeScene(invalidDesc), Error::Exception);
+    }
+
+    TEST(SceneFileTest, SceneVersion13LocalLightsAndPostprocessRoundTripAndValidation)
+    {
+        auto d = sample();
+        // 未使用 localLights / ACES / Skybox / Bloom 时仍保持 minorVersion: 1。
+        const std::string baselineJson = Scene::encodeScene(d);
+        EXPECT_NE(baselineJson.find("\"minorVersion\": 1"), std::string::npos);
+        EXPECT_EQ(baselineJson.find("localLights"), std::string::npos);
+        EXPECT_EQ(baselineJson.find("bloomEnabled"), std::string::npos);
+
+        // 仅开启 1.3 显示项（无局部光源）应升级至 minorVersion: 3 并完整往返。
+        auto displayOnly13 = d;
+        displayOnly13.display = {Render::ToneMappingMode::AcesFilmic, 0.5f, true, true, 1.4f, 0.85f};
+        const std::string displayJson13 = Scene::encodeScene(displayOnly13);
+        EXPECT_NE(displayJson13.find("\"minorVersion\": 3"), std::string::npos);
+        EXPECT_NE(displayJson13.find("\"toneMapping\": \"aces\""), std::string::npos);
+        compare(displayOnly13, Scene::decodeScene(displayJson13));
+
+        // 同时携带点光源、聚光灯、1.3 显示参数与 1.2 材质覆盖时写出 minorVersion: 3 并完整往返。
+        d.entities[0].materialOverrides.push_back({0u, {0.8f, 0.5f, 0.3f}});
+        d.display = {Render::ToneMappingMode::AcesFilmic, -0.75f, true, true, 1.25f, 0.5f};
+        Render::LocalLight point;
+        point.type = Render::LocalLightType::Point;
+        point.enabled = true;
+        point.position = {1.5f, 3.0f, -0.5f};
+        point.direction = {0.0f, -1.0f, 0.0f};
+        point.color = {1.0f, 0.75f, 0.35f};
+        point.intensity = 9.5f;
+        point.range = 12.0f;
+        Render::LocalLight spot;
+        spot.type = Render::LocalLightType::Spot;
+        spot.enabled = false;
+        spot.position = {-2.0f, 4.0f, 1.5f};
+        spot.direction = {0.2f, -1.0f, -0.3f};
+        spot.color = {0.3f, 0.7f, 1.0f};
+        spot.intensity = 15.0f;
+        spot.range = 18.0f;
+        spot.innerConeAngle = 0.25f;
+        spot.outerConeAngle = 0.75f;
+        d.lighting.localLights = {point, spot};
+
+        const std::string json13 = Scene::encodeScene(d);
+        EXPECT_NE(json13.find("\"minorVersion\": 3"), std::string::npos);
+        EXPECT_NE(json13.find("\"materialOverrides\""), std::string::npos);
+        EXPECT_NE(json13.find("\"localLights\""), std::string::npos);
+        compare(d, Scene::decodeScene(json13));
+
+        const auto expectInvalid = [&](std::string text, std::string_view expected) {
+            try
+            {
+                (void)Scene::decodeScene(text);
+                FAIL() << "accepted invalid 1.3 scene JSON";
+            }
+            catch (const Error::Exception& e)
+            {
+                EXPECT_EQ(e.code(), Error::Code::IO);
+                EXPECT_NE(e.message().find(expected), std::string::npos) << e.message();
+            }
+        };
+        auto replaceFirst = [&](std::string text, std::string_view from, std::string_view to) {
+            const auto at = text.find(from);
+            EXPECT_NE(at, std::string::npos);
+            if (at != std::string::npos)
+                text.replace(at, from.size(), to);
+            return text;
+        };
+
+        expectInvalid(replaceFirst(json13, "\"type\": \"point\"", "\"type\": \"area\""), "type");
+        expectInvalid(replaceFirst(json13, "\"range\": 12.0", "\"range\": 0.0"), "lighting.localLights[0]");
+        expectInvalid(replaceFirst(json13, "\"innerConeAngle\": 0.25", "\"innerConeAngle\": 0.9"),
+                      "lighting.localLights[1]");
+        expectInvalid(replaceFirst(json13, "\"bloomThreshold\": 1.25", "\"bloomThreshold\": -0.5"), "display");
+        expectInvalid(replaceFirst(json13, "\"bloomIntensity\": 0.5", "\"bloomIntensity\": 5.0"), "display");
+
+        auto tooManyLights = d;
+        tooManyLights.lighting.localLights.assign(Render::MAX_LOCAL_LIGHTS + 1u, point);
+        EXPECT_THROW((void)Scene::encodeScene(tooManyLights), Error::Exception);
     }
 }  // namespace
