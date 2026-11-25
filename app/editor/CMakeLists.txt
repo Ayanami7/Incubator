@@ -18,7 +18,11 @@ set(EDITOR_HEADERS
 set(EDITOR_SOURCES
     editor_app.cpp
     editor_controller.cpp
+    editor_controller_assets.cpp
+    editor_controller_viewport.cpp
     editor_scene.cpp
+    editor_scene_panels.cpp
+    editor_scene_properties.cpp
     editor_operations.cpp
     editor_theme.cpp
     gizmo.cpp

@@ -74,10 +74,7 @@ endforeach()
 add_custom_target(runtime_test_fixtures DEPENDS ${RUNTIME_TEST_FIXTURE_OUTPUTS})
 
 set(RUNTIME_TEST_SHADER_OUTPUTS)
-foreach(SHADER_FILE IN ITEMS cube.vert.spv cube.frag.spv shadow.vert.spv shadow_mask.vert.spv shadow_mask.frag.spv
-                             display.vert.spv display.frag.spv fxaa.frag.spv skybox.vert.spv skybox.frag.spv
-                             bloom_prefilter.frag.spv bloom_downsample.frag.spv bloom_upsample.frag.spv
-                             debug_line.vert.spv debug_line.frag.spv)
+foreach(SHADER_FILE IN LISTS INCUBATOR_SHADER_SPIRV_FILES)
     set(SHADER_SOURCE "${CMAKE_BINARY_DIR}/assets/shaders/${SHADER_FILE}")
     set(SHADER_OUTPUT "${RUNTIME_TEST_ASSET_DIR}/shaders/${SHADER_FILE}")
     add_custom_command(

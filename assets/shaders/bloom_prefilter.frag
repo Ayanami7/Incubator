@@ -16,8 +16,9 @@ vec3 sampleHdrChecked(vec2 uv)
     vec4 s = texture(hdrScene, uv);
     if (s.a <= 0.0)
         return vec3(0.0);
-    // 夹紧极值避免极亮单点导致半精度溢出与萤火虫闪烁。
-    return clamp(s.rgb, vec3(0.0), vec3(65000.0));
+    // 与 display.frag 对称还原半透明预乘像素的非预乘线性色，同时夹紧极值避免半精度溢出与萤火虫闪烁。
+    vec3 rgb = s.a < 1.0 ? (s.rgb / s.a) : s.rgb;
+    return clamp(rgb, vec3(0.0), vec3(65000.0));
 }
 
 float karisWeight(vec3 c)

@@ -85,6 +85,7 @@ set(RENDER_HEADERS
     render/vulkan/vulkan_shadow_target.h
     render/renderer.h
     render/gpu_resources.h
+    render/detail/renderer_impl.h
     render/detail/renderer_review.h
     render/display.h
     render/frame_input.h
@@ -112,6 +113,8 @@ set(RENDER_SOURCES
     render/vulkan/vulkan_scene_target.cpp
     render/vulkan/vulkan_shadow_target.cpp
     render/renderer.cpp
+    render/renderer_resources.cpp
+    render/renderer_review.cpp
     render/lighting.cpp
     render/shadow.cpp
     render/integration/imgui_renderer.cpp

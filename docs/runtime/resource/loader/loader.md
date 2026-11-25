@@ -62,7 +62,7 @@ Loader 构造函数注入 `AssetSource&`（例如 `ShaderLoader(source)` / `Text
 2. 若引入新载荷类型，另建 `<name>_resource.h/.cpp`（继承 `ResourceObject`，`final`）；载荷可复用则跳过
 3. 若为新资源种，在 `ResourceType` 增量添加显式 `constHash` 枚举值（需重编译）
 4. `CMakeLists.txt` 登记头文件/源文件
-5. 编写测试：真实 FileIO + 临时目录模式（归入 `runtime_cpu_test`）
+5. 编写测试：真实 FileIO + 临时目录模式（归入 `runtime_asset_cpu_test`）
 
 ## 文档索引
 
