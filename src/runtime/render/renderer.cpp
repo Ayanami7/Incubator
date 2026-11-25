@@ -172,12 +172,14 @@ namespace Incubator
         {
             Impl(const Vulkan::VulkanDevice& device, std::shared_ptr<Texture::Impl> source,
                  std::shared_ptr<Texture::Impl> normalSource, std::shared_ptr<Texture::Impl> mrSource,
+                 std::shared_ptr<Texture::Impl> emissiveSource,
                  const Vulkan::VulkanBindingSet& bindingSet, const MaterialDesc& desc)
                 : owner(&device),
                   texture(std::move(source)),
                   normalTexture(std::move(normalSource)),
                   metallicRoughnessTexture(std::move(mrSource)),
-                  samplerDesc(desc.sampler),
+                  emissiveTexture(std::move(emissiveSource)),
+                  description(desc),
                   colorSampler(std::make_shared<Vulkan::VulkanSampler>(device, desc.sampler, texture->image->mipLevels())),
                   normalSampler(selectSampler(device, desc.sampler,
                                               normalImage(bindingSet).mipLevels(), colorSampler,
@@ -219,7 +221,8 @@ namespace Incubator
             std::shared_ptr<Texture::Impl> texture;
             std::shared_ptr<Texture::Impl> normalTexture;
             std::shared_ptr<Texture::Impl> metallicRoughnessTexture;
-            const SamplerDesc samplerDesc;
+            std::shared_ptr<Texture::Impl> emissiveTexture;
+            const MaterialDesc description;
             std::shared_ptr<Vulkan::VulkanSampler> colorSampler;
             std::shared_ptr<Vulkan::VulkanSampler> normalSampler;
             std::shared_ptr<Vulkan::VulkanSampler> mrSampler;
@@ -494,7 +497,8 @@ namespace Incubator
                 if (texture->colorSpace != TextureColorSpace::Srgb)
                     throw Error::Exception(Error::Code::RENDER, "Material base color texture must use Srgb color space");
 
-                const auto resolveOptionalLinearTexture = [&](const Texture& handle, const char* name) {
+                const auto resolveOptionalTexture = [&](const Texture& handle, TextureColorSpace colorSpace,
+                                                        std::string_view name) {
                     std::shared_ptr<Texture::Impl> resolved;
                     if (!handle.isUnset())
                     {
@@ -507,15 +511,18 @@ namespace Incubator
                             throw Error::Exception(
                                 Error::Code::RENDER,
                                 fmt::format("{} texture must be a 2D RGBA8 texture", name));
-                        if (resolved->colorSpace != TextureColorSpace::Linear)
+                        if (resolved->colorSpace != colorSpace)
                             throw Error::Exception(
                                 Error::Code::RENDER,
-                                fmt::format("{} texture must use Linear color space", name));
+                                fmt::format("{} texture must use {} color space", name,
+                                            colorSpace == TextureColorSpace::Srgb ? "Srgb" : "Linear"));
                     }
                     return resolved;
                 };
-                auto normalTexture = resolveOptionalLinearTexture(desc.normalTexture, "Normal");
-                auto mrTexture = resolveOptionalLinearTexture(desc.metallicRoughnessTexture, "Metallic-roughness");
+                auto normalTexture = resolveOptionalTexture(desc.normalTexture, TextureColorSpace::Linear, "Normal");
+                auto mrTexture = resolveOptionalTexture(desc.metallicRoughnessTexture, TextureColorSpace::Linear,
+                                                        "Metallic-roughness");
+                auto emissiveTexture = resolveOptionalTexture(desc.emissiveTexture, TextureColorSpace::Srgb, "Emissive");
 
                 for (const auto value : desc.color)
                     if (!std::isfinite(value) || value < 0.0f || value > 1.0f)
@@ -528,6 +535,16 @@ namespace Incubator
                     throw Error::Exception(Error::Code::RENDER, "Material metallic factor must be finite in [0, 1]");
                 if (!std::isfinite(desc.roughness) || desc.roughness < 0.0f || desc.roughness > 1.0f)
                     throw Error::Exception(Error::Code::RENDER, "Material roughness factor must be finite in [0, 1]");
+                if (desc.alphaMode != AlphaMode::Opaque && desc.alphaMode != AlphaMode::Mask &&
+                    desc.alphaMode != AlphaMode::Blend)
+                    throw Error::Exception(Error::Code::RENDER, "Material alphaMode is invalid");
+                if (!std::isfinite(desc.alphaCutoff) || desc.alphaCutoff < 0.0f)
+                    throw Error::Exception(Error::Code::RENDER, "Material alphaCutoff must be finite and nonnegative");
+                if (!std::isfinite(desc.baseAlpha) || desc.baseAlpha < 0.0f || desc.baseAlpha > 1.0f)
+                    throw Error::Exception(Error::Code::RENDER, "Material baseAlpha must be finite in [0, 1]");
+                for (const auto value : desc.emissiveFactor)
+                    if (!std::isfinite(value) || value < 0.0f || value > 1.0f)
+                        throw Error::Exception(Error::Code::RENDER, "Material emissiveFactor must be finite in [0, 1]");
                 if (desc.shading != ShadingMode::Unlit && desc.shading != ShadingMode::Lambert &&
                     desc.shading != ShadingMode::Pbr)
                     throw Error::Exception(Error::Code::RENDER, "Material shading mode is invalid");
@@ -552,9 +569,12 @@ namespace Incubator
                 checkLinearFiltering(*texture->image);
                 checkLinearFiltering(normalTexture ? *normalTexture->image : bindingSet_->normalFallback());
                 checkLinearFiltering(mrTexture ? *mrTexture->image : bindingSet_->metallicRoughnessFallback());
+                if (emissiveTexture)
+                    checkLinearFiltering(*emissiveTexture->image);
 
                 auto material = std::make_shared<Material::Impl>(device_, std::move(texture), std::move(normalTexture),
-                                                                 std::move(mrTexture), *bindingSet_, desc);
+                                                                 std::move(mrTexture), std::move(emissiveTexture),
+                                                                 *bindingSet_, desc);
                 std::erase_if(materials_, [](const auto& entry) { return entry.object.expired(); });
                 materials_.push_back({material, resources ? nullptr : material});
                 if (resources)
@@ -1073,6 +1093,14 @@ namespace Incubator
         Detail::RendererReviewAccess::ResourceCounts Detail::RendererReviewAccess::resourceCounts(Renderer& renderer)
         {
             return renderer.impl_->resourceCounts();
+        }
+
+        MaterialDesc Detail::RendererReviewAccess::materialDescription(const Material& material)
+        {
+            const auto impl = material.impl_.lock();
+            if (!impl)
+                throw Error::Exception(Error::Code::RENDER, "Cannot inspect an expired material");
+            return impl->description;
         }
 
         void Detail::RendererReviewAccess::waitForFrames(Renderer& renderer)

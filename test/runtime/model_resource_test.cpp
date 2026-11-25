@@ -495,6 +495,44 @@ namespace
         expectInvalid(input, "embedded texture dimensions");
     }
 
+    TEST(ModelResourceTest, ValidatesAlphaAndEmissiveMaterialInvariants)
+    {
+        ModelInput input;
+        auto& material = input.materials[0];
+        material.alphaMode = AlphaMode::Blend;
+        material.alphaCutoff = 2.0f;
+        material.baseAlpha = 0.25f;
+        material.doubleSided = true;
+        material.emissiveFactor = {0.25f, 0.5f, 1.0f};
+        material.emissiveTexturePath = "Textures/Glow.JPEG";
+        const auto model = makeModel(input);
+        EXPECT_EQ(model->materials()[0].emissiveTexturePath, "textures/glow.jpeg");
+
+        material.alphaMode = static_cast<AlphaMode>(99);
+        expectInvalid(input, "alphaMode");
+        material.alphaMode = AlphaMode::Mask;
+        material.alphaCutoff = -0.1f;
+        expectInvalid(input, "alphaCutoff");
+        material.alphaCutoff = std::numeric_limits<float>::infinity();
+        expectInvalid(input, "alphaCutoff");
+        material.alphaCutoff = 0.5f;
+        material.baseAlpha = std::numeric_limits<float>::quiet_NaN();
+        expectInvalid(input, "baseAlpha");
+        material.baseAlpha = 0.25f;
+        material.emissiveFactor[1] = 1.01f;
+        expectInvalid(input, "emissiveFactor");
+        material.emissiveFactor[1] = 0.5f;
+        material.emissiveTexturePath = "textures/glow.webp";
+        expectInvalid(input, "emissive texture requires a PNG or JPEG");
+        material.emissiveTexturePath = "textures/glow.png";
+        input.embeddedTextures = {{1, 1, {255, 0, 0, 255}}};
+        material.embeddedEmissiveTextureIndex = 0;
+        expectInvalid(input, "embedded emissive texture index");
+        material.emissiveTexturePath.reset();
+        material.embeddedEmissiveTextureIndex = 1;
+        expectInvalid(input, "embedded emissive texture index");
+    }
+
     TEST(ModelResourceTest, RejectsInvalidPbrMaterialPathsAndFactors)
     {
         for (const std::string& badPath : {"", ".", "../escape.png", "textures/normal.webp"})

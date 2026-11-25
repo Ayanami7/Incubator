@@ -11,6 +11,19 @@ namespace Incubator
 {
     namespace Render
     {
+        namespace Detail
+        {
+            struct RendererReviewAccess;
+        }
+
+        /// @brief 材质描述中的透明度模式。
+        enum class AlphaMode : uint32_t
+        {
+            Opaque,
+            Mask,
+            Blend
+        };
+
         /// @brief 材质着色模式。
         enum class ShadingMode : uint32_t
         {
@@ -29,7 +42,7 @@ namespace Incubator
         struct MaterialDesc
         {
             Texture texture;
-            /// @brief 线性 RGB 颜色，取值范围为 [0, 1]；场景输出保持不透明。
+            /// @brief 线性 RGB 基色，取值范围为 [0, 1]。
             std::array<float, 3> color{1.0f, 1.0f, 1.0f};
             SamplerDesc sampler;
             ShadingMode shading = ShadingMode::Unlit;
@@ -40,6 +53,12 @@ namespace Incubator
             float roughness = 1.0f;              ///< 粗糙度因子或固定覆盖值，有限且位于 [0, 1]。
             MaterialParameterMode roughnessMode = MaterialParameterMode::TextureFactor;  ///< 粗糙度取值模式。
             MaterialParameterMode metallicMode = MaterialParameterMode::TextureFactor;   ///< 金属度取值模式。
+            AlphaMode alphaMode = AlphaMode::Opaque;
+            float alphaCutoff = 0.5f;
+            float baseAlpha = 1.0f;
+            bool doubleSided = false;
+            std::array<float, 3> emissiveFactor{};
+            Texture emissiveTexture{};  ///< 可选的 sRGB 自发光贴图。
         };
 
         /// @brief 不可变材质的非拥有引用，副本指向同一份实际对象。
@@ -56,6 +75,7 @@ namespace Incubator
 
         private:
             friend class Renderer;
+            friend struct Detail::RendererReviewAccess;
             struct Impl;
             explicit Material(const std::shared_ptr<Impl>& impl) : impl_(impl) {}
             std::weak_ptr<Impl> impl_;

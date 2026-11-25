@@ -118,7 +118,8 @@ instanceTransform * root.localTransform * ... * node.localTransform
 
 ModelLoader 将静态 glTF 2.0、GLB 和 OBJ 统一转换为上述数据。
 GLB 的 PNG/JPEG 解码为 `embeddedTextures()` 中的 `EmbeddedTexture`，包含尺寸与紧密排列的 RGBA8 像素。
-基色、法线和金属粗糙度槽各自使用外部虚拟路径或内嵌索引。构造时检查两种引用互斥、索引有效和像素长度与尺寸一致。
+基色、法线、金属粗糙度和自发光槽各自使用外部虚拟路径或内嵌索引。构造时检查引用互斥、索引有效、像素长度与尺寸一致。
+材质同时保存透明模式、阈值、基色 alpha、双面标志和线性自发光因子。构造时校验模式枚举、阈值的有限非负性以及 alpha 与自发光因子的 [0, 1] 范围。
 CPU 载荷保存 position、UV0、normal、uint32 三角形索引和基色；贴图材质要求 UV0，纯色几何可由导入方补固定 UV。
 normal 位于几何局部空间，未乘节点矩阵；默认零向量表示无可用法线，原两字段顶点初始化仍有效。
 ModelResource 只验证法线有限性，不归一化或改写手工输入；法线不影响几何边界，未引用顶点及退化三角形可保留零法线。

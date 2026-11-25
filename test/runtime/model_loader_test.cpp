@@ -421,6 +421,8 @@ namespace
         EXPECT_FALSE(material.metallicRoughnessTexturePath);
         ASSERT_TRUE(material.embeddedTextureIndex);
         EXPECT_EQ(material.embeddedNormalTextureIndex, material.embeddedTextureIndex);
+        EXPECT_EQ(material.embeddedEmissiveTextureIndex, material.embeddedTextureIndex);
+        EXPECT_FALSE(material.emissiveTexturePath);
         ASSERT_TRUE(material.embeddedMetallicRoughnessTextureIndex);
         EXPECT_NE(material.embeddedMetallicRoughnessTextureIndex, material.embeddedTextureIndex);
         const auto& png = model->embeddedTextures()[*material.embeddedTextureIndex];
@@ -919,10 +921,54 @@ namespace
                 texture.AddMember("extensions", extensions, a);
                 reason = "UV transform";
             }
-            else if (name == "mask" || name == "blend" || name == "unknown_alpha")
+            else if (name == "unknown_alpha")
             {
-                material["alphaMode"].SetString(name == "mask" ? "MASK" : name == "blend" ? "BLEND" : "INVALID", a);
-                reason = "alphaMode OPAQUE";
+                material["alphaMode"].SetString("INVALID", a);
+                reason = "alphaMode";
+            }
+            else if (name == "negative_cutoff" || name == "overflow_cutoff")
+            {
+                material.AddMember("alphaCutoff", name == "negative_cutoff" ? -0.1 : 1e40, a);
+                reason = "alphaCutoff";
+            }
+            else if (name == "invalid_base_alpha")
+            {
+                pbr["baseColorFactor"][3].SetDouble(1.1);
+                reason = "baseColorFactor alpha";
+            }
+            else if (name == "non_bool_double_sided")
+            {
+                material.AddMember("doubleSided", 1, a);
+                reason = "doubleSided";
+            }
+            else if (name == "invalid_emissive_factor" || name == "short_emissive_factor")
+            {
+                rapidjson::Value factor(rapidjson::kArrayType);
+                factor.PushBack(0.0, a).PushBack(0.5, a);
+                if (name == "invalid_emissive_factor")
+                    factor.PushBack(1.1, a);
+                material.AddMember("emissiveFactor", factor, a);
+                reason = "emissiveFactor";
+            }
+            else if (name == "emissive_uv1" || name == "emissive_transform" || name == "emissive_missing_uv0")
+            {
+                rapidjson::Value emissive(rapidjson::kObjectType);
+                emissive.AddMember("index", 0, a);
+                if (name == "emissive_uv1")
+                    emissive.AddMember("texCoord", 1, a);
+                else if (name == "emissive_transform")
+                {
+                    rapidjson::Value extensions(rapidjson::kObjectType), transform(rapidjson::kObjectType);
+                    extensions.AddMember("KHR_texture_transform", transform, a);
+                    emissive.AddMember("extensions", extensions, a);
+                }
+                else
+                {
+                    pbr.RemoveMember("baseColorTexture");
+                    source["meshes"][0]["primitives"][0]["attributes"].RemoveMember("TEXCOORD_0");
+                }
+                material.AddMember("emissiveTexture", emissive, a);
+                reason = name == "emissive_transform" ? "emissive UV transform" : "UV0";
             }
             else if (name == "negative_color" || name == "high_color")
             {
@@ -1010,8 +1056,11 @@ namespace
     }
     INSTANTIATE_TEST_SUITE_P(UnsupportedGltf, ModelGltfFailureTest,
                              ::testing::Values("uv1", "negative_uv", "missing_uv0", "uv_transform",
-                                               "identity_uv_transform", "transform_uv_override", "mask", "blend",
-                                               "unknown_alpha", "negative_color", "high_color", "root_escape",
+                                               "identity_uv_transform", "transform_uv_override", "unknown_alpha",
+                                               "negative_cutoff", "overflow_cutoff", "invalid_base_alpha",
+                                               "non_bool_double_sided", "invalid_emissive_factor",
+                                               "short_emissive_factor", "emissive_uv1", "emissive_transform",
+                                               "emissive_missing_uv0", "negative_color", "high_color", "root_escape",
                                                "absolute_uri", "network_uri", "encoded_escape", "bad_texture_uri",
                                                "embedded_image", "embedded_buffer", "unsupported_image_format",
                                                "animation", "skin",
@@ -1021,7 +1070,7 @@ namespace
 
     class ModelGltfAcceptedTest : public ModelLoaderTest, public ::testing::WithParamInterface<std::string>
     {};
-    TEST_P(ModelGltfAcceptedTest, AcceptsOpaqueDefaultsAndPureColorWithoutUv)
+    TEST_P(ModelGltfAcceptedTest, PreservesMaterialMetadataAndAcceptsPureColorWithoutUv)
     {
         const auto name = GetParam();
         editGltf([&](auto& source) {
@@ -1030,6 +1079,19 @@ namespace
                 mat.RemoveMember("alphaMode");
             if (name == "opaque_low_alpha")
                 mat["pbrMetallicRoughness"]["baseColorFactor"][3].SetFloat(0.2f);
+            if (name == "mask" || name == "blend")
+            {
+                auto& a = source.GetAllocator();
+                mat["alphaMode"].SetString(name == "mask" ? "MASK" : "BLEND", a);
+                mat["pbrMetallicRoughness"]["baseColorFactor"][3].SetFloat(0.375f);
+                mat.AddMember("alphaCutoff", 1.25, a);
+                mat.AddMember("doubleSided", true, a);
+                rapidjson::Value factor(rapidjson::kArrayType), emissive(rapidjson::kObjectType);
+                factor.PushBack(0.125, a).PushBack(0.25, a).PushBack(0.5, a);
+                emissive.AddMember("index", 0, a);
+                mat.AddMember("emissiveFactor", factor, a);
+                mat.AddMember("emissiveTexture", emissive, a);
+            }
             if (name == "pure_color_no_uv" || name == "default_material")
             {
                 mat["pbrMetallicRoughness"].RemoveMember("baseColorTexture");
@@ -1042,6 +1104,24 @@ namespace
         ASSERT_NE(model, nullptr) << messages_.str();
         const auto& material = model->materials()[model->parts()[0].material];
         EXPECT_EQ(material.color, (std::array<float, 3>{1, 1, 1}));
+        if (name == "mask" || name == "blend")
+        {
+            EXPECT_EQ(material.alphaMode, name == "mask" ? AlphaMode::Mask : AlphaMode::Blend);
+            EXPECT_FLOAT_EQ(material.alphaCutoff, 1.25f);
+            EXPECT_FLOAT_EQ(material.baseAlpha, 0.375f);
+            EXPECT_TRUE(material.doubleSided);
+            EXPECT_EQ(material.emissiveFactor, (std::array<float, 3>{0.125f, 0.25f, 0.5f}));
+            EXPECT_EQ(material.emissiveTexturePath, "textures/direction_rgba.png");
+        }
+        else
+        {
+            EXPECT_EQ(material.alphaMode, AlphaMode::Opaque);
+            EXPECT_FLOAT_EQ(material.alphaCutoff, 0.5f);
+            EXPECT_FLOAT_EQ(material.baseAlpha, name == "opaque_low_alpha" ? 0.2f : 1.0f);
+            EXPECT_FALSE(material.doubleSided);
+            EXPECT_EQ(material.emissiveFactor, (std::array<float, 3>{}));
+            EXPECT_FALSE(material.emissiveTexturePath);
+        }
         if (name == "pure_color_no_uv" || name == "default_material")
         {
             EXPECT_FALSE(material.texturePath.has_value());
@@ -1051,7 +1131,7 @@ namespace
     }
     INSTANTIATE_TEST_SUITE_P(SupportedGltf, ModelGltfAcceptedTest,
                              ::testing::Values("default_alpha", "opaque_low_alpha", "pure_color_no_uv",
-                                               "default_material"),
+                                               "default_material", "mask", "blend"),
                              [](const auto& info) { return info.param; });
     struct MtlCase
     {

@@ -29,6 +29,8 @@ namespace Incubator::Render::Detail
         /// @brief 统计实际存活对象，包含直接创建、资源组、材质依赖和在途持有；不等待或回收。
         /// @note 不包含内部帧目标、白图、字体、Shader 或 Pipeline。
         static ResourceCounts resourceCounts(Renderer& renderer);
+        /// @brief 返回实际材质保留的描述，包含材质覆盖继承的字段。
+        static MaterialDesc materialDescription(const Material& material);
         /// @brief 等待全部已提交帧的 Fence 并释放帧槽持有，不等待整个设备空闲。
         static void waitForFrames(Renderer& renderer);
         /// @brief 返回当前已完成并消费的离屏视口样本累计次数。

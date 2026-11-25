@@ -32,7 +32,7 @@ namespace Incubator
         struct PreparedMaterialSlot
         {
             uint32_t sourceMaterialIndex = 0;  ///< 对应 ModelResource::materials() 中的源材质槽索引。
-            Render::MaterialDesc sourceDesc;   ///< 源材质描述（保留共享纹理、采样器、着色模式与默认因子）。
+            Render::MaterialDesc sourceDesc;   ///< 源材质描述，含共享贴图及材质覆盖继承的透明度、双面和自发光属性。
         };
 
         /// @brief 按独立资源组按需构建并持有的实体材质覆盖绑定；替换或销毁时仍受在途帧 Fence 保护。

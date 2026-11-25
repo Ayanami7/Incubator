@@ -145,6 +145,21 @@ namespace Incubator
                 canonicalizeSlot(material.normalTexturePath, material.embeddedNormalTextureIndex, true, "normal texture");
                 canonicalizeSlot(material.metallicRoughnessTexturePath,
                                  material.embeddedMetallicRoughnessTextureIndex, true, "metallic-roughness texture");
+                canonicalizeSlot(material.emissiveTexturePath, material.embeddedEmissiveTextureIndex, true,
+                                 "emissive texture");
+                if (material.alphaMode != AlphaMode::Opaque && material.alphaMode != AlphaMode::Mask &&
+                    material.alphaMode != AlphaMode::Blend)
+                    throw Error::Exception(Error::Code::CONFIG, fmt::format("Model material {} invalid alphaMode", i));
+                if (!std::isfinite(material.alphaCutoff) || material.alphaCutoff < 0.0f)
+                    throw Error::Exception(Error::Code::CONFIG, fmt::format("Model material {} invalid alphaCutoff", i));
+                if (!std::isfinite(material.baseAlpha) || material.baseAlpha < 0.0f || material.baseAlpha > 1.0f)
+                    throw Error::Exception(Error::Code::CONFIG, fmt::format("Model material {} invalid baseAlpha", i));
+                for (const auto factor : material.emissiveFactor)
+                {
+                    if (!std::isfinite(factor) || factor < 0.0f || factor > 1.0f)
+                        throw Error::Exception(Error::Code::CONFIG,
+                                               fmt::format("Model material {} invalid emissiveFactor", i));
+                }
                 if (!std::isfinite(material.normalScale) || material.normalScale < 0.0f)
                 {
                     throw Error::Exception(

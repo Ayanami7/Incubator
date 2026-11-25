@@ -15,6 +15,14 @@ namespace Incubator
 {
     namespace Resource
     {
+        /// @brief 源材质的透明度模式。
+        enum class AlphaMode : uint32_t
+        {
+            Opaque,
+            Mask,
+            Blend
+        };
+
         struct ModelMaterial
         {
             /// @brief 相对于资产根目录的纹理路径，由导入器解析。
@@ -30,6 +38,13 @@ namespace Incubator
             std::optional<uint32_t> embeddedTextureIndex;                 ///< 内嵌基色贴图索引。
             std::optional<uint32_t> embeddedNormalTextureIndex;            ///< 内嵌法线贴图索引。
             std::optional<uint32_t> embeddedMetallicRoughnessTextureIndex; ///< 内嵌金属粗糙度贴图索引。
+            AlphaMode alphaMode = AlphaMode::Opaque;
+            float alphaCutoff = 0.5f;
+            float baseAlpha = 1.0f;
+            bool doubleSided = false;
+            std::array<float, 3> emissiveFactor{};
+            std::optional<std::string> emissiveTexturePath;      ///< 相对资产根的自发光贴图路径。
+            std::optional<uint32_t> embeddedEmissiveTextureIndex; ///< 内嵌自发光贴图索引。
         };
 
         /// @brief 模型拥有的紧密 RGBA8 像素，颜色空间由使用该贴图的材质槽决定。

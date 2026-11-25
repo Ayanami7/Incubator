@@ -85,6 +85,7 @@ namespace Incubator::Model
             uint32_t baseColor = NO_INDEX;
             uint32_t normal = NO_INDEX;
             uint32_t metallicRoughness = NO_INDEX;
+            uint32_t emissive = NO_INDEX;
         };
         std::vector<Resource::CpuResource> textureHolds;
         std::vector<TextureUploadRequest> textureRequests;
@@ -104,6 +105,8 @@ namespace Incubator::Model
                 const auto& material = source->materials()[index];
                 if (material.texturePath)
                     requireUnloaded(Resource::ResourceType::TEXTURE, *material.texturePath);
+                if (material.emissiveTexturePath)
+                    requireUnloaded(Resource::ResourceType::TEXTURE, *material.emissiveTexturePath);
                 if (usesPbrTextures(material))
                 {
                     if (material.normalTexturePath)
@@ -163,6 +166,8 @@ namespace Incubator::Model
                                                          material.embeddedMetallicRoughnessTextureIndex,
                                                          Render::TextureColorSpace::Linear);
             }
+            slots.emissive = acquireTexture(material.emissiveTexturePath, material.embeddedEmissiveTextureIndex,
+                                             Render::TextureColorSpace::Srgb);
             materialTextures.push_back(slots);
         }
 
@@ -213,6 +218,24 @@ namespace Incubator::Model
                 sourceMat.metallic,
                 sourceMat.roughness,
             };
+            switch (sourceMat.alphaMode)
+            {
+                case Resource::AlphaMode::Opaque:
+                    desc.alphaMode = Render::AlphaMode::Opaque;
+                    break;
+                case Resource::AlphaMode::Mask:
+                    desc.alphaMode = Render::AlphaMode::Mask;
+                    break;
+                case Resource::AlphaMode::Blend:
+                    desc.alphaMode = Render::AlphaMode::Blend;
+                    break;
+            }
+            desc.alphaCutoff = sourceMat.alphaCutoff;
+            desc.baseAlpha = sourceMat.baseAlpha;
+            desc.doubleSided = sourceMat.doubleSided;
+            desc.emissiveFactor = sourceMat.emissiveFactor;
+            if (slots.emissive != NO_INDEX)
+                desc.emissiveTexture = result->textures_[slots.emissive];
             result->materials_.push_back(renderer.createMaterial(result->resources_, desc));
             result->materialSlots_.push_back({materials[i], std::move(desc)});
         }

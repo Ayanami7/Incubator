@@ -71,17 +71,7 @@ namespace Incubator::Resource
             const auto reject = [index](std::string_view reason) {
                 throw Error::Exception(Error::Code::IO, fmt::format("Model material {}: {}", index, reason));
             };
-            if (gltf)
-            {
-                aiString mode;
-                if (source.Get(AI_MATKEY_GLTF_ALPHAMODE, mode) != aiReturn_SUCCESS ||
-                    std::string_view(mode.C_Str()) != "OPAQUE")
-                {
-                    reject("Only glTF alphaMode OPAQUE is supported");
-                }
-                // 即使材质为 OPAQUE，Assimp 也会把 baseColorFactor.a 映射到 OPACITY。此处不要检查该值。
-            }
-            else
+            if (!gltf)
             {
                 float opacity = 1.0f;
                 source.Get(AI_MATKEY_OPACITY, opacity);
@@ -96,10 +86,27 @@ namespace Incubator::Resource
                 aiShadingMode shading = aiShadingMode_PBR_BRDF;
                 source.Get(AI_MATKEY_SHADING_MODEL, shading);
                 result.unlit = shading == aiShadingMode_Unlit;
+                aiString mode("OPAQUE");
+                source.Get(AI_MATKEY_GLTF_ALPHAMODE, mode);
+                const std::string_view alphaMode(mode.C_Str(), mode.length);
+                if (alphaMode == "MASK")
+                    result.alphaMode = AlphaMode::Mask;
+                else if (alphaMode == "BLEND")
+                    result.alphaMode = AlphaMode::Blend;
+                else if (alphaMode != "OPAQUE")
+                    reject("Invalid glTF alphaMode");
+                source.Get(AI_MATKEY_GLTF_ALPHACUTOFF, result.alphaCutoff);
+                source.Get(AI_MATKEY_TWOSIDED, result.doubleSided);
+                aiColor4D emissive(0.0f, 0.0f, 0.0f, 1.0f);
+                source.Get(AI_MATKEY_COLOR_EMISSIVE, emissive);
+                result.emissiveFactor = {emissive.r, emissive.g, emissive.b};
             }
             aiColor4D color(1.0f, 1.0f, 1.0f, 1.0f);
             if (gltf)
+            {
                 source.Get(AI_MATKEY_BASE_COLOR, color);
+                result.baseAlpha = color.a;
+            }
             else if (objDiffuseSpecified)
                 source.Get(AI_MATKEY_COLOR_DIFFUSE, color);
             result.color = {color.r, color.g, color.b};
@@ -155,6 +162,8 @@ namespace Incubator::Resource
                                  result.embeddedNormalTextureIndex);
                 parseTextureSlot(aiTextureType_GLTF_METALLIC_ROUGHNESS, "Metallic roughness",
                                  result.metallicRoughnessTexturePath, result.embeddedMetallicRoughnessTextureIndex);
+                parseTextureSlot(aiTextureType_EMISSIVE, "Emissive", result.emissiveTexturePath,
+                                 result.embeddedEmissiveTextureIndex);
 
                 result.normalScale = 1.0f;
                 source.Get(AI_MATKEY_GLTF_TEXTURE_SCALE(aiTextureType_NORMALS, 0), result.normalScale);
@@ -282,7 +291,8 @@ namespace Incubator::Resource
                 const auto& material = materials[mesh.mMaterialIndex];
                 if ((material.texturePath || material.normalTexturePath || material.metallicRoughnessTexturePath ||
                      material.embeddedTextureIndex || material.embeddedNormalTextureIndex ||
-                     material.embeddedMetallicRoughnessTextureIndex) && !mesh.HasTextureCoords(0))
+                     material.embeddedMetallicRoughnessTextureIndex || material.emissiveTexturePath ||
+                     material.embeddedEmissiveTextureIndex) && !mesh.HasTextureCoords(0))
                 {
                     throw Error::Exception(Error::Code::IO, fmt::format("Model geometry {} material {} requires UV0", i,
                                                                         mesh.mMaterialIndex));

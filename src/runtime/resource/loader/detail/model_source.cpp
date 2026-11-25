@@ -228,6 +228,12 @@ namespace Incubator::Resource::Detail
             }
             if (const auto* materials = arrayMember(source, "materials"))
             {
+                const auto inUnitRange = [](const rapidjson::Value& value) {
+                    if (!value.IsNumber())
+                        return false;
+                    const auto number = value.GetDouble();
+                    return std::isfinite(number) && number >= 0.0 && number <= 1.0;
+                };
                 for (rapidjson::SizeType i = 0; i < materials->Size(); ++i)
                 {
                     const auto checkTextureSlot = [i](const rapidjson::Value* texture, std::string_view label) {
@@ -248,6 +254,30 @@ namespace Incubator::Resource::Detail
                         }
                     };
                     const auto& mat = (*materials)[i];
+                    if (const auto* alphaMode = member(mat, "alphaMode"))
+                    {
+                        const auto mode = alphaMode->IsString()
+                                              ? std::string_view(alphaMode->GetString(), alphaMode->GetStringLength())
+                                              : std::string_view{};
+                        if (mode != "OPAQUE" && mode != "MASK" && mode != "BLEND")
+                            throw Error::Exception(Error::Code::IO, fmt::format("Model material {} invalid alphaMode", i));
+                    }
+                    if (const auto* cutoff = member(mat, "alphaCutoff"))
+                    {
+                        const auto value = cutoff->IsNumber() ? cutoff->GetDouble() : -1.0;
+                        if (!std::isfinite(value) || value < 0.0 || value > std::numeric_limits<float>::max())
+                            throw Error::Exception(Error::Code::IO, fmt::format("Model material {} invalid alphaCutoff", i));
+                    }
+                    if (const auto* sides = member(mat, "doubleSided"); sides && !sides->IsBool())
+                        throw Error::Exception(Error::Code::IO, fmt::format("Model material {} invalid doubleSided", i));
+                    if (const auto* factor = arrayMember(mat, "emissiveFactor"))
+                    {
+                        if (factor->Size() != 3 || !inUnitRange((*factor)[0]) || !inUnitRange((*factor)[1]) ||
+                            !inUnitRange((*factor)[2]))
+                            throw Error::Exception(Error::Code::IO,
+                                                   fmt::format("Model material {} invalid emissiveFactor", i));
+                    }
+                    checkTextureSlot(member(mat, "emissiveTexture"), "emissive");
                     const auto* pbr = member(mat, "pbrMetallicRoughness");
                     checkTextureSlot(pbr ? member(*pbr, "baseColorTexture") : nullptr, "base color");
                     checkTextureSlot(pbr ? member(*pbr, "metallicRoughnessTexture") : nullptr, "metallic roughness");
@@ -256,6 +286,10 @@ namespace Incubator::Resource::Detail
 
                     if (pbr)
                     {
+                        const auto* color = arrayMember(*pbr, "baseColorFactor");
+                        if (color && color->Size() > 3 && !inUnitRange((*color)[3]))
+                            throw Error::Exception(Error::Code::IO,
+                                                   fmt::format("Model material {} invalid baseColorFactor alpha", i));
                         if (const auto* metallic = member(*pbr, "metallicFactor"))
                         {
                             const double value = metallic->IsNumber() ? metallic->GetDouble()

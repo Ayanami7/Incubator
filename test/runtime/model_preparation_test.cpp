@@ -1175,6 +1175,7 @@ namespace
             ASSERT_EQ(oldPbr->textures().size(), 4u);
             EXPECT_TRUE(oldPbr->materialSlots().front().sourceDesc.normalTexture.valid());
             EXPECT_TRUE(oldPbr->materialSlots().front().sourceDesc.metallicRoughnessTexture.valid());
+            EXPECT_TRUE(oldPbr->materialSlots().front().sourceDesc.emissiveTexture.valid());
             const auto log = messages_.str();
             EXPECT_NE(log.find("3x4, format 43"), std::string::npos);
             EXPECT_NE(log.find("3x4, format 37"), std::string::npos);
@@ -1216,6 +1217,76 @@ namespace
             EXPECT_NE(after, before);
             EXPECT_EQ(pixels(*oldUnlit), before);
             released(ResourceType::MODEL, imported.virtualPath);
+        }
+        cleanValidation();
+    }
+
+    TEST_F(ModelPreparationTest, PreservesAlphaDoubleSidedAndEmissiveThroughMaterialOverride)
+    {
+        constexpr auto path = "assets/models/minimal_gltf/model.gltf";
+        std::ifstream input(path, std::ios::binary);
+        std::string text{std::istreambuf_iterator<char>(input), {}};
+        input.close();
+        constexpr std::string_view original = R"("alphaMode": "OPAQUE",)";
+        const auto mode = text.find(original);
+        ASSERT_NE(mode, std::string::npos);
+        text.replace(mode, original.size(), R"("alphaMode":"MASK","alphaCutoff":0.625,"doubleSided":true,
+                       "emissiveFactor":[0.125,0.25,0.5],"emissiveTexture":{"index":0},)");
+        const auto baseColor = text.find("\"baseColorFactor\"");
+        ASSERT_NE(baseColor, std::string::npos);
+        const auto close = text.find(']', baseColor);
+        ASSERT_NE(close, std::string::npos);
+        text.replace(baseColor, close - baseColor + 1, R"("baseColorFactor":[1,1,1,0.375])");
+        std::ofstream(path, std::ios::binary) << text;
+
+        auto native = window();
+        {
+            Renderer renderer(*native, RendererValidationMode::Required);
+            shaders(renderer);
+            const auto model = Model::prepareModel(renderer, GLTF,
+                                                   {TextureMipMode::FullChain,
+                                                    {TextureFilter::Linear, TextureFilter::Linear, MipFilter::Linear},
+                                                    ShadingMode::Pbr});
+            ASSERT_EQ(model->textures().size(), 2u);
+            ASSERT_FALSE(model->materialSlots().empty());
+            const auto& slot = model->materialSlots().front();
+            const auto checkMetadata = [](const MaterialDesc& desc) {
+                EXPECT_EQ(desc.alphaMode, Render::AlphaMode::Mask);
+                EXPECT_FLOAT_EQ(desc.alphaCutoff, 0.625f);
+                EXPECT_FLOAT_EQ(desc.baseAlpha, 0.375f);
+                EXPECT_TRUE(desc.doubleSided);
+                EXPECT_EQ(desc.emissiveFactor, (std::array<float, 3>{0.125f, 0.25f, 0.5f}));
+                EXPECT_TRUE(desc.emissiveTexture.valid());
+            };
+            checkMetadata(slot.sourceDesc);
+            const auto edited = Model::prepareMaterialOverride(renderer, *model, slot.sourceMaterialIndex,
+                                                               {0.75f, 0.5f, 0.25f},
+                                                               MaterialParameterMode::FixedValue, 0.25f,
+                                                               MaterialParameterMode::TextureFactor, 0.75f);
+            const auto desc = Detail::RendererReviewAccess::materialDescription(edited->material);
+            checkMetadata(desc);
+            EXPECT_EQ(desc.color, (std::array<float, 3>{0.75f, 0.5f, 0.25f}));
+            EXPECT_FLOAT_EQ(desc.roughness, 0.25f);
+            EXPECT_FLOAT_EQ(desc.metallic, 0.75f);
+            EXPECT_EQ(desc.roughnessMode, MaterialParameterMode::FixedValue);
+            EXPECT_EQ(desc.metallicMode, MaterialParameterMode::TextureFactor);
+
+            auto bad = desc;
+            bad.alphaMode = static_cast<Render::AlphaMode>(99);
+            EXPECT_THROW(renderer.createMaterial(bad), Error::Exception);
+            bad = desc;
+            bad.alphaCutoff = -1.0f;
+            EXPECT_THROW(renderer.createMaterial(bad), Error::Exception);
+            bad = desc;
+            bad.baseAlpha = 1.1f;
+            EXPECT_THROW(renderer.createMaterial(bad), Error::Exception);
+            bad = desc;
+            bad.emissiveFactor[0] = std::numeric_limits<float>::quiet_NaN();
+            EXPECT_THROW(renderer.createMaterial(bad), Error::Exception);
+            bad = desc;
+            const TextureResource linear({}, 1, 1, {255, 255, 255, 255});
+            bad.emissiveTexture = renderer.createTexture(linear, TextureMipMode::BaseLevel, TextureColorSpace::Linear);
+            EXPECT_THROW(renderer.createMaterial(bad), Error::Exception);
         }
         cleanValidation();
     }

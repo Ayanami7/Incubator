@@ -188,7 +188,10 @@ nearest mip 选择及 `maxLod=0.25`；它仍向下选择第 0 层。min/mag 相�
 颜色按线性空间相乘，因此白色 texel 乘 `{0.5, 0.5, 0.5}` 后，sRGB 编码结果约为
 188/255；默认白色参数保持原纹理的中灰 128/255。材质参数不作用于清屏或 ImGui。
 
-`createMaterial` 要求先准备共享 Shader，并在分配 GPU 资源前检查颜色和 Texture 从属关系。
+`createMaterial` 要求先准备共享 Shader，并在分配 GPU 资源前检查材质参数和 Texture 从属关系。
+`MaterialDesc` 还保存透明模式、非负的 `alphaCutoff`、[0, 1] 范围的 `baseAlpha`、双面标志以及三分量自发光因子。
+可选的 `emissiveTexture` 使用同一 Renderer 的 sRGB RGBA8 贴图，可按材质采样器进行线性过滤能力校验。
+这些字段随实际材质保留，当前主场景仍沿用原有不透明绘制路径。
 空、过期、跨 Renderer 纹理，NaN、无穷或越界颜色均明确失败，不替换白图或钳制非法输入。
 创建时将参数复制进 32 字节 std140 `MaterialData`（`vec4 colorShading` 与 `vec4 surfaceParams`），`colorShading.w` 精确编码模式（0 为 Unlit、1 为 Lambert、2 为 Pbr），`surfaceParams.w` 编码粗糙度/金属度独立模式位（bit 0 为固定粗糙度，bit 1 为固定金属度）；之后不改写该 Buffer
 或 Descriptor。无论 PNG alpha 或颜色参数如何，场景输出 alpha 始终为 1，不启用透明混合。
